@@ -65,24 +65,47 @@ def _qis_allocations(circuit: ScheduledCircuit, chunks: list[dict], rows: list[d
     _require(set(tags) == {r["measurement_tag"] for r in rows}, "missing or unexpected measurement tags")
     _require(len(set(tags.values())) == len(tags), "duplicate named program result IDs")
     active, by_result, seen = {}, {}, set()
+    native_allocations = []
+    occurrences = defaultdict(int)
     moment = 0
     for chunk in chunks:
-        for op in chunk["operations"]:
+        for raw_op in chunk["operations"]:
+            op = raw_op
             if op == "Barrier":
                 moment += 1
                 continue
             if not isinstance(op, dict):
                 continue
+            request = op.get("RuntimeRequest", {}).get("request", {})
+            native = request.get("Native")
+            if native == "Qalloc":
+                native_allocations.append(moment)
+                continue
+            if isinstance(native, dict):
+                if "Reset" in native:
+                    op = {"Quantum": {"Reset": native["Reset"]}}
+                elif "Measure" in native:
+                    measure = native["Measure"]
+                    _require(not measure["leaked"], "leakage-aware source measurement is unsupported")
+                    op = {"Quantum": {"Measure": [measure["qubit"], measure["result_id"]]}}
+                elif "Qfree" in native:
+                    op = {"ReleaseQubit": {"id": native["Qfree"]}}
             if "AllocateQubit" in op:
                 q = op["AllocateQubit"]["id"]
                 _require(type(q) is int and q >= 0 and q not in seen, "reused or invalid program allocation ID")
                 seen.add(q)
-                active[q] = {"program_qubit": q, "allocation_moment": moment}
+                active[q] = {"program_qubit": q, "allocation_moment": moment, "allocation_occurrence": 1}
             elif "TraceMetadata" in op:
                 item = op["TraceMetadata"]
                 metadata = item["metadata"]
                 if _ALLOCATION_KEY in metadata:
                     q = item["qubit"]
+                    if native_allocations:
+                        _require(type(q) is int and q >= 0 and q not in active,
+                                 "overlapping or invalid native allocation")
+                        occurrences[q] += 1
+                        active[q] = {"program_qubit": q, "allocation_moment": native_allocations.pop(0),
+                                     "allocation_occurrence": occurrences[q], "source_qubit_kind": "native_handle"}
                     _require(q in active and "reset_moment" not in active[q]
                              and metadata[_ALLOCATION_KEY] == str(q)
                              and metadata.get("source_lowering_required") == "true",
@@ -110,7 +133,7 @@ def _qis_allocations(circuit: ScheduledCircuit, chunks: list[dict], rows: list[d
                 q = op["ReleaseQubit"]["id"]
                 _require(q in active and "program_result_id" in active[q], "release without destructive measurement")
                 active.pop(q)
-    _require(not active and len(by_result) == len(rows), "incomplete allocation lifetimes")
+    _require(not active and not native_allocations and len(by_result) == len(rows), "incomplete allocation lifetimes")
     _require(moment == max(0, len(circuit.moments) - 1), "ALL_MOMENTS barrier coverage required")
     bindings = {}
     for row in rows:
@@ -147,6 +170,8 @@ def bind_runtime_lifetime_windows(circuit: ScheduledCircuit, evidence: dict) -> 
     for chunk in chunks:
         lowered.extend(op for op in chunk["lowered_quantum_ops"] if op["gate_type"] != "Idle")
     cursor, active, windows, allocated = 0, {}, [], set()
+    occurrences = defaultdict(int)
+    native_handles = {b["program_qubit"] for b in bindings.values() if b.get("source_qubit_kind") == "native_handle"}
     for batch in batches:
         _require(_boundaries(batch["operations"]) == _boundaries(batch["normalized_operations"]),
                  "event adapter changed preparation/readout boundaries")
@@ -186,9 +211,12 @@ def bind_runtime_lifetime_windows(circuit: ScheduledCircuit, evidence: dict) -> 
                      "lifetime boundary shares its site/batch with another operation")
             if kinds == ["Reset"]:
                 allocation = endpoint_labels[q]
-                _require(q not in active and allocation not in allocated, "overlapping or repeated tagged preparation")
+                _require(q not in active and (allocation not in allocated or allocation in native_handles),
+                         "overlapping or repeated tagged preparation")
+                occurrences[allocation] += 1
                 allocated.add(allocation)
                 active[q] = {"runtime_site": q, "program_qubit": allocation,
+                             "allocation_occurrence": occurrences[allocation],
                              "preparation_start_ns": start, "preparation_end_ns": end,
                              "preparation_batch": batch["batch_index"], "previous_end": end,
                              "gate_interval_ns": 0, "gap_intervals": []}
@@ -202,7 +230,8 @@ def bind_runtime_lifetime_windows(circuit: ScheduledCircuit, evidence: dict) -> 
                 result, future = endpoint_labels[q]
                 _require(result in bindings, "readout does not bind to a unique source lifetime")
                 source = bindings.pop(result)
-                _require(source["program_qubit"] == window["program_qubit"],
+                _require(source["program_qubit"] == window["program_qubit"]
+                         and source["allocation_occurrence"] == window["allocation_occurrence"],
                          "preparation and measurement belong to different program allocations")
                 window.update(source)
                 window.update({"runtime_future_id": future, "measurement_start_ns": start,

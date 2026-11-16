@@ -310,6 +310,15 @@ omitted `buffer` derives the safe forward overlap. An explicit `buffer` also
 adds that many look-behind rounds and is rejected if it is smaller than the
 derived forward requirement.
 
+## Composition invariants
+
+Detector `fault_sector` labels travel with emitted declarations, just like
+coordinates. Slice extraction takes the label from the source detector emitted
+at relative round zero; port-only source detectors do not contribute labels.
+Declarations for the same composed address must agree on coordinates and labels,
+including whether a label is present. Disagreement is a
+`ConflictingDetectorDeclaration` error.
+
 ## Window boundaries
 
 `DemWindowSpec` describes a half-open commit region followed by a half-open
@@ -344,10 +353,12 @@ The decoder-core crate owns the flattened `StructuredDem` input boundary used
 by streaming and windowed decoders. The type can retain independent-error
 grouping, decomposition components, hyperedges, standard observable columns,
 and detector coordinates. `DetectorErrorModel::to_structured_decoder_dem()`
-uses the same equal-effect grouping and XOR probability combination as
-`to_mechanisms()` and the default rendered model; this avoids introducing a
-second factorization policy at the decoder boundary. PECOS tracked-Pauli outputs
-are rejected explicitly because they are not standard DEM observables.
+parses exactly its standard `to_string()` text, then overlays each detector's
+opaque `fault_sector` label by ID. Probabilities use standard text formatting,
+including its rounding (issue #1260), rather than exact mechanism probabilities.
+Tracked-Pauli outputs are omitted by standard text rendering. Sparse detector
+IDs retain the dimensions declared by the text. This is also the definition used
+by all Python object decode paths; corpus identity certifies that same text.
 
 `StreamingWindowedDecoder::from_structured_dem` accepts the model directly;
 `from_dem` parses the flattened text once. Decoder specifications also accept
@@ -429,3 +440,24 @@ PR as separate commits:
   types.
 - [#751](https://github.com/PECOS-packages/PECOS/issues/751) makes logical-gate
   boundary providers data-driven through one typed assembly description.
+
+## Embedded runtime decoding
+
+The [live supplied-window integration](runtime-decoding.md) connects program
+observations to existing structured decoders during `sim()` execution. It supports
+independently closed windows and returns mapped frame bits before the program
+continues. The same document specifies the separate JIT batch/provenance design,
+including cross-window carry, faulty branches and persistent leakage that remain
+outside this first supported contract.
+
+The [versioned contract](runtime-decoder-contract.md#observed-native-reads-opt-in)
+also offers an opt-in native read/source check: supplied measurement occurrence
+expectations and detector parities are checked against actual getter results.
+This does not certify branch declarations or adaptive DEM soundness.
+
+The [compiler control opt-in](runtime-decoder-contract.md#compiler-owned-llvm-control-opt-in)
+adds actual LLVM branch outcomes, loop progress and conservative input-site
+dependencies for a strict, bounded subset, joined to emitted-batch intervals.
+Full physical-fragment JIT, exact HUGR/source-to-gate mapping and adaptive-model
+admission remain separate; existing boundary and unsupported-model failures stay
+in force.

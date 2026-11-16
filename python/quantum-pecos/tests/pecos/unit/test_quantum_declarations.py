@@ -1,6 +1,7 @@
 """PHIR-JSON declaration shape and program-wide name uniqueness."""
 
 import json
+import reprlib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -33,32 +34,44 @@ def test_optional_quantum_type(explicit_type: bool) -> None:
 
 @pytest.mark.parametrize("data_type", ["u32", None])
 def test_wrong_quantum_type(data_type: str | None) -> None:
-    """A present wrong type retains the reference reader's existing rejection."""
+    """A present non-qubits type is rejected by the reader; null by the shared check."""
     program = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
         "ops": [{"data": "qvar_define", "variable": "q", "data_type": data_type, "size": 2}],
     }
+    expected = "invalid data_type null" if data_type is None else "Do not know handle qvar type"
     for reader in [PyPHIR.from_phir, PhirClassicalInterpreter().init]:
-        with pytest.raises(Exception, match="Do not know handle qvar type"):
+        with pytest.raises(Exception, match=expected):
             reader(program)
 
 
 @pytest.mark.parametrize(
-    "fields",
-    [{}, {"size": 0}, {"size": -1}, {"size": True}, {"size": False}, {"size": 2.0}, {"size": "2"}, {"size": None}],
+    ("fields", "expected"),
+    [
+        ({}, "Quantum register 'q' requires a positive integer size"),
+        ({"size": 0}, "Quantum register 'q' requires a positive integer size"),
+        ({"size": -1}, "Register 'q' has invalid size"),
+        ({"size": True}, "Register 'q' has invalid size"),
+        ({"size": False}, "Register 'q' has invalid size"),
+        ({"size": 2.0}, "Register 'q' has invalid size"),
+        ({"size": "2"}, "Register 'q' has invalid size"),
+        ({"size": None}, "Register 'q' has invalid size"),
+    ],
 )
-def test_quantum_size_schema_remains_enforced(fields: dict) -> None:
+def test_quantum_size_schema_remains_enforced(fields: dict, expected: str) -> None:
     """The full upstream schema still rejects missing, zero and malformed sizes."""
     program = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
         "ops": [{"data": "qvar_define", "variable": "q", **fields}],
     }
-    with pytest.raises(ValueError, match="Quantum register 'q' requires a positive integer size"):
+    with pytest.raises(ValueError, match=expected):
         PyPHIR.from_phir(program)
     with pytest.raises(ValueError, match="size"):
         PhirClassicalInterpreter().init(program)
+    with pytest.raises(ValueError, match="size"):
+        PhirModel.model_validate(program)
 
 
 @pytest.mark.parametrize("size", [2, 3])
@@ -181,3 +194,164 @@ def test_unreachable_redeclaration() -> None:
     }
     with pytest.raises(ValueError, match="Variable 'a' is already declared as quantum; cannot redeclare as classical"):
         PyPHIR.from_phir(program)
+
+
+@pytest.mark.parametrize(("kind", "guidance"), [("qvar_spec", "qubit count"), ("cvar_spec", "0 to 64")])
+def test_qc2phir_rejects_unknown_register_size(kind: str, guidance: str) -> None:
+    """Unknown widths fail at export with metadata-specific repair guidance."""
+    circuit = pecos.QuantumCircuit(**{kind: {"a": None}})
+    for export in (circuit.to_phir_dict, circuit.to_phir_json):
+        with pytest.raises(ValueError, match=rf"{kind}\['a'\].*None.*use.*{guidance}"):
+            export()
+
+
+@pytest.mark.parametrize("dtype", ["u32", "bool"])
+def test_schema_rejects_null_classical_size_but_accepts_omitted(dtype: str) -> None:
+    """PECOS rejects an explicit null while preserving omitted-size inference."""
+    declaration = {"data": "cvar_define", "data_type": dtype, "variable": "a"}
+    source = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [declaration]}
+    PhirModel.model_validate(source)
+    declaration["size"] = None
+    with pytest.raises(ValueError, match="Register 'a' has invalid size null"):
+        PhirModel.model_validate(source)
+
+
+@pytest.mark.parametrize("kind", ["cvar_define", "qvar_define"])
+@pytest.mark.parametrize("size_case", ["numpy", "nan", "inf", "decimal", "rust", "large_decimal"])
+def test_projection_names_non_json_sizes(kind: str, size_case: str) -> None:
+    """Non-JSON sizes retain a bounded value representation in the Rust diagnostic."""
+    from decimal import Decimal
+
+    import numpy as np
+
+    size = {
+        "numpy": np.int64(2),
+        "nan": float("nan"),
+        "inf": float("inf"),
+        "decimal": Decimal(2),
+        "large_decimal": Decimal("9" * 1000),
+        "rust": pecos.i64(2),
+    }[size_case]
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": kind, "data_type": "u32" if kind == "cvar_define" else "qubits", "variable": "a", "size": size},
+        ],
+    }
+    hint = "a positive integer size" if kind == "qvar_define" else "a positive integer size that fits the data type"
+    for reader in (PyPHIR.from_phir, PhirClassicalInterpreter().init):
+        with pytest.raises(ValueError, match="invalid size") as error:
+            reader(source)
+        stand_in = json.dumps({"python": reprlib.repr(size)}, separators=(",", ":"))
+        expected = f"PHIR interpreter failed: Register 'a' has invalid size {stand_in}; use {hint}"
+        assert str(error.value) == expected
+        assert len(str(error.value)) < 200
+
+
+@pytest.mark.parametrize("kind", ["cvar_define", "qvar_define"])
+@pytest.mark.parametrize(
+    "fields",
+    [{}, {"variable": 5}, {"variable": None}, {"variable": True}, {"variable": []}, {"variable": {}}],
+)
+@pytest.mark.parametrize("validate", [False, True])
+def test_invalid_declaration_names_precede_size_errors(kind: str, fields: dict, validate: bool) -> None:
+    """Every reader names malformed declarations before considering their invalid size."""
+    declaration = {"data": kind, "data_type": "u32" if kind == "cvar_define" else "qubits", "size": None, **fields}
+    program = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [declaration]}
+    value = fields.get("variable")
+    if isinstance(value, (list, dict)):
+        value = {"python": reprlib.repr(value)}
+    bad = json.dumps(value, separators=(",", ":")) if "variable" in fields else "<missing>"
+    expected = f"Declaration {kind} has invalid variable {bad}; use a string variable name"
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = validate
+    for reader in (
+        PyPHIR.from_phir,
+        interpreter.init,
+    ):
+        with pytest.raises(ValueError, match="invalid variable") as error:
+            reader(program)
+        assert str(error.value) == f"PHIR interpreter failed: {expected}"
+    # Native JSON readers see the original JSON value, not the Python stand-in.
+    bad = json.dumps(fields["variable"], separators=(",", ":")) if "variable" in fields else "<missing>"
+    expected = f"Declaration {kind} has invalid variable {bad}; use a string variable name"
+    with pytest.raises(ValueError, match="invalid variable") as error:
+        RustPhirClassicalInterpreter().init(program)
+    assert str(error.value) == f"PHIR interpreter failed: {expected}"
+    with pytest.raises(ValueError, match="invalid variable") as error:
+        PhirJsonEngine(json.dumps(program))
+    assert str(error.value) == (
+        f"Input error: {expected}; supply a valid program or measurement batch "
+        "supported by the native PHIR-JSON engine"
+    )
+
+
+def test_schema_null_guard_is_internal_invariant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shared validator that unexpectedly accepts null cannot bypass the schema guard."""
+    import pecos.typing as implementation
+
+    monkeypatch.setattr(implementation, "validate_classical_inputs", lambda _program: None)
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "cvar_define", "data_type": "u32", "variable": "a", "size": None},
+        ],
+    }
+    with pytest.raises(RuntimeError, match="Internal invariant violated: shared size check accepted an explicit null"):
+        PhirModel.model_validate(source)
+
+
+@pytest.mark.parametrize("validate", [False, True])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("variable", b"m"),
+        ("variable", float("nan")),
+        ("variable", float("inf")),
+        ("variable", object()),
+        ("variable", {1, 2}),
+        ("size", 10**400),
+        ("data_type", b"u32"),
+    ],
+)
+def test_projection_rejects_non_json_declaration_fields(validate: bool, field: str, value: object) -> None:
+    """Non-JSON declaration fields get named diagnostics before schema or parser errors."""
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "cvar_define", "variable": "a", "data_type": "u32", "size": 1, field: value},
+        ],
+    }
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = validate
+    stand_in = json.dumps({"python": reprlib.repr(value)}, separators=(",", ":"))
+    for reader in (PyPHIR.from_phir, interpreter.init):
+        with pytest.raises(ValueError, match=f"invalid {field}") as error:
+            reader(source)
+        assert stand_in in str(error.value)
+        assert ("Declaration cvar_define" if field == "variable" else "Register 'a'") in str(error.value)
+
+
+def test_projection_accepts_json_scalar_subclasses() -> None:
+    """Int and str subclasses are JSON scalars, so the shared check accepts them."""
+    from enum import IntEnum, StrEnum
+
+    class Width(IntEnum):
+        W8 = 8
+
+    class Name(StrEnum):
+        A = "a"
+
+    source = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [{"data": "cvar_define", "variable": Name.A, "data_type": "u32", "size": Width.W8}],
+    }
+    interpreter = PhirClassicalInterpreter()
+    interpreter.phir_validate = False
+    PyPHIR.from_phir(source)
+    interpreter.init(source)
+    assert interpreter.csym2id == {"a": 0}

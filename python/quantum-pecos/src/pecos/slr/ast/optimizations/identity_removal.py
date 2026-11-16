@@ -74,6 +74,7 @@ class IdentityRemovalPass(OptimizationPass):
             body=optimized_body,
             returns=program.returns,
             allocator=program.allocator,
+            is_fragment=program.is_fragment,
             block_decls=program.block_decls,
             location=program.location,
         )

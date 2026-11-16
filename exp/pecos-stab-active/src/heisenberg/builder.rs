@@ -333,7 +333,7 @@ pub(super) fn compile(circuit: &TickCircuit) -> Result<HeisenbergProgram, Compil
                 measurement_ids, ..
             } => (measurement_ids, &mut detectors),
             AnnotationKind::Observable { measurement_ids } => (measurement_ids, &mut observables),
-            AnnotationKind::TrackedPauli => continue,
+            AnnotationKind::TrackedPauli { .. } => continue,
         };
         destination.push(
             measurements

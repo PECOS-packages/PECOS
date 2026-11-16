@@ -2114,6 +2114,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // SWAP can always swap frames without flushing.
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         if pairs.len() == 1 {
             // Single pair: fast path
             let (c, t) = (pairs[0].0.0, pairs[0].1.0);
@@ -2159,6 +2160,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn cz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CZ");
         if pairs.len() == 1 {
             // Single pair: fast path
             let (c, t) = (pairs[0].0.0, pairs[0].1.0);
@@ -2214,6 +2216,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn cy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CY");
         // CY = (I tensor S) . CX . (I tensor Sdg)
         // Circuit order: Sdg on target, then CX, then S on target
         for &(q0, q1) in pairs {
@@ -2229,6 +2232,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn swap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SWAP");
         if pairs.len() == 1 {
             // Single pair: fast path
             let (c, t) = (pairs[0].0.0, pairs[0].1.0);
@@ -2275,6 +2279,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // to this simulator's forward ELEMENT_MATRIX convention, including daggers.
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZ");
         if pairs.len() == 1 {
             let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
             if !PauliFrameGate::Szz.propagate(
@@ -2349,6 +2354,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "SZZDG");
         if pairs.len() == 1 {
             let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
             if !PauliFrameGate::SzzDg.propagate(
@@ -2423,6 +2429,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     }
 
     fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "ISWAP");
         if pairs.len() == 1 {
             let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
             if !PauliFrameGate::ISwap.propagate(
@@ -2724,6 +2731,7 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
     }
 
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXX");
         let theta_rad = theta.to_radians_signed();
         // RXX(theta) = exp(-i*theta*XX/2)
         // Pairs (00<->11) and (01<->10) with matrix [[cos, -i*sin], [-i*sin, cos]].
@@ -2769,6 +2777,7 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
     }
 
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RYY");
         let theta_rad = theta.to_radians_signed();
         // RYY(theta) = exp(-i*theta*YY/2)
         // Same parity (00<->11): matrix [[cos, +i*sin], [+i*sin, cos]]
@@ -2816,6 +2825,7 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecSoA<R> {
     }
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         let theta = theta.to_radians_signed();
         // RZZ(theta) = diag(e^{-i*theta/2}, e^{i*theta/2}, e^{i*theta/2}, e^{-i*theta/2})
         //

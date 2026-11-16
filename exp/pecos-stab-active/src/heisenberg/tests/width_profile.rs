@@ -189,7 +189,7 @@ fn fused_quarter_turn_then_promotion() {
             1,
             vec![
                 rotation(1, &[(0, X)], Angle64::QUARTER_TURN, negative),
-                rotation(1, &[(0, Z)], Angle64::from_radians(0.37), false),
+                rotation(1, &[(0, Z)], pecos_core::radians!(0.37), false),
             ],
         );
         assert_eq!(program.width_profile(), [0, 1]);
@@ -203,7 +203,7 @@ fn active_measurement_demotes() {
     let program = program(
         1,
         vec![
-            rotation(1, &[(0, X)], Angle64::from_radians(0.37), false),
+            rotation(1, &[(0, X)], pecos_core::radians!(0.37), false),
             measurement(1, 0, Z, 0),
         ],
     );
@@ -218,7 +218,7 @@ fn random_measurement_updates_tableau() {
         1,
         vec![
             measurement(1, 0, X, 0),
-            rotation(1, &[(0, Z)], Angle64::from_radians(0.37), false),
+            rotation(1, &[(0, Z)], pecos_core::radians!(0.37), false),
         ],
     );
     assert_eq!(program.width_profile(), [0, 1]);
@@ -230,15 +230,15 @@ fn identity_half_turn_and_snapped_active_measurements() {
     use PauliKindForDecomp::{X, Z};
     let mut coverage = Coverage::default();
     for negative in [false, true] {
-        let a = Angle64::from_radians(0.79);
-        let b = Angle64::from_radians(2.91);
+        let a = pecos_core::radians!(0.79);
+        let b = pecos_core::radians!(2.91);
         let program = program(
             1,
             vec![
                 rotation(1, &[], a, negative),
                 rotation(1, &[(0, X)], Angle64::ZERO, negative),
                 rotation(1, &[(0, X)], Angle64::HALF_TURN, negative),
-                rotation(1, &[(0, Z)], Angle64::from_radians(1.23), negative),
+                rotation(1, &[(0, Z)], pecos_core::radians!(1.23), negative),
                 rotation(1, &[(0, X)], a, negative),
                 rotation(1, &[(0, X)], b, negative),
                 rotation(1, &[(0, X)], -(a + b), negative),
@@ -258,7 +258,7 @@ fn profile_exceeds_machine_word_then_demotes_every_coordinate() {
     use PauliKindForDecomp::{X, Z};
     let n = usize::try_from(usize::BITS).unwrap() + 3;
     let operations = (0..n)
-        .map(|q| rotation(n, &[(q, X)], Angle64::from_radians(0.37), false))
+        .map(|q| rotation(n, &[(q, X)], pecos_core::radians!(0.37), false))
         .chain((0..n).map(|q| measurement(n, q, Z, q)))
         .collect();
     let expected: Vec<_> = (1..=n).chain((0..n).rev()).collect();
@@ -268,7 +268,7 @@ fn profile_exceeds_machine_word_then_demotes_every_coordinate() {
 #[test]
 fn overflowing_rotation_preserves_the_entire_state() {
     use PauliKindForDecomp::X;
-    let angle = Angle64::from_radians(0.37);
+    let angle = pecos_core::radians!(0.37);
     let program = program(
         3,
         (0..3)

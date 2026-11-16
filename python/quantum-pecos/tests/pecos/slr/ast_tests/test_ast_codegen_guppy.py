@@ -115,7 +115,7 @@ class TestAstToGuppyPrepMeasure:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             Return(c),
         )
         ast = slr_to_ast(prog)
@@ -181,8 +181,8 @@ class TestAstToGuppyControlFlow:
 
         code = ast_to_guppy(ast)
 
-        # Repeat becomes for _ in range(n)
-        assert "for _ in range(3):" in code
+        # Repeat uses a reserved counter, leaving user loop variables intact.
+        assert "for _repeat_0 in range(3):" in code
         assert "q_0 = h(q_0)" in code
 
 
@@ -197,7 +197,7 @@ class TestAstToGuppyQEC:
             c := CReg("c", 1),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
-            qb.Measure(ancilla[0]) > c[0],
+            qb.MeasureZ(ancilla[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 

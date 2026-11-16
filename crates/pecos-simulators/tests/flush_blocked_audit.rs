@@ -108,13 +108,13 @@ fn apply_1q(sim: &mut StateVecSoA, op: Op1q) {
             sim.tdg(&[QubitId(q)]);
         }
         Op1q::Rx(q, t) => {
-            sim.rx(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rx(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Op1q::Ry(q, t) => {
-            sim.ry(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.ry(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Op1q::Rz(q, t) => {
-            sim.rz(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
     }
 }
@@ -336,9 +336,9 @@ fn flush_blocked_all_qubits_pending() {
         // not identity).
         let theta = rng.random_range(0.1..3.0);
         reference.h(&[QubitId(q)]);
-        reference.rz(Angle64::from_radians(theta), &[QubitId(q)]);
+        reference.rz(Angle64::try_from_radians(theta).unwrap(), &[QubitId(q)]);
         under_test.h(&[QubitId(q)]);
-        under_test.rz(Angle64::from_radians(theta), &[QubitId(q)]);
+        under_test.rz(Angle64::try_from_radians(theta).unwrap(), &[QubitId(q)]);
     }
     trigger_flush(&mut under_test);
 

@@ -194,7 +194,7 @@ fn stabilizer_rejects_unsupported_clifford() {
 
 fn noop_gate(gate: GateType) -> Gate {
     if gate == GateType::RZ {
-        Gate::rz(pecos_core::Angle64::from_radians(0.01), &[0])
+        Gate::rz(pecos_core::radians!(0.01), &[0])
     } else {
         make_gate(gate, &[0])
     }

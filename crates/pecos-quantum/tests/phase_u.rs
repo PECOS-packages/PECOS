@@ -96,13 +96,13 @@ fn phase_u_recognition_is_exact() {
     for angle in [
         Angle64::ZERO,
         Angle64::HALF_TURN,
-        Angle64::from_radians(-0.37),
+        pecos_core::radians!(-0.37),
     ] {
         let gate = Gate::u(Angle64::ZERO, Angle64::ZERO, angle, &[0, 1]);
         assert_eq!(gate.phase_angle(), Some(angle));
         for (theta, phi) in [
-            (Angle64::from_turns(1e-12), Angle64::ZERO),
-            (Angle64::ZERO, Angle64::from_turns(1e-12)),
+            (pecos_core::turns!(1e-12), Angle64::ZERO),
+            (Angle64::ZERO, pecos_core::turns!(1e-12)),
         ] {
             assert_eq!(Gate::u(theta, phi, angle, &[0]).phase_angle(), None);
         }
@@ -114,7 +114,7 @@ fn phase_u_recognition_is_exact() {
         assert_eq!(gate.phase_angle(), None);
     }
     for angle in [
-        Angle64::from_turns(0.25 + 1e-12),
+        pecos_core::turns!(0.25 + 1e-12),
         Angle64::from_turn_ratio(1, 8),
     ] {
         assert_eq!(
@@ -170,7 +170,7 @@ fn phase_u_tick_passes_and_general_u_barriers() {
     dag.u(
         Angle64::ZERO,
         Angle64::ZERO,
-        Angle64::from_radians(0.37),
+        pecos_core::radians!(0.37),
         &[0],
     );
     AbsorbBasisGates.apply_dag(&mut dag);

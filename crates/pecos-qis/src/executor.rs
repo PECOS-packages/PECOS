@@ -3,9 +3,7 @@
 //! This module implements the `QisInterface` trait for Selene's Helios compiler.
 
 use crate::qis_interface::{DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface};
-use crate::selene_runtimes::{
-    find_library_in_dir, platform_hashed_library_pattern, platform_library_name,
-};
+use crate::selene_runtimes::{bundled_library, find_library_in_dir, platform_library_name};
 use libloading::{Library, Symbol};
 use log::{debug, error, info, warn};
 use pecos_qis_ffi_types::OperationCollector;
@@ -183,14 +181,40 @@ struct SharedLibrary {
 unsafe impl Sync for SharedLibrary {}
 unsafe impl Send for SharedLibrary {}
 
+#[cfg(test)]
+static SYMBOL_LOOKUPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 impl SharedLibrary {
     /// Get a symbol from the library
     ///
     /// # Safety
     /// Same safety requirements as `Library::get`
     unsafe fn get<T>(&self, symbol: &[u8]) -> Result<Symbol<'_, T>, libloading::Error> {
+        #[cfg(test)]
+        SYMBOL_LOOKUPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // SAFETY: We're inside an unsafe fn, caller is responsible for safety
         unsafe { self.lib.get(symbol) }
+    }
+
+    /// Resolve a callback from a process-lifetime library on first successful use.
+    /// Failed lookups remain retryable, just like uncached `get` calls. Racing
+    /// first callers may both resolve the symbol; they publish the same address.
+    ///
+    /// # Safety
+    /// `T` must match the symbol's ABI. The cache must be dedicated to this
+    /// library/symbol pair. The static library reference keeps copied function
+    /// pointers valid for the entire lifetime of their cache.
+    unsafe fn get_cached<T: Copy>(
+        &'static self,
+        cache: &OnceLock<T>,
+        symbol: &[u8],
+    ) -> Result<T, libloading::Error> {
+        if let Some(value) = cache.get() {
+            return Ok(*value);
+        }
+        // SAFETY: The caller supplies the matching symbol type and dedicated cache.
+        let value = *unsafe { self.get::<T>(symbol)? };
+        Ok(*cache.get_or_init(|| value))
     }
 
     /// Get a reference to the inner Library for legacy code
@@ -239,6 +263,7 @@ fn check_context_status(status: i32, operation: &str) -> Result<(), InterfaceErr
         0 => return Ok(()),
         1 => "null execution context",
         2 => "poisoned execution context lock",
+        4 => "unknown native future provenance; cannot certify an operation trace",
         _ => "invalid data or serialization failure",
     };
     Err(InterfaceError::ExecutionError(format!(
@@ -264,9 +289,13 @@ impl HeliosSyncHandle {
 
 impl DynamicSyncHandle for HeliosSyncHandle {
     fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64> {
+        static WAIT: OnceLock<WaitForNeedResultFn> = OnceLock::new();
         let lib = Self::get_lib().ok()?;
-        let wait_fn: Symbol<WaitForNeedResultFn> =
-            unsafe { lib.get(b"pecos_wait_for_need_result_with_context\0").ok()? };
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let wait_fn = unsafe {
+            lib.get_cached(&WAIT, b"pecos_wait_for_need_result_with_context\0")
+                .ok()?
+        };
         let mut result_id = u64::MAX;
         let status = unsafe { wait_fn(self.execution_context.0, timeout_ms, &raw mut result_id) };
         check_context_status(status, "wait for result").ok()?;
@@ -278,9 +307,11 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     }
 
     fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError> {
+        static CALLBACK: OnceLock<SetMeasurementResultFn> = OnceLock::new();
         let lib = Self::get_lib()?;
-        let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
-            lib.get(b"pecos_set_measurement_result_with_context\0")
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let set_fn = unsafe {
+            lib.get_cached(&CALLBACK, b"pecos_set_measurement_result_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_set_measurement_result: {e}"
@@ -296,9 +327,11 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     }
 
     fn set_measurement_outcome(&self, result_id: u64, value: u64) -> Result<(), InterfaceError> {
+        static CALLBACK: OnceLock<SetMeasurementOutcomeFn> = OnceLock::new();
         let lib = Self::get_lib()?;
-        let set_fn: Symbol<SetMeasurementOutcomeFn> = unsafe {
-            lib.get(b"pecos_set_measurement_outcome_with_context\0")
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let set_fn = unsafe {
+            lib.get_cached(&CALLBACK, b"pecos_set_measurement_outcome_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_set_measurement_outcome: {e}"
@@ -314,9 +347,11 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     }
 
     fn signal_result_ready(&self) -> Result<(), InterfaceError> {
+        static CALLBACK: OnceLock<SignalResultReadyFn> = OnceLock::new();
         let lib = Self::get_lib()?;
-        let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
-            lib.get(b"pecos_signal_result_ready_with_context\0")
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let signal_fn = unsafe {
+            lib.get_cached(&CALLBACK, b"pecos_signal_result_ready_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_signal_result_ready: {e}"
@@ -334,10 +369,12 @@ impl DynamicSyncHandle for HeliosSyncHandle {
     fn get_pending_operations(
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
+        static CALLBACK: OnceLock<GetPendingOperationsFn> = OnceLock::new();
         let lib = Self::get_lib()?;
         // Read the owned context queue through pecos_get_pending_operations_with_context.
-        let get_ops_fn: Symbol<GetPendingOperationsFn> = unsafe {
-            lib.get(b"pecos_get_pending_operations_with_context\0")
+        // SAFETY: This cache belongs to this symbol in the pinned FFI singleton.
+        let get_ops_fn = unsafe {
+            lib.get_cached(&CALLBACK, b"pecos_get_pending_operations_with_context\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
                         "Failed to find pecos_get_pending_operations_with_context: {e}"
@@ -425,6 +462,85 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         Ok(result)
     }
 
+    fn get_program_exit(
+        &self,
+    ) -> Result<Option<pecos_engines::shot_results::ProgramExit>, InterfaceError> {
+        let lib = Self::get_lib()?;
+        // Resolve both symbols before allocating the JSON buffer.
+        // SAFETY: Symbols have the declared explicit-context reader/deallocator ABI.
+        let (get, free) = unsafe {
+            let get = lib
+                .get::<GetNamedResultsJsonFn>(b"pecos_get_program_error_json_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!("Missing program error reader: {e}"))
+                })?;
+            let free = lib
+                .get::<FreeNamedResultsJsonFn>(b"pecos_free_named_results_json\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!("Missing JSON deallocator: {e}"))
+                })?;
+            (get, free)
+        };
+        let mut ptr = std::ptr::null_mut();
+        // SAFETY: This handle owns the live context; output is valid writable storage.
+        check_context_status(
+            unsafe { get(self.execution_context.0, &raw mut ptr) },
+            "read program exit",
+        )?;
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: Success returns an allocated, NUL-terminated JSON buffer.
+        let json = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes();
+        let error = serde_json::from_slice::<pecos_qis_ffi_types::ProgramError>(json);
+        // SAFETY: Parsing no longer borrows the buffer; release it exactly once.
+        unsafe { free(ptr) };
+        let error = error.map_err(|e| {
+            InterfaceError::ExecutionError(format!("Invalid program error JSON: {e}"))
+        })?;
+        match error {
+            pecos_qis_ffi_types::ProgramError::Exit { code, message } => {
+                Ok(Some(pecos_engines::shot_results::ProgramExit {
+                    code,
+                    message,
+                }))
+            }
+            error => Err(InterfaceError::ProgramError(error)),
+        }
+    }
+
+    fn get_measurement_layout(
+        &self,
+    ) -> Result<Option<pecos_qis_ffi_types::MeasurementLayout>, InterfaceError> {
+        let lib = Self::get_lib()?;
+        let get_fn: Symbol<GetNamedResultTracesJsonFn> = unsafe {
+            lib.get(b"pecos_get_measurement_layout_json_with_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Missing measurement identity query: {e}"
+                    ))
+                })?
+        };
+        let free_fn: Symbol<FreeNamedResultsJsonFn> = unsafe {
+            lib.get(b"pecos_free_named_results_json\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!("Missing JSON deallocator: {e}"))
+            })?
+        };
+        let mut ptr = std::ptr::null_mut();
+        check_context_status(
+            unsafe { get_fn(self.execution_context.0, &raw mut ptr) },
+            "read measurement identities",
+        )?;
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        let result = serde_json::from_slice(unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes());
+        unsafe { free_fn(ptr) };
+        result.map(Some).map_err(|e| {
+            InterfaceError::ExecutionError(format!("Invalid measurement identities: {e}"))
+        })
+    }
+
     fn get_named_result_traces(
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::NamedResultTrace>, InterfaceError> {
@@ -468,141 +584,6 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         );
         Ok(result)
     }
-}
-
-/// Derive the project target directory from the compile-time embedded Helios path.
-///
-/// The compile-time path looks like:
-/// `/path/to/project/target/release/build/pecos-qis-HASH/out/libhelios_selene_interface.a`
-///
-/// We want to extract `/path/to/project/target` so we can search for other build hashes.
-fn get_helios_target_dir() -> Option<PathBuf> {
-    let compile_time_path = PathBuf::from(env!("HELIOS_LIB_PATH"));
-    // Go up from: lib -> out -> pecos-qis-HASH -> build -> release/debug -> target
-    compile_time_path
-        .parent() // out/
-        .and_then(|p| p.parent()) // pecos-qis-HASH/
-        .and_then(|p| p.parent()) // build/
-        .and_then(|p| p.parent()) // release or debug
-        .and_then(|p| p.parent()) // target/
-        .map(std::path::Path::to_path_buf)
-}
-
-/// Search for the Helios library in a target directory
-fn search_helios_in_target(target_dir: &Path, lib_name: &str) -> Option<PathBuf> {
-    for profile in ["release", "debug"] {
-        let build_dir = target_dir.join(profile).join("build");
-        if build_dir.exists()
-            && let Ok(entries) = std::fs::read_dir(&build_dir)
-        {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with("pecos-qis-") {
-                    let lib_path = entry.path().join("out").join(lib_name);
-                    if lib_path.exists() {
-                        debug!("Found Helios library at: {}", lib_path.display());
-                        return Some(lib_path);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Find the Helios interface library with the following priority:
-/// 1. Runtime `HELIOS_LIB_PATH` environment variable (explicit override)
-/// 2. Embedded path from build time (compile-time `HELIOS_LIB_PATH`)
-/// 3. Search target directory derived from compile-time path (handles hash changes)
-/// 4. Search target directory relative to current working directory
-/// 5. Search relative to the executable
-///
-/// Returns the path to `libhelios_selene_interface.a` or an error with helpful suggestions.
-fn find_helios_lib() -> Result<PathBuf, InterfaceError> {
-    const LIB_NAME: &str = "libhelios_selene_interface.a";
-
-    // 1. Check runtime environment variable (explicit override)
-    if let Ok(path_str) = std::env::var("HELIOS_LIB_PATH") {
-        let path = PathBuf::from(&path_str);
-        if path.exists() {
-            debug!(
-                "Using Helios library from HELIOS_LIB_PATH env var: {}",
-                path.display()
-            );
-            return Ok(path);
-        }
-        warn!(
-            "HELIOS_LIB_PATH is set to '{path_str}' but file does not exist, searching other locations..."
-        );
-    }
-
-    // 2. Check compile-time embedded path
-    let compile_time_path = PathBuf::from(env!("HELIOS_LIB_PATH"));
-    if compile_time_path.exists() {
-        debug!(
-            "Using Helios library from compile-time path: {}",
-            compile_time_path.display()
-        );
-        return Ok(compile_time_path);
-    }
-
-    // 3. Search target directory derived from compile-time path
-    // This handles cases where the build hash changed but the target dir is the same
-    if let Some(target_dir) = get_helios_target_dir()
-        && let Some(path) = search_helios_in_target(&target_dir, LIB_NAME)
-    {
-        return Ok(path);
-    }
-
-    // 4. Search target directory relative to current working directory
-    let mut candidate_paths = Vec::new();
-    if let Ok(cwd) = std::env::current_dir() {
-        let target_dir = cwd.join("target");
-        if let Some(path) = search_helios_in_target(&target_dir, LIB_NAME) {
-            return Ok(path);
-        }
-    }
-
-    // 5. Search relative to executable
-    if let Ok(exe_path) = std::env::current_exe()
-        && let Some(exe_dir) = exe_path.parent()
-    {
-        // Check same directory as executable
-        candidate_paths.push(exe_dir.join(LIB_NAME));
-        // Check lib subdirectory
-        candidate_paths.push(exe_dir.join("lib").join(LIB_NAME));
-        // Check parent directory (for bundled installations)
-        if let Some(parent) = exe_dir.parent() {
-            candidate_paths.push(parent.join("lib").join(LIB_NAME));
-        }
-    }
-
-    // Try each candidate
-    for path in &candidate_paths {
-        if path.exists() {
-            debug!("Found Helios library at: {}", path.display());
-            return Ok(path.clone());
-        }
-    }
-
-    // Nothing found - provide helpful error message
-    let searched_locations = candidate_paths
-        .iter()
-        .map(|p| format!("  - {}", p.display()))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    Err(InterfaceError::LoadError(format!(
-        "Could not find Helios interface library ({LIB_NAME}).\n\n\
-        The compile-time path no longer exists:\n  {}\n\n\
-        This usually happens after a partial rebuild. To fix this:\n\
-        1. Run: cargo clean -p pecos-qis\n\
-        2. Rebuild: cargo build --release\n\n\
-        Or set HELIOS_LIB_PATH environment variable to the library location.\n\n\
-        Searched locations:\n{searched_locations}",
-        compile_time_path.display()
-    )))
 }
 
 /// Find an LLVM tool with the following priority:
@@ -868,6 +849,7 @@ pub struct QisHeliosInterface {
     /// Shared with sync handles; replacing this Arc leaves older handles valid.
     execution_context: Option<Arc<ExecutionContextPtr>>,
     dynamic_mode: bool,
+    program_shot: u64,
 }
 
 impl QisHeliosInterface {
@@ -881,6 +863,7 @@ impl QisHeliosInterface {
             metadata: BTreeMap::new(),
             execution_context: None,
             dynamic_mode: false,
+            program_shot: 0,
         }
     }
 
@@ -943,17 +926,11 @@ impl QisHeliosInterface {
             .map_err(|e| InterfaceError::LoadError(e.clone()))
     }
 
-    /// Find the `libpecos_qis_ffi` library by searching common locations.
+    /// Find QIS FFI through `PECOS_QIS_FFI_PATH`, the registered host bundle,
+    /// then a library directly next to the running executable.
+    /// Prepare development libraries with `pecos qis-runtime` or `just build-debug`.
     ///
-    /// Issue #365 discovery precedence is: the authoritative
-    /// `PECOS_QIS_FFI_PATH` override; executable-adjacent and compile-time
-    /// workspace artifacts from this build; `CARGO_TARGET_DIR`; then the
-    /// remaining parent/cwd fallbacks. Keeping runtime Cargo overrides below
-    /// build-associated locations reduces the risk of loading a stale,
-    /// ABI-incompatible FFI library across ownership-transferring calls.
-    ///
-    /// Unlike `PECOS_SELENE_DIR`, which is one source in a fallthrough search,
-    /// a set-but-invalid `PECOS_QIS_FFI_PATH` fails loudly because it is an
+    /// A set-but-invalid `PECOS_QIS_FFI_PATH` fails loudly because it is an
     /// authoritative per-purpose override.
     fn find_pecos_qis_lib() -> Result<PathBuf, InterfaceError> {
         let lib_name = platform_library_name("pecos_qis_ffi");
@@ -963,15 +940,8 @@ impl QisHeliosInterface {
             std::env::consts::OS
         );
 
-        let profile_order = if cfg!(debug_assertions) {
-            ["debug", "release"]
-        } else {
-            ["release", "debug"]
-        };
-
         if let Some(override_path) = std::env::var_os("PECOS_QIS_FFI_PATH") {
             let override_path = PathBuf::from(override_path);
-            let hashed_pattern = platform_hashed_library_pattern("pecos_qis_ffi");
             if override_path.is_file() {
                 return Ok(override_path);
             }
@@ -982,9 +952,13 @@ impl QisHeliosInterface {
             }
 
             return Err(InterfaceError::ExecutionError(format!(
-                "PECOS_QIS_FFI_PATH is set to {}, but no library was found. Searched it as a direct file and searched for {lib_name} and {hashed_pattern} in the directory and its deps subdirectory",
+                "PECOS_QIS_FFI_PATH is set to {}, but no library was found. Searched it as a direct file or for {lib_name} directly in the directory. Set PECOS_QIS_FFI_PATH and PECOS_SELENE_DIR to the directory printed by `pecos qis-runtime --profile <profile>` using the profile you built with, use `pecos rust test --profile <profile>`, or run `pecos python build --profile <profile>` with the same profile (for example `just build-debug` for debug)",
                 override_path.display()
             )));
+        }
+
+        if let Some(path) = bundled_library("pecos_qis_ffi") {
+            return Ok(path);
         }
 
         let exe_dir = std::env::current_exe()
@@ -998,62 +972,35 @@ impl QisHeliosInterface {
 
         debug!("Executable directory: {}", exe_dir.display());
 
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        Self::find_pecos_qis_lib_from_roots(&exe_dir, &manifest_dir, &profile_order, &lib_name)
+        Self::find_pecos_qis_lib_from_roots(&exe_dir, &lib_name)
     }
 
     fn find_pecos_qis_lib_from_roots(
         exe_dir: &Path,
-        manifest_dir: &Path,
-        profile_order: &[&str; 2],
         lib_name: &str,
     ) -> Result<PathBuf, InterfaceError> {
-        // Cargo refreshes dependencies in `deps/` without necessarily updating
-        // an older top-level cdylib. Use the same deps-first, hash-aware lookup
-        // for every root so a stale copy cannot shadow this build's artifact.
-        let mut search_dirs = vec![exe_dir.to_path_buf()];
-
-        // Editable/development installs may execute from outside the checkout.
-        // Preserve the workspace target as a stable fallback in that case.
-        if let Some(workspace_root) = manifest_dir.parent().and_then(std::path::Path::parent) {
-            for profile in profile_order {
-                search_dirs.push(workspace_root.join("target").join(profile));
-            }
-        }
-        if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
-            let target_dir = PathBuf::from(target_dir);
-            for profile in profile_order {
-                search_dirs.push(target_dir.join(profile));
-            }
-        }
-
-        if let Some(parent) = exe_dir.parent() {
-            search_dirs.push(parent.to_path_buf());
-        }
-
-        if let Ok(current_dir) = std::env::current_dir() {
-            debug!("Current directory: {}", current_dir.display());
-            for profile in profile_order {
-                search_dirs.push(current_dir.join("target").join(profile));
-            }
-
-            // Search up the directory tree for workspace root (when running from Python).
-            for parent in current_dir.ancestors().skip(1).take(5) {
-                for profile in profile_order {
-                    search_dirs.push(parent.join("target").join(profile));
-                }
-            }
-        }
-
-        for dir in &search_dirs {
-            debug!("Searching QIS FFI library directory: {}", dir.display());
-            if let Some(path) = find_library_in_dir(dir, "pecos_qis_ffi") {
-                return Ok(path);
-            }
+        let path = exe_dir.join(lib_name);
+        if path.is_file() {
+            return Ok(path);
         }
         Err(InterfaceError::ExecutionError(format!(
-            "Failed to find {lib_name}. Searched directories (including deps and hash-suffixed libraries): {search_dirs:?}"
+            "Failed to find {lib_name}. No registered bundle or executable-adjacent library at {}. Set PECOS_QIS_FFI_PATH and PECOS_SELENE_DIR to the directory printed by `pecos qis-runtime --profile <profile>` using the profile you built with (add --tests for Rust tests), use `pecos rust test --profile <profile>`, or run `pecos python build --profile <profile>` with the same profile (for example `just build-debug` for debug).",
+            path.display()
         )))
+    }
+
+    fn validate_qis_ffi_abi(lib: &Library) -> Result<(), String> {
+        let version: Symbol<unsafe extern "C" fn() -> u64> = unsafe {
+            lib.get(b"pecos_qis_ffi_abi_version\0")
+        }.map_err(|_| "incompatible QIS FFI library: missing ABI version; rebuild or reinstall the matching host and FFI library".to_string())?;
+        let actual = unsafe { version() };
+        let expected = pecos_qis_ffi_types::QIS_FFI_ABI_VERSION;
+        if actual != expected {
+            return Err(format!(
+                "incompatible QIS FFI library: ABI version {actual}, expected {expected}; rebuild or reinstall the matching host and FFI library"
+            ));
+        }
+        Ok(())
     }
 
     /// Get or initialize the process-wide QIS FFI library singleton.
@@ -1077,9 +1024,9 @@ impl QisHeliosInterface {
                     true,
                 ) {
                     Ok((lib_global, lib)) => {
-                        if let Err(error) = validate_qis_ffi_abi(&lib, &lib_path) {
-                            return Err(error.to_string());
-                        }
+                        Self::validate_qis_ffi_abi(&lib)
+                            .map_err(|error| format!("{error} ({})", lib_path.display()))?;
+                        validate_qis_ffi_abi(&lib, &lib_path).map_err(|error| error.to_string())?;
                         debug!("QIS FFI library singleton initialized successfully");
                         Ok(SharedLibrary {
                             _global_handle: std::mem::ManuallyDrop::new(lib_global),
@@ -1293,7 +1240,7 @@ impl QisHeliosInterface {
     /// QIR programs can use one of two entry-point signatures:
     /// - `i64 @qmain(i64)` -- the Helios / adaptive profile. Selene's HUGR-to-QIS
     ///   compiler (the Python boundary) emits this entry point; a test asserts its name
-    ///   in `python/quantum-pecos/tests/guppy/test_guppy_execute_llvm.py`.
+    ///   in `python/quantum-pecos/tests/guppy/test_compilation_boundary.py`.
     ///   The pecos-phir RON pipeline fixtures (`ron_support.rs`,
     ///   `qis_pipeline_tests`) use it. The return value is an error code.
     /// - `void @main()` -- the "base profile" form. pecos-phir's MLIR/QIR text
@@ -1611,10 +1558,6 @@ impl QisHeliosInterface {
         cache_faults::check(cache_faults::Site::Link, staging.path())
             .map_err(|e| InterfaceError::LoadError(format!("Injected linking failure: {e}")))?;
 
-        // Find the Helios library using robust search
-        let helios_lib_path = find_helios_lib()?;
-        let helios_lib_path = helios_lib_path.to_string_lossy().to_string();
-
         // Create temporary files for the program
         let mut program_file = NamedTempFile::new_in(staging.path())
             .map_err(|e| InterfaceError::LoadError(format!("Failed to create temp file: {e}")))?;
@@ -1826,7 +1769,7 @@ entry:
                 .arg(&so_path_for_clang)
                 .arg(&program_temp_path)
                 .arg(&qis_ffi_import_lib) // Link QIS FFI import library for setup/teardown/___* symbols
-                // NOTE: On Windows, DO NOT link helios_lib_path - it conflicts with DLL symbols
+                // NOTE: On Windows, DO NOT link the Helios static archive - it conflicts with DLL symbols
                 // The static library contains stub implementations that we replace with DLL versions
                 .arg("-Wl,/EXPORT:qmain"); // Export qmain symbol for GetProcAddress
             debug!("Windows: Exporting qmain entry point (auto-wrapped from main if needed)");
@@ -1854,7 +1797,7 @@ entry:
             let qis_ffi_path =
                 Self::pinned_qis_ffi_lib_path().map_err(InterfaceError::LoadError)?;
             clang_cmd.arg(qis_ffi_path);
-            // NOTE: We intentionally do NOT link helios_lib_path here.
+            // NOTE: We intentionally do NOT link the Helios static archive here.
             // The helios library statically defines ___read_future_bool which would
             // shadow our dynamic version from libpecos_qis_ffi.so.
             // This enables dynamic circuits because our ___read_future_bool has the
@@ -1983,8 +1926,6 @@ entry:
             "library_path".to_string(),
             persistent_cache_path.display().to_string(),
         );
-        self.metadata
-            .insert("helios_lib".to_string(), helios_lib_path);
         Ok(self.remember_program(&content_hash, &persistent_cache_path))
     }
 
@@ -2063,6 +2004,19 @@ entry:
         unsafe { reset_fn() };
 
         let execution = (|| {
+            // Assign through the same cdylib/context as the program's queries.
+            let set_shot: Symbol<unsafe extern "C" fn(*mut ExecutionContext, u64) -> i32> = unsafe {
+                pecos_qis_lib
+                    .get(b"pecos_set_program_shot_with_context\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!("Missing program shot setter: {e}"))
+                    })?
+            };
+            check_context_status(
+                unsafe { set_shot(ctx, self.program_shot) },
+                "set program shot",
+            )?;
+
             // Step 2b: Pre-populate the execution context before the program
             // reads its measurement futures.
             if let Some(measurements) = measurements {
@@ -2206,6 +2160,21 @@ fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), Inter
         return Ok(());
     }
 
+    canonical_qis_ir(bytes, format)?;
+    cache
+        .lock()
+        .map_err(|error| {
+            InterfaceError::LoadError(format!("Failed to lock validation cache: {error}"))
+        })?
+        .insert(digest);
+    Ok(())
+}
+
+/// Canonical LLVM text verified through the same CLI boundary as execution.
+pub(crate) fn canonical_qis_ir(
+    bytes: &[u8],
+    format: ProgramFormat,
+) -> Result<String, InterfaceError> {
     // Use the compiler's LLVM installation even without optional LLVM bindings.
     // File input avoids blocking on simultaneous child stdin/stdout pipe traffic.
     let mut input = NamedTempFile::new().map_err(|error| {
@@ -2284,13 +2253,7 @@ fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), Inter
             "QIS input contains {reason}; convert QIR to QIS first"
         )));
     }
-    cache
-        .lock()
-        .map_err(|error| {
-            InterfaceError::LoadError(format!("Failed to lock validation cache: {error}"))
-        })?
-        .insert(digest);
-    Ok(())
+    Ok(ir)
 }
 
 impl QisInterface for QisHeliosInterface {
@@ -2336,6 +2299,10 @@ impl QisInterface for QisHeliosInterface {
         self.execute_program(Some(&measurements))
     }
 
+    fn set_program_shot(&mut self, shot: u64) {
+        self.program_shot = shot;
+    }
+
     fn metadata(&self) -> BTreeMap<String, String> {
         self.metadata.clone()
     }
@@ -2347,6 +2314,7 @@ impl QisInterface for QisHeliosInterface {
     fn reset(&mut self) -> Result<(), InterfaceError> {
         // Subsequent collection must use a fresh context, including after cancellation.
         self.dynamic_mode = false;
+        self.program_shot = 0;
         Ok(())
     }
 
@@ -2371,6 +2339,23 @@ impl QisInterface for QisHeliosInterface {
         self.execution_context = Some(Arc::new(context));
         self.dynamic_mode = true;
         Ok(())
+    }
+
+    fn set_native_selene_handles(&mut self, enabled: bool) -> Result<(), InterfaceError> {
+        let lib = Self::get_qis_ffi_lib_singleton()?;
+        let configure: Symbol<unsafe extern "C" fn(*mut ExecutionContext, bool) -> i32> = unsafe {
+            lib.get(b"pecos_set_native_selene_handles\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!("Missing native handle configuration: {e}"))
+            })?
+        };
+        let context = self
+            .execution_context
+            .as_ref()
+            .ok_or_else(|| InterfaceError::ExecutionError("no dynamic context".into()))?;
+        check_context_status(
+            unsafe { configure(context.0, enabled) },
+            "configure native Selene handles",
+        )
     }
 
     fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
@@ -2869,21 +2854,10 @@ ret i64 %status
         // SAFETY: This counter has no arguments and does not transfer.
         let live: Symbol<unsafe extern "C" fn() -> usize> =
             unsafe { ffi.get(b"pecos_get_live_allocation_count\0").unwrap() };
-        // Hand-written IR must follow the C ABI the Selene adapters export.
-        // The 8-byte `SeleneBoolResult` returns in one integer register on
-        // every 64-bit target. The 16-byte `SeleneU64Result` returns in two
-        // registers on SysV and AArch64 but through a hidden pointer on Windows.
         // `RID` stands for the result ID each shot reads.
-        #[cfg(not(windows))]
         let selene_u64 = (
-            "declare {i32, i64} @selene_future_read_u64(ptr, i64)",
-            "%value = call {i32, i64} @selene_future_read_u64(ptr null, i64 RID)",
-        );
-        #[cfg(windows)]
-        let selene_u64 = (
-            "declare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
-            "%out = alloca {i32, i64}
-                    call void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 RID)",
+            crate::selene_test_ir::declaration("selene_future_read_u64", "ptr, i64"),
+            crate::selene_test_ir::call("value", "selene_future_read_u64", "ptr null, i64 RID"),
         );
         let reads = [
             (
@@ -2906,7 +2880,11 @@ ret i64 %status
                 "declare i64 @selene_future_read_bool(ptr, i64)",
                 "%value = call i64 @selene_future_read_bool(ptr null, i64 RID)",
             ),
-            ("selene_future_read_u64", selene_u64.0, selene_u64.1),
+            (
+                "selene_future_read_u64",
+                selene_u64.0.as_str(),
+                selene_u64.1.as_str(),
+            ),
         ];
         let mut missed_checkpoints = Vec::new();
         for (reader, declaration, call) in reads {
@@ -2986,6 +2964,223 @@ ret i64 %status
             Vec::<String>::new(),
             "missed reader entry checkpoints"
         );
+    }
+
+    #[test]
+    fn native_request_cancellation_is_typed_and_fresh_context_reuses_interface() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        // Use the Guppy scalar adapter so the program ABI is identical on all targets.
+        // No other FFI call may intercept cancellation before the native request.
+        let source = br"
+            declare i64 @___qalloc()
+            define i64 @qmain(i64 %shot) {
+                %qubit = call i64 @___qalloc()
+                ret i64 0
+            }
+        ";
+        for before_submission in [true, false] {
+            let mut interface = QisHeliosInterface::new();
+            interface
+                .load_program(source, ProgramFormat::LlvmIrText)
+                .unwrap();
+            interface.enable_dynamic_mode().unwrap();
+            interface.set_native_selene_handles(true).unwrap();
+            let handle = interface.get_sync_handle().unwrap();
+            if before_submission {
+                handle.abort_execution().unwrap();
+            }
+            let worker = std::thread::spawn(move || {
+                let output = interface.execute_with_measurements(BTreeMap::new());
+                (interface, output)
+            });
+            let requested = if before_submission {
+                None
+            } else {
+                let requested = handle.wait_for_need_result(2_000);
+                handle.abort_execution().unwrap();
+                requested
+            };
+            let (mut interface, output) = worker.join().unwrap();
+            if !before_submission {
+                assert_eq!(
+                    requested,
+                    Some(pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID as u64)
+                );
+            }
+            assert!(
+                matches!(
+                    output,
+                    Err(InterfaceError::ProgramError(
+                        pecos_qis_ffi_types::ProgramError::Cancelled
+                    ))
+                ),
+                "{output:?}"
+            );
+            interface.disable_dynamic_mode().unwrap();
+
+            // The same interface must execute successfully in a fresh context.
+            interface.enable_dynamic_mode().unwrap();
+            interface.set_native_selene_handles(true).unwrap();
+            let handle = interface.get_sync_handle().unwrap();
+            let worker = std::thread::spawn(move || {
+                let output = interface.execute_with_measurements(BTreeMap::new());
+                (interface, output)
+            });
+            let requested = handle.wait_for_need_result(2_000);
+            if let Some(id) = requested {
+                handle.set_measurement_outcome(id, 987).unwrap();
+                handle.signal_result_ready().unwrap();
+            } else {
+                handle.abort_execution().unwrap();
+            }
+            let (mut interface, output) = worker.join().unwrap();
+            assert_eq!(
+                requested,
+                Some(pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID as u64)
+            );
+            output.unwrap();
+            interface.disable_dynamic_mode().unwrap();
+        }
+    }
+
+    #[test]
+    fn observed_read_cancellation_and_recycled_handles_preserve_shot_isolation() {
+        use pecos_qis_ffi_types::{
+            Operation, RUNTIME_REQUEST_RESULT_ID, RuntimeObservedRead, RuntimeRequest,
+            SeleneRequest,
+        };
+        const FUTURE: u64 = (1_u64 << 63) + 7;
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let source = include_bytes!("../tests/fixtures/runtime_decode_reused_future.ll");
+        let mut interface = QisHeliosInterface::new();
+        interface
+            .load_program(source, ProgramFormat::LlvmIrText)
+            .unwrap();
+        // Both native measurements deliberately return the SAME high-bit handle.
+        // This tests the FFI bridge, not physical scheduling or DEM certification.
+        let responses = [FUTURE, 1, 0, FUTURE, 0, 0];
+        let expected = [
+            SeleneRequest::Measure {
+                qubit: 0,
+                result_id: 0,
+                leaked: false,
+            },
+            SeleneRequest::ReadFuture {
+                future: FUTURE,
+                boolean: true,
+            },
+            SeleneRequest::Refcount {
+                future: FUTURE,
+                increment: false,
+            },
+            SeleneRequest::Measure {
+                qubit: 0,
+                result_id: 1,
+                leaked: false,
+            },
+            SeleneRequest::ReadFuture {
+                future: FUTURE,
+                boolean: true,
+            },
+        ];
+        // Cancel with either only a pending read, or a completed and pending read.
+        // Follow each cancellation by two successful shots on the same interface.
+        for cancel_at in [1, 4] {
+            for cancel in [true, false, false] {
+                interface.enable_dynamic_mode().unwrap();
+                interface.set_native_selene_handles(true).unwrap();
+                let handle = interface.get_sync_handle().unwrap();
+                let (completed, completion) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let result = interface.execute_with_measurements(BTreeMap::new());
+                    let _ = completed.send(());
+                    (interface, result)
+                });
+                let mut prefixes = Vec::new();
+                let drive = (|| -> Result<(), InterfaceError> {
+                    for (step, response) in responses.into_iter().enumerate() {
+                        let requested = handle.wait_for_need_result(2_000);
+                        if requested != Some(RUNTIME_REQUEST_RESULT_ID as u64) {
+                            return Err(InterfaceError::Other(format!(
+                                "missing synchronous request at step {step}: {requested:?}"
+                            )));
+                        }
+                        prefixes.push(handle.get_pending_operations()?);
+                        if cancel && step == cancel_at {
+                            return Ok(()); // Getter is waiting; no result has been supplied.
+                        }
+                        handle
+                            .set_measurement_outcome(RUNTIME_REQUEST_RESULT_ID as u64, response)?;
+                        handle.signal_result_ready()?;
+                    }
+                    completion
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .map_err(|error| {
+                            InterfaceError::Other(format!(
+                                "program did not finish after decode: {error}"
+                            ))
+                        })
+                })();
+                // Release the worker before assertions, including failed driver paths.
+                if cancel || drive.is_err() {
+                    handle.abort_execution().unwrap();
+                }
+                let (returned, result) = worker.join().unwrap();
+                interface = returned;
+                interface.disable_dynamic_mode().unwrap();
+                drive.unwrap();
+                for (prefix, request) in prefixes.iter().zip(&expected) {
+                    assert_eq!(
+                        prefix,
+                        &[Operation::RuntimeRequest {
+                            request: RuntimeRequest::Native(request.clone()),
+                            result_id: Some(RUNTIME_REQUEST_RESULT_ID),
+                        }]
+                    );
+                }
+                if cancel {
+                    assert_eq!(prefixes.len(), cancel_at + 1);
+                    assert!(
+                        matches!(
+                            result,
+                            Err(InterfaceError::ProgramError(
+                                pecos_qis_ffi_types::ProgramError::Cancelled
+                            ))
+                        ),
+                        "{result:?}"
+                    );
+                } else {
+                    result.unwrap();
+                    assert_eq!(prefixes.len(), 6);
+                    assert_eq!(
+                        prefixes[5],
+                        [Operation::RuntimeRequest {
+                            request: RuntimeRequest::Decode {
+                                window_id: 7,
+                                instance_id: 0,
+                                syndrome: vec![1],
+                                context: Some(b"{}".to_vec()),
+                                observed_reads: Some(vec![
+                                    RuntimeObservedRead {
+                                        name: "read".into(),
+                                        occurrence: 0,
+                                        source_id: 0,
+                                        value: true
+                                    },
+                                    RuntimeObservedRead {
+                                        name: "read".into(),
+                                        occurrence: 1,
+                                        source_id: 1,
+                                        value: false
+                                    },
+                                ]),
+                            },
+                            result_id: Some(RUNTIME_REQUEST_RESULT_ID),
+                        }]
+                    );
+                }
+            }
+        }
     }
 
     fn is_qir_text(ir: &str) -> bool {
@@ -3327,7 +3522,8 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn link_error_preserves_diagnostics_from_both_streams() {
-        let symbol = b"program.obj : error LNK2019: unresolved external symbol get_current_shot";
+        let symbol =
+            b"program.obj : error LNK2019: unresolved external symbol pecos_test_missing_import";
         let summary = b"clang: error: linker command failed with exit code 1120";
         // MSVC's linker reports unresolved names on stdout, while clang puts
         // its exit-code summary on stderr. Other linkers use stderr instead.
@@ -3336,9 +3532,101 @@ attributes #0 = { "EntryPoint" }
             (summary.as_slice(), symbol.as_slice()),
         ] {
             let message = link_error_message(stdout, stderr);
-            assert!(message.contains("get_current_shot"), "{message}");
+            assert!(message.contains("pecos_test_missing_import"), "{message}");
             assert!(message.contains("exit code 1120"), "{message}");
         }
+    }
+
+    #[test]
+    fn missing_cached_symbol_remains_retryable() {
+        const CHILD: &str = "PECOS_TEST_MISSING_SYNC_SYMBOL";
+        if std::env::var_os(CHILD).is_none() {
+            crate::test_env::run_test_in_child(
+                "executor::tests::missing_cached_symbol_remains_retryable",
+                &[(CHILD, "1".as_ref())],
+            );
+            return;
+        }
+        let lib = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        let cache = OnceLock::<WaitForNeedResultFn>::new();
+        // Compare the platform loader diagnostic, which need not include the name.
+        let original =
+            unsafe { lib.get::<WaitForNeedResultFn>(b"pecos_test_absent_wait_callback\0") }
+                .unwrap_err()
+                .to_string();
+        let before = SYMBOL_LOOKUPS.load(std::sync::atomic::Ordering::SeqCst);
+        for _ in 0..2 {
+            // SAFETY: The deliberately absent symbol has its own typed cache.
+            let error = unsafe { lib.get_cached(&cache, b"pecos_test_absent_wait_callback\0") }
+                .unwrap_err();
+            assert_eq!(error.to_string(), original);
+            assert!(cache.get().is_none());
+        }
+        assert_eq!(
+            SYMBOL_LOOKUPS.load(std::sync::atomic::Ordering::SeqCst) - before,
+            2
+        );
+    }
+
+    #[test]
+    fn sync_callbacks_reuse_symbols_across_contexts_and_threads() {
+        use std::sync::atomic::Ordering;
+        unsafe extern "C" fn no_destroy(_: *mut ExecutionContext) {}
+        const CHILD: &str = "PECOS_TEST_SYNC_SYMBOL_CACHE";
+        if std::env::var_os(CHILD).is_none() {
+            crate::test_env::run_test_in_child(
+                "executor::tests::sync_callbacks_reuse_symbols_across_contexts_and_threads",
+                &[(CHILD, "1".as_ref())],
+            );
+            return;
+        }
+        let lib = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        let handles: Vec<_> = (0..2)
+            .map(|_| HeliosSyncHandle {
+                execution_context: Arc::new(
+                    QisHeliosInterface::create_execution_context(lib.inner()).unwrap(),
+                ),
+            })
+            .collect();
+        let call = |handle: &HeliosSyncHandle| {
+            assert_eq!(handle.wait_for_need_result(0), None);
+            handle.set_measurement_result(0, true).unwrap();
+            handle.set_measurement_outcome(1, 2).unwrap();
+            handle.signal_result_ready().unwrap();
+            assert_eq!(handle.get_pending_operations().unwrap(), []);
+        };
+        let before = SYMBOL_LOOKUPS.load(Ordering::SeqCst);
+        call(&handles[0]);
+        let warm = SYMBOL_LOOKUPS.load(Ordering::SeqCst);
+        assert_eq!(warm - before, 5, "resolve the five callbacks lazily");
+        std::thread::scope(|scope| {
+            for handle in &handles {
+                scope.spawn(move || {
+                    for _ in 0..32 {
+                        call(handle);
+                    }
+                });
+            }
+        });
+        assert_eq!(SYMBOL_LOOKUPS.load(Ordering::SeqCst), warm);
+
+        // A warm function pointer must still report errors for this call's context.
+        let null = HeliosSyncHandle {
+            execution_context: Arc::new(ExecutionContextPtr(std::ptr::null_mut(), no_destroy)),
+        };
+        assert_eq!(null.wait_for_need_result(0), None);
+        for error in [
+            null.set_measurement_result(0, true).unwrap_err(),
+            null.set_measurement_outcome(0, 2).unwrap_err(),
+            null.signal_result_ready().unwrap_err(),
+            null.get_pending_operations().unwrap_err(),
+        ] {
+            assert!(
+                error.to_string().contains("null execution context"),
+                "{error}"
+            );
+        }
+        assert_eq!(SYMBOL_LOOKUPS.load(Ordering::SeqCst), warm);
     }
 
     #[test]
@@ -3414,7 +3702,16 @@ attributes #0 = { "EntryPoint" }
             let free: Symbol<FreeNamedResultsJsonFn> =
                 ffi.get(b"pecos_free_named_results_json\0").expect("free");
             // No wrapper has installed a handler: record without jumping into an invalid buffer.
-            for code in [0, 1000, 1001] {
+            for code in [
+                0,
+                1,
+                999,
+                1000,
+                1001,
+                i32::MAX.cast_unsigned(),
+                1 << 31,
+                u32::MAX,
+            ] {
                 clear();
                 assert_eq!(
                     panic(std::ptr::null_mut(), tag(b"outside"), code).error_code,
@@ -3422,11 +3719,28 @@ attributes #0 = { "EntryPoint" }
                 );
                 let ptr = get();
                 assert!(!ptr.is_null());
+                let handle = HeliosSyncHandle {
+                    execution_context: Arc::clone(&context),
+                };
+                // The host reader must not depend on the worker's TLS registration.
+                register(std::ptr::null_mut());
+                if code < 1000 {
+                    assert_eq!(
+                        handle.get_program_exit().unwrap(),
+                        Some(pecos_engines::shot_results::ProgramExit {
+                            code: i32::try_from(code).unwrap(),
+                            message: "outside".into()
+                        })
+                    );
+                } else {
+                    assert!(handle.get_program_exit().is_err());
+                }
+                register(context.0);
                 let error: ProgramError =
                     serde_json::from_slice(std::ffi::CStr::from_ptr(ptr).to_bytes())
                         .expect("termination JSON");
                 free(ptr);
-                let expected = if code <= 1000 {
+                let expected = if code < 1000 {
                     ProgramError::Exit {
                         code: code.cast_signed(),
                         message: "outside".to_string(),
@@ -3514,9 +3828,9 @@ attributes #0 = { "EntryPoint" }
             let error = interface
                 .load_program(
                     br"
-                        declare i64 @get_current_shot()
+                        declare i64 @pecos_test_missing_import()
                         define i64 @qmain(i64 %arg) {
-                            %shot = call i64 @get_current_shot()
+                            %shot = call i64 @pecos_test_missing_import()
                             ret i64 %shot
                         }
                     ",
@@ -3525,7 +3839,10 @@ attributes #0 = { "EntryPoint" }
                 .expect_err("an undefined program import must fail at load time");
             // The linker rejects it before any library is published or opened.
             assert!(error.to_string().contains("Linking failed"), "{error}");
-            assert!(error.to_string().contains("get_current_shot"), "{error}");
+            assert!(
+                error.to_string().contains("pecos_test_missing_import"),
+                "{error}"
+            );
             return;
         }
 
@@ -3773,7 +4090,8 @@ attributes #0 = { "EntryPoint" }
         }
 
         // A stand-in runtime that needs a helper library. Loading a program never
-        // calls into the runtime, and the stand-in's bytes, and so the program's
+        // executes operations in the runtime; the ABI marker is checked at load.
+        // The stand-in's bytes, and so the program's
         // cache key, stay the same when the helper disappears.
         let dir = tempfile::tempdir().expect("temporary directory");
         let compile = |args: &[&std::ffi::OsStr]| {
@@ -3802,7 +4120,16 @@ attributes #0 = { "EntryPoint" }
         let runtime = dir.path().join("libpecos_test_runtime.so");
         std::fs::write(
             &runtime_source,
-            "int pecos_test_helper(void);\nint pecos_test_runtime(void) { return pecos_test_helper(); }\n",
+            format!(
+                "int pecos_test_helper(void);\nint pecos_test_runtime(void) {{ return pecos_test_helper(); }}\nunsigned long long pecos_qis_ffi_abi_version(void) {{ return {}; }}\n",
+                pecos_qis_ffi_types::QIS_FFI_ABI_VERSION,
+            ) + &format!(
+                "unsigned long long pecos_qis_ffi_abi_fingerprint_v1(unsigned int i) {{ unsigned long long words[4] = {{ {}ULL, {}ULL, {}ULL, {}ULL }}; return i < 4 ? words[i] : 0; }}\n",
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[0],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[1],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[2],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[3],
+            ),
         )
         .expect("write runtime source");
         let library_dir = dir.path().as_os_str().to_owned();
@@ -3857,9 +4184,9 @@ attributes #0 = { "EntryPoint" }
         // Linking and dialect validation fail at different points of the load.
         let failing_programs: [&[u8]; 2] = [
             br"
-                declare i64 @get_current_shot()
+                declare i64 @pecos_test_missing_import()
                 define i64 @qmain(i64 %arg) {
-                    %shot = call i64 @get_current_shot()
+                    %shot = call i64 @pecos_test_missing_import()
                     ret i64 %shot
                 }
             ",
@@ -4105,7 +4432,7 @@ attributes #0 = { "EntryPoint" }
             ("main", "void", "", "void"),
         ] {
             let mut interface = QisHeliosInterface::new();
-            for code in [0, 1, 999, 1000, 1001, 1002, -1] {
+            for code in [0, 1, 999, 1000, 1001, 1002, -1, i32::MIN, i32::MAX] {
                 let program = format!(
                     r#"
                     @message = private constant [6 x i8] c"\05hello"
@@ -4119,7 +4446,7 @@ attributes #0 = { "EntryPoint" }
                 interface
                     .load_program(program.as_bytes(), ProgramFormat::LlvmIrText)
                     .expect("load panic program");
-                if (0..=1000).contains(&code) {
+                if (0..1000).contains(&code) {
                     interface.collect_operations().expect("exit must succeed");
                 } else {
                     let error = interface.collect_operations().expect_err("panic must fail");
@@ -4197,13 +4524,13 @@ attributes #0 = { "EntryPoint" }
     }
 
     #[test]
-    fn qis_ffi_env_accepts_directory_with_hashed_deps_library() {
+    fn qis_ffi_env_rejects_directory_with_hashed_deps_library() {
         // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
         // possibly from a parallel test, so change it only in a child process.
         const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_HASHED_DIR";
         if std::env::var_os(CHILD_ENV).is_none() {
             run_test_in_child(
-                "executor::tests::qis_ffi_env_accepts_directory_with_hashed_deps_library",
+                "executor::tests::qis_ffi_env_rejects_directory_with_hashed_deps_library",
                 &[(CHILD_ENV, "1".as_ref())],
             );
             return;
@@ -4222,10 +4549,17 @@ attributes #0 = { "EntryPoint" }
         File::create(&library_path).expect("create hashed library");
         let _env = EnvVarGuard::set("PECOS_QIS_FFI_PATH", temp_dir.path());
 
-        assert_eq!(
-            QisHeliosInterface::find_pecos_qis_lib().expect("find hashed library"),
-            library_path
-        );
+        let error = QisHeliosInterface::find_pecos_qis_lib()
+            .expect_err("unreported hashed library")
+            .to_string();
+        for text in [
+            "PECOS_QIS_FFI_PATH",
+            &temp_dir.path().display().to_string(),
+            &exact_name,
+            "pecos qis-runtime --profile <profile>",
+        ] {
+            assert!(error.contains(text), "{error}");
+        }
     }
 
     #[test]
@@ -4252,204 +4586,59 @@ attributes #0 = { "EntryPoint" }
     }
 
     #[test]
-    fn qis_ffi_cargo_target_finds_hashed_deps_library() {
-        const CHILD_ENV: &str = "PECOS_TEST_CARGO_TARGET_HASHED";
-        if std::env::var_os(CHILD_ENV).is_none() {
-            // Runtime tests also discover libraries through CARGO_TARGET_DIR.
-            run_test_in_child(
-                "executor::tests::qis_ffi_cargo_target_finds_hashed_deps_library",
-                &[(CHILD_ENV, "1".as_ref())],
-            );
+    fn qis_ffi_bundle_and_override_precedence() {
+        const CHILD: &str = "PECOS_TEST_FFI_BUNDLE";
+        if std::env::var_os(CHILD).is_none() {
+            crate::test_env::join_test_child(crate::test_env::spawn_test_child_removing(
+                "executor::tests::qis_ffi_bundle_and_override_precedence",
+                &[(CHILD, "1".as_ref())],
+                &["PECOS_QIS_FFI_PATH", "PECOS_SELENE_DIR"],
+            ));
             return;
         }
-        let _env_lock = ENV_MUTEX
+        let _lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let temp_dir = tempfile::tempdir().expect("create temp directory");
-        let cargo_target = temp_dir.path().join("cargo-target");
-        let profile = if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        };
-        let deps_dir = cargo_target.join(profile).join("deps");
-        std::fs::create_dir_all(&deps_dir).expect("create Cargo deps directory");
-        let exact_name = platform_library_name("pecos_qis_ffi");
-        let (stem, extension) = exact_name
-            .rsplit_once('.')
-            .expect("platform library name has extension");
-        let library_path = deps_dir.join(format!("{stem}-abc123.{extension}"));
-        File::create(&library_path).expect("create hashed library");
-        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", &cargo_target);
-
-        let fake_exe_dir = temp_dir.path().join("untrusted/bin");
-        let fake_manifest_dir = temp_dir.path().join("untrusted/workspace/crates/pecos-qis");
-        let profile_order = if cfg!(debug_assertions) {
-            ["debug", "release"]
-        } else {
-            ["release", "debug"]
-        };
-
+        let bundle = tempfile::tempdir().expect("bundle directory");
+        let library = bundle.path().join(platform_library_name("pecos_qis_ffi"));
+        File::create(&library).expect("bundled library");
+        crate::set_bundled_library_dir(bundle.path()).expect("register bundle");
         assert_eq!(
-            QisHeliosInterface::find_pecos_qis_lib_from_roots(
-                &fake_exe_dir,
-                &fake_manifest_dir,
-                &profile_order,
-                &exact_name,
-            )
-            .expect("find hashed Cargo target library"),
-            library_path
+            QisHeliosInterface::find_pecos_qis_lib().expect("bundle lookup"),
+            library
         );
-    }
 
-    #[test]
-    fn qis_ffi_build_associated_dependencies_precede_stale_top_level_copies() {
-        let exact_name = platform_library_name("pecos_qis_ffi");
-        let (stem, extension) = exact_name.rsplit_once('.').unwrap();
-        for executable_root in [false, true] {
-            for hashed in [false, true] {
-                let temp_dir = tempfile::tempdir().unwrap();
-                let exe_dir = temp_dir.path().join("bin");
-                let workspace = temp_dir.path().join("workspace");
-                let manifest_dir = workspace.join("crates/pecos-qis");
-                let library_dir = if executable_root {
-                    exe_dir.clone()
-                } else {
-                    workspace.join("target/debug")
-                };
-                std::fs::create_dir_all(library_dir.join("deps")).unwrap();
-                let stale = library_dir.join(&exact_name);
-                File::create(&stale).unwrap();
-                let dependency = library_dir.join("deps").join(if hashed {
-                    format!("{stem}-abc123.{extension}")
-                } else {
-                    exact_name.clone()
-                });
-                File::create(&dependency).unwrap();
-                assert_eq!(
-                    QisHeliosInterface::find_pecos_qis_lib_from_roots(
-                        &exe_dir,
-                        &manifest_dir,
-                        &["debug", "release"],
-                        &exact_name,
-                    )
-                    .unwrap(),
-                    dependency,
-                    "dependency must precede stale top-level library (exe={executable_root}, hashed={hashed})"
-                );
-                // A top-level artifact remains usable when no dependency exists.
-                std::fs::remove_file(&dependency).unwrap();
-                assert_eq!(
-                    QisHeliosInterface::find_pecos_qis_lib_from_roots(
-                        &exe_dir,
-                        &manifest_dir,
-                        &["debug", "release"],
-                        &exact_name,
-                    )
-                    .unwrap(),
-                    stale,
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn qis_ffi_executable_location_and_profile_precedence_are_preserved() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let exe_dir = temp_dir.path().join("bin");
-        let workspace = temp_dir.path().join("workspace");
-        let manifest_dir = workspace.join("crates/pecos-qis");
-        let exact_name = platform_library_name("pecos_qis_ffi");
-        std::fs::create_dir_all(&exe_dir).unwrap();
-        let adjacent = exe_dir.join(&exact_name);
-        File::create(&adjacent).unwrap();
-        for profile in ["debug", "release"] {
-            let deps = workspace.join("target").join(profile).join("deps");
-            std::fs::create_dir_all(&deps).unwrap();
-            File::create(deps.join(&exact_name)).unwrap();
-        }
-        for profiles in [["debug", "release"], ["release", "debug"]] {
-            assert_eq!(
-                QisHeliosInterface::find_pecos_qis_lib_from_roots(
-                    &exe_dir,
-                    &manifest_dir,
-                    &profiles,
-                    &exact_name,
-                )
-                .unwrap(),
-                adjacent,
-            );
-        }
-        std::fs::remove_file(adjacent).unwrap();
-        for profiles in [["debug", "release"], ["release", "debug"]] {
-            assert_eq!(
-                QisHeliosInterface::find_pecos_qis_lib_from_roots(
-                    &exe_dir,
-                    &manifest_dir,
-                    &profiles,
-                    &exact_name,
-                )
-                .unwrap(),
-                workspace
-                    .join("target")
-                    .join(profiles[0])
-                    .join("deps")
-                    .join(&exact_name),
-            );
-        }
-    }
-
-    #[test]
-    fn qis_ffi_build_associated_library_precedes_cargo_target() {
-        const CHILD_ENV: &str = "PECOS_TEST_CARGO_TARGET_PRECEDENCE";
-        if std::env::var_os(CHILD_ENV).is_none() {
-            run_test_in_child(
-                "executor::tests::qis_ffi_build_associated_library_precedes_cargo_target",
-                &[(CHILD_ENV, "1".as_ref())],
-            );
-            return;
-        }
-        let _env_lock = ENV_MUTEX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let temp_dir = tempfile::tempdir().expect("create temp directory");
-        let exe_dir = temp_dir.path().join("bin");
-        std::fs::create_dir(&exe_dir).expect("create executable directory");
-        let exact_name = platform_library_name("pecos_qis_ffi");
-        let exe_library = exe_dir.join(&exact_name);
-        File::create(&exe_library).expect("create executable-adjacent library");
-
-        let cargo_target = temp_dir.path().join("cargo-target");
-        let profile = if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        };
-        let cargo_deps = cargo_target.join(profile).join("deps");
-        std::fs::create_dir_all(&cargo_deps).expect("create Cargo deps directory");
-        let (stem, extension) = exact_name
-            .rsplit_once('.')
-            .expect("platform library name has extension");
-        File::create(cargo_deps.join(format!("{stem}-newer.{extension}")))
-            .expect("create Cargo target library");
-        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", cargo_target);
-
-        let fake_manifest_dir = temp_dir.path().join("workspace/crates/pecos-qis");
-        let profile_order = if cfg!(debug_assertions) {
-            ["debug", "release"]
-        } else {
-            ["release", "debug"]
-        };
-
+        let explicit = bundle.path().join("explicit-library");
+        File::create(&explicit).expect("explicit library");
+        let _override = EnvVarGuard::set("PECOS_QIS_FFI_PATH", &explicit);
         assert_eq!(
-            QisHeliosInterface::find_pecos_qis_lib_from_roots(
-                &exe_dir,
-                &fake_manifest_dir,
-                &profile_order,
-                &exact_name,
-            )
-            .expect("find build-associated library"),
-            exe_library
+            QisHeliosInterface::find_pecos_qis_lib().expect("explicit lookup"),
+            explicit
+        );
+
+        let empty = tempfile::tempdir().expect("invalid override directory");
+        let _invalid = EnvVarGuard::set("PECOS_QIS_FFI_PATH", empty.path());
+        let error = QisHeliosInterface::find_pecos_qis_lib()
+            .expect_err("invalid override must not fall back to bundle");
+        assert!(error.to_string().contains("PECOS_QIS_FFI_PATH"));
+    }
+
+    #[test]
+    fn qis_ffi_only_searches_directly_beside_executable() {
+        let directory = tempfile::tempdir().expect("executable directory");
+        let name = platform_library_name("pecos_qis_ffi");
+        let deps = directory.path().join("deps");
+        std::fs::create_dir(&deps).expect("deps directory");
+        File::create(deps.join(&name)).expect("ignored dependency library");
+        let error = QisHeliosInterface::find_pecos_qis_lib_from_roots(directory.path(), &name)
+            .expect_err("must not search deps beside executable");
+        assert!(error.to_string().contains("pecos qis-runtime"));
+        let library = directory.path().join(&name);
+        File::create(&library).expect("executable-adjacent library");
+        assert_eq!(
+            QisHeliosInterface::find_pecos_qis_lib_from_roots(directory.path(), &name)
+                .expect("adjacent library"),
+            library
         );
     }
 }

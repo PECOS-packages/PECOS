@@ -93,6 +93,26 @@ pub fn register_noise_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     noise.add("biased_depolarizing_noise", &biased_fn)?;
 
     // Add builder classes (via getattr from parent)
+    noise.add("PauliLeakageDict", parent.getattr("PauliLeakageDict")?)?;
+    noise.add(
+        "PauliLeakageChannel",
+        parent.getattr("PauliLeakageChannel")?,
+    )?;
+    noise.add(
+        "TwoQubitPauliLeakageChannel",
+        parent.getattr("TwoQubitPauliLeakageChannel")?,
+    )?;
+    noise.add("P2PauliLeakageStep", parent.getattr("P2PauliLeakageStep")?)?;
+    noise.add("TransitionDict", parent.getattr("TransitionDict")?)?;
+    noise.add(
+        "StateTransitionChannel",
+        parent.getattr("StateTransitionChannel")?,
+    )?;
+    noise.add(
+        "TwoQubitStateTransitionChannel",
+        parent.getattr("TwoQubitStateTransitionChannel")?,
+    )?;
+    noise.add("P2TransitionStep", parent.getattr("P2TransitionStep")?)?;
     noise.add(
         "GeneralNoiseModelBuilder",
         parent.getattr("GeneralNoiseModelBuilder")?,

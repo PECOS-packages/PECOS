@@ -338,6 +338,19 @@ def test_influence_map_tracks_dem_outputs_and_tracked_paulis_separately() -> Non
         assert influence_map.has_tracked_pauli_flips(loc_idx, 1) == bool(tracked)
 
 
+def test_influence_builder_repeated_mx_is_deterministic() -> None:
+    """MX preserves the X eigenstate for a subsequent measurement without reset."""
+    from pecos_rslib import TickCircuit
+    from pecos_rslib.qec import InfluenceBuilder
+
+    tc = TickCircuit()
+    tc.tick().h([0])
+    tc.tick().mx([0])
+    tc.tick().mx([0])
+
+    assert InfluenceBuilder(tc.to_dag_circuit()).build().num_detectors == 2
+
+
 def test_influence_builder_does_not_add_empty_tracked_paulis() -> None:
     """An unconfigured Python InfluenceBuilder should not create identity tracked Paulis."""
     from pecos_rslib import DagCircuit
@@ -422,6 +435,53 @@ def test_dem_sampler_repr() -> None:
     assert "mechanisms" in repr_str
     assert "dem_outputs" in repr_str
     assert "tracked_paulis" in repr_str
+
+
+def test_influence_builder_rejects_duplicate_tracked_qubits() -> None:
+    from pecos_rslib import DagCircuit
+    from pecos_rslib.qec import InfluenceBuilder
+
+    builder = InfluenceBuilder(DagCircuit())
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 0"):
+        builder.with_tracked_pauli([(0, "X"), (0, "Z")])
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 0"):
+        builder.with_tracked_x([0, 0])
+    with pytest.raises(ValueError, match="duplicate Pauli entry for qubit 0"):
+        builder.with_tracked_z([0, 0])
+
+
+@pytest.mark.parametrize(
+    ("control", "target", "label", "flipped"),
+    [
+        # A label "AB" puts A on the first operand and B on the second, whatever
+        # the qubit indices. Detector D0 reads the lower qubit, D1 the higher.
+        (0, 1, "XI", "D0"),
+        (0, 1, "IX", "D1"),
+        (1, 0, "XI", "D1"),
+        (1, 0, "IX", "D0"),
+        (3, 2, "XI", "D1"),
+        (3, 2, "IX", "D0"),
+    ],
+)
+def test_weighted_two_qubit_noise_is_operand_relative(control: int, target: int, label: str, flipped: str) -> None:
+    from pecos_rslib import DagCircuit
+    from pecos_rslib.qec import DagFaultAnalyzer, DemSamplerBuilder
+
+    dag = DagCircuit()
+    qubits = sorted([control, target])
+    dag.pz(qubits)
+    dag.cx([(control, target)])
+    measurements = dag.mz(qubits)
+    dag.detector([measurements[0]])
+    dag.detector([measurements[1]])
+    influence = DagFaultAnalyzer(dag).build_influence_map()
+    sampler = (
+        DemSamplerBuilder(influence)
+        .with_noise(p1=0.0, p2=0.01, p_meas=0.0, p_prep=0.0, p2_weights={label: 1.0})
+        .build()
+    )
+    errors = [line for line in sampler.to_detector_error_model().to_string().splitlines() if line.startswith("error")]
+    assert errors == [f"error(0.01) {flipped}"]
 
 
 if __name__ == "__main__":

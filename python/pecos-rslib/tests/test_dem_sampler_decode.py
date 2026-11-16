@@ -122,15 +122,31 @@ def test_resolved_seed_round_trips_and_distinct_seeds_diverge() -> None:
     assert seed_7.predictions != seed_8.predictions
 
 
-def test_history_and_wall_clock_traits_reuse_batch_planner_contracts() -> None:
-    sampler = _sampler()
-    relay = sampler.decode(DEM, 32, relay_bp(), seed=3)
-    assert relay.execution_path == "sequential"
-    assert sampler.decode(DEM, 32, relay_bp(), seed=3, workers=1).num_errors == relay.num_errors
-    with pytest.raises(ValueError, match=r"worker count 4"):
-        sampler.decode(DEM, 32, relay_bp(), seed=3, workers=4)
+def test_relay_and_wall_clock_traits_reuse_batch_planner_contracts() -> None:
+    from pecos_rslib.decoders import RelayBpBuilder
 
-    timed = sampler.decode(DEM, 32, mwpf(timeout=0.5), seed=3, workers=4)
+    dem = "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1 D2\nerror(0.1) D2 D3\nerror(0.1) D3\n"
+    matrix = [[1, 1, 0, 0, 0], [0, 1, 1, 0, 0], [0, 0, 1, 1, 0], [0, 0, 0, 1, 1]]
+    sampler = DemSampler.from_dem_string(dem)
+    # ABI v1's frozen first-chunk seed for sampling seed 0 (batch.rs) lets
+    # sample() replay the first fused shot, which reaches the relay legs.
+    first_syndrome, _ = sampler.sample(seed=0x20D0_F923_7F7F_D397)
+    assert first_syndrome == [True, True, True, True]
+    direct = RelayBpBuilder(matrix, [0.1] * 5).pre_iter(1).num_sets(5).seed(42).build()
+    first_result = direct.decode(first_syndrome)
+    assert first_result.iterations > 1
+    spec = relay_bp(pre_iter=1, num_sets=5, seed=42)
+    # Two canonical chunks ensure that parallel execution actually uses two workers.
+    serial = sampler.decode(dem, 2048, spec, seed=0, workers=1, predictions=True)
+    parallel = sampler.decode(dem, 2048, spec, seed=0, workers=4, predictions=True)
+    assert parallel.workers_used == 2
+    assert serial.predictions is not None
+    assert serial.predictions[0] == first_result.decoding[0]
+    assert parallel.execution_path == "parallel"
+    assert parallel.predictions == serial.predictions
+    assert parallel.num_errors == serial.num_errors
+
+    timed = _sampler().decode(DEM, 32, mwpf(timeout=0.5), seed=3, workers=4)
     assert timed.execution_path == "parallel"
     assert timed.reproducibility_warnings
 

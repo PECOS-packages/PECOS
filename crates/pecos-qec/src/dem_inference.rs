@@ -314,8 +314,16 @@ impl DemInferenceSettings {
     pub fn infer(&self, data: &DemInferenceData) -> Result<DemInferenceReport, DemInferenceError> {
         self.validate()?;
         let width = validate_rows(&data.raw_rows, "raw measurement records")?;
-        let detectors = validate_rows(&data.detector_rows, "detector records")?;
-        validate_rows(&data.observable_rows, "observable records")?;
+        // An unrequested role is represented by one empty row per shot.
+        let validate_outputs = |rows: &[Vec<u8>], name| {
+            if !rows.is_empty() && rows.iter().all(Vec::is_empty) {
+                Ok(0)
+            } else {
+                validate_rows(rows, name)
+            }
+        };
+        let detectors = validate_outputs(&data.detector_rows, "detector records")?;
+        validate_outputs(&data.observable_rows, "observable records")?;
         if data.raw_measurement_ids.len() != width
             || data
                 .raw_measurement_ids
@@ -403,6 +411,21 @@ mod tests {
     }
 
     #[test]
+    fn permits_one_unrequested_output_role_and_rejects_empty_combined_output() {
+        let settings = DemInferenceSettings::default().with_validation_rows(2);
+        let mut inputs = data();
+        inputs.detector_rows = vec![vec![]; inputs.raw_rows.len()];
+        let report = settings.infer(&inputs).unwrap();
+        assert_eq!(report.detector_supports, Vec::<Vec<usize>>::new());
+        assert_eq!(report.observable_supports, vec![vec![5]]);
+        inputs.observable_rows = vec![vec![]; inputs.raw_rows.len()];
+        assert!(matches!(
+            settings.infer(&inputs),
+            Err(DemInferenceError::InvalidData(_))
+        ));
+    }
+
+    #[test]
     fn rejects_nonlinear_constant_and_rank_deficient_data() {
         let settings = DemInferenceSettings::default().with_validation_rows(2);
         let mut nonlinear = data();
@@ -471,6 +494,11 @@ mod tests {
         assert_eq!(
             correlate_measurement_ids(&raw, &physical, &[0, 1, 2]).unwrap(),
             vec![2, 0, 1]
+        );
+        // Results are the caller's measurement IDs, not column indices.
+        assert_eq!(
+            correlate_measurement_ids(&raw, &physical, &[4, 7, 9]).unwrap(),
+            vec![9, 4, 7]
         );
         assert!(correlate_measurement_ids(&vec![vec![0; 3]; 8], &physical, &[0, 1, 2]).is_err());
         assert!(correlate_measurement_ids(&raw, &vec![vec![0; 3]; 8], &[0, 1, 2]).is_err());

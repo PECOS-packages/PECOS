@@ -31,8 +31,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from pecos.slr.ast.codegen._allocator_layout import allocator_offsets
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
-from pecos.slr.ast.codegen._permutation import reject_permute_in_region
+from pecos.slr.ast.codegen._loop_bounds import static_for_range
+from pecos.slr.ast.codegen._permutation import parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -42,6 +44,7 @@ from pecos.slr.ast.nodes import (
     BinaryOp,
     BitExpr,
     BitRef,
+    CommentOp,
     ForStmt,
     GateKind,
     GateOp,
@@ -282,6 +285,7 @@ def _require_parameter_literals(node: GateOp, backend: str) -> None:
 class QirCodeGenContext:
     """Context for QIR code generation."""
 
+    is_fragment: bool = False
     qubit_map: dict[tuple[str, int], int] = field(default_factory=dict)
     qubit_count: int = 0
     creg_map: dict[str, int] = field(default_factory=dict)  # name -> size
@@ -295,17 +299,24 @@ class QirCodeGenContext:
     # the (reg, index) whose storage it should resolve to. Consulted
     # at every qubit-ref and classical-bit-ref lowering.
     permutation_map: dict[tuple[str, int], tuple[str, int]] = field(default_factory=dict)
+    # Variables of the For loops being unrolled; unrolling does not bind them.
+    loop_variables: list[str] = field(default_factory=list)
 
     def get_root_allocator(self, name: str) -> str:
         """Get the root allocator for a given allocator name."""
         current = name
         while self.allocator_parents.get(current) is not None:
             current = self.allocator_parents[current]
+        if current not in self.allocator_parents and not self.is_fragment:
+            msg = f"Undeclared allocator {current!r}; declare it before generating code."
+            raise ValueError(msg)
         return current
 
     def get_absolute_index(self, allocator: str, index: int) -> int:
         """Get the absolute index in the root allocator."""
-        offset = self.allocator_offsets.get(allocator, 0)
+        if self.is_fragment and allocator not in self.allocator_offsets:
+            return index
+        offset = self.allocator_offsets[allocator]
         return offset + index
 
     def get_qubit_index(self, allocator: str, index: int) -> int:
@@ -368,7 +379,7 @@ class AstToQir:
 
         program = flatten_block_calls(program)
 
-        self.context = QirCodeGenContext()
+        self.context = QirCodeGenContext(is_fragment=program.is_fragment)
         self._gate_cache = {}
         self._creg_ptrs = {}
 
@@ -502,7 +513,7 @@ class AstToQir:
             self.context.allocator_parents[program.allocator.name] = program.allocator.parent
 
         # Calculate offsets for child allocators
-        self._calculate_allocator_offsets(program)
+        self.context.allocator_offsets = allocator_offsets(program)
 
         # Process allocator declarations - only allocate for root allocators
         for decl in program.declarations:
@@ -542,29 +553,6 @@ class AstToQir:
             for i in range(program.allocator.capacity):
                 self.context.get_qubit_index(program.allocator.name, i)
 
-    def _calculate_allocator_offsets(self, program: Program) -> None:
-        """Calculate the offset of each child allocator within its parent."""
-        parent_next_offset: dict[str, int] = {}
-
-        # Root allocators have offset 0
-        for decl in program.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is None:
-                self.context.allocator_offsets[decl.name] = 0
-
-        if program.allocator and program.allocator.parent is None:
-            self.context.allocator_offsets[program.allocator.name] = 0
-
-        # Process child allocators in declaration order
-        for decl in program.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is not None:
-                parent = decl.parent
-                if parent not in parent_next_offset:
-                    parent_next_offset[parent] = 0
-
-                parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
-                parent_next_offset[parent] += decl.capacity
-
     def _process_statement(self, stmt: Statement) -> None:
         """Process a statement using recursive descent."""
         if isinstance(stmt, GateOp):
@@ -600,6 +588,9 @@ class AstToQir:
                 "streaming is unimplemented; silently dropping it would "
                 "lose observable program output)."
             )
+            raise NotImplementedError(msg)
+        elif not isinstance(stmt, CommentOp):
+            msg = f"QIR codegen does not support statement {type(stmt).__name__}: {stmt!r}"
             raise NotImplementedError(msg)
 
     def _process_return(self, node: ReturnOp) -> None:
@@ -805,27 +796,27 @@ class AstToQir:
     def _require_creg(self, reg_name: str) -> None:
         """Fail LOUD if `reg_name` has no entry-block CReg storage.
 
-        Only CRegs declared at Main scope (`program.declarations`)
+        Only CRegs collected into `program.declarations`
         get an `alloca [N x i1]` in `_process_declarations`. An
-        inline / local-scope CReg -- e.g. one created in a block and
+        undeclared inline CReg -- e.g. one created in a block and
         only surfaced via `Return(creg)` -- has no storage, so every
         measure/assign/read against it used to be SILENTLY skipped
         (the store dropped, a read folded to constant 0) and the
         explicit returned value vanished from the QIS records (the
         `docs.inline_measure_creg` defect surfaced). Mirror the
         fail-loud doctrine: a silent miscompile must become a loud
-        `NotImplementedError`, not a buried wrong answer.
+        `ValueError`, not a buried wrong answer.
         """
         if reg_name not in self._creg_ptrs:
             msg = (
                 f"QIR codegen: classical register {reg_name!r} is "
                 "used/measured/returned but was not declared at Main "
-                "scope, so it has no QIR storage. Inline / local-scope "
+                "scope or in an ordinary Block, so it has no QIR storage. Undeclared "
                 "CRegs are not supported by the QIR backend (their "
                 "values would be silently dropped from the recorded "
-                f"output). Declare {reg_name!r} in Main(...)."
+                f"output). Declare {reg_name!r} in Main(...) or in an ordinary Block."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
 
     def _creg_bit_ptr(self, reg_name: str, index: int) -> Any:
         """`getelementptr [N x i1], [N x i1]* %creg, i64 0, i64 index`.
@@ -895,19 +886,18 @@ class AstToQir:
     def _process_prepare(self, node: PrepareOp) -> None:
         """Process a prepare/reset operation (Z-reset + canonical basis tail)."""
         tail = prep_tail(node.basis)
-        if node.slots is None:
-            # prepare_all is a pre-existing no-op gap; a NON-PZ
-            # prepare_all silently doing nothing would be a basis
-            # miscompile -- fail loud rather than extend the gap.
-            if tail:
-                msg = f"QIR codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
-                raise NotImplementedError(msg)
-            return
+        if node.slots is None and node.allocator not in self.context.qreg_sizes:
+            msg = (
+                f"QIR codegen: prepare_all references unknown allocator {node.allocator!r}; "
+                "declare the allocator before preparing it."
+            )
+            raise ValueError(msg)
+        slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
 
         reset_func = self._get_or_create_gate("reset", has_params=False, num_qubits=1)
         tail_funcs = [(self._get_or_create_gate(GATE_TO_QIR[gk], has_params=False, num_qubits=1)) for gk in tail]
 
-        for slot in node.slots:
+        for slot in slots:
             qubit_ptr = self._get_qubit_ptr(
                 SlotRef(allocator=node.allocator, index=slot),
             )
@@ -919,13 +909,19 @@ class AstToQir:
         """Process a barrier operation."""
         # Collect all qubits involved
         qubits = []
-        if node.allocators:
-            for alloc in node.allocators:
-                qubits.extend(
-                    self._get_qubit_ptr(SlotRef(allocator=key[0], index=key[1]))
-                    for key in self.context.qubit_map
-                    if key[0] == alloc
-                )
+        seen: set[int] = set()
+        allocators = node.allocators or tuple(
+            name for name in self.context.qreg_sizes if self.context.allocator_parents.get(name) is None
+        )
+        for alloc in allocators:
+            if alloc not in self.context.qreg_sizes:
+                msg = f"QIR codegen: Barrier refers to unknown allocator {alloc!r}."
+                raise ValueError(msg)
+            for i in range(self.context.qreg_sizes[alloc]):
+                index = self.context.get_qubit_index(alloc, i)
+                if index not in seen:
+                    qubits.append(self._get_qubit_ptr(SlotRef(allocator=alloc, index=i)))
+                    seen.add(index)
 
         if not qubits:
             return
@@ -936,7 +932,10 @@ class AstToQir:
             self._types["void"],
             [self._types["qubit_ptr"]] * len(qubits),
         )
-        barrier_func = llvm_ir.Function(self._module, fnty, name=barrier_name)
+        barrier_func = self._gate_cache.get(barrier_name)
+        if barrier_func is None:
+            barrier_func = llvm_ir.Function(self._module, fnty, name=barrier_name)
+            self._gate_cache[barrier_name] = barrier_func
         self._builder.call(barrier_func, qubits, name="")
 
     def _process_assign(self, node: AssignOp) -> None:
@@ -950,6 +949,13 @@ class AstToQir:
                 rhs,
             )
         elif isinstance(node.target, str):
+            # A declared name is a whole register, even if it contains brackets.
+            if node.target not in self.context.creg_map and re.fullmatch(r"\w+\[.*\]", node.target):
+                msg = (
+                    f"QIR codegen: assignment target {node.target!r} requires a static integer index; "
+                    "loop-variable indices are not supported."
+                )
+                raise NotImplementedError(msg)
             # Whole-CReg `c.set(int)` (converter.py:928/930 -> target=str).
             # Unpack the i64 value bit-by-bit into the buffer.
             reg_name = node.target
@@ -992,17 +998,19 @@ class AstToQir:
             # scalar (e.g. `If(m == 0)`, `o.set(m + n)`, Steane
             # `smid_flag_x`). SLR has no scalar-integer classical type
             # (verified: `pecos.slr.vars` exposes only Reg/CReg/Bit/
-            # SymbolicElem/LoopVar). A `LoopVar` used as a symbolic index
-            # is resolved by `For` unrolling; a `LoopVar` appearing as a
-            # bare classical scalar (e.g. `If(i == 0)`) is NOT substituted
-            # by `_process_for` and reaches here as `VarExpr(name="i")`,
-            # where `_require_creg` fails it loud (no CReg named `i`) --
-            # never silent-0. The lowering
+            # SymbolicElem/LoopVar). A `LoopVar` used as a classical
+            # value (e.g. `If(i == 0)`) is NOT substituted by
+            # `_process_for` and reaches here as `VarExpr(name="i")`,
+            # where it fails loud -- never silent-0. The lowering
             # is the existing i64 pack (`OR_i (zext c[i] << i)`)
             # factored out of `_generate_results` as `_pack_creg`. A
             # `VarExpr` whose name is not a declared Main-scope CReg
             # fails LOUD via `_require_creg`, preserving the
             # anti-silent-0 guarantee.
+            # A string-label For may share a declared register's name (as in QASM).
+            if expr.name in self.context.loop_variables and expr.name not in self.context.creg_map:
+                msg = f"QIR codegen: For body references loop variable {expr.name!r}; binding it is not supported."
+                raise NotImplementedError(msg)
             self._require_creg(expr.name)
             return self._pack_creg(expr.name)
 
@@ -1070,44 +1078,22 @@ class AstToQir:
         )
         raise NotImplementedError(msg)
 
-    def _static_int_bound(self, expr: Any, which: str) -> int:
-        """Resolve a static integer `For` bound.
-
-        The converter wraps integer range bounds in `LiteralExpr`
-        (`converter.py` `_convert_for`), so the bound is never a raw
-        `int`. A non-literal / non-int bound is a symbolic/dynamic
-        `For`, which is unsupported -- fail LOUD rather than silently
-        drop the loop body (the previous `isinstance(int)` guard was
-        always false, so EVERY `For` body was silently dropped).
-        """
-        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
-            return expr.value
-        msg = (
-            f"QIR codegen: For loop {which} bound is not a static integer "
-            f"({type(expr).__name__}); only fixed-bound `For(i, <int>, "
-            "<int>)` is supported (symbolic/dynamic For is out of scope -- "
-            "and must not silently drop the loop body)."
-        )
-        raise NotImplementedError(msg)
-
     def _process_for(self, node: ForStmt) -> None:
-        """Unroll a static fixed-bound `For` (v1-supported)."""
-        start = self._static_int_bound(node.start, "start")
-        stop = self._static_int_bound(node.stop, "stop")
-        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
-        if step == 0:
-            msg = "QIR codegen: For loop step is 0 (infinite loop); only a non-zero static step is supported."
-            raise NotImplementedError(msg)
-        for _ in range(start, stop, step):
+        """Unroll a static fixed-bound For."""
+        self.context.loop_variables.append(node.variable)
+        for _ in static_for_range(node, "QIR"):
             for stmt in node.body:
                 self._process_statement(stmt)
+        self.context.loop_variables.pop()
 
     def _process_repeat(self, node: RepeatStmt) -> None:
         """Process a repeat loop by unrolling."""
-        if isinstance(node.count, int):
-            for _ in range(node.count):
-                for stmt in node.body:
-                    self._process_statement(stmt)
+        if not isinstance(node.count, int):
+            msg = f"QIR codegen: Repeat count is not a static integer ({node.count!r})."
+            raise NotImplementedError(msg)
+        for _ in range(node.count):
+            for stmt in node.body:
+                self._process_statement(stmt)
 
     def _process_parallel(self, node: ParallelBlock) -> None:
         """Process a parallel block."""
@@ -1121,15 +1107,19 @@ class AstToQir:
         of the register (QReg capacity or CReg size). Mirrors the
         Guppy codegen's `_expand_permute_ref`.
         """
-        if ref.endswith("]") and "[" in ref:
-            name, idx = ref[:-1].split("[", 1)
-            return [(name, int(idx))]
-        if ref in self.context.qreg_sizes:
-            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
-        if ref in self.context.creg_map:
-            return [(ref, i) for i in range(self.context.creg_map[ref])]
-        msg = f"QIR codegen: unknown Permute ref {ref!r}"
-        raise NotImplementedError(msg)
+        parsed = parse_permute_ref(ref, "QIR")
+        name = parsed[0] if parsed is not None else ref
+        sizes = {**self.context.creg_map, **self.context.qreg_sizes}
+        if name not in sizes:
+            msg = f"QIR codegen: unknown Permute ref {ref!r}"
+            raise ValueError(msg)
+        if parsed is not None:
+            _, index = parsed
+            if not 0 <= index < sizes[name]:
+                msg = f"QIR codegen: Permute reference {ref!r} is not a declared slot."
+                raise ValueError(msg)
+            return [(name, index)]
+        return [(name, i) for i in range(sizes[name])]
 
     def _process_permute(self, node: PermuteOp) -> None:
         """Realize a Permute as a static logical relabel.
@@ -1163,6 +1153,12 @@ class AstToQir:
             tgt_refs = self._expand_permute_ref(target)
             if len(src_refs) != len(tgt_refs):
                 msg = f"QIR codegen: Permute element count mismatch for {source!r} -> {target!r}"
+                raise NotImplementedError(msg)
+            if any(
+                (src[0] in self.context.qreg_sizes) != (tgt[0] in self.context.qreg_sizes)
+                for src, tgt in zip(src_refs, tgt_refs, strict=True)
+            ):
+                msg = f"QIR codegen: Permute cannot map quantum and classical refs together: {source!r} -> {target!r}"
                 raise NotImplementedError(msg)
             src_all.extend(src_refs)
             tgt_all.extend(tgt_refs)

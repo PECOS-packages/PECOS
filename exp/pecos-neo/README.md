@@ -18,7 +18,7 @@ let circuit = CommandBuilder::new()
 
 // Run 1000 shots with depolarizing noise
 let results = sim_neo(circuit).auto()
-    .depolarizing(0.01)
+    .depolarizing(0.01)?
     .sampling(monte_carlo(1000))
     .seed(42)
     .run();

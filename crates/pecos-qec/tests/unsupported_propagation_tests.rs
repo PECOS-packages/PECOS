@@ -1,5 +1,5 @@
 //! Public propagation must never silently skip a non-Clifford gate.
-use pecos_core::{Angle64, Gate, QubitId};
+use pecos_core::{Gate, QubitId};
 use pecos_qec::fault_tolerance::propagator::CountingRecorder;
 use pecos_qec::fault_tolerance::propagator::dag::PropagationBuffers;
 use pecos_qec::fault_tolerance::*;
@@ -33,7 +33,7 @@ fn fault() -> PauliFault {
 
 fn unsupported_gates() -> [Gate; 2] {
     [
-        Gate::rz(Angle64::from_radians(0.3), &[0]),
+        Gate::rz(pecos_core::radians!(0.3), &[0]),
         Gate::simple(GateType::T, vec![QubitId(0)]),
     ]
 }
@@ -153,7 +153,7 @@ rejections! { reject_dag;
 #[test]
 fn pauli_frame_rejects_non_cliffords() {
     for gate in [
-        Gate::rz(Angle64::from_radians(0.3), &[0]),
+        Gate::rz(pecos_core::radians!(0.3), &[0]),
         Gate::simple(GateType::T, vec![QubitId(0)]),
     ] {
         let expected_type = format!("unsupported gate {:?}", gate.gate_type);
@@ -170,7 +170,7 @@ fn pauli_frame_rejects_non_cliffords() {
 #[test]
 fn correction_cycle_rejects_non_cliffords() {
     for gate in [
-        Gate::rz(Angle64::from_radians(0.3), &[0]),
+        Gate::rz(pecos_core::radians!(0.3), &[0]),
         Gate::simple(GateType::T, vec![QubitId(0)]),
     ] {
         let expected_type = format!("unsupported gate {:?}", gate.gate_type);
@@ -192,7 +192,7 @@ fn correction_cycle_rejects_non_cliffords() {
 #[test]
 fn correction_check_rejects_non_cliffords() {
     for gate in [
-        Gate::rz(Angle64::from_radians(0.3), &[0]),
+        Gate::rz(pecos_core::radians!(0.3), &[0]),
         Gate::simple(GateType::T, vec![QubitId(0)]),
     ] {
         let expected_type = format!("unsupported gate {:?}", gate.gate_type);
@@ -354,7 +354,7 @@ fn errors_follow_traversal_order_and_original_batch_coordinates() {
     let mut circuit = TickCircuit::new();
     circuit.tick().h(&[0]);
     circuit.tick().h(&[1]).t(&[0]);
-    circuit.tick().rz(Angle64::from_radians(0.3), &[0]);
+    circuit.tick().rz(pecos_core::radians!(0.3), &[0]);
     for direction in [Direction::Forward, Direction::Backward] {
         let error =
             propagate_through_circuit(&circuit, &mut PauliProp::new(), direction).unwrap_err();

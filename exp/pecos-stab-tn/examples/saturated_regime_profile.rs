@@ -262,7 +262,7 @@ fn queries(n: usize, seed: u64) -> Vec<Vec<bool>> {
     rows
 }
 
-fn apply_gate(simulator: &mut StabMps, gate: Gate) {
+fn apply_gate(simulator: &mut StabMps, gate: Gate) -> Result<(), Box<dyn std::error::Error>> {
     match gate {
         Gate::H(q) => {
             simulator.h(&[QubitId(q)]);
@@ -283,12 +283,16 @@ fn apply_gate(simulator: &mut StabMps, gate: Gate) {
             simulator.tdg(&[QubitId(q)]);
         }
         Gate::Rz(angle, q) => {
-            simulator.rz(Angle64::from_radians(angle), &[QubitId(q)]);
+            simulator.rz(Angle64::try_from_radians(angle)?, &[QubitId(q)]);
         }
     }
+    Ok(())
 }
 
-fn simulate(cell: Cell, collect_telemetry: bool) -> (StabMps, f64) {
+fn simulate(
+    cell: Cell,
+    collect_telemetry: bool,
+) -> Result<(StabMps, f64), Box<dyn std::error::Error>> {
     let started = Instant::now();
     let mut simulator = StabMps::builder(cell.n)
         .seed(cell.seed)
@@ -300,10 +304,10 @@ fn simulate(cell: Cell, collect_telemetry: bool) -> (StabMps, f64) {
         .saturation_telemetry(collect_telemetry)
         .build();
     for gate in gates(cell) {
-        apply_gate(&mut simulator, gate);
+        apply_gate(&mut simulator, gate)?;
     }
     simulator.flush();
-    (simulator, started.elapsed().as_secs_f64())
+    Ok((simulator, started.elapsed().as_secs_f64()))
 }
 
 fn mix_hash(hash: &mut u64, value: u64) {
@@ -702,9 +706,9 @@ fn print_events(cell: Cell, run: usize, telemetry: &SaturationTelemetry) {
     );
 }
 
-fn run_profiled(cell: Cell, run: usize) -> RunSummary {
-    let (_, sim_seconds) = simulate(cell, false);
-    let (simulator, profiled_sim_seconds) = simulate(cell, true);
+fn run_profiled(cell: Cell, run: usize) -> Result<RunSummary, Box<dyn std::error::Error>> {
+    let (_, sim_seconds) = simulate(cell, false)?;
+    let (simulator, profiled_sim_seconds) = simulate(cell, true)?;
     let telemetry = simulator.saturation_profile();
     let cascade_seconds = telemetry
         .multi_std_events
@@ -829,7 +833,7 @@ fn run_profiled(cell: Cell, run: usize) -> RunSummary {
         summary.ofd_avoidable_seconds,
         summary.output_hash,
     );
-    summary
+    Ok(summary)
 }
 
 fn median_run_by(runs: &[RunSummary], key: impl Fn(&RunSummary) -> f64) -> (usize, &RunSummary) {
@@ -903,7 +907,7 @@ fn env_count(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Stable anchors from CPython 3.13's random.Random. These fail before a
     // campaign run if the ported generator ever drifts.
     let mut random_anchor = PythonRandom::new(21_602);
@@ -924,7 +928,7 @@ fn main() {
             cell.name, cell.n, cell.seed, gate_count, cell.campaign_content_hash,
         );
         for warmup in 0..warmups {
-            let (simulator, sim_seconds) = simulate(cell, false);
+            let (simulator, sim_seconds) = simulate(cell, false)?;
             let started = Instant::now();
             let probabilities = simulator.prob_bitstrings(&queries(cell.n, cell.seed));
             let elapsed = started.elapsed().as_secs_f64();
@@ -939,9 +943,10 @@ fn main() {
         }
         let runs: Vec<RunSummary> = (0..repetitions)
             .map(|run| run_profiled(cell, run))
-            .collect();
+            .collect::<Result<_, _>>()?;
         print_summary(cell, &runs);
     }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -13,11 +13,15 @@
 use crate::decoder_specs::{
     decoder_error_to_py, indexed_decoder_error_to_py, validate_batch_workers,
 };
+use pecos_frontier::recovery::{
+    FallbackPolicy, FrontierNoPath as RustFrontierNoPath,
+    FrontierRecoveryDecoder as RustFrontierDecoder, FrontierRecoveryOutcome, NoPathAction,
+    NoPathCause, RecoveryOptions,
+};
 use pecos_frontier::{
     CommitteeDirection, CommitteeMember, CommitteeStatus, Factor, FactorModel,
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,
-    FrontierDecodeAttempt, FrontierDecoder as RustFrontierDecoder,
     FrontierResult as RustFrontierResult, FrontierStatus, MetricMode, ObsMask, Outcome, SparseDem,
     TrellisOrdering, backward_deadline_column_order_for_factors, deadline_column_order_for_factors,
 };
@@ -262,15 +266,261 @@ fn frontier_status(status: FrontierStatus) -> &'static str {
     }
 }
 
+pub(crate) fn parse_fallback(fallback: Option<&str>) -> PyResult<Option<FallbackPolicy>> {
+    match fallback {
+        None => Ok(None),
+        Some("zero") => Ok(Some(FallbackPolicy::Zero)),
+        Some("feasible_then_zero") => Ok(Some(FallbackPolicy::FeasibleThenZero)),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "fallback must be None, 'zero', or 'feasible_then_zero', got '{other}'"
+        ))),
+    }
+}
+
+fn recovery_options(
+    decoder: &RustFrontierDecoder,
+    on_no_path: &str,
+    delta_max: Option<f64>,
+) -> PyResult<RecoveryOptions> {
+    let on_no_path = parse_no_path_action(on_no_path)?;
+    let options = RecoveryOptions {
+        delta_max,
+        on_no_path,
+    };
+    decoder
+        .validate_options(options)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(options)
+}
+
+pub(crate) fn parse_no_path_action(on_no_path: &str) -> PyResult<NoPathAction> {
+    Ok(match on_no_path {
+        "raise" => NoPathAction::Raise,
+        "report" => NoPathAction::Report,
+        "fallback" => NoPathAction::Fallback,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "on_no_path must be 'raise', 'report', or 'fallback', got '{other}'"
+            )));
+        }
+    })
+}
+
+/// A retained-path failure, with no prediction or fabricated confidence.
+#[pyclass(name = "FrontierNoPath", module = "pecos_rslib_exp", frozen)]
+pub struct PyFrontierNoPath {
+    inner: RustFrontierNoPath,
+}
+
+#[pymethods]
+impl PyFrontierNoPath {
+    #[getter]
+    fn no_path(&self) -> bool {
+        true
+    }
+    #[getter]
+    fn fallback_used(&self) -> bool {
+        false
+    }
+    #[getter]
+    fn status(&self) -> &'static str {
+        "no_path"
+    }
+    /// Residual/infeasible is a proof; exhausted means pruning may be responsible.
+    #[getter]
+    fn cause(&self) -> &'static str {
+        match self.inner.cause {
+            NoPathCause::Residual { .. } => "residual",
+            NoPathCause::Infeasible => "infeasible",
+            NoPathCause::Exhausted => "exhausted",
+        }
+    }
+    #[getter]
+    fn detector(&self) -> Option<usize> {
+        match self.inner.cause {
+            NoPathCause::Residual { detector } => Some(detector),
+            _ => None,
+        }
+    }
+    /// Actual DP deltas, empty if preparation proves an impossible residual.
+    #[getter]
+    fn deltas_tried(&self) -> Vec<f64> {
+        self.inner.deltas_tried.clone()
+    }
+    /// Candidate branch evaluations summed across attempts.
+    #[getter]
+    fn transitions(&self) -> u64 {
+        self.inner.transitions
+    }
+    /// States discarded summed across attempts.
+    #[getter]
+    fn dropped_states(&self) -> u64 {
+        self.inner.dropped_states
+    }
+    /// BP preparation time counted once per shot.
+    #[getter]
+    fn bp_seconds(&self) -> f64 {
+        self.inner.bp_seconds
+    }
+    fn __repr__(&self) -> String {
+        format!(
+            "FrontierNoPath(transitions={}, dropped_states={})",
+            self.inner.transitions, self.inner.dropped_states
+        )
+    }
+}
+
+/// An explicitly requested fallback prediction, without likelihood or confidence.
+#[pyclass(name = "FrontierFallback", module = "pecos_rslib_exp", frozen)]
+pub struct PyFrontierFallback {
+    predicted: ObsMask,
+    num_observables: usize,
+    policy: FallbackPolicy,
+    syndrome_consistent: Option<bool>,
+    mechanisms: Option<Vec<usize>>,
+    failure: RustFrontierNoPath,
+}
+
+#[pymethods]
+impl PyFrontierFallback {
+    /// The primary decoder had no path, even though a fallback prediction exists.
+    #[getter]
+    fn no_path(&self) -> bool {
+        true
+    }
+    #[getter]
+    fn fallback_used(&self) -> bool {
+        true
+    }
+    #[getter]
+    fn fallback_policy(&self) -> &'static str {
+        match self.policy {
+            FallbackPolicy::Zero => "zero",
+            FallbackPolicy::FeasibleThenZero => "feasible_then_zero",
+        }
+    }
+    #[getter]
+    fn status(&self) -> &'static str {
+        if self.syndrome_consistent == Some(true) {
+            "fallback:feasible"
+        } else {
+            "fallback:zero"
+        }
+    }
+    /// True for a verified DEM explanation, false for a proved impossible DEM,
+    /// None for an unverified zero prediction.
+    #[getter]
+    fn syndrome_consistent(&self) -> Option<bool> {
+        self.syndrome_consistent
+    }
+    #[getter]
+    fn observable_flips(&self) -> PyFrontierObservableFlips {
+        PyFrontierObservableFlips {
+            mask: self.predicted.clone(),
+            num_observables: self.num_observables,
+        }
+    }
+    /// Original DEM mechanism indices of the verified explanation, if any.
+    #[getter]
+    fn mechanism_indices(&self) -> Option<Vec<usize>> {
+        self.mechanisms.clone()
+    }
+    /// Original Frontier failure, including cause and attempt metadata.
+    #[getter]
+    fn failure(&self) -> PyFrontierNoPath {
+        PyFrontierNoPath {
+            inner: self.failure.clone(),
+        }
+    }
+    #[getter]
+    fn deltas_tried(&self) -> Vec<f64> {
+        self.failure.deltas_tried.clone()
+    }
+    #[getter]
+    fn transitions(&self) -> u64 {
+        self.failure.transitions
+    }
+    #[getter]
+    fn dropped_states(&self) -> u64 {
+        self.failure.dropped_states
+    }
+    #[getter]
+    fn bp_seconds(&self) -> f64 {
+        self.failure.bp_seconds
+    }
+}
+
+fn outcome_to_py(
+    py: Python<'_>,
+    outcome: FrontierRecoveryOutcome,
+    num_observables: usize,
+) -> PyResult<Py<PyAny>> {
+    match outcome {
+        FrontierRecoveryOutcome::Decoded {
+            result: inner,
+            deltas_tried,
+        } => Ok(Py::new(
+            py,
+            PyFrontierResult {
+                inner,
+                num_observables,
+                deltas_tried,
+            },
+        )?
+        .into_any()),
+        FrontierRecoveryOutcome::NoPath(inner) => {
+            Ok(Py::new(py, PyFrontierNoPath { inner })?.into_any())
+        }
+        FrontierRecoveryOutcome::Fallback {
+            predicted,
+            policy,
+            syndrome_consistent,
+            mechanisms,
+            no_path: failure,
+        } => Ok(Py::new(
+            py,
+            PyFrontierFallback {
+                predicted,
+                num_observables,
+                policy,
+                syndrome_consistent,
+                mechanisms,
+                failure,
+            },
+        )?
+        .into_any()),
+    }
+}
+
 /// Result returned by the native experimental Frontier decoder.
 #[pyclass(name = "FrontierResult", module = "pecos_rslib_exp")]
 pub struct PyFrontierResult {
     inner: RustFrontierResult,
     num_observables: usize,
+    deltas_tried: Vec<f64>,
 }
 
 #[pymethods]
 impl PyFrontierResult {
+    #[getter]
+    fn fallback_used(&self) -> bool {
+        false
+    }
+    #[getter]
+    fn deltas_tried(&self) -> Vec<f64> {
+        self.deltas_tried.clone()
+    }
+    #[getter]
+    fn delta_used(&self) -> Option<f64> {
+        self.deltas_tried.last().copied()
+    }
+
+    /// Always false; this result contains a logical prediction.
+    #[getter]
+    fn no_path(&self) -> bool {
+        false
+    }
+
     /// Predicted logical-observable flips with their intrinsic width.
     #[getter]
     fn observable_flips(&self) -> PyFrontierObservableFlips {
@@ -468,8 +718,8 @@ impl PyFrontierDecoder {
     /// Construct a native Frontier decoder from a Stim-format DEM string.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024)"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, fallback=None),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, fallback=None)"
     )]
     fn from_dem(
         dem: &str,
@@ -481,6 +731,7 @@ impl PyFrontierDecoder {
         merge_indistinguishable: bool,
         metric_mode: &str,
         int_metric_scale: i32,
+        fallback: Option<&str>,
     ) -> PyResult<Self> {
         let (dem, config) = parse_dem_and_config(
             dem,
@@ -495,7 +746,7 @@ impl PyFrontierDecoder {
         )?;
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;
-        let inner = RustFrontierDecoder::from_sparse_dem(&dem, config)
+        let inner = RustFrontierDecoder::from_sparse_dem(&dem, config, parse_fallback(fallback)?)
             .map_err(|error| decoder_error_to_py(&error))?;
         Ok(Self {
             inner,
@@ -507,8 +758,8 @@ impl PyFrontierDecoder {
     /// Construct a native Frontier decoder from a multi-outcome factor model.
     #[staticmethod]
     #[pyo3(
-        signature = (factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),
-        text_signature = "(factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024)"
+        signature = (factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, fallback=None),
+        text_signature = "(factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, fallback=None)"
     )]
     fn from_factors(
         factors: FactorModelArgument,
@@ -522,6 +773,7 @@ impl PyFrontierDecoder {
         merge_indistinguishable: bool,
         metric_mode: &str,
         int_metric_scale: i32,
+        fallback: Option<&str>,
     ) -> PyResult<Self> {
         let metric_mode = parse_metric_mode(metric_mode)?;
         let mut config = RustFrontierConfig {
@@ -554,8 +806,9 @@ impl PyFrontierDecoder {
         let model = FactorModel::new(factors, num_detectors, num_observables)
             .map_err(|error| decoder_error_to_py(&error))?;
         config.column_order = resolve_factor_column_order(&model, ordering)?;
-        let inner = RustFrontierDecoder::from_factor_model(&model, config)
-            .map_err(|error| decoder_error_to_py(&error))?;
+        let inner =
+            RustFrontierDecoder::from_factor_model(&model, config, parse_fallback(fallback)?)
+                .map_err(|error| decoder_error_to_py(&error))?;
         Ok(Self {
             inner,
             num_detectors,
@@ -569,36 +822,60 @@ impl PyFrontierDecoder {
         self.inner.build_seconds()
     }
 
-    /// Decode sparse fired-detector indices.
-    fn decode_from_defects(&mut self, defects: Vec<u64>) -> PyResult<PyFrontierResult> {
+    /// Decode sparse fired-detector indices with the same recovery options as
+    /// decode_syndrome. Defaults preserve strict errors and disable retries.
+    #[pyo3(signature = (defects, *, on_no_path="raise", delta_max=None))]
+    fn decode_from_defects(
+        &mut self,
+        py: Python<'_>,
+        defects: Vec<u64>,
+        on_no_path: &str,
+        delta_max: Option<f64>,
+    ) -> PyResult<Py<PyAny>> {
+        recovery_options(&self.inner, on_no_path, delta_max)?;
         let syndrome = sparse_to_dense(&defects, self.num_detectors)?;
-        self.decode_syndrome(syndrome)
+        self.decode_syndrome(py, syndrome, on_no_path, delta_max)
     }
 
-    /// Decode one dense detector syndrome.
-    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyFrontierResult> {
-        self.inner
-            .decode(&syndrome)
-            .map(|inner| PyFrontierResult {
-                inner,
-                num_observables: self.num_observables,
-            })
-            .map_err(|error| decoder_error_to_py(&error))
+    /// Decode one dense detector syndrome. on_no_path="report" returns
+    /// FrontierNoPath without a prediction on search failure. Other errors
+    /// still raise. "fallback" uses the fallback configured at construction.
+    /// delta_max doubles delta after pruned no-paths, capped at that finite maximum;
+    /// None disables retries. K is unchanged and success stops the ladder.
+    #[pyo3(signature = (syndrome, *, on_no_path="raise", delta_max=None))]
+    fn decode_syndrome(
+        &mut self,
+        py: Python<'_>,
+        syndrome: Vec<u8>,
+        on_no_path: &str,
+        delta_max: Option<f64>,
+    ) -> PyResult<Py<PyAny>> {
+        let options = recovery_options(&self.inner, on_no_path, delta_max)?;
+        let outcome = self
+            .inner
+            .decode(&syndrome, options)
+            .map_err(|e| decoder_error_to_py(&e))?;
+        outcome_to_py(py, outcome, self.num_observables)
     }
 
     /// Decode dense detector syndromes in input order. Defaults to sequential
     /// execution; workers > 1 shares the model across workers and releases the GIL.
     /// workers must be positive and is capped at one per shot (one for an empty batch).
     /// Each worker owns independent decoding scratch.
-    #[pyo3(signature = (shots, *, workers=1))]
+    /// on_no_path="report" retains FrontierNoPath outcomes alongside successful
+    /// FrontierResult objects. Other errors still raise with the shot index.
+    #[pyo3(signature = (shots, *, workers=1, on_no_path="raise", delta_max=None))]
     fn decode_batch(
         &self,
         py: Python<'_>,
         shots: Vec<Vec<u8>>,
         workers: i64,
-    ) -> PyResult<Vec<PyFrontierResult>> {
+        on_no_path: &str,
+        delta_max: Option<f64>,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        let options = recovery_options(&self.inner, on_no_path, delta_max)?;
         let workers = validate_batch_workers(workers)?;
-        let decode = || self.inner.decode_batch(&shots, workers);
+        let decode = || self.inner.decode_batch(&shots, workers, options);
         let results = if workers > 1 {
             py.detach(decode)
         } else {
@@ -608,18 +885,9 @@ impl PyFrontierDecoder {
         results
             .into_iter()
             .enumerate()
-            .map(|(shot_index, result)| {
-                let result = match result {
-                    FrontierDecodeAttempt::Success(inner) => Ok(inner),
-                    FrontierDecodeAttempt::NoPath { error, .. }
-                    | FrontierDecodeAttempt::Error(error) => Err(error),
-                };
-                result
-                    .map(|inner| PyFrontierResult {
-                        inner,
-                        num_observables: self.num_observables,
-                    })
-                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
+            .map(|(index, attempt)| {
+                let outcome = attempt.map_err(|e| indexed_decoder_error_to_py(index, &e))?;
+                outcome_to_py(py, outcome, self.num_observables)
             })
             .collect()
     }

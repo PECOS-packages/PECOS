@@ -24,7 +24,7 @@ fn native_u_angles(include: &str, spelling: &str, lambda: &str) -> [Angle64; 3] 
             assert_eq!(parameters.len(), 3);
             parameters
                 .iter()
-                .map(|&angle| Angle64::from_radians(angle))
+                .map(|&angle| Angle64::try_from_radians(angle).unwrap())
                 .collect::<Vec<_>>()
                 .try_into()
                 .expect("U has three angles")
@@ -98,9 +98,9 @@ fn apply_expanded_operation(sim: &mut StateVecSoA32, operation: &Operation) {
         } if name == "U" => {
             assert_eq!(parameters.len(), 3);
             sim.u(
-                Angle64::from_radians(parameters[0]),
-                Angle64::from_radians(parameters[1]),
-                Angle64::from_radians(parameters[2]),
+                Angle64::try_from_radians(parameters[0]).unwrap(),
+                Angle64::try_from_radians(parameters[1]).unwrap(),
+                Angle64::try_from_radians(parameters[2]).unwrap(),
                 &[QubitId(qubits[0])],
             );
         }
@@ -121,14 +121,20 @@ fn apply_expanded_operation(sim: &mut StateVecSoA32, operation: &Operation) {
             parameters,
             qubits,
         } if name == "RX" => {
-            sim.rx(Angle64::from_radians(parameters[0]), &[QubitId(qubits[0])]);
+            sim.rx(
+                Angle64::try_from_radians(parameters[0]).unwrap(),
+                &[QubitId(qubits[0])],
+            );
         }
         Operation::Gate {
             name,
             parameters,
             qubits,
         } if name == "RZ" => {
-            sim.rz(Angle64::from_radians(parameters[0]), &[QubitId(qubits[0])]);
+            sim.rz(
+                Angle64::try_from_radians(parameters[0]).unwrap(),
+                &[QubitId(qubits[0])],
+            );
         }
         Operation::Gate {
             name,
@@ -136,8 +142,8 @@ fn apply_expanded_operation(sim: &mut StateVecSoA32, operation: &Operation) {
             qubits,
         } if name == "RXY1Q" => {
             sim.rxy1q(
-                Angle64::from_radians(parameters[0]),
-                Angle64::from_radians(parameters[1]),
+                Angle64::try_from_radians(parameters[0]).unwrap(),
+                Angle64::try_from_radians(parameters[1]).unwrap(),
                 &[QubitId(qubits[0])],
             );
         }
@@ -328,9 +334,9 @@ fn phase_and_u1_aliases_lower_to_exact_u() {
             let [theta, phi, lambda] = native_u_angles(include, spelling, "pi/3");
             assert_eq!(theta, Angle64::ZERO);
             assert_eq!(phi, Angle64::ZERO);
-            assert!(lambda.abs_diff_eq_radians(
-                &Angle64::from_radians(std::f64::consts::PI / 3.0),
-                1e-14,
+            assert!(lambda.abs_diff_eq(
+                &pecos_core::radians!(std::f64::consts::PI / 3.0),
+                Angle64::try_epsilon_from_radians(1e-14).unwrap()
             ));
         }
     }

@@ -12,6 +12,7 @@
 //! destructors, so unwinding support does not relax that lifetime requirement.
 
 pub use crate::random::*;
+pub use crate::shot::*;
 
 use crate::{Operation, QuantumOp, TraceMetadata, with_interface};
 use log::debug;
@@ -135,12 +136,22 @@ unsafe fn read_direct_string_arg<'a>(
     }
 }
 
+/// Inspect cancellation without transferring while a caller still owns request data.
+pub(super) fn cancellation_requested() -> bool {
+    crate::get_execution_context().is_some_and(|ctx| {
+        // SAFETY: The registered context is live throughout program execution.
+        unsafe { &*ctx }
+            .cancel_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+    })
+}
+
 /// Check only at destructor-free FFI boundaries, outside collector/callback borrows.
 ///
 /// # Safety
 /// All frames between this checkpoint and the execution guard must be free of
 /// live Rust destructors. Without a guard the caller must return a default.
-unsafe fn cancellation_checkpoint() -> bool {
+pub(super) unsafe fn cancellation_checkpoint() -> bool {
     let cancelled = crate::get_execution_context().is_some_and(|ctx| {
         // SAFETY: The registered context is live throughout program execution.
         let ctx = unsafe { &*ctx };
@@ -421,16 +432,23 @@ pub unsafe extern "C-unwind" fn __quantum__rt__result_allocate() -> i64 {
 
 // --- Result Retrieval ---
 
-fn record_result_read(result_id: usize) {
+fn stash_result_source(result_id: usize) {
     if let Some(ctx) = crate::get_execution_context() {
         // SAFETY: Context is valid for duration of execution.
-        unsafe { &*ctx }.record_result_read(result_id);
+        unsafe { &*ctx }.stash_result_source(Some(result_id));
     }
 }
 
 /// Transfer only after the shared read helper has released all owned data.
 /// The caller and all skipped frames must obey the checkpoint discipline.
 unsafe fn dynamic_read(result_id: usize, boolean: bool) -> u64 {
+    let result_id = match crate::qir_measurement_source(result_id) {
+        Ok(source) => source,
+        Err(reason) => {
+            unsafe { fatal_ffi_input("QIR result read", reason) };
+            return 0;
+        }
+    };
     let Some(outcome) = crate::read_dynamic_result(result_id as u64, boolean) else {
         checkpoint!(0);
         if let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
@@ -441,7 +459,7 @@ unsafe fn dynamic_read(result_id: usize, boolean: bool) -> u64 {
         return 0;
     };
     checkpoint!(0);
-    record_result_read(result_id);
+    stash_result_source(result_id);
     outcome
 }
 
@@ -470,7 +488,7 @@ pub unsafe extern "C-unwind" fn __quantum__rt__result_get_one(result: i64) -> i3
     let existing_result = with_interface(|interface| interface.get_result(result_id));
 
     if let Some(value) = existing_result {
-        record_result_read(result_id);
+        stash_result_source(result_id);
         return i32::from(value);
     }
 
@@ -490,7 +508,7 @@ pub unsafe extern "C-unwind" fn __quantum__rt__result_get_one(result: i64) -> i3
                     0
                 },
                 |value| {
-                    record_result_read(result_id);
+                    stash_result_source(result_id);
                     i32::from(value)
                 },
             )
@@ -573,8 +591,8 @@ fn queue_trace_metadata(func_name: &str, key: String, value: String, qubit: Opti
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn pecos_qis_ordered_alloc_hugr(_token: i64) -> i64 {
     checkpoint!(0);
-    let qubit = unsafe { __quantum__rt__qubit_allocate() };
-    unsafe { __quantum__qis__reset__body(qubit) };
+    let qubit = unsafe { ___qalloc() };
+    unsafe { ___reset(qubit) };
     qubit
 }
 
@@ -588,7 +606,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_ordered_alloc_hugr(_token: i64) -> i64
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn pecos_qis_ordered_alloc_tagged_hugr(_token: i64) -> i64 {
     checkpoint!(0);
-    let qubit = unsafe { __quantum__rt__qubit_allocate() };
+    let qubit = unsafe { ___qalloc() };
     let id = checked_ffi_id!(
         stringify!(pecos_qis_ordered_alloc_tagged_hugr),
         qubit,
@@ -603,7 +621,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_ordered_alloc_tagged_hugr(_token: i64)
             qubit: Some(id),
         });
     });
-    unsafe { __quantum__qis__reset__body(qubit) };
+    unsafe { ___reset(qubit) };
     qubit
 }
 
@@ -883,7 +901,14 @@ pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata_direct(
 // They provide the same functionality as the QIS-style functions above but with
 // different names to support Selene-generated LLVM IR.
 
-ffi_gate_1q!(___reset, Reset);
+/// Reset a Selene qubit using the selected runtime protocol.
+///
+/// # Safety
+/// Callers must obey the execution guard and recovery discipline.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___reset(qubit: i64) {
+    unsafe { crate::selene::selene_qubit_reset(std::ptr::null_mut(), qubit.cast_unsigned()) };
+}
 
 /// RXY rotation (Selene-style)
 ///
@@ -892,6 +917,13 @@ ffi_gate_1q!(___reset, Reset);
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::selene_rxy(std::ptr::null_mut(), qubit.cast_unsigned(), theta, phi)
+        };
+        return;
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__r1xy__body(theta, phi, qubit) };
 }
@@ -903,6 +935,11 @@ pub unsafe extern "C-unwind" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rz(qubit: i64, theta: f64) {
+    if crate::uses_native_selene_handles() {
+        unsafe { crate::selene::selene_rz(std::ptr::null_mut(), qubit.cast_unsigned(), theta) };
+        return;
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__rz__body(theta, qubit) };
 }
@@ -914,6 +951,18 @@ pub unsafe extern "C-unwind" fn ___rz(qubit: i64, theta: f64) {
 /// non-negative qubit IDs that fit in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::selene_rzz(
+                std::ptr::null_mut(),
+                qubit1.cast_unsigned(),
+                qubit2.cast_unsigned(),
+                theta,
+            )
+        };
+        return;
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__rzz__body(theta, qubit1, qubit2) };
 }
@@ -924,6 +973,20 @@ pub unsafe extern "C-unwind" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
 /// Called from C/LLVM code. Qubits must be valid non-negative IDs that fit in usize.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___rpp(qubit1: i64, qubit2: i64, theta: f64, phi: f64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::native_request(
+                pecos_qis_ffi_types::SeleneRequest::Rpp {
+                    qubits: [qubit1.cast_unsigned(), qubit2.cast_unsigned()],
+                    theta,
+                    phi,
+                },
+                "___rpp",
+            )
+        };
+        return;
+    }
+
     checkpoint!();
     let q1 = checked_ffi_id!("___rpp", qubit1, usize);
     let q2 = checked_ffi_id!("___rpp", qubit2, usize);
@@ -938,6 +1001,12 @@ pub unsafe extern "C-unwind" fn ___rpp(qubit1: i64, qubit2: i64, theta: f64, phi
 /// This function is safe to call from C/LLVM code.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___qalloc() -> i64 {
+    if crate::uses_native_selene_handles() {
+        return unsafe { crate::selene::selene_qalloc(std::ptr::null_mut()) }
+            .value
+            .cast_signed();
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__rt__qubit_allocate() }
 }
@@ -949,6 +1018,11 @@ pub unsafe extern "C-unwind" fn ___qalloc() -> i64 {
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___qfree(qubit: i64) {
+    if crate::uses_native_selene_handles() {
+        unsafe { crate::selene::selene_qfree(std::ptr::null_mut(), qubit.cast_unsigned()) };
+        return;
+    }
+
     // Delegate to the QIS-style function
     unsafe { __quantum__rt__qubit_release(qubit) };
 }
@@ -979,6 +1053,14 @@ ffi_gate_2q!(___cx, CX);
 /// Returns the allocated result ID as i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___lazy_measure(qubit: i64) -> i64 {
+    if crate::uses_native_selene_handles() {
+        return unsafe {
+            crate::selene::selene_qubit_lazy_measure(std::ptr::null_mut(), qubit.cast_unsigned())
+        }
+        .reference
+        .cast_signed();
+    }
+
     checkpoint!(0);
     let qubit_id = checked_ffi_id!(stringify!(___lazy_measure), qubit, usize);
     let allocated_id = with_interface(|interface| {
@@ -999,6 +1081,17 @@ pub unsafe extern "C-unwind" fn ___lazy_measure(qubit: i64) -> i64 {
 /// The same requirements as [`___lazy_measure`] apply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
+    if crate::uses_native_selene_handles() {
+        return unsafe {
+            crate::selene::selene_qubit_lazy_measure_leaked(
+                std::ptr::null_mut(),
+                qubit.cast_unsigned(),
+            )
+        }
+        .reference
+        .cast_signed();
+    }
+
     checkpoint!(0);
     let qubit_id = checked_ffi_id!(stringify!(___lazy_measure_leaked), qubit, usize);
     let allocated_id = with_interface(|interface| {
@@ -1029,6 +1122,13 @@ pub unsafe extern "C-unwind" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
 /// Returns the boolean measurement result (true = 1, false = 0).
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
+    if crate::uses_native_selene_handles() {
+        return unsafe {
+            crate::selene::selene_future_read_bool(std::ptr::null_mut(), future_id.cast_unsigned())
+        }
+        .value;
+    }
+
     checkpoint!(false);
     log::debug!("___read_future_bool called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_bool), future_id, usize);
@@ -1038,7 +1138,7 @@ pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
         return unsafe { dynamic_read(result_id, true) } == 1;
     }
     if let Some(result) = with_interface(|interface| interface.get_result(result_id)) {
-        record_result_read(result_id);
+        stash_result_source(result_id);
         return result;
     }
 
@@ -1075,6 +1175,13 @@ pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
 /// The same requirements as [`___read_future_bool`] apply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn ___read_future_uint(future_id: i64) -> u64 {
+    if crate::uses_native_selene_handles() {
+        return unsafe {
+            crate::selene::selene_future_read_u64(std::ptr::null_mut(), future_id.cast_unsigned())
+        }
+        .value;
+    }
+
     checkpoint!(0);
     log::debug!("___read_future_uint called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_uint), future_id, usize);
@@ -1091,6 +1198,35 @@ pub unsafe extern "C-unwind" fn ___read_future_uint(future_id: i64) -> u64 {
     u64::from(unsafe { ___read_future_bool(future_id) })
 }
 
+/// Eager measurement in the Selene Helios ABI.
+///
+/// # Safety
+/// Callers must obey the execution guard and recovery discipline.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___measure(qubit: u64) -> bool {
+    unsafe { crate::selene::selene_qubit_measure(std::ptr::null_mut(), qubit) }.value
+}
+
+/// Scoped barrier in the Selene Helios ABI.
+///
+/// # Safety
+/// The input must contain `length` readable qubit handles.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___barrier(qubits: *const u64, length: u64) {
+    unsafe { crate::selene::selene_local_barrier(std::ptr::null_mut(), qubits, length, 0) };
+}
+
+/// Scoped sleep in the Selene Helios ABI, in integer nanoseconds.
+///
+/// # Safety
+/// The input must contain `length` readable qubit handles.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___sleep(qubits: *const u64, length: u64, nanoseconds: u64) {
+    unsafe {
+        crate::selene::selene_local_barrier(std::ptr::null_mut(), qubits, length, nanoseconds)
+    };
+}
+
 /// Reset the collection mode read counter.
 ///
 /// This should be called at the start of each new execution to reset the loop
@@ -1099,30 +1235,47 @@ pub fn reset_collection_read_count() {
     COLLECTION_MODE_READ_COUNT.with(|c| c.set(0));
 }
 
-/// Increment the reference count of a future (Guppy/HUGR-LLVM style)
-///
-/// This function is called when a future value is copied or shared.
-/// In the minimal interface, this is a no-op since we don't do reference counting.
+/// Increment a Guppy/HUGR-LLVM future's native runtime reference count.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The `future_id` parameter is ignored.
+/// The future ID must be a nonnegative program result ID. Callers must follow
+/// the execution guard and recovery discipline.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___inc_future_refcount(_future_id: i64) {
-    // No-op in the minimal interface - we don't do reference counting
-    // The runtime will clean up measurement results when the shot completes
+pub unsafe extern "C-unwind" fn ___inc_future_refcount(future_id: i64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::selene_refcount_increment(
+                std::ptr::null_mut(),
+                future_id.cast_unsigned(),
+            )
+        };
+        return;
+    }
+
+    checkpoint!();
+    let result = checked_ffi_id!("___inc_future_refcount", future_id, u64);
+    unsafe { crate::selene::selene_refcount_increment(std::ptr::null_mut(), result) };
 }
 
-/// Decrement the reference count of a future (Guppy/HUGR-LLVM style)
-///
-/// This function is called when a future value is no longer needed.
-/// In the minimal interface, this is a no-op since we don't do reference counting.
+/// Decrement a Guppy/HUGR-LLVM future's native runtime reference count.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The `future_id` parameter is ignored.
+/// The same requirements as [`___inc_future_refcount`] apply.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___dec_future_refcount(_future_id: i64) {
-    // No-op in the minimal interface - we don't do reference counting
-    // The runtime will clean up measurement results when the shot completes
+pub unsafe extern "C-unwind" fn ___dec_future_refcount(future_id: i64) {
+    if crate::uses_native_selene_handles() {
+        unsafe {
+            crate::selene::selene_refcount_decrement(
+                std::ptr::null_mut(),
+                future_id.cast_unsigned(),
+            )
+        };
+        return;
+    }
+
+    checkpoint!();
+    let result = checked_ffi_id!("___dec_future_refcount", future_id, u64);
+    unsafe { crate::selene::selene_refcount_decrement(std::ptr::null_mut(), result) };
 }
 
 /// Teardown function (called at program end)
@@ -1226,12 +1379,11 @@ pub unsafe extern "C-unwind" fn pecos_record_program_panic(
         String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(message, len) }).into_owned()
     };
     if let Some(ctx) = crate::get_execution_context() {
-        // guppylang std/platform.py's exit/panic convention lowers to exit
-        // codes 0..=1000 and panic codes signal + 1000. Apply it at the C ABI
-        // to every producer, independently of the source function's name.
-        // Guppy documents supported signals 1..=1000. panic(msg, 0) lowers
-        // to 1000 (an exit here), but signal 0 is outside that contract.
-        let termination = if (0..=1000).contains(&code) {
+        // Match Selene's launcher and result parser: only raw codes below
+        // 1000 finish an individual shot. Code 1000 and above stop the job.
+        // Negative QIS i32 values arrive at Selene as large u32 codes, so they
+        // are fatal too. Keep the original signed code in PECOS diagnostics.
+        let termination = if (0..1000).contains(&code) {
             crate::ProgramError::Exit { code, message }
         } else {
             crate::ProgramError::Panic { code, message }
@@ -1288,13 +1440,19 @@ pub unsafe extern "C-unwind" fn panic(code: i32, message: *const std::ffi::c_cha
 /// The `register_name` pointer may be null or must point to a valid null-terminated C string.
 /// Invalid pointers will cause undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__rt__result_record_output(
+pub unsafe extern "C-unwind" fn __quantum__rt__result_record_output(
     result_ptr: *const std::ffi::c_void,
     register_name: *const std::ffi::c_char,
 ) {
     // Extract the result ID from the pointer
     // HUGR generates: %result_ptr = inttoptr i64 %result_id to i8*
-    let result_id = result_ptr as usize;
+    let result_id = match crate::qir_measurement_source(result_ptr as usize) {
+        Ok(source) => source,
+        Err(reason) => {
+            unsafe { fatal_ffi_input("QIR result output", reason) };
+            return;
+        }
+    };
 
     // Convert the C string to a Rust String
     let register_name_str = if register_name.is_null() {
@@ -1347,6 +1505,16 @@ pub type Dense1DArrayInt = Dense1DArray<i64>;
 pub type Dense1DArrayUint = Dense1DArray<u64>;
 pub type Dense1DArrayFloat = Dense1DArray<f64>;
 
+// Validation can fail before shared storage receives the output. Bool callers
+// consume their binding before transfer, with no context mutex held at transfer.
+unsafe fn fatal_named_output_input(entry: &str, detail: String, is_bool_call: bool) {
+    if is_bool_call && let Some(context) = crate::get_execution_context() {
+        // SAFETY: The registered context lives for the duration of execution.
+        let _ = unsafe { &*context }.take_output_binding();
+    }
+    unsafe { fatal_ffi_input(entry, detail) };
+}
+
 /// Both string ABIs converge here after the direct form skips its length byte.
 unsafe fn record_named_output(
     label_ptr: *const u8,
@@ -1355,29 +1523,38 @@ unsafe fn record_named_output(
     scalar_prefix: &str,
     array_prefix: &str,
     entry: &str,
-    is_scalar: bool,
+    array: Option<usize>,
 ) {
+    let is_bool_call = matches!(&values, crate::NamedResult::Bool(_));
     let Ok(len) = usize::try_from(label_len) else {
         drop(values);
         unsafe {
-            fatal_ffi_input(
+            fatal_named_output_input(
                 entry,
                 format!("label length={label_len} does not fit usize"),
+                is_bool_call,
             );
         };
         return;
     };
     if label_ptr.is_null() {
         drop(values);
-        unsafe { fatal_ffi_input(entry, format!("label pointer=null, length={label_len}")) };
+        unsafe {
+            fatal_named_output_input(
+                entry,
+                format!("label pointer=null, length={label_len}"),
+                is_bool_call,
+            );
+        };
         return;
     }
     if len > isize::MAX as usize {
         drop(values);
         unsafe {
-            fatal_ffi_input(
+            fatal_named_output_input(
                 entry,
                 format!("label length={label_len} exceeds isize::MAX"),
+                is_bool_call,
             );
         };
         return;
@@ -1386,7 +1563,13 @@ unsafe fn record_named_output(
     let bytes = unsafe { std::slice::from_raw_parts(label_ptr, len) };
     let Ok(label) = std::str::from_utf8(bytes) else {
         drop(values);
-        unsafe { fatal_ffi_input(entry, format!("invalid UTF-8 label={bytes:?}")) };
+        unsafe {
+            fatal_named_output_input(
+                entry,
+                format!("invalid UTF-8 label={bytes:?}"),
+                is_bool_call,
+            );
+        };
         return;
     };
     let name = label
@@ -1395,7 +1578,10 @@ unsafe fn record_named_output(
         .unwrap_or(label);
     if let Some(ctx) = crate::get_execution_context() {
         // SAFETY: The registered context lives for the duration of execution.
-        unsafe { &*ctx }.store_named_result(name, values, is_scalar);
+        let location = array.map_or(crate::OutputLocation::Scalar, |address| {
+            crate::OutputLocation::Array { address }
+        });
+        unsafe { &*ctx }.store_named_result_with_address(name, values, location);
     } else {
         log::error!("Cannot record named result '{name}': no execution context registered");
     }
@@ -1405,8 +1591,9 @@ unsafe fn result_array<'a, T>(ptr: *const T, len: u64) -> Result<&'a [T], String
     let len = checked_slice_len::<T>(len)?;
     if len == 0 {
         // Compatibility exception: the parent rejected null data even at zero
-        // length. Accepting it now records an empty Bool result and empty trace.
-        // This is the sole exception to bool byte-compatibility; it drains nothing.
+        // length. The bool caller records an empty result and trace, and consumes
+        // its binding downstream. This is the sole exception to bool
+        // byte-compatibility.
         return Ok(&[]);
     }
     if ptr.is_null() || !ptr.is_aligned() {
@@ -1453,16 +1640,23 @@ macro_rules! named_result_exports {
         ) {
             if arr.is_null() || !arr.is_aligned() {
                 unsafe {
-                    fatal_ffi_input(
+                    fatal_named_output_input(
                         stringify!($array),
                         format!("array pointer={arr:?} is null or misaligned"),
+                        std::any::TypeId::of::<$ty>() == std::any::TypeId::of::<bool>(),
                     )
                 };
                 return;
             }
             let arr = unsafe { &*arr };
             let Ok(len) = u64::try_from(arr.x) else {
-                unsafe { fatal_ffi_input(stringify!($array), format!("array length={}", arr.x)) };
+                unsafe {
+                    fatal_named_output_input(
+                        stringify!($array),
+                        format!("array length={}", arr.x),
+                        std::any::TypeId::of::<$ty>() == std::any::TypeId::of::<bool>(),
+                    )
+                };
                 return;
             };
             let data = if label_ptr.is_null() {
@@ -1491,7 +1685,7 @@ macro_rules! named_result_exports {
                     concat!("USER:", $prefix, ":"),
                     concat!("USER:", $prefix, "ARR:"),
                     stringify!($selene_scalar),
-                    true,
+                    None,
                 )
             };
         }
@@ -1518,11 +1712,17 @@ macro_rules! named_result_exports {
                             concat!("USER:", $prefix, ":"),
                             concat!("USER:", $prefix, "ARR:"),
                             stringify!($selene_array),
-                            false,
+                            Some(arr_ptr as usize),
                         )
                     };
                 }
-                Err(detail) => unsafe { fatal_ffi_input(stringify!($selene_array), detail) },
+                Err(detail) => unsafe {
+                    fatal_named_output_input(
+                        stringify!($selene_array),
+                        detail,
+                        std::any::TypeId::of::<$ty>() == std::any::TypeId::of::<bool>(),
+                    )
+                },
             }
         }
     };
@@ -1684,7 +1884,12 @@ fn allocate_program_memory(size: u64) -> Result<*mut u8, String> {
     if ptr.is_null() {
         return Err(format!("size={size}: malloc returned null"));
     }
-    allocations.insert(ptr as usize);
+    allocations.insert(ptr as usize, size_t);
+    drop(allocations);
+    ctx.shadows
+        .lock()
+        .map_err(|_| "poisoned heap shadow")?
+        .clear_memory(ptr as usize, size_t);
     crate::LIVE_PROGRAM_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     crate::TOTAL_PROGRAM_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     Ok(ptr)
@@ -1713,11 +1918,12 @@ fn free_program_memory(ptr: *mut u8) -> Result<(), String> {
         .lock()
         .map_err(|e| format!("pointer={ptr:?}: allocation lock error: {e}"))?
         .remove(&(ptr as usize));
-    if !removed {
-        return Err(format!(
-            "pointer={ptr:?} is not a live allocation owned by this context"
-        ));
-    }
+    let size = removed
+        .ok_or_else(|| format!("pointer={ptr:?} is not a live allocation owned by this context"))?;
+    ctx.shadows
+        .lock()
+        .map_err(|_| "poisoned heap shadow")?
+        .clear_memory(ptr as usize, size);
     unsafe { ctx.free_program_allocation(ptr.cast()) };
     Ok(())
 }
@@ -2390,6 +2596,58 @@ mod tests {
     // --- Lazy measure and future tests ---
 
     #[test]
+    fn native_source_ids_are_distinct_from_qir_slots_and_reset_per_shot() {
+        if !crate::test_env::run_test_in_child(
+            "ffi::tests::native_source_ids_are_distinct_from_qir_slots_and_reset_per_shot",
+        ) {
+            return;
+        }
+        setup_test();
+        let ctx = crate::pecos_create_execution_context();
+        unsafe {
+            crate::pecos_register_execution_context(ctx);
+            assert_eq!(crate::pecos_set_native_selene_handles(ctx, true), 0);
+        }
+        // Reserving user slots does not consume measurement occurrences.
+        assert_eq!(unsafe { __quantum__rt__result_allocate() }, 0);
+        crate::queue_measurement(0, 7, false);
+        assert_eq!(crate::qir_measurement_source(7).unwrap(), 0);
+        assert_eq!(crate::allocate_measurement_source(None).unwrap(), 1);
+        crate::queue_measurement(0, 7, true);
+        assert_eq!(crate::qir_measurement_source(7).unwrap(), 2);
+        assert!(crate::qir_measurement_source(1).is_err());
+        unsafe {
+            __quantum__rt__result_record_output(7 as *const std::ffi::c_void, std::ptr::null());
+        }
+        with_interface(|iface| {
+            assert!(matches!(
+                iface.operations.last(),
+                Some(Operation::RecordOutput { result_id: 2, .. })
+            ));
+        });
+        let mut json = std::ptr::null_mut();
+        unsafe {
+            assert_eq!(
+                crate::pecos_get_measurement_layout_json_with_context(ctx, &raw mut json),
+                0
+            );
+            let layout: pecos_qis_ffi_types::MeasurementLayout =
+                serde_json::from_slice(std::ffi::CStr::from_ptr(json).to_bytes()).unwrap();
+            crate::pecos_free_named_results_json(json);
+            assert_eq!(layout.qir_slots, std::collections::BTreeMap::from([(7, 2)]));
+            assert_eq!(layout.native_sources, std::collections::BTreeSet::from([1]));
+            (*ctx).measurement_identities.lock().unwrap().next_source =
+                pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID;
+            assert!(crate::allocate_measurement_source(None).is_err());
+            (*ctx).reset_outputs();
+            assert!(crate::qir_measurement_source(7).is_err());
+            assert_eq!(crate::allocate_measurement_source(None).unwrap(), 0);
+            crate::pecos_register_execution_context(std::ptr::null_mut());
+            crate::pecos_destroy_execution_context(ctx);
+        }
+    }
+
+    #[test]
     fn test_lazy_measure() {
         setup_test();
         let result_id = unsafe { ___lazy_measure(0) };
@@ -2487,45 +2745,39 @@ mod tests {
     }
 
     #[test]
-    fn test_named_result_trace_consumes_recorded_result_reads() {
+    fn test_named_trace_uses_binding_and_array_memory() {
+        use pecos_qis_ffi_types::ValueProvenance::Measurement;
         let ctx = crate::ExecutionContext::new();
-
-        ctx.record_result_read(7);
+        let values = [false, true];
+        {
+            let mut s = ctx.shadows.lock().unwrap();
+            s.instrumented = true;
+            s.binding = Some(Measurement { id: 7 });
+            s.memory
+                .insert(values.as_ptr() as usize, Measurement { id: 8 });
+            s.memory
+                .insert(values.as_ptr() as usize + 1, Measurement { id: 9 });
+        }
+        // Unrelated reads cannot change the explicit binding or memory shadows.
+        ctx.stash_result_source(Some(99));
         ctx.store_named_bool("m", true);
-        ctx.record_result_read(8);
-        ctx.record_result_read(9);
-        ctx.store_named_array("arr", &[false, true]);
-
+        ctx.shadows.lock().unwrap().binding = Some(pecos_qis_ffi_types::ValueProvenance::Constant);
+        ctx.store_named_array("arr", &values);
         let traces = ctx.get_named_result_traces();
-        assert_eq!(traces.len(), 2);
-        assert_eq!(traces[0].name, "m");
-        assert_eq!(traces[0].values, vec![true]);
         assert_eq!(traces[0].result_ids, vec![7]);
-        assert_eq!(traces[1].name, "arr");
-        assert_eq!(traces[1].values, vec![false, true]);
         assert_eq!(traces[1].result_ids, vec![8, 9]);
+        assert_eq!(traces[0].provenance, Some(vec![Measurement { id: 7 }]));
     }
 
     #[test]
-    fn test_named_result_trace_rejects_ambiguous_recorded_reads() {
+    fn test_uninstrumented_reads_never_bind_outputs() {
         let ctx = crate::ExecutionContext::new();
-
-        ctx.record_result_read(7);
-        ctx.record_result_read(8);
-        ctx.store_named_bool("computed", true);
-
-        let traces = ctx.get_named_result_traces();
-        assert_eq!(traces.len(), 1);
-        let result_ids = &traces[0].result_ids;
-        assert!(
-            result_ids.is_empty(),
-            "expected no result IDs, got {result_ids:?}"
-        );
-
-        ctx.record_result_read(9);
-        ctx.store_named_bool("next", false);
-        let traces = ctx.get_named_result_traces();
-        assert_eq!(traces[1].result_ids, vec![9]);
+        ctx.stash_result_source(Some(7));
+        ctx.store_named_bool("m", true);
+        let trace = &ctx.get_named_result_traces()[0];
+        assert_eq!(trace.result_ids, [] as [usize; 0]);
+        assert!(trace.provenance.is_none());
+        assert!(trace.control_dependent.is_none());
     }
 
     #[test]
@@ -2538,14 +2790,30 @@ mod tests {
     }
 
     #[test]
-    fn test_future_refcount_noops() {
-        // These are no-ops but should not crash
+    fn test_future_refcounts_queue_runtime_requests() {
+        setup_test();
         unsafe {
-            ___inc_future_refcount(0);
-            ___dec_future_refcount(0);
-            ___inc_future_refcount(999);
-            ___dec_future_refcount(999);
+            ___inc_future_refcount(7);
+            ___dec_future_refcount(7);
         }
+        let ops = with_interface(pecos_qis_ffi_types::OperationCollector::take_operations);
+        assert_eq!(
+            ops,
+            [
+                Operation::RuntimeRequest {
+                    request: pecos_qis_ffi_types::RuntimeRequest::IncrementFutureRefcount {
+                        result_id: 7
+                    },
+                    result_id: None,
+                },
+                Operation::RuntimeRequest {
+                    request: pecos_qis_ffi_types::RuntimeRequest::DecrementFutureRefcount {
+                        result_id: 7
+                    },
+                    result_id: None,
+                },
+            ]
+        );
     }
 
     // --- Setup/teardown tests ---

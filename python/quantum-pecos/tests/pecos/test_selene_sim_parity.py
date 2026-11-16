@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, output
+from guppylang.std.qsystem import measure_leaked
 from guppylang.std.quantum import collect_measurements, cx, h, measure, measure_array, qubit, x
 from pecos.guppy_gen import variant_scoped
 
@@ -111,6 +112,117 @@ def alloc_reuse_probe() -> None:
     output("m2", array(b2))
 
 
+@guppy
+def ordinary_read_probe() -> None:
+    """Read one ordinary measurement future with a deterministic outcome."""
+    q = qubit()
+    x(q)
+    output("m", array(measure(q).read()))
+
+
+@guppy
+def leaked_read_probe() -> None:
+    """Read one leakage-aware future, without a barrier to force it indirectly."""
+    q = qubit()
+    x(q)
+    output("m", array(measure_leaked(q).to_result().unwrap()))
+
+
+@pytest.mark.parametrize("runtime_name", ["SimpleRuntime", "SoftRZRuntime"])
+@pytest.mark.parametrize("read_case", ["ordinary", "leaked_pending"])
+def test_measurement_reads_match_direct_selene(runtime_name: str, read_case: str) -> None:
+    """Match Selene's successful reads and unsupported-read failures."""
+    import pecos
+    import selene_sim
+    from pecos.compilation_pipeline import compile_guppy_to_hugr
+    from selene_sim.exceptions import SelenePanicError
+
+    _configure_selene_caches()
+    runtime = getattr(selene_sim, runtime_name)()
+    program = {
+        "ordinary": ordinary_read_probe,
+        "leaked_pending": leaked_read_probe,
+    }[read_case]
+    instance = selene_sim.build(compile_guppy_to_hugr(program))
+
+    def run_selene() -> dict:
+        return _collect_selene_named_results(
+            instance,
+            n_qubits=1,
+            n_shots=1,
+            p=0.0,
+            seed=7,
+            runtime=runtime,
+        )
+
+    def run_pecos() -> dict:
+        return (
+            pecos.sim(program)
+            .classical(pecos.selene_engine(runtime))
+            .quantum(pecos.stabilizer())
+            .qubits(1)
+            .seed(7)
+            .run(1)
+            .to_dict()
+        )
+
+    if read_case == "leaked_pending" and runtime_name == "SoftRZRuntime":
+        # The pinned SoftRZ implementation omits MeasureLeaked in force_result.
+        # Compatibility means exposing the same failed read, not adding a barrier.
+        with pytest.raises(SelenePanicError, match="Future u64 result not available after attempting to force it"):
+            run_selene()
+        with pytest.raises(RuntimeError, match="native result is unavailable after force_result"):
+            run_pecos()
+    else:
+        expected = run_selene()
+        assert expected == {"m": [1]}
+        actual = run_pecos()
+        for name, values in expected.items():
+            assert actual[name] == values
+
+
+@guppy
+def unread_measurement_probe() -> None:
+    """Leave a measurement unobserved for the runtime's end hook to handle."""
+    q = qubit()
+    x(q)
+    _ = measure(q)
+    output("done", array(True))
+
+
+@pytest.mark.parametrize(("runtime_name", "physical_measurements"), [("SimpleRuntime", 1), ("SoftRZRuntime", 0)])
+def test_unread_measurement_completion_matches_selene(
+    runtime_name: str,
+    physical_measurements: int,
+    tmp_path: Path,
+) -> None:
+    """No host terminal barrier forces an otherwise unobserved measurement."""
+    import pecos
+    import selene_sim
+    from pecos.compilation_pipeline import compile_guppy_to_hugr
+
+    _configure_selene_caches()
+    runtime = getattr(selene_sim, runtime_name)()
+    instance = selene_sim.build(compile_guppy_to_hugr(unread_measurement_probe))
+    expected = _collect_selene_named_results(instance, n_qubits=1, n_shots=1, p=0.0, seed=7, runtime=runtime)
+    actual = (
+        pecos.sim(unread_measurement_probe)
+        .classical(pecos.selene_engine(runtime))
+        .quantum(pecos.stabilizer())
+        .qubits(1)
+        .seed(7)
+        .trace_operations(str(tmp_path))
+        .run(1)
+        .to_dict()
+    )
+    assert actual["done"] == expected["done"] == [1]
+    chunks = [json.loads(path.read_text()) for path in tmp_path.glob("*.json")]
+    assert any(chunk["stage"] == "trace_complete" for chunk in chunks)
+    gates = [gate for chunk in chunks for gate in chunk.get("lowered_quantum_ops", [])]
+    assert sum(gate["gate_type"] == "MZ" for gate in gates) == physical_measurements
+    assert not any(chunk["stage"] == "terminal_flush" for chunk in chunks)
+
+
 def _require_selene_runtime() -> object:
     """Eagerly instantiate the Selene engine to fail fast if it is unavailable.
 
@@ -151,7 +263,7 @@ def test_qis_trace_operations_write_chunks_on_run_path(tmp_path: Path) -> None:
     payload = json.loads(trace_files[0].read_text())
     assert payload["format"] == "pecos_qis_operation_trace_v1"
     assert payload["num_operations"] > 0
-    assert payload["lowered_quantum_ops"]
+    assert any(json.loads(path.read_text())["lowered_quantum_ops"] for path in trace_files)
 
 
 def test_capture_operation_trace_returns_in_memory_batches() -> None:
@@ -173,7 +285,7 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
     assert trace
     assert trace[0]["format"] == "pecos_qis_operation_trace_v1"
     assert trace[0]["num_operations"] > 0
-    assert trace[0]["lowered_quantum_ops"]
+    assert any(chunk["lowered_quantum_ops"] for chunk in trace)
 
 
 def test_capture_operation_trace_includes_named_result_provenance() -> None:
@@ -228,6 +340,7 @@ def _collect_selene_named_results(
     n_shots: int,
     p: float,
     seed: int,
+    runtime: object | None = None,
 ) -> dict[str, list[int] | list[list[int]]]:
     from selene_sim import DepolarizingErrorModel, SimpleRuntime, Stim
 
@@ -250,7 +363,7 @@ def _collect_selene_named_results(
                 p_meas=p,
                 p_init=p,
             ),
-            runtime=SimpleRuntime(),
+            runtime=SimpleRuntime() if runtime is None else runtime,
             random_seed=seed,
             n_processes=1,
         ):

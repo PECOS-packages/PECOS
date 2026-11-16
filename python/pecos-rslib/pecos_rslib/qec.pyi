@@ -14,11 +14,47 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+import os
+from typing import Any, Callable, ClassVar, Mapping, Sequence, TypedDict
 
-from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
+from pecos_rslib import decoders
+from pecos_rslib.decoders import ObservableFlips
+
+from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, Qis, StabilizerCodeSpec, TickCircuit
 
 DEM_SLICE_ROUND_ATTRIBUTE: str
+
+class DiscoveredDetectors:
+    """Record parities with integer noiseless references (0 or 1)."""
+
+    @property
+    def detectors(self) -> list[tuple[list[int], int]]: ...
+    @property
+    def observables(self) -> list[tuple[list[int], int]]: ...
+
+def discover_detectors(
+    tc: TickCircuit,
+    observables: Sequence[Sequence[int]] = (),
+    conjugates: Sequence[tuple[int, str]] = (),
+) -> DiscoveredDetectors:
+    """Discover logical-free detectors relative to the supplied conjugates.
+
+    Each observable requires a (before_tick, pauli) conjugate. The string is
+    parsed as a sparse ("X0 X3") or dense PauliString; phase is ignored.
+    before_tick=1 means after tick 0. Pairing requires each conjugate to flip
+    only its own completed observable and rejects dependent observables.
+    Cleaning XORs completed observables and their references into detectors;
+    independent detectors are selected with unflipped canonical ones preferred,
+    then sorted by their newest record. Undeclared logicals remain detectors.
+
+    Precondition: each conjugate must be a genuine logical, commuting with every
+    measured check and anticommuting with its own observable only. Records alone
+    cannot identify logical content or verify this; a wrong conjugate may pass
+    pairing and silently lower the fault distance. Invalid declarations, counts,
+    tick/qubit bounds, pairing and Pauli strings raise ValueError; conjugate
+    arguments are parsed before the observables are validated.
+    """
+    ...
 
 class BivariateBicycleCode:
     """A validated bivariate-bicycle CSS code."""
@@ -163,6 +199,16 @@ class DemInferenceSettings:
     def with_require_raw_provenance(self, required: bool) -> DemInferenceSettings: ...
     def validate(self) -> None: ...
     def resolved_probe_shots(self, raw_width: int) -> int: ...
+    def infer(
+        self,
+        raw_measurement_ids: Sequence[int],
+        raw_rows: Sequence[Sequence[int]],
+        detector_rows: Sequence[Sequence[int]],
+        observable_rows: Sequence[Sequence[int]],
+    ) -> tuple[list[list[int]], list[list[int]]]:
+        """Infer detector and observable supports from bound bit-valued probe rows."""
+        ...
+
     @property
     def raw_tag(self) -> str: ...
     @property
@@ -201,7 +247,9 @@ class DetectorErrorModel:
     ) -> DetectorErrorModel: ...
     def independent_mechanisms(self) -> list[tuple[float, list[int], list[int]]]: ...
     def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
-    def build_decoder(self, decoder: Any) -> StructuredDemDecoder: ...
+    def detector_fault_sectors(self) -> list[tuple[int, str | None]]: ...
+    def detector_bases(self) -> list[str]: ...
+    def build_decoder(self, decoder: decoders.DecoderSpec | str) -> StructuredDemDecoder: ...
     def round_schedule(self, influence_map: Any, circuit: DagCircuit) -> DemSliceRoundSchedule: ...
     def required_buffer_rounds(
         self,
@@ -229,11 +277,17 @@ class DetectorErrorModel:
     def __getattr__(self, name: str) -> Any: ...
 
 class StructuredDemDecoder:
-    """Decoder built directly from a structured PECOS DEM."""
+    """Decoder built from standard DEM text plus the object's fault_sector labels."""
+
+    @property
+    def dem(self) -> str: ...
+    @property
+    def projection(self) -> ProjectionReport | None:
+        """Shared report, or None if unneeded or projected within members without a shared policy."""
 
     @property
     def num_detectors(self) -> int | None: ...
-    def decode_syndrome(self, syndrome: list[int]) -> Any: ...
+    def decode_syndrome(self, syndrome: list[int]) -> decoders.ObservableFlips: ...
 
 class CircuitFaultLocation:
     """A Pauli-fault location in a tick circuit."""
@@ -484,3 +538,401 @@ class HypergraphProductCode:
     def logical_z(self) -> ParityCheckMatrix: ...
     def num_qubits(self) -> int: ...
     def num_logical_qubits(self) -> int: ...
+
+class ProjectionReport:
+    """Immutable projection diagnostics. Pickling is not supported."""
+
+    __hash__: ClassVar[None]
+
+    @property
+    def input_hyperedges(self) -> int: ...
+    @property
+    def projected(self) -> int: ...
+    @property
+    def zero_probability_omitted(self) -> list[int]: ...
+    @property
+    def dropped_indices(self) -> list[int]: ...
+    @property
+    def cross_sector_components(self) -> int: ...
+    @property
+    def label_conflicts(self) -> int: ...
+    @property
+    def unlabelled_detectors(self) -> int: ...
+    @property
+    def distinct_sectors(self) -> int: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __repr__(self) -> str: ...
+
+class DecoderComparisonResult:
+    @property
+    def dut_projection(self) -> ProjectionReport | None:
+        """Shared report, or None if unneeded or projected within members without a shared policy."""
+
+    @property
+    def reference_projection(self) -> ProjectionReport | None:
+        """Shared report, or None if unneeded or projected within members without a shared policy."""
+
+    @property
+    def counts(self) -> list[list[int]]: ...
+    @property
+    def total_shots(self) -> int: ...
+    @property
+    def alpha(self) -> float: ...
+    @property
+    def dut_correct_reference_correct(self) -> int: ...
+    @property
+    def dut_correct_reference_mismatch(self) -> int: ...
+    @property
+    def dut_correct_reference_error(self) -> int: ...
+    @property
+    def dut_mismatch_reference_correct(self) -> int: ...
+    @property
+    def dut_mismatch_reference_mismatch(self) -> int: ...
+    @property
+    def dut_mismatch_reference_error(self) -> int: ...
+    @property
+    def dut_error_reference_correct(self) -> int: ...
+    @property
+    def dut_error_reference_mismatch(self) -> int: ...
+    @property
+    def dut_error_reference_error(self) -> int: ...
+    @property
+    def dut_only_failures(self) -> int: ...
+    @property
+    def dut_only_failure_proportion(self) -> float: ...
+    @property
+    def dut_only_failure_interval(self) -> tuple[float, float]: ...
+    @property
+    def both_failed(self) -> int: ...
+    @property
+    def both_failed_proportion(self) -> float: ...
+    @property
+    def both_failed_interval(self) -> tuple[float, float]: ...
+
+class SampleBatch:
+    def __init__(
+        self,
+        detection_events: Sequence[Sequence[int | bool]],
+        observable_masks: Sequence[int],
+        *,
+        num_observables: int | None = ...,
+    ) -> None: ...
+    @property
+    def num_shots(self) -> int: ...
+    @property
+    def num_observables(self) -> int: ...
+    @property
+    def seed(self) -> int | None: ...
+    @property
+    def dem(self) -> str | None: ...
+    @property
+    def dem_fault_sectors(self) -> list[str | None] | None: ...
+    @property
+    def metadata_json(self) -> str | None: ...
+    @property
+    def generator(self) -> str | None: ...
+    @property
+    def format_version(self) -> int | None: ...
+    def get_syndrome(self, i: int) -> list[int]: ...
+    def get_observable_flips(self, i: int) -> ObservableFlips: ...
+    def detector_events(self) -> list[list[bool]]: ...
+    def observable_flips(self) -> list[list[bool]]: ...
+    def save(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        dem: str | DetectorErrorModel,
+        metadata_json: str | None = ...,
+        clear_metadata: bool = ...,
+        allow_dem_mismatch: bool = ...,
+    ) -> None:
+        """Write v2 (older PECOS rejects it); readers accept v1 and v2.
+
+        Objects supply labels; equal embedded text preserves stored labels;
+        other text writes all-null labels. Identity compares only text.
+        Saving does not attach a model or mutate the source batch.
+        """
+        ...
+
+    @staticmethod
+    def load(path: str | os.PathLike[str]) -> SampleBatch:
+        """Read v1 (unlabelled) or v2; format_version reports the disk version.
+
+        Every save writes v2, which older PECOS installations reject.
+        """
+        ...
+
+    def decode(
+        self,
+        dem: str | DetectorErrorModel | None = ...,
+        decoder: decoders.DecoderSpec | str = ...,
+        *,
+        workers: int | None = ...,
+        predictions: bool = ...,
+        timing: bool = ...,
+        allow_dem_mismatch: bool = ...,
+    ) -> DecodeResult:
+        """Decode all shots with planned native, sequential, or parallel execution.
+
+        ``decoder`` is a typed decoder spec or legacy string. ``dem=None``
+        requires a loaded corpus and uses its text plus stored fault-sector labels.
+        Labelled embedded models use object semantics and refuse providers;
+        all-null labels use text semantics. Explicit text is unlabelled.
+        An object decodes its standard text plus its fault_sector labels. Explicit
+        ``workers`` requests that exact count; automatic execution respects
+        stateful and wall-clock-limited decoder contracts. Predictions are
+        wide Python integers, and timing forces per-shot dispatch.
+        """
+        ...
+
+    def compare_decoders(
+        self,
+        dem: str | DetectorErrorModel,
+        dut_decoder_type: str,
+        reference_decoder_type: str,
+        alpha: float = ...,
+        *,
+        allow_dem_mismatch: bool = ...,
+    ) -> DecoderComparisonResult: ...
+
+class DecodeStats:
+    num_shots: int
+    num_errors: int
+    logical_error_rate: float
+    total_seconds: float
+    wall_elapsed: float
+    summed_decode_elapsed: float
+    num_timing_samples: int
+    per_shot_mean: float
+    per_shot_median: float
+    per_shot_p99: float
+    per_shot_min: float
+    per_shot_max: float
+    quantiles: list[float]
+
+class DecodeRecovery:
+    shot_index: int
+    undecoded: bool
+    logical_error: bool | None
+    fallback_used: bool
+    syndrome_consistent: bool | None
+    deltas_tried: list[float]
+
+class DecodeResult:
+    @property
+    def projection(self) -> ProjectionReport | None:
+        """Shared report, or None if unneeded or projected within members without a shared policy."""
+    num_shots: int
+    num_errors: int
+    num_scored: int
+    num_undecoded: int
+    num_fallback: int
+    recovery: list[DecodeRecovery]
+    logical_error_rate: float
+    execution_path: str
+    workers_used: int
+    reproducibility_warnings: list[str]
+    sampling_seed_used: int | None
+    predictions: list[int | None] | None
+    stats: DecodeStats | None
+    def interval(self, alpha: float = ...) -> tuple[float, float]: ...
+
+class DemSampler:
+    @staticmethod
+    def from_circuit(
+        circuit: DagCircuit | TickCircuit,
+        p1: float = ...,
+        p2: float = ...,
+        p_meas: float = ...,
+        p_prep: float = ...,
+        **noise_options: Any,
+    ) -> DemSampler: ...
+    @staticmethod
+    def from_dem_string(dem_string: str) -> DemSampler: ...
+    @staticmethod
+    def raw_uniform(influence_map: DagFaultInfluenceMap, p_error: float) -> DemSampler: ...
+    @staticmethod
+    def raw(
+        influence_map: DagFaultInfluenceMap,
+        p1: float,
+        p2: float,
+        p_meas: float,
+        p_prep: float,
+    ) -> DemSampler: ...
+    @staticmethod
+    def with_detectors(
+        influence_map: DagFaultInfluenceMap,
+        detectors: Sequence[Sequence[int]],
+        observables: Sequence[Sequence[int]],
+        p1: float,
+        p2: float,
+        p_meas: float,
+        p_prep: float,
+        **noise_options: Any,
+    ) -> DemSampler: ...
+    @staticmethod
+    def from_influence_map(
+        influence_map: DagFaultInfluenceMap,
+        p_error: float,
+    ) -> DemSampler: ...
+    @staticmethod
+    def from_influence_map_circuit_noise(
+        influence_map: DagFaultInfluenceMap,
+        p1: float,
+        p2: float,
+        p_meas: float,
+        p_prep: float,
+    ) -> DemSampler: ...
+    def to_detector_error_model(self) -> DetectorErrorModel: ...
+    @property
+    def num_mechanisms(self) -> int: ...
+    @property
+    def num_outputs(self) -> int: ...
+    @property
+    def num_detectors(self) -> int: ...
+    @property
+    def num_observables(self) -> int: ...
+    @property
+    def num_dem_outputs(self) -> int: ...
+    @property
+    def num_tracked_paulis(self) -> int: ...
+    def sample(self, seed: int | None = ...) -> tuple[list[bool], list[bool]]: ...
+    def sample_batch(self, num_shots: int, seed: int | None = ...) -> SampleBatch: ...
+    def sample_batch_with_pauli_masks(
+        self,
+        num_shots: int,
+        lookup: PauliFrameLookup,
+        pauli_masks: Any,
+        seed: int | None = ...,
+    ) -> SampleBatch: ...
+    def sample_tracked_paulis(self, seed: int | None = ...) -> list[bool]: ...
+    def sample_tracked_pauli_batch(self, num_shots: int, seed: int | None = ...) -> list[list[bool]]: ...
+    def sample_statistics(self, num_shots: int, seed: int | None = ...) -> dict[str, Any]: ...
+    def decode(
+        self,
+        dem: str | DetectorErrorModel,
+        num_shots: int,
+        decoder: decoders.DecoderSpec | str,
+        *,
+        seed: int | None = ...,
+        workers: int | None = ...,
+        predictions: bool = ...,
+        timing: bool = ...,
+    ) -> DecodeResult:
+        """Sample and decode under sampling ABI v1.
+
+        A fixed seed produces the same shot stream for all worker counts and
+        execution paths. Predictions and counts match too, except when
+        ``reproducibility_warnings`` is non-empty -- a wall-clock-limited
+        decoder run in parallel can decode differently under CPU contention.
+        The resolved replay seed is returned in ``sampling_seed_used``;
+        timing is always outside the reproducibility guarantee.
+        """
+        ...
+
+    def labels(self) -> dict[str, Any]: ...
+
+class FaultLocation:
+    @property
+    def node(self) -> int: ...
+    @property
+    def qubits(self) -> list[int]: ...
+    @property
+    def before(self) -> bool: ...
+    @property
+    def gate_type(self) -> str: ...
+
+class DagFaultInfluenceMap:
+    @property
+    def num_locations(self) -> int: ...
+    @property
+    def num_detectors(self) -> int: ...
+    @property
+    def num_dem_outputs(self) -> int: ...
+    @property
+    def num_observables(self) -> int: ...
+    @property
+    def num_tracked_paulis(self) -> int: ...
+    def get_locations(self) -> list[FaultLocation]: ...
+    def get_location(self, loc_idx: int) -> FaultLocation | None: ...
+    def classify_fault(self, loc_idx: int, pauli: int) -> tuple[bool, bool]: ...
+    def get_detector_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+    def get_dem_output_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+    def get_internal_dem_output_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+    def get_tracked_pauli_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+    def get_observable_indices(self, loc_idx: int, pauli: int) -> list[int]: ...
+    def has_detector_flips(self, loc_idx: int, pauli: int) -> bool: ...
+    def has_dem_output_flips(self, loc_idx: int, pauli: int) -> bool: ...
+    def has_observable_flips(self, loc_idx: int, pauli: int) -> bool: ...
+    def has_tracked_pauli_flips(self, loc_idx: int, pauli: int) -> bool: ...
+    def merge_dem_outputs_from(self, other: DagFaultInfluenceMap) -> None: ...
+    def memory_stats(self) -> dict[str, Any]: ...
+    def export_csr(self) -> dict[str, Any]: ...
+    def measurements(self) -> list[tuple[int, int, int]]: ...
+    def __len__(self) -> int: ...
+
+class PauliFrameLookup:
+    @staticmethod
+    def from_circuit(
+        dag: DagCircuit,
+        detectors: Sequence[Sequence[int]],
+        observables: Sequence[Sequence[int]],
+    ) -> PauliFrameLookup: ...
+    @property
+    def num_pauli_sites(self) -> int: ...
+    @property
+    def num_tracked_paulis(self) -> int: ...
+    @property
+    def num_detectors(self) -> int: ...
+    @property
+    def num_observables(self) -> int: ...
+    def row(self, tracked_idx: int) -> tuple[list[int], list[int]]: ...
+    def mask_firings(self, pauli_masks: Any) -> list[list[bool]]: ...
+    def compute_mask_xor(self, pauli_masks: Any) -> tuple[list[list[bool]], list[list[bool]]]: ...
+
+class _SeleneRuntimeSpec:
+    def __init__(self) -> None: ...
+    def selene_runtime(
+        self,
+        runtime_name: str | None = None,
+        *,
+        custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
+    ) -> _SeleneRuntimeSpec: ...
+    def selene_runtime_plugin(
+        self,
+        library_file: str,
+        init_args: list[str] | None = None,
+        library_search_dirs: list[str] | None = None,
+        *,
+        custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
+        batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
+    ) -> _SeleneRuntimeSpec: ...
+
+class _DemEvidence(TypedDict):
+    circuit: TickCircuit
+    raw_measurement_ids: list[int]
+    raw_rows: list[list[int]]
+    detector_rows: list[list[int]]
+    observable_rows: list[list[int]]
+    binding: str
+    detector_outputs: list[tuple[str, int]]
+    observable_outputs: list[tuple[str, int]]
+    probe_shots: int
+    correlation_shots: int
+    schedule_shots: int
+    named_result_traces: list[dict[str, Any]]
+
+def _capture_dem_evidence(
+    program: Qis,
+    num_qubits: int,
+    seed: int,
+    runtime: _SeleneRuntimeSpec,
+    settings: DemInferenceSettings,
+    detector_outputs: Sequence[tuple[str, int]] | None = None,
+    observable_outputs: Sequence[tuple[str, int]] | None = None,
+) -> _DemEvidence: ...

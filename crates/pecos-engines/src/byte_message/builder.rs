@@ -185,15 +185,20 @@ impl ByteMessageBuilder {
             gate_type != GateType::Channel,
             "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
         );
-        let payload_size = size_of::<GateHeader>()
-            + num_qubits * size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+        let payload_size = num_qubits
+            .checked_mul(size_of::<u32>())
+            .and_then(|size| size.checked_add(size_of::<GateHeader>()))
+            .and_then(|size| size.checked_add(std::mem::size_of_val(angles)))
+            .and_then(|size| size.checked_add(std::mem::size_of_val(params)))
+            .expect("Gate payload size exceeds usize::MAX");
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
         let header = GateHeader {
             gate_type: gate_type as u8,
-            num_qubits: u8::try_from(num_qubits).expect("Too many qubits for gate"),
+            num_qubits: u32::try_from(num_qubits).expect(
+                "prepare_message checked that the payload, including all qubit indices, fits u32",
+            ),
             has_params: u8::from(!angles.is_empty() || !params.is_empty()),
             reserved: 0,
         };
@@ -206,7 +211,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {
@@ -242,7 +247,8 @@ impl ByteMessageBuilder {
     ) -> &mut Self {
         let payload_size = size_of::<GateHeader>()
             + size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+            + angles.len() * size_of::<u64>()
+            + std::mem::size_of_val(params);
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -259,7 +265,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {
@@ -280,7 +286,8 @@ impl ByteMessageBuilder {
     ) -> &mut Self {
         let payload_size = size_of::<GateHeader>()
             + 2 * size_of::<u32>()
-            + (angles.len() + params.len()) * size_of::<f64>();
+            + angles.len() * size_of::<u64>()
+            + std::mem::size_of_val(params);
 
         self.prepare_message(MessageType::Gate, payload_size, MessageFlags::NONE);
 
@@ -299,7 +306,7 @@ impl ByteMessageBuilder {
 
         for angle in angles {
             self.buffer
-                .extend_from_slice(&angle.to_radians().to_le_bytes());
+                .extend_from_slice(&angle.fraction().to_le_bytes());
         }
 
         for param in params {
@@ -355,8 +362,9 @@ impl ByteMessageBuilder {
     ///
     /// # Panics
     ///
-    /// This function will panic if the number of qubits in the gate exceeds 255,
-    /// as the protocol uses a u8 to represent the qubit count.
+    /// Panics if the gate is invalid or carries a typed channel payload, a qubit
+    /// index or payload size exceeds `u32::MAX`, or the builder contains a
+    /// different message type.
     pub fn add_gate_command(&mut self, gate: &Gate) -> &mut Self {
         gate.validate()
             .unwrap_or_else(|err| panic!("Invalid gate command: {err}"));
@@ -621,11 +629,20 @@ impl ByteMessageBuilder {
     /// # Panics
     ///
     /// Panics if any qubit ID is too large to fit in a u32.
-    pub fn measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
+    pub fn measure_z_leaked(&mut self, qubit_ids: &[usize]) -> &mut Self {
         for &qubit in qubit_ids {
-            self.add_single_qubit_gate_parts(GateType::MeasureLeaked, qubit, &[], &[]);
+            self.add_single_qubit_gate_parts(GateType::MeasureZLeaked, qubit, &[], &[]);
         }
         self
+    }
+
+    /// Deprecated spelling of [`ByteMessageBuilder::measure_z_leaked`].
+    ///
+    /// # Panics
+    /// Panics if any qubit ID is too large to fit in a u32.
+    #[deprecated(note = "renamed to ByteMessageBuilder::measure_z_leaked")]
+    pub fn measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
+        self.measure_z_leaked(qubit_ids)
     }
 
     /// Add an MPZ (measure-and-prepare) gate: measure +Z, then prepare |0>.
@@ -915,6 +932,36 @@ impl ByteMessageBuilder {
         self.msg_count
     }
 
+    /// Check that an append fits the protocol's message-count and byte-size fields.
+    /// `additional_bytes` includes message headers, payloads and alignment padding.
+    ///
+    /// # Errors
+    /// Returns an input error when the requested append exceeds a u32 field or
+    /// the platform slice-size limit. Split such input across smaller batches.
+    pub fn validate_append_capacity(
+        &self,
+        messages: usize,
+        additional_bytes: usize,
+    ) -> Result<(), pecos_core::errors::PecosError> {
+        let count_fits = u32::try_from(messages)
+            .ok()
+            .and_then(|count| self.msg_count.checked_add(count))
+            .is_some();
+        let size_fits = self
+            .buffer
+            .len()
+            .checked_add(additional_bytes)
+            .is_some_and(|size| u32::try_from(size).is_ok() && isize::try_from(size).is_ok());
+        if !count_fits || !size_fits {
+            return Err(pecos_core::errors::PecosError::Input(format!(
+                "cannot append {messages} messages and {additional_bytes} bytes to a batch containing {} messages and {} bytes: protocol u32 or platform slice-size limit exceeded; split the input into smaller batches",
+                self.msg_count,
+                self.buffer.len()
+            )));
+        }
+        Ok(())
+    }
+
     /// Clear the builder and start fresh
     ///
     /// This method completely replaces the builder with a new instance,
@@ -1040,6 +1087,41 @@ mod tests {
     use pecos_core::QubitId;
 
     #[test]
+    fn cx_broadcasts_round_trip_across_the_old_count_limit() {
+        for count in [127, 128, 129] {
+            let pairs: Vec<_> = (0..count).map(|i| (2 * i + 1, 2 * i)).collect();
+            let expected = Gate::cx(&pairs);
+            let message = ByteMessage::builder().cx(&pairs).build();
+            assert_eq!(
+                message.quantum_ops().unwrap(),
+                std::slice::from_ref(&expected)
+            );
+            let message = ByteMessage::builder().add_gate_command(&expected).build();
+            assert_eq!(message.quantum_ops().unwrap(), [expected]);
+        }
+    }
+
+    #[test]
+    fn h_broadcast_round_trips_more_than_u16_qubits() {
+        let qubits: Vec<_> = (0..70_000).rev().collect();
+        let message = ByteMessage::builder().h(&qubits).build();
+        assert_eq!(message.quantum_ops().unwrap(), [Gate::h(&qubits)]);
+    }
+
+    #[test]
+    fn gate_header_has_the_version_eight_wire_layout() {
+        assert_eq!(size_of::<GateHeader>(), 8);
+        assert_eq!(std::mem::align_of::<GateHeader>(), 4);
+        let header = GateHeader {
+            gate_type: 50,
+            has_params: 1,
+            reserved: 0,
+            num_qubits: 70_000,
+        };
+        assert_eq!(bytes_of(&header), &[50, 1, 0, 0, 112, 17, 1, 0]);
+    }
+
+    #[test]
     fn strict_all_gates_round_trip() {
         let mut builder = ByteMessageBuilder::new();
         builder.x(&[0]);
@@ -1050,7 +1132,7 @@ mod tests {
         builder.szz(&[(0, 1)]);
         builder.szzdg(&[(0, 1)]);
         builder.mz(&[0]);
-        builder.measure_leakages(&[0]);
+        builder.measure_z_leaked(&[0]);
         builder.mpz(&[0]);
         builder.meas_crosstalk_global_payload(&[0]);
         builder.meas_crosstalk_local_payload(&[0]);
@@ -1082,7 +1164,7 @@ mod tests {
                 Gate::szz(&[(0, 1)]),
                 Gate::szzdg(&[(0, 1)]),
                 Gate::mz(&[0]),
-                Gate::measure_leaked(&[0]),
+                Gate::measure_z_leaked(&[0]),
                 Gate::mpz(&[0]),
                 Gate::meas_crosstalk_global_payload(&[0]),
                 Gate::meas_crosstalk_local_payload(&[0]),
@@ -1110,8 +1192,8 @@ mod tests {
     #[test]
     fn strict_all_parameterized_gates_round_trip() {
         let mut builder = ByteMessageBuilder::new();
-        let theta = Angle64::from_radians(0.25);
-        let phi = Angle64::from_radians(0.5);
+        let theta = pecos_core::radians!(0.25);
+        let phi = pecos_core::radians!(0.5);
         builder.idle(0.75, &[0]);
         builder.rx(theta, &[0]);
         builder.ry(theta, &[0]);
@@ -1228,7 +1310,7 @@ mod tests {
         // Add gates using new GateCommand interface
         let gate = Gate::h(&[0]);
         builder.add_gate_command(&gate);
-        let gate = Gate::rz(Angle64::from_radians(0.5), &[1]);
+        let gate = Gate::rz(pecos_core::radians!(0.5), &[1]);
         builder.add_gate_command(&gate);
 
         // Test multiple gates at once
@@ -1240,7 +1322,7 @@ mod tests {
             message.quantum_ops().unwrap(),
             [
                 Gate::h(&[0]),
-                Gate::rz(Angle64::from_radians(0.5), &[1]),
+                Gate::rz(pecos_core::radians!(0.5), &[1]),
                 Gate::x(&[2]),
                 Gate::cx(&[(0, 1)]),
             ]
@@ -1347,8 +1429,8 @@ mod tests {
         builder.x(&[1]);
         builder.y(&[2]);
         builder.z(&[3]);
-        builder.rz(Angle64::from_radians(0.5), &[4]);
-        builder.rxy1q(Angle64::from_radians(0.1), Angle64::from_radians(0.2), &[5]);
+        builder.rz(pecos_core::radians!(0.5), &[4]);
+        builder.rxy1q(pecos_core::radians!(0.1), pecos_core::radians!(0.2), &[5]);
         builder.mz(&[6]);
 
         // Build the message
@@ -1379,12 +1461,12 @@ mod tests {
 
     #[test]
     fn test_single_item_fast_paths_match_generic_gate_encoding() {
-        let theta_rx = Angle64::from_radians(0.3);
-        let theta_ry = Angle64::from_radians(0.4);
-        let theta_rz = Angle64::from_radians(0.5);
-        let theta_rxy1q = Angle64::from_radians(0.6);
-        let phi_rxy1q = Angle64::from_radians(0.7);
-        let theta_rzz = Angle64::from_radians(0.8);
+        let theta_rx = pecos_core::radians!(0.3);
+        let theta_ry = pecos_core::radians!(0.4);
+        let theta_rz = pecos_core::radians!(0.5);
+        let theta_rxy1q = pecos_core::radians!(0.6);
+        let phi_rxy1q = pecos_core::radians!(0.7);
+        let theta_rzz = pecos_core::radians!(0.8);
 
         let mut generic_builder = ByteMessageBuilder::new();
         let _ = generic_builder.for_quantum_operations();
@@ -1472,9 +1554,9 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
 
-        // Add measure_leakages for multiple qubits
+        // Add measure_z_leaked for multiple qubits
         let qubits = vec![0, 1, 2];
-        builder.measure_leakages(&qubits);
+        builder.measure_z_leaked(&qubits);
 
         // Build the message
         let message = builder.build();
@@ -1485,7 +1567,7 @@ mod tests {
         // Verify the commands
         assert_eq!(commands.len(), 3);
         for i in 0..3 {
-            assert_eq!(commands[i].gate_type, GateType::MeasureLeaked);
+            assert_eq!(commands[i].gate_type, GateType::MeasureZLeaked);
             assert_eq!(commands[i].qubits.as_slice(), &[QubitId(qubits[i])]);
         }
     }

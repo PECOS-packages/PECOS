@@ -29,12 +29,12 @@ class TestDirectMethodChaining:
         builder = general_noise()
 
         # Test invalid probability values
-        # Rust panics raise BaseException
-        with pytest.raises(BaseException, match=r".*"):  # Rust panic - any error message
+        # Setter validation reports ordinary Python ValueError.
+        with pytest.raises(ValueError, match=r".*"):
             builder.with_p1(-0.1)  # Negative probability
 
         builder = general_noise()
-        with pytest.raises(BaseException, match=r".*"):  # Rust panic - any error message
+        with pytest.raises(ValueError, match=r".*"):
             builder.with_p2(1.5)  # > 1 probability
 
     def test_direct_noise_builder_with_sim(self) -> None:

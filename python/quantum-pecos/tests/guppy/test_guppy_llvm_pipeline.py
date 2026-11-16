@@ -23,33 +23,6 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
 class TestGuppyLLVMPipeline:
     """Test suite for the Guppy to LLVM compilation pipeline."""
 
-    def test_backend_availability(self) -> None:
-        """Test that backends are properly detected."""
-        from pecos import get_guppy_backends
-
-        backends = get_guppy_backends()
-
-        # Check that we get a dictionary with expected keys
-        assert isinstance(
-            backends,
-            dict,
-        ), "get_guppy_backends should return a dictionary"
-        assert "guppy_available" in backends, "Should have 'guppy_available' key"
-        assert "rust_backend" in backends, "Should have 'rust_backend' key"
-
-        # These should be boolean values
-        assert isinstance(
-            backends["guppy_available"],
-            bool,
-        ), "guppy_available should be boolean"
-        assert isinstance(
-            backends["rust_backend"],
-            bool,
-        ), "rust_backend should be boolean"
-
-        # If guppy is available, rust backend should also be available in most cases
-        assert not backends["guppy_available"] or backends["rust_backend"], "Guppy requires the Rust backend"
-
     def test_bell_state_execution(self) -> None:
         """Test Bell state creation and measurement correlation."""
         from guppylang import guppy

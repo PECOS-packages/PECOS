@@ -36,9 +36,6 @@ Note: For Python wrappers that accept pecos.programs types, use:
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from importlib.metadata import PackageNotFoundError, version
-from importlib.util import find_spec
-
 from pecos_rslib import (
     ByteMessage,
     ByteMessageBuilder,
@@ -69,30 +66,7 @@ from pecos_rslib.engines import (
     qis_engine,
 )
 
-from pecos.compilation_pipeline import compile_hugr_to_qis
 from pecos.engines.hybrid_engine import HybridEngine
-
-
-def get_compilation_backends() -> dict:
-    """Report the external HUGR compiler without importing its native extension."""
-    name = "selene-hugr-qis-compiler"
-    available = find_spec("selene_hugr_qis_compiler") is not None
-    try:
-        compiler_version = version(name)
-    except PackageNotFoundError:
-        compiler_version = None
-    return {
-        "default_backend": name if available else None,
-        "backends": {
-            name: {
-                "available": available,
-                "version": compiler_version,
-                "description": "Selene HUGR to QIS compiler",
-            },
-        },
-        "qsystem_platforms": ["helios", "sol"] if available else [],
-    }
-
 
 __all__ = [
     "ByteMessage",
@@ -113,9 +87,7 @@ __all__ = [
     "SparseStabEngineBuilder",
     "StateVecEngine",
     "StateVectorEngineBuilder",
-    "compile_hugr_to_qis",
     "find_llvm_tool",
-    "get_compilation_backends",
     "phir_engine",
     "phir_json_engine",
     "qasm_engine",

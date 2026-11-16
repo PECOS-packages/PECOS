@@ -1967,6 +1967,7 @@ mod tests {
                 QuarterPhase::PlusOne,
                 terms.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
             )
+            .unwrap()
         };
         StabilizerCodeSpec::new(
             5,
@@ -2134,7 +2135,8 @@ mod tests {
         let logical_x = PauliString::with_phase_and_paulis(
             QuarterPhase::PlusOne,
             (0..5).map(|q| (Pauli::X, QubitId::new(q))).collect(),
-        );
+        )
+        .unwrap();
         let certified = certified_stabilizer_coset_weight(&spec, &logical_x, 5)
             .unwrap()
             .unwrap();
@@ -2235,6 +2237,7 @@ mod tests {
                 QuarterPhase::PlusOne,
                 terms.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
             )
+            .unwrap()
         };
         let spec = StabilizerCodeSpec::new(
             2,

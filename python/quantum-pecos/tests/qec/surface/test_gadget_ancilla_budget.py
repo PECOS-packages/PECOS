@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from pecos.guppy_gen import get_num_qubits
 from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import SurfacePatch, TwirlConfig, gadgets
 from pecos.qec.surface._check_plan import (
     ancilla_schedule_for_check_plan,
@@ -21,9 +22,7 @@ from pecos.qec.surface._check_plan import (
 )
 from pecos.qec.surface.circuit_builder import (
     GuppyRenderer,
-    OpType,
     QubitAllocation,
-    SurfaceCircuitStep,
     TickCircuitRenderer,
     build_surface_code_circuit,
 )
@@ -48,7 +47,7 @@ def test_original_builder_parity(case: dict) -> None:
     )
     expected = case["output"]
     allocation = QubitAllocation(*expected["allocation"])
-    steps = [SurfaceCircuitStep(OpType[op], qubits, label) for op, qubits, label in expected["steps"]]
+    steps = [CircuitStep(OpType[op], qubits, label) for op, qubits, label in expected["steps"]]
     assert all(part.allocations == (allocation,) for part in parts)
     assert [step for part in parts for step in part.steps] == steps
     assert build_surface_code_circuit(patch, rounds, basis, ancilla_budget=budget, check_plan=plan) == (
@@ -189,7 +188,7 @@ def test_repeated_live_allocation_is_rejected() -> None:
     patch = SurfacePatch.create(distance=3)
     allocation = gadgets.default_allocation(patch)
     part = gadgets.syndrome_round_gadget(patch, allocation, round_index=0)
-    step = SurfaceCircuitStep(OpType.ALLOC, [allocation.x_ancilla_qubits[0]], "ax0")
+    step = CircuitStep(OpType.ALLOC, [allocation.x_ancilla_qubits[0]], "ax0")
     with pytest.raises(ValueError, match="allocations must be disjoint within a live epoch"):
         render_gadget_function(replace(part, steps=(step, step)))
 
@@ -368,7 +367,7 @@ def test_use_after_measurement_has_no_live_name(op: OpType, two_registers: bool)
             allocations=(*part.allocations, target),
         )
     with pytest.raises(ValueError, match=rf"{part.name}: ancilla {qubit} has no live allocation"):
-        render_gadget_function(replace(part, steps=(alloc, measure, SurfaceCircuitStep(op, qubits))))
+        render_gadget_function(replace(part, steps=(alloc, measure, CircuitStep(op, qubits))))
 
 
 @pytest.mark.parametrize("entry", ["init", "syndrome"])

@@ -18,7 +18,9 @@ import warnings
 from typing import TYPE_CHECKING
 
 from pecos.circuits.quantum_circuit import QuantumCircuit
-from pecos.slr.gen_codes._permutation import reject_permute_in_region
+from pecos.slr._qubit_args import gate_target_groups, qubit_key
+from pecos.slr.cops import COp
+from pecos.slr.gen_codes._permutation import reject_permute_in_region, reject_unsupported_permute
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.vars import SymbolicElem
 
@@ -47,7 +49,6 @@ class QuantumCircuitGenerator(Generator):
         self.current_tick = {}  # Accumulate operations for current tick
         self.current_scope = None
         self.permutation_map = {}
-        self.loop_var_values = {}  # Maps LoopVar to current iteration value
 
     def get_circuit(self) -> QuantumCircuit:
         """Get the generated QuantumCircuit.
@@ -96,6 +97,8 @@ class QuantumCircuitGenerator(Generator):
         Parameters:
             block (Block): The block of operations to generate code for.
         """
+        reject_unsupported_permute(block, "QuantumCircuitGenerator", "quantum_circuit")
+
         # Reset state
         self.circuit = QuantumCircuit()
         self.qubit_map = {}
@@ -117,6 +120,13 @@ class QuantumCircuitGenerator(Generator):
         if block_name in ("If", "While"):
             reject_permute_in_region(block, "QuantumCircuitGenerator")
 
+        if block_name == "If":
+            msg = (
+                "If cannot be converted to QuantumCircuit format: the generated circuit records no "
+                "classical results, so there is no condition to attach to the branch operations. "
+                "Use the QASM, QIR or Guppy targets for programs with conditionals."
+            )
+            raise NotImplementedError(msg)
         if block_name == "While":
             # While loops cannot be statically unrolled in QuantumCircuit format
             # This would require runtime evaluation which QuantumCircuit doesn't support
@@ -130,20 +140,13 @@ class QuantumCircuitGenerator(Generator):
         if block_name == "For":
             # For loops - unroll them properly
             self._flush_tick()
-            loop_var = block.var  # LoopVar object
             # Check if we can determine the iteration count
             if hasattr(block, "iterable") and block.iterable is not None:
                 # For(i, range(n)) or For(i, iterable)
                 if hasattr(block.iterable, "__iter__"):
                     # Unroll the loop for each iteration
                     iterations = list(block.iterable)
-                    for iter_val in iterations:
-                        self.loop_var_values[loop_var] = iter_val
-                        for op in block.ops:
-                            resolved_op = self._resolve_symbolic(op, loop_var, iter_val)
-                            self._handle_op(resolved_op)
-                    # Clean up loop variable
-                    del self.loop_var_values[loop_var]
+                    self._unroll_for(block, iterations)
                 else:
                     msg = f"Cannot unroll For loop with non-iterable: {block.iterable}"
                     raise ValueError(
@@ -160,13 +163,7 @@ class QuantumCircuitGenerator(Generator):
                     raise ValueError(
                         msg,
                     )
-                for iter_val in range(block.start, block.stop, step):
-                    self.loop_var_values[loop_var] = iter_val
-                    for op in block.ops:
-                        resolved_op = self._resolve_symbolic(op, loop_var, iter_val)
-                        self._handle_op(resolved_op)
-                # Clean up loop variable
-                del self.loop_var_values[loop_var]
+                self._unroll_for(block, range(block.start, block.stop, step))
             else:
                 msg = f"For loop missing required attributes (iterable or start/stop): {block}"
                 raise ValueError(
@@ -189,14 +186,6 @@ class QuantumCircuitGenerator(Generator):
             for _ in range(block.cond):
                 for op in block.ops:
                     self._handle_op(op)
-        elif block_name == "If":
-            # Conditional blocks - process both branches
-            self._flush_tick()
-            if hasattr(block, "then_block"):
-                self._handle_block(block.then_block)
-            if hasattr(block, "else_block") and block.else_block:
-                self._flush_tick()
-                self._handle_block(block.else_block)
         elif block_name == "Parallel":
             # Parallel operations stay in same tick
             for op in block.ops:
@@ -210,6 +199,12 @@ class QuantumCircuitGenerator(Generator):
 
         self.current_scope = previous_scope
         self.exit_block(block)
+
+    def _unroll_for(self, block, iterations):
+        """Resolve each iteration directly, without mutable loop-binding state."""
+        for value in iterations:
+            for op in block.ops:
+                self._handle_op(self._resolve_symbolic(op, block.var, value))
 
     def _resolve_symbolic(self, op, loop_var: LoopVar, value: int):
         """Resolve symbolic elements in an operation to concrete elements.
@@ -286,11 +281,18 @@ class QuantumCircuitGenerator(Generator):
         elif op_class == "Barrier":
             self._flush_tick()
         elif op_class == "Permute":
-            # Handle permutation - would need to update qubit mapping
-            self._flush_tick()
+            msg = "QuantumCircuitGenerator does not support Permute; use SlrConverter(...).quantum_circuit()."
+            raise NotImplementedError(msg)
         elif op_class == "Vars":
             # Variable declarations already handled
             pass
+        elif isinstance(op, COp) or op_class == "Print":
+            msg = (
+                f"QuantumCircuitGenerator does not yet support {op_class}: "
+                "classical operations are not lowered. "
+                "Use the QASM, QIR or Guppy targets for these operations."
+            )
+            raise NotImplementedError(msg)
         else:
             # Quantum operations (QGate objects)
             self._handle_quantum_op(op)
@@ -324,7 +326,7 @@ class QuantumCircuitGenerator(Generator):
             "CNOT": "CX",
             "CY": "CY",
             "CZ": "CZ",
-            "Measure": "Measure",
+            "MeasureZ": "Measure",
             "PZ": "RESET",
             "RX": "RX",
             "RY": "RY",
@@ -333,17 +335,9 @@ class QuantumCircuitGenerator(Generator):
 
         gate_name = gate_map.get(op_class, op_class)
 
-        # Handle two-qubit gates specially
-        if op_class in ["CX", "CNOT", "CY", "CZ"]:
-            # For PECOS gates, qargs contains both qubits
-            if len(targets) >= 2:
-                # Take first two as control and target
-                self._add_to_tick(gate_name, (targets[0], targets[1]))
-            elif hasattr(op, "control") and hasattr(op, "target"):
-                control_qubits = self._get_qubit_indices_from_target(op.control)
-                target_qubits = self._get_qubit_indices_from_target(op.target)
-                for c, t in zip(control_qubits, target_qubits):
-                    self._add_to_tick(gate_name, (c, t))
+        if op.qsize > 1:
+            for offset in range(0, len(targets), op.qsize):
+                self._add_to_tick(gate_name, tuple(targets[offset : offset + op.qsize]))
         else:
             # Single qubit gates or measurements
             for qubit in targets:
@@ -351,6 +345,14 @@ class QuantumCircuitGenerator(Generator):
 
     def _add_to_tick(self, gate_name, target):
         """Add a gate to the current tick."""
+        qubits = set(target) if isinstance(target, tuple) else {target}
+        if any(
+            qubits.intersection(location if isinstance(location, tuple) else (location,))
+            for locations in self.current_tick.values()
+            for location in locations
+        ):
+            # Sequential applications sharing a qubit cannot occupy one tick.
+            self._flush_tick()
         if gate_name not in self.current_tick:
             self.current_tick[gate_name] = set()
 
@@ -386,8 +388,11 @@ class QuantumCircuitGenerator(Generator):
     def _get_targets(self, op):
         """Get target qubit indices from an operation."""
         if hasattr(op, "qargs"):
-            # PECOS gate operations use qargs
-            return self._get_qubit_indices_from_target(op.qargs)
+            return [
+                self.qubit_map[qubit_key(qubit)]
+                for group in gate_target_groups(op.qargs, op.qsize, op.sym)
+                for qubit in group
+            ]
         if hasattr(op, "target"):
             return self._get_qubit_indices_from_target(op.target)
         if hasattr(op, "targets"):

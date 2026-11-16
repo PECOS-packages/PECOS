@@ -111,7 +111,7 @@ def test_sim_guppy_can_use_selene_engine_via_qis_path(policy: str) -> None:
     assert len(results["measurement_0"]) == 10
 
 
-def _run_selene_cwd_probe(tmp_path: Path, cargo_target_dir: Path | None = None) -> None:
+def _run_selene_cwd_probe(tmp_path: Path) -> None:
     probe = tmp_path / "selene_cwd_probe.py"
     probe.write_text(
         textwrap.dedent(
@@ -139,8 +139,6 @@ def _run_selene_cwd_probe(tmp_path: Path, cargo_target_dir: Path | None = None) 
         encoding="utf-8",
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith(("PECOS", "CARGO"))}
-    if cargo_target_dir is not None:
-        env["CARGO_TARGET_DIR"] = str(cargo_target_dir)
 
     subprocess.run(
         [sys.executable, str(probe)],
@@ -157,27 +155,26 @@ def test_selene_engine_is_cwd_independent(tmp_path: Path) -> None:
     _run_selene_cwd_probe(tmp_path)
 
 
-def test_selene_engine_uses_plugin_when_cargo_target_is_empty(tmp_path: Path) -> None:
-    """An empty explicit Cargo target forces the module-relative runtime fallback."""
-    empty_cargo_target = tmp_path / "empty-cargo-target"
-    empty_cargo_target.mkdir()
-
-    _run_selene_cwd_probe(tmp_path, empty_cargo_target)
-
-
 @pytest.mark.parametrize("operation", ["run", "run_with_workers", "build", "capture_operation_trace"])
 def test_qis_default_runtime_is_resolved_lazily(tmp_path: Path, operation: str) -> None:
     """QIS configuration needs no runtime; execution resolves the default."""
-    empty_cargo_target = tmp_path / "empty-cargo-target"
-    empty_cargo_target.mkdir()
+    from pecos_rslib import pecos_rslib as native
+
     probe = tmp_path / "qis_lazy_runtime_probe.py"
     probe.write_text(
         textwrap.dedent(
             '''
+            import importlib.util
             import sys
 
-            import pecos_rslib
             import pytest
+
+            # Load the extension without its package wrapper, which normally
+            # registers the wheel's bundled runtimes. This fixture must make
+            # the default runtime unavailable even when testing a full wheel.
+            spec = importlib.util.spec_from_file_location("pecos_rslib", sys.argv[2])
+            pecos_rslib = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(pecos_rslib)
 
             program = pecos_rslib.Qis("""
                 define i64 @qmain(i64 %0) #0 {
@@ -215,9 +212,8 @@ def test_qis_default_runtime_is_resolved_lazily(tmp_path: Path, operation: str) 
         encoding="utf-8",
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith(("PECOS", "CARGO"))}
-    env["CARGO_TARGET_DIR"] = str(empty_cargo_target)
     completed = subprocess.run(
-        [sys.executable, str(probe), operation],
+        [sys.executable, str(probe), operation, native.__file__],
         cwd=tmp_path,
         env=env,
         check=False,
@@ -254,7 +250,7 @@ def test_qis_trace_capture_supports_leakage_measurement_futures(tmp_path: Path) 
             saved_trace = json.loads(json.dumps(trace))
             leakage_gates = [
                 gate for chunk in saved_trace for gate in chunk.get("lowered_quantum_ops", [])
-                if gate["gate_type"] == "MeasureLeaked"
+                if gate["gate_type"] == "MeasureZLeaked"
             ]
             assert leakage_gates
             mid = leakage_gates[0]["measurement_result_ids"][0]
@@ -264,7 +260,7 @@ def test_qis_trace_capture_supports_leakage_measurement_futures(tmp_path: Path) 
             tikz = str(circuit_diagram(saved_trace, format="tikz", show_measurement_ids=True))
             assert "MZ" + chr(92) + f"_L[m{mid}]" in tikz
             inspection = inspect_circuit(saved_trace, show_measurement_ids=True)
-            measurement = next(op for op in inspection.operations if op["gate_type"] == "MeasureLeaked")
+            measurement = next(op for op in inspection.operations if op["gate_type"] == "MeasureZLeaked")
             assert measurement["measurement_ids"] == [mid]
             origin = measurement["metadata"]["_pecos_trace_origin"]
             source_chunk = next(
@@ -406,16 +402,17 @@ def event_runtime_proxy(tmp_path: Path) -> Path:
     if platform.system() == "Windows":
         pytest.skip("Synthetic dlopen proxy requires a POSIX C compiler")
     compiler = shutil.which("cc")
-    if compiler is None:
-        pytest.skip("Synthetic runtime proxy requires a C compiler")
+    assert compiler is not None, "Synthetic runtime proxy requires a C compiler"
     repo = Path(__file__).resolve().parents[4]
     lock = tomllib.loads((repo / "Cargo.lock").read_text())
     source = next(p["source"] for p in lock["package"] if p["name"] == "selene-core")
     revision = source.rsplit("#", 1)[1]
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     includes = list((cargo_home / "git/checkouts").glob(f"selene-*/{revision[:7]}/selene-core/c/include"))
-    if len(includes) != 1:
-        pytest.skip("Pinned Selene C headers unavailable; fetch Rust dependencies first")
+    assert includes, "Pinned Selene C headers unavailable; fetch Rust dependencies first"
+    # SSH and HTTPS Cargo caches can contain the same pinned ABI headers.
+    assert len({(path / "selene/runtime.h").read_bytes() for path in includes}) == 1
+    includes.sort()
     library = tmp_path / ("event_proxy.dylib" if platform.system() == "Darwin" else "event_proxy.so")
     args = [
         compiler,
@@ -502,8 +499,8 @@ def test_custom_runtime_native_gate_declaration_is_forwarded(explicit: list[str]
 
 
 @pytest.mark.parametrize("deferred", [False, True])
-def test_runtime_deferred_measurements_are_opt_in(deferred: bool) -> None:
-    """Only an opted-in plugin asks the Rust binding to defer measurements."""
+def test_legacy_deferred_measurement_hint_is_not_forwarded(deferred: bool) -> None:
+    """Native runtimes use the upstream future protocol without an opt-in."""
     from types import SimpleNamespace
 
     from pecos._engine_builders import _configure_selene_runtime
@@ -520,8 +517,7 @@ def test_runtime_deferred_measurements_are_opt_in(deferred: bool) -> None:
     if deferred:
         plugin.defer_measurements = True
     _configure_selene_runtime(builder, plugin)
-    assert builder.options.get("defer_measurements", False) is deferred
-    assert ("defer_measurements" in builder.options) is deferred
+    assert "defer_measurements" not in builder.options
 
 
 def test_named_soft_rz_package_retains_native_gate_declaration(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -557,8 +553,8 @@ def test_custom_runtime_rejects_unknown_native_gate_name() -> None:
 
 
 @pytest.mark.parametrize("runtime_name", ["selene_simple_runtime", "selene_soft_rz_runtime"])
-def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: str) -> None:
-    """Queued work after the last measurement reaches the final lowered batch."""
+def test_flat_runtime_owns_tail_after_last_result_read(runtime_name: str) -> None:
+    """A result read forces its future; the native end hook owns the later tail."""
     import pecos
     import pecos_rslib as pr
 
@@ -566,12 +562,14 @@ def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: s
         define i64 @qmain(i64 %shot) #0 {
             call void @__quantum__qis__x__body(i64 0)
             %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %read = call i32 @__quantum__rt__result_get_one(i64 0)
             call void @__quantum__qis__x__body(i64 1)
             call void @__quantum__qis__rz__body(double 0.3, i64 1)
             ret i64 0
         }
         declare void @__quantum__qis__x__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
         declare void @__quantum__qis__rz__body(double, i64)
         attributes #0 = { "EntryPoint" }
     """
@@ -589,9 +587,18 @@ def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: s
     )
     assert results["measurement_0"] == [1] * shots
 
+    trace = pecos.capture_qis_operation_trace(pecos.Qis(program), 2, runtime=runtime_name)
+    tail_pulses = [
+        gate
+        for chunk in trace
+        for gate in chunk["lowered_quantum_ops"]
+        if gate["qubits"] == [1] and gate["gate_type"] == "RXY1Q"
+    ]
+    assert len(tail_pulses) == int(runtime_name == "selene_simple_runtime")
 
-def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
-    """Selene's own soft-RZ plugin object carries soft-RZ's gate set, so rpp is decomposed."""
+
+def test_upstream_soft_rz_plugin_rejects_unsupported_native_rpp() -> None:
+    """Native calls preserve the runtime ABI, including its rejection of RPP."""
     import pecos
     import pecos_rslib as pr
 
@@ -603,24 +610,23 @@ def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
             call void @___rpp(i64 0, i64 1, double 3.141592653589793, double 0.0)
             %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
             %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+            %read0 = call i32 @__quantum__rt__result_get_one(i64 0)
+            %read1 = call i32 @__quantum__rt__result_get_one(i64 1)
             ret i64 0
         }
         declare void @___rpp(i64, i64, double, double)
         declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
         attributes #0 = { "EntryPoint" }
     """
-    shots = 5
     classical = pecos.selene_engine(plugin_package.SoftRZRuntimePlugin()).interface(pr.qis_helios_interface())
-    results = (
-        pecos.sim(pecos.Qis(program))
-        .classical(classical)
-        .qubits(2)
-        .quantum(pr.state_vector())
-        .seed(42)
-        .workers(1)
-        .run(shots)
-        .to_dict()
-    )
-    # rpp(pi, 0) is XX up to global phase, so |00> becomes |11>.
-    assert results["measurement_0"] == [1] * shots
-    assert results["measurement_1"] == [1] * shots
+    with pytest.raises(RuntimeError, match="rpp failed with errno"):
+        (
+            pecos.sim(pecos.Qis(program))
+            .classical(classical)
+            .qubits(2)
+            .quantum(pr.state_vector())
+            .seed(42)
+            .workers(1)
+            .run(1)
+        )

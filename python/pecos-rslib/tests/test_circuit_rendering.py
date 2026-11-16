@@ -195,7 +195,7 @@ def test_explicit_leakage_ids_keep_operand_order_metadata_and_reserve_ids():
     assert handle.measure_leaked_with_ids([8, 2], [42, 7]) is handle
     handle.meta("round", 3)
     gate = circuit.get_tick(0).gate_batches()[0]
-    assert gate.gate_type.name == "MeasureLeaked"
+    assert gate.gate_type.name == "MeasureZLeaked"
     assert gate.qubits == [8, 2]
     assert gate.meas_ids == [42, 7]
     assert circuit.get_tick(0).get_gate_attr(0, "round") == 3

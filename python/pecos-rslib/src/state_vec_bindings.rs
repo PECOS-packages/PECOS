@@ -17,7 +17,7 @@ use pyo3::types::{PyAny, PyBytes, PyDict, PySet, PyTuple};
 
 use crate::pecos_array::Array;
 use crate::simulator_utils::{
-    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_gate_locations,
 };
 
 /// The struct represents the state-vector simulator exposed to Python
@@ -147,6 +147,7 @@ impl PyStateVec {
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
+        crate::simulator_utils::validate_qubit(symbol, location, self.inner.qubit_capacity())?;
         let q = &[QubitId(location)];
         match symbol {
             "X" => {
@@ -343,165 +344,21 @@ impl PyStateVec {
     /// `params`: Optional parameters for parameterized gates (currently unused here)
     ///
     /// Returns an optional result, usually `None` unless a measurement is performed
-    #[allow(clippy::too_many_lines)]
     #[pyo3(signature = (symbol, location, params))]
     fn run_2q_gate(
         &mut self,
         symbol: &str,
-        location: &Bound<'_, PyTuple>,
+        location: &Bound<'_, PyAny>,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        if location.len() != 2 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Two-qubit gate requires exactly 2 qubit locations",
-            ));
-        }
-
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[(QubitId(q1), QubitId(q2))];
-
-        match symbol {
-            "CX" | "CNOT" => {
-                self.inner.cx(pair);
-                Ok(None)
-            }
-            "CY" => {
-                self.inner.cy(pair);
-                Ok(None)
-            }
-            "CZ" => {
-                self.inner.cz(pair);
-                Ok(None)
-            }
-            "SXX" | "SqrtXX" => {
-                self.inner.sxx(pair);
-                Ok(None)
-            }
-            "SXXdg" | "SqrtXXd" | "SqrtXXdg" => {
-                self.inner.sxxdg(pair);
-                Ok(None)
-            }
-            "SYY" | "SqrtYY" => {
-                self.inner.syy(pair);
-                Ok(None)
-            }
-            "SYYdg" | "SqrtYYd" | "SqrtYYdg" => {
-                self.inner.syydg(pair);
-                Ok(None)
-            }
-            "SZZ" | "SqrtZZ" => {
-                self.inner.szz(pair);
-                Ok(None)
-            }
-            "SZZdg" | "SqrtZZd" | "SqrtZZdg" => {
-                self.inner.szzdg(pair);
-                Ok(None)
-            }
-            "SWAP" => {
-                self.inner.swap(pair);
-                Ok(None)
-            }
-            "G2" | "G" => {
-                self.inner.g(pair);
-                Ok(None)
-            }
-            "RXX" => {
-                let angle = extract_angle(params, "RXX")?;
-                self.inner.rxx(angle, pair);
-                Ok(None)
-            }
-            "RYY" => {
-                let angle = extract_angle(params, "RYY")?;
-                self.inner.ryy(angle, pair);
-                Ok(None)
-            }
-            "RXYXY2Q" => {
-                let angles = extract_angles(params, "RXYXY2Q", GateType::RXYXY2Q.angle_arity())?;
-                self.inner.rxyxy2q(angles[0], angles[1], pair);
-                Ok(None)
-            }
-            "RZZ" => {
-                let angle = extract_angle(params, "RZZ")?;
-                self.inner.rzz(angle, pair);
-                Ok(None)
-            }
-
-            "CRX" | "CRY" | "CRZ" => {
-                let Some(params) = params else {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                        "Angle parameter missing for controlled rotation gate",
-                    ));
-                };
-                let angle = match params.get_item("angle") {
-                    Ok(Some(py_any)) => py_any.extract::<f64>().map_err(|_| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "Expected a float radians parameter for controlled rotation gate",
-                        )
-                    })?,
-                    Ok(None) => {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "Angle parameter missing for controlled rotation gate",
-                        ));
-                    }
-                    Err(err) => return Err(err),
-                };
-                let gates = match symbol {
-                    "CRX" => {
-                        pecos_core::controlled_rotations::lower_crx(angle, pair[0].0, pair[0].1)
-                    }
-                    "CRY" => {
-                        pecos_core::controlled_rotations::lower_cry(angle, pair[0].0, pair[0].1)
-                    }
-                    "CRZ" => {
-                        pecos_core::controlled_rotations::lower_crz(angle, pair[0].0, pair[0].1)
-                            .into_iter()
-                            .collect()
-                    }
-                    _ => unreachable!(),
-                };
-                for gate in gates {
-                    match gate.gate_type {
-                        GateType::Z => {
-                            self.inner.z(&gate.qubits);
-                        }
-                        GateType::H => {
-                            self.inner.h(&gate.qubits);
-                        }
-                        GateType::SX => {
-                            self.inner.sx(&gate.qubits);
-                        }
-                        GateType::SXdg => {
-                            self.inner.sxdg(&gate.qubits);
-                        }
-                        GateType::RZ => {
-                            self.inner.rz(gate.angles[0], &gate.qubits);
-                        }
-                        GateType::RZZ => {
-                            self.inner
-                                .rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])]);
-                        }
-                        _ => {
-                            unreachable!("controlled-rotation lowering emitted an unexpected gate")
-                        }
-                    }
-                }
-                Ok(None)
-            }
-
-            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
-                let angles =
-                    extract_angles(params, "RXXRYYRZZ", GateType::RXXRYYRZZ.angle_arity())?;
-                self.inner.rxxryyrzz(angles[0], angles[1], angles[2], pair);
-                Ok(None)
-            }
-            // Gate aliases - alternative names for two-qubit gates
-            "II" => Ok(None), // Two-qubit identity - no operation
-
-            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Unsupported two-qubit gate",
-            )),
-        }
+        let pair = crate::simulator_utils::extract_pair(symbol, location)?;
+        crate::simulator_utils::validate_pair(
+            symbol,
+            pair.0.0,
+            pair.1.0,
+            self.inner.qubit_capacity(),
+        )?;
+        self.dispatch_2q_gate(symbol, pair, params)
     }
 
     /// Internal gate dispatcher (tuple-based) - for internal use
@@ -632,6 +489,12 @@ impl PyStateVec {
         Py::new(py, pecos_array)
     }
 
+    /// Fixed register capacity, or None for a growable simulator.
+    #[getter]
+    fn gate_capacity(&self) -> Option<usize> {
+        self.inner.qubit_capacity()
+    }
+
     #[getter]
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
@@ -648,7 +511,12 @@ impl PyStateVec {
     ) -> PyResult<Py<PyDict>> {
         let output = PyDict::new(py);
         let locations_set: Bound<PySet> = locations.clone().cast_into()?;
-        validate_supported_symbol(symbol, &locations_set, supports)?;
+        let crate::simulator_utils::ValidatedLocations { qubits, pairs } = validate_gate_locations(
+            symbol,
+            &locations_set,
+            supports,
+            self.inner.qubit_capacity(),
+        )?;
 
         // Check if simulate_gate is False
         if let Some(p) = params
@@ -658,19 +526,18 @@ impl PyStateVec {
             return Ok(output.into());
         }
 
-        for location in locations_set.iter() {
-            // Convert location to tuple
-            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.clone().cast_into()?
-            } else {
-                // Single qubit - wrap in tuple
-                PyTuple::new(py, std::slice::from_ref(&location))?
-            };
+        if let Some(pairs) = pairs {
+            for pair in pairs {
+                if let Some(value) = self.dispatch_2q_gate(symbol, pair, params)? {
+                    output.set_item((pair.0.0, pair.1.0), value)?;
+                }
+            }
+            return Ok(output.into());
+        }
 
-            // Call the underlying run_gate_internal
-            let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
+        for (&qubit, location) in qubits.iter().zip(locations_set.iter()) {
+            let result = self.run_1q_gate(symbol, qubit, params)?;
 
-            // Only add to output if result is Some (non-zero measurement)
             if let Some(value) = result {
                 output.set_item(location, value)?;
             }
@@ -749,7 +616,8 @@ impl PyStateVec {
     }
 
     #[staticmethod]
-    fn _from_pickle(num_qubits: usize, state_bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
+    #[pyo3(name = "_from_pickle")]
+    fn from_pickle(num_qubits: usize, state_bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
         let bytes = state_bytes.as_bytes();
         let expected_len = (1usize << num_qubits) * 16;
         if bytes.len() != expected_len {
@@ -788,5 +656,170 @@ impl PyStateVec {
         Ok(crate::simulator_utils::GateBindingsDict::new(
             sim_obj, supports,
         ))
+    }
+}
+
+impl PyStateVec {
+    // Operands have already been extracted and validated for the entire batch.
+    #[allow(clippy::too_many_lines)]
+    fn dispatch_2q_gate(
+        &mut self,
+        symbol: &str,
+        operands: (QubitId, QubitId),
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = &[operands];
+        match symbol {
+            "CX" | "CNOT" => {
+                self.inner.cx(pair);
+                Ok(None)
+            }
+            "CY" => {
+                self.inner.cy(pair);
+                Ok(None)
+            }
+            "CZ" => {
+                self.inner.cz(pair);
+                Ok(None)
+            }
+            "SXX" | "SqrtXX" => {
+                self.inner.sxx(pair);
+                Ok(None)
+            }
+            "SXXdg" | "SqrtXXd" | "SqrtXXdg" => {
+                self.inner.sxxdg(pair);
+                Ok(None)
+            }
+            "SYY" | "SqrtYY" => {
+                self.inner.syy(pair);
+                Ok(None)
+            }
+            "SYYdg" | "SqrtYYd" | "SqrtYYdg" => {
+                self.inner.syydg(pair);
+                Ok(None)
+            }
+            "SZZ" | "SqrtZZ" => {
+                self.inner.szz(pair);
+                Ok(None)
+            }
+            "SZZdg" | "SqrtZZd" | "SqrtZZdg" => {
+                self.inner.szzdg(pair);
+                Ok(None)
+            }
+            "SWAP" => {
+                self.inner.swap(pair);
+                Ok(None)
+            }
+            "G2" | "G" => {
+                self.inner.g(pair);
+                Ok(None)
+            }
+            "RXX" => {
+                let angle = extract_angle(params, "RXX")?;
+                self.inner.rxx(angle, pair);
+                Ok(None)
+            }
+            "RYY" => {
+                let angle = extract_angle(params, "RYY")?;
+                self.inner.ryy(angle, pair);
+                Ok(None)
+            }
+            "RXYXY2Q" => {
+                let angles = extract_angles(params, "RXYXY2Q", GateType::RXYXY2Q.angle_arity())?;
+                self.inner.rxyxy2q(angles[0], angles[1], pair);
+                Ok(None)
+            }
+            "RZZ" => {
+                let angle = extract_angle(params, "RZZ")?;
+                self.inner.rzz(angle, pair);
+                Ok(None)
+            }
+
+            "CRX" | "CRY" | "CRZ" => {
+                let Some(params) = params else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Angle parameter missing for controlled rotation gate",
+                    ));
+                };
+                let angle = match params.get_item("angle") {
+                    Ok(Some(py_any)) => py_any.extract::<f64>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Expected a float radians parameter for controlled rotation gate",
+                        )
+                    })?,
+                    Ok(None) => {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for controlled rotation gate",
+                        ));
+                    }
+                    Err(err) => return Err(err),
+                };
+                pecos_core::Angle64::try_from_radians(angle)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+                let gates = match symbol {
+                    "CRX" => {
+                        pecos_core::controlled_rotations::lower_crx(angle, pair[0].0, pair[0].1)
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?
+                    }
+                    "CRY" => {
+                        pecos_core::controlled_rotations::lower_cry(angle, pair[0].0, pair[0].1)
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?
+                    }
+                    "CRZ" => {
+                        pecos_core::controlled_rotations::lower_crz(angle, pair[0].0, pair[0].1)
+                            .map_err(|error| {
+                                pyo3::exceptions::PyValueError::new_err(error.to_string())
+                            })?
+                            .into_iter()
+                            .collect()
+                    }
+                    _ => unreachable!(),
+                };
+                for gate in gates {
+                    match gate.gate_type {
+                        GateType::Z => {
+                            self.inner.z(&gate.qubits);
+                        }
+                        GateType::H => {
+                            self.inner.h(&gate.qubits);
+                        }
+                        GateType::SX => {
+                            self.inner.sx(&gate.qubits);
+                        }
+                        GateType::SXdg => {
+                            self.inner.sxdg(&gate.qubits);
+                        }
+                        GateType::RZ => {
+                            self.inner.rz(gate.angles[0], &gate.qubits);
+                        }
+                        GateType::RZZ => {
+                            self.inner
+                                .rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])]);
+                        }
+                        _ => {
+                            unreachable!("controlled-rotation lowering emitted an unexpected gate")
+                        }
+                    }
+                }
+                Ok(None)
+            }
+
+            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
+                let angles =
+                    extract_angles(params, "RXXRYYRZZ", GateType::RXXRYYRZZ.angle_arity())?;
+                self.inner.rxxryyrzz(angles[0], angles[1], angles[2], pair);
+                Ok(None)
+            }
+            // Gate aliases - alternative names for two-qubit gates
+            "II" => Ok(None), // Two-qubit identity - no operation
+
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Unsupported two-qubit gate",
+            )),
+        }
     }
 }

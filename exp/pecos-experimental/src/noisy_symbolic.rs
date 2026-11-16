@@ -457,8 +457,7 @@ impl NoisyMeasurementHistory {
         let n = self.measurements.len();
         let mut flattened = Vec::with_capacity(n);
 
-        for meas_idx in 0..n {
-            let meas = &self.measurements[meas_idx];
+        for (meas_idx, meas) in self.measurements.iter().enumerate() {
             let mut random_deps = BitSet::new();
             let mut fault_deps = meas.fault_deps.clone();
             let mut flip = meas.flip;
@@ -1898,7 +1897,7 @@ mod tests {
 
         let mut circuit = DagCircuit::new();
         circuit.h(&[0]);
-        let gate_index = circuit.add_gate_auto_wire(Gate::rz(Angle64::from_turns(0.125), &[0]));
+        let gate_index = circuit.add_gate_auto_wire(Gate::rz(Angle64::from_turn_ratio(1, 8), &[0]));
         for noise in [
             DepolarizingNoiseModel::default(),
             DepolarizingNoiseModel::uniform(0.01),

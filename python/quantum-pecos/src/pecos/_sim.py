@@ -69,18 +69,4 @@ def sim(
     return pecos_rslib.sim(program)
 
 
-def get_guppy_backends() -> dict:
-    """Get available Guppy backends.
-
-    Returns a dict with:
-        - guppy_available: Always True (guppylang is now a required dependency)
-        - rust_backend: Always True (program wrappers are built into pecos-rslib;
-          HUGR execution also requires selene-hugr-qis-compiler and Selene)
-    """
-    return {"guppy_available": True, "rust_backend": True}
-
-
-__all__ = [
-    "get_guppy_backends",
-    "sim",
-]
+__all__ = ["sim"]

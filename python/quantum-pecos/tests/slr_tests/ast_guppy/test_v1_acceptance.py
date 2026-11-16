@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pecos.slr import Block, CReg, If, Main, QReg, Repeat, Return
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ._harness import assert_ast_guppy_compiles  # noqa: TID252
 
@@ -29,7 +29,7 @@ class TestStraightLine:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -41,7 +41,7 @@ class TestStraightLine:
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.CX(q[1], q[2]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -56,8 +56,8 @@ class TestStraightLine:
             qb.CX(a[0], a[1]),
             qb.X(b[0]),
             qb.CX(b[0], b[1]),
-            Measure(a) > ca,
-            Measure(b) > cb,
+            MeasureZ(a) > ca,
+            MeasureZ(b) > cb,
             Return(ca, cb),
         )
         assert_ast_guppy_compiles(prog)
@@ -72,7 +72,7 @@ class TestMeasurement:
             q := QReg("q", 3),
             c := CReg("c", 1),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -85,7 +85,7 @@ class TestMeasurement:
             qb.H(q[1]),
             qb.H(q[2]),
             qb.H(q[3]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -95,10 +95,10 @@ class TestMeasurement:
             q := QReg("q", 3),
             c := CReg("c", 3),
             qb.X(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             qb.X(q[1]),
-            Measure(q[1]) > c[1],
-            Measure(q[2]) > c[2],
+            MeasureZ(q[1]) > c[1],
+            MeasureZ(q[2]) > c[2],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -109,7 +109,7 @@ class TestMeasurement:
             q := QReg("q", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            Measure(q),
+            MeasureZ(q),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -135,9 +135,9 @@ class TestPrep:
             q := QReg("q", 1),
             c := CReg("c", 2),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             qb.PZ(q[0]),  # consumed -> fresh qubit()
-            Measure(q[0]) > c[1],
+            MeasureZ(q[0]) > c[1],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -151,9 +151,9 @@ class TestControlFlow:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0]).Then(qb.X(q[1])),
-            Measure(q[1]) > c[1],
+            MeasureZ(q[1]) > c[1],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -163,7 +163,7 @@ class TestControlFlow:
         prog = Main(
             q := QReg("q", 1),
             Repeat(3).block(qb.H(q[0]), qb.H(q[0])),
-            Measure(q[0]),
+            MeasureZ(q[0]),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -179,7 +179,7 @@ class TestGatesBeyondCX:
             qb.Y(q[1]),
             qb.Z(q[2]),
             qb.H(q[3]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -195,7 +195,7 @@ class TestGatesBeyondCX:
             qb.Tdg(q[0]),
             qb.SZdg(q[0]),
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -207,7 +207,7 @@ class TestGatesBeyondCX:
             qb.H(q[0]),
             qb.CY(q[0], q[1]),
             qb.CZ(q[0], q[1]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         assert_ast_guppy_compiles(prog)

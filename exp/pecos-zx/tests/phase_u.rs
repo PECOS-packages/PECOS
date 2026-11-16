@@ -5,7 +5,15 @@ use quizx::tensor::ToTensor;
 
 #[test]
 fn phase_u_zx_export() {
-    for angle in [Angle64::HALF_TURN, Angle64::from_radians(-0.37)] {
+    let negative = pecos_core::radians!(-0.37);
+    assert_eq!(negative.fraction(), 17_360_464_587_495_211_133);
+    // The negative magnitude is 1_086_279_486_214_340_483 ticks. Rounding
+    // to the nearest four ticks gives 1_086_279_486_214_340_484; dividing by four
+    // yields the pinned half-turn rational below.
+    for (angle, numerator, denominator) in [
+        (Angle64::HALF_TURN, 1, 1),
+        (negative, -271_569_871_553_585_121, 1_i64 << 61),
+    ] {
         let mut dag = DagCircuit::new();
         dag.u(Angle64::ZERO, Angle64::ZERO, angle, &[0, 1]);
         let circuit = dag_to_zx_circuit(&dag).unwrap();
@@ -16,6 +24,13 @@ fn phase_u_zx_export() {
                 .iter()
                 .all(|gate| gate.t == quizx::gate::GType::ZPhase)
         );
+        for gate in &circuit.gates {
+            let rational = gate.phase.to_rational();
+            assert_eq!(
+                (*rational.numer(), *rational.denom()),
+                (numerator, denominator)
+            );
+        }
         let graph = dag_to_zx(&dag).unwrap();
         for tensor in [circuit.to_tensor64(), graph.to_tensor64()] {
             for (index, actual) in tensor.iter().enumerate() {

@@ -108,7 +108,7 @@ class TestMultiprocessingPauliProp:
 
     def test_pool_map(self) -> None:
         """Test PauliProp serialization works with multiprocessing Pool.map."""
-        sim = PauliProp(num_qubits=3, track_sign=True)
+        sim = PauliProp(track_sign=True)
         sim.track_x([0])
         sim_bytes = pickle.dumps(sim)
         args = [(sim_bytes, "h", ([0],), "weight", ())] * 2

@@ -25,8 +25,9 @@
 //!
 //! let model = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)
-//!     .build();
+//!     .build()?;
 //! println!("{}", model.describe());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use std::fmt::Write;

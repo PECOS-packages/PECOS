@@ -45,9 +45,40 @@ pub struct DecodeRangeResult {
     /// Predictions differing from the true observable flips.
     pub mismatches: usize,
     /// Predictions in range order, empty when retention was not requested.
-    pub predictions: Vec<ObsMask>,
+    pub predictions: Vec<Option<ObsMask>>,
+    /// Diagnostics only for shots requiring recovery.
+    pub recovery: Vec<pecos_decoder_core::outcome::ShotRecovery>,
     /// Decode seconds in range order, empty when timing was not requested.
     pub per_shot_seconds: Vec<f64>,
+}
+
+impl DecodeRangeResult {
+    /// Score only supplied predictions, retaining exceptional outcomes by shot index.
+    pub fn record_outcome(
+        &mut self,
+        shot_index: usize,
+        outcome: pecos_decoder_core::outcome::ObservableDecodeOutcome,
+        truth: &ObsMask,
+        collect_predictions: bool,
+    ) {
+        if let Some(prediction) = &outcome.prediction {
+            self.mismatches += usize::from(prediction != truth);
+        }
+        if outcome.prediction.is_none() || outcome.fallback_used || outcome.deltas_tried.len() > 1 {
+            self.recovery
+                .push(pecos_decoder_core::outcome::ShotRecovery {
+                    shot_index,
+                    undecoded: outcome.prediction.is_none(),
+                    logical_error: outcome.prediction.as_ref().map(|mask| mask != truth),
+                    fallback_used: outcome.fallback_used,
+                    syndrome_consistent: outcome.syndrome_consistent,
+                    deltas_tried: outcome.deltas_tried,
+                });
+        }
+        if collect_predictions {
+            self.predictions.push(outcome.prediction);
+        }
+    }
 }
 
 impl fmt::Display for ShotDecodeError {
@@ -85,6 +116,7 @@ pub fn decode_and_score_range(
     let capacity = shots.len();
     let mut result = DecodeRangeResult {
         mismatches: 0,
+        recovery: Vec::new(),
         predictions: if collect_predictions {
             Vec::with_capacity(capacity)
         } else {
@@ -99,15 +131,12 @@ pub fn decode_and_score_range(
     for shot_index in shots {
         let truth = access_shot(shot_index, syndrome);
         let start = collect_timings.then(std::time::Instant::now);
-        let decoded = decoder.decode_obs(syndrome);
+        let decoded = decoder.decode_outcome(syndrome);
         if let Some(start) = start {
             result.per_shot_seconds.push(start.elapsed().as_secs_f64());
         }
         let prediction = decoded.map_err(|source| ShotDecodeError::new(shot_index, source))?;
-        result.mismatches += usize::from(prediction != truth);
-        if collect_predictions {
-            result.predictions.push(prediction);
-        }
+        result.record_outcome(shot_index, prediction, &truth, collect_predictions);
     }
     Ok(result)
 }

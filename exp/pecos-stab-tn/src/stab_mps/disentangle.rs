@@ -364,7 +364,7 @@ pub(crate) fn disentangle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_core::{Angle64, QubitId};
+    use pecos_core::QubitId;
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DenseStateVec};
 
     #[test]
@@ -414,10 +414,10 @@ mod tests {
         let mut oracle = DenseStateVec::new(2);
         base.h(&[QubitId(0), QubitId(1)]);
         oracle.h(&[QubitId(0), QubitId(1)]);
-        base.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
-        oracle.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
-        base.rz(Angle64::from_radians(0.61), &[QubitId(1)]);
-        oracle.rz(Angle64::from_radians(0.61), &[QubitId(1)]);
+        base.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
+        oracle.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
+        base.rz(pecos_core::radians!(0.61), &[QubitId(1)]);
+        oracle.rz(pecos_core::radians!(0.61), &[QubitId(1)]);
         let expected = oracle.state();
 
         for (index, gate) in build_disentangler_set().iter().enumerate() {

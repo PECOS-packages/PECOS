@@ -12,6 +12,10 @@ categories.workspace = true
 description = "Trellis dynamic-programming engine for coset-mass decoding in PECOS"
 publish = false
 
+[features]
+# Expensive scalar oracles for integration validation; disabled in production.
+runtime-checks = []
+
 [dependencies]
 rayon.workspace = true
 pecos-bp.workspace = true

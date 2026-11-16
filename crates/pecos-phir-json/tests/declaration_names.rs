@@ -261,8 +261,34 @@ fn redeclaration_matrix() {
 fn distinct_names_and_repeated_references() {
     let input = include_str!("fixtures/unique_declarations.phir.json");
     let program: PHIRProgram = serde_json::from_str(input).unwrap();
+    let mut supported: Value = serde_json::from_str(input).unwrap();
+    supported["ops"].as_array_mut().unwrap().retain(|op| {
+        op.get("qop").is_some()
+            || matches!(
+                op.get("data").and_then(Value::as_str),
+                Some("qvar_define" | "cvar_define")
+            )
+    });
+    let supported_input = supported.to_string();
+    let supported_program: PHIRProgram = serde_json::from_str(&supported_input).unwrap();
     for &(entry, run) in ENTRIES {
-        run(input, &program.ops).unwrap_or_else(|e| panic!("{entry}: {e}"));
+        if matches!(
+            entry,
+            "converter" | "file converter" | "RON converter" | "file RON converter"
+        ) {
+            // This fixture includes assignments, which the module converter used
+            // to discard. Its declaration namespace is valid, but it must now
+            // report the unsupported operation instead of losing that work.
+            let error = run(input, &program.ops).unwrap_err();
+            assert!(
+                error.contains("cop =") && error.contains("JSON-to-module"),
+                "{entry}: {error}"
+            );
+            run(&supported_input, &supported_program.ops)
+                .unwrap_or_else(|e| panic!("{entry}: {e}"));
+        } else {
+            run(input, &program.ops).unwrap_or_else(|e| panic!("{entry}: {e}"));
+        }
     }
 }
 

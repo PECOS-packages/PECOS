@@ -104,10 +104,13 @@ jobs:
         rustup show
 
     - name: Install just
-      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      with:
+        tool: just@1.59.0
+        fallback: none
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
@@ -118,12 +121,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -138,6 +148,9 @@ jobs:
     - name: Sync Python dependencies
       run: just python-ci-sync-lint
 
+    - name: Verify Rust source distributions
+      run: uv run --frozen --no-sync python scripts/ci/check_rust_sdists.py
+
     - name: Run linting
       run: just python-ci-lint
 
@@ -146,9 +159,12 @@ jobs:
     # and the lockfile checks from python-lint.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # The full post-merge core suite passed at ~40m in late June and has since
-    # grown past 45m (timing out at ~83% of the suite on every dev push since
-    # 2026-07-07). 75m restores the original ~35% headroom.
+    # Use the same complete partition as the PR gate: the unsharded suite
+    # exceeds 75 minutes on trunk. Keep every shard running after a failure.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [qec-surface-harvest, qec-surface, qec-guppy, rest]
     timeout-minutes: 75
     steps:
     - name: Harden the runner (egress audit)
@@ -182,26 +198,37 @@ jobs:
       run: cmake --version
 
     - name: Install just
-      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      with:
+        tool: just@1.59.0
+        fallback: none
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) && matrix.shard == 'rest' }}
+        # All shards share the same build; only rest publishes its cache.
         # The cache saved here is what pr-core-python (pr-core-gate.yml)
         # restores on every PR. The default (root) workspace is the right one:
         # the rslib crates are members of the root Cargo workspace and build
         # into the top-level target/.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -213,9 +240,11 @@ jobs:
         path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
-    - name: Run core Python tests
-      if: github.event_name != 'pull_request'
-      run: just python-ci-core
+    - name: Build the Python packages the core lane needs
+      run: just python-ci-build-test
+
+    - name: Run core Python tests (${{ matrix.shard }} shard)
+      run: just pytest-ci-core-shard ${{ matrix.shard }}
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
@@ -300,10 +329,13 @@ jobs:
         rustup show
 
     - name: Install just
-      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      with:
+        tool: just@1.59.0
+        fallback: none
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
@@ -316,12 +348,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -342,12 +381,30 @@ jobs:
     - name: Install Python build tooling
       run: uv pip install --system maturin
 
+    # Build one artifact the way an isolated PEP 517 frontend does: outside the
+    # checkout and without Cargo exporting the workspace's LLVM prefix. The
+    # installed-wheel smoke test below then exercises Guppy -> QIS -> Selene,
+    # catching both LLVM toolchain fallback and native-library ABI mismatches.
+    - name: Build pecos-rslib wheel from an isolated frontend
+      if: runner.os == 'Linux'
+      env:
+        RUSTUP_TOOLCHAIN: stable
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/dist/pecos-rslib"
+        cd "$RUNNER_TEMP"
+        env -u LLVM_SYS_211_PREFIX uv build --wheel \
+          "$GITHUB_WORKSPACE/python/pecos-rslib" \
+          --config-setting 'build-args=--locked --profile dev' \
+          --out-dir "$GITHUB_WORKSPACE/dist/pecos-rslib"
+
     - name: Build pecos-rslib wheel
+      if: runner.os != 'Linux'
       env:
         RUSTUP_TOOLCHAIN: stable
       run: |
         mkdir -p dist/pecos-rslib
-        maturin build --locked --manifest-path python/pecos-rslib/Cargo.toml --out dist/pecos-rslib
+        uv build --wheel python/pecos-rslib \
+          --config-setting 'build-args=--locked --profile dev' --out-dir dist/pecos-rslib
 
     - name: Build pecos-rslib-llvm wheel
       if: matrix.build-llvm
@@ -358,9 +415,12 @@ jobs:
         maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
 
     - name: Test QIS executor recovery and runtime symbol binding
+      shell: bash
       if: runner.os == 'macOS' || runner.os == 'Windows'
       run: |
         cargo +stable test --locked -p pecos-qis-ffi --lib
+        runtime_dir=$(cargo +stable run --locked -p pecos-cli -- qis-runtime --profile debug --tests)
+        export PECOS_QIS_FFI_PATH="$runtime_dir" PECOS_SELENE_DIR="$runtime_dir"
         cargo +stable test --locked -p pecos-qis --lib executor::tests
 
     - name: Test StabVec numerical reference contract
@@ -468,7 +528,17 @@ jobs:
 
     - name: Install just
       if: matrix.include-llvm
-      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      with:
+        tool: just@1.59.0
+        fallback: none
+
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
@@ -476,7 +546,7 @@ jobs:
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       if: matrix.include-llvm
@@ -538,6 +608,22 @@ jobs:
           fi
         fi
 
+    - name: Execute installed-wheel Guppy QIS smoke test
+      if: matrix.include-pecos
+      run: |
+        python_bin="$(command -v python)"
+        isolated_home="$RUNNER_TEMP/qis-smoke-home"
+        llvm_shadow="$RUNNER_TEMP/qis-smoke-path"
+        mkdir -p "$isolated_home" "$llvm_shadow"
+        printf '#!/usr/bin/env sh\nexit 86\n' > "$llvm_shadow/llvm-as"
+        chmod +x "$llvm_shadow/llvm-as"
+        cp scripts/ci/smoke_guppy_qis.py "$RUNNER_TEMP/smoke_guppy_qis.py"
+        cd "$RUNNER_TEMP"
+        env -u LLVM_SYS_211_PREFIX \
+          HOME="$isolated_home" \
+          PATH="$llvm_shadow:$PATH" \
+          "$python_bin" -I smoke_guppy_qis.py
+
     - name: Execute WASM compatibility smoke test
       run: python scripts/ci/smoke_wasm_foreign_object.py
 
@@ -582,10 +668,13 @@ jobs:
       run: cmake --version
 
     - name: Install just
-      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      with:
+        tool: just@1.59.0
+        fallback: none
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
@@ -596,12 +685,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -661,10 +757,13 @@ jobs:
       run: cmake --version
 
     - name: Install just
-      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      with:
+        tool: just@1.59.0
+        fallback: none
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
@@ -674,12 +773,19 @@ jobs:
         # a root-workspace member and builds into the top-level target/, so the
         # default (root) workspace is the right one.
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm-zluppy
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env

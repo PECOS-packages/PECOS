@@ -527,7 +527,8 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
     /// executed for each shot with fresh noise samples.
     ///
     /// # Errors
-    /// Returns an error if GPU resource creation or shader execution fails.
+    /// Returns an error if a gate or noise operand is outside the register,
+    /// before GPU work, or if GPU resource creation or shader execution fails.
     pub fn sample<F>(&mut self, shots: usize, circuit_fn: F) -> Result<Vec<ShotResult>, String>
     where
         F: Fn(&mut CircuitBuilder),
@@ -536,6 +537,34 @@ impl<N: NoiseSampler> GpuNoisySampler<N> {
         let mut builder = CircuitBuilder::new();
         circuit_fn(&mut builder);
         let steps = builder.steps().to_vec();
+        for step in &steps {
+            let (a, b) = match *step {
+                NoisyCircuitStep::Gate(
+                    Gate::H(q)
+                    | Gate::S(q)
+                    | Gate::Sdg(q)
+                    | Gate::X(q)
+                    | Gate::Y(q)
+                    | Gate::Z(q)
+                    | Gate::Mz(q),
+                )
+                | NoisyCircuitStep::Noise(NoiseInjection::OneQ(q)) => (q, None),
+                NoisyCircuitStep::Gate(Gate::Cx(a, b) | Gate::Cz(a, b) | Gate::Swap(a, b))
+                | NoisyCircuitStep::Noise(NoiseInjection::TwoQ(a, b)) => (a, Some(b)),
+            };
+            for qubit in std::iter::once(a).chain(b) {
+                if qubit >= self.num_qubits {
+                    return Err(format!(
+                        "GpuNoisySampler: {step:?} targets qubit {qubit} outside a {}-qubit register; {}",
+                        self.num_qubits,
+                        pecos_simulators::qubit_validation::qubit_index_remedy(
+                            qubit,
+                            self.num_qubits
+                        )
+                    ));
+                }
+            }
+        }
 
         let mut results = Vec::with_capacity(shots);
 
@@ -661,7 +690,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_depolarizing_sampler() {
+    fn gpu_free_empty_register_remedy() {
+        let noise = DepolarizingNoiseSampler::with_seed(0.0, 0.0, 0.0, 42);
+        let mut sampler = GpuNoisySampler::with_seed(0, noise, 42);
+        let error = sampler
+            .sample(0, |c| {
+                c.x(&[3]);
+            })
+            .expect_err("empty registers reject operands before GPU work");
+        assert_eq!(
+            error,
+            "GpuNoisySampler: Gate(X(3)) targets qubit 3 outside a 0-qubit register; construct it with at least 4 qubits"
+        );
+    }
+
+    #[test]
+    fn gpu_free_invalid_operands_return_errors_before_adapter_creation() {
+        for bad in [2, 16383, 16384, usize::MAX] {
+            let steps = [
+                NoisyCircuitStep::Gate(Gate::H(bad)),
+                NoisyCircuitStep::Gate(Gate::S(bad)),
+                NoisyCircuitStep::Gate(Gate::Sdg(bad)),
+                NoisyCircuitStep::Gate(Gate::X(bad)),
+                NoisyCircuitStep::Gate(Gate::Y(bad)),
+                NoisyCircuitStep::Gate(Gate::Z(bad)),
+                NoisyCircuitStep::Gate(Gate::Mz(bad)),
+                NoisyCircuitStep::Gate(Gate::Cx(0, bad)),
+                NoisyCircuitStep::Gate(Gate::Cx(bad, 0)),
+                NoisyCircuitStep::Gate(Gate::Cz(0, bad)),
+                NoisyCircuitStep::Gate(Gate::Cz(bad, 0)),
+                NoisyCircuitStep::Gate(Gate::Swap(0, bad)),
+                NoisyCircuitStep::Gate(Gate::Swap(bad, 0)),
+                NoisyCircuitStep::Noise(NoiseInjection::OneQ(bad)),
+                NoisyCircuitStep::Noise(NoiseInjection::TwoQ(0, bad)),
+                NoisyCircuitStep::Noise(NoiseInjection::TwoQ(bad, 0)),
+            ];
+            for step in steps {
+                let noise = DepolarizingNoiseSampler::with_seed(0.0, 0.0, 0.0, 42);
+                let mut sampler = GpuNoisySampler::with_seed(2, noise, 42);
+                for shots in [0, 1] {
+                    let error = sampler
+                        .sample(shots, |circuit| {
+                            circuit.x(&[0]);
+                            circuit.steps.push(step.clone());
+                        })
+                        .expect_err("invalid operands must be returned before creating an adapter");
+                    assert_eq!(
+                        error,
+                        format!(
+                            "GpuNoisySampler: {step:?} targets qubit {bad} outside a 2-qubit register; use a qubit index below 2, or construct the simulator with more qubits"
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gpu_free_test_depolarizing_sampler() {
         let mut sampler = DepolarizingNoiseSampler::with_seed(0.5, 0.5, 0.5, 42);
 
         // With 50% probability, we should see some errors
@@ -692,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn test_circuit_builder() {
+    fn gpu_free_test_circuit_builder() {
         let mut builder = CircuitBuilder::new();
         builder
             .h(&[0])
@@ -729,7 +815,7 @@ mod tests {
     }
 
     #[test]
-    fn test_circuit_builder_all_gates() {
+    fn gpu_free_test_circuit_builder_all_gates() {
         // Test all gate types in CircuitBuilder
         let mut builder = CircuitBuilder::new();
         builder
@@ -1036,7 +1122,7 @@ mod tests {
     }
 
     #[test]
-    fn test_biased_depolarizing_sampler() {
+    fn gpu_free_test_biased_depolarizing_sampler() {
         // Test the biased depolarizing noise sampler with asymmetric measurement errors
         let mut sampler = BiasedDepolarizingNoiseSampler::with_seed(0.0, 0.0, 0.8, 0.2, 42);
 

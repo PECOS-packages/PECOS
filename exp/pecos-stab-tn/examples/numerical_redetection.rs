@@ -37,7 +37,7 @@ fn run_circuit(
     seed: u64,
     mix: GateMix,
     numerical_redetection: bool,
-) -> (StabMps, usize) {
+) -> Result<(StabMps, usize), Box<dyn std::error::Error>> {
     let mut stn = StabMps::builder(num_qubits)
         .seed(seed)
         .numerical_flag_redetection(numerical_redetection)
@@ -80,19 +80,19 @@ fn run_circuit(
             }
             6 => {
                 let bits = next_rng(&mut rng_state);
-                let angle = Angle64::from_radians((bits % 1000) as f64 * 0.001 * TAU);
+                let angle = Angle64::try_from_radians((bits % 1000) as f64 * 0.001 * TAU)?;
                 stn.rz(angle, &[QubitId(q0)]);
             }
             _ => {
                 let bits = next_rng(&mut rng_state);
-                let angle = Angle64::from_radians((bits % 1000) as f64 * 0.001 * TAU);
+                let angle = Angle64::try_from_radians((bits % 1000) as f64 * 0.001 * TAU)?;
                 stn.rx(angle, &[QubitId(q0)]);
             }
         }
         peak_bond = peak_bond.max(stn.max_bond_dim());
     }
 
-    (stn, peak_bond)
+    Ok((stn, peak_bond))
 }
 
 fn benchmark(
@@ -102,7 +102,7 @@ fn benchmark(
     num_seeds: u64,
     mix: GateMix,
     numerical_redetection: bool,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut total = 0u64;
     let mut fast = 0u64;
@@ -112,7 +112,8 @@ fn benchmark(
     let mut peak_bond_sum = 0u64;
 
     for seed in 0..num_seeds {
-        let (stn, peak_bond) = run_circuit(num_qubits, num_gates, seed, mix, numerical_redetection);
+        let (stn, peak_bond) =
+            run_circuit(num_qubits, num_gates, seed, mix, numerical_redetection)?;
         total += stn.stats.total_nonclifford;
         fast += stn.stats.multi_disent;
         redetect += stn.stats.numerical_redetect;
@@ -132,11 +133,12 @@ fn benchmark(
     let wall_ms = start.elapsed().as_secs_f64() * 1000.0;
     println!(
         "{label:<13} | {mode:<3} | {total:>5} | {fast_rate:>7.2}% | {redetect:>8} | \
-         {standard:>5} | {average_final:>9.2} | {average_peak:>8.2} | {wall_ms:>8.2}"
+     {standard:>5} | {average_final:>9.2} | {average_peak:>8.2} | {wall_ms:>8.2}"
     );
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "scenario      | opt | total | fast rate | redetect |   std | avg final | avg peak |  wall ms"
     );
@@ -149,7 +151,8 @@ fn main() {
         ("10q T", 10, 40, 3, GateMix::CliffT),
         ("15q T", 15, 50, 2, GateMix::CliffT),
     ] {
-        benchmark(label, n, gates, seeds, mix, false);
-        benchmark(label, n, gates, seeds, mix, true);
+        benchmark(label, n, gates, seeds, mix, false)?;
+        benchmark(label, n, gates, seeds, mix, true)?;
     }
+    Ok(())
 }

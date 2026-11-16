@@ -29,10 +29,10 @@ def test_individual_measurement_permutation_qasm(
     assert "measure a[1] -> m[1];" in qasm
 
     # Verify that the bit permutation is using the temporary bit approach, not XOR swap
-    assert "creg _bit_swap[1];" in qasm
-    assert "_bit_swap[0] = m[0];" in qasm
+    assert "creg bitswap[1];" in qasm
+    assert "bitswap[0] = m[0];" in qasm
     assert "m[0] = n[0];" in qasm
-    assert "n[0] = _bit_swap[0];" in qasm
+    assert "n[0] = bitswap[0];" in qasm
     assert "m[0] = m[0] ^ n[0];" not in qasm  # Make sure XOR swap is not used
 
     # Verify that running QASM generation twice produces consistent results

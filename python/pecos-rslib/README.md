@@ -2,6 +2,24 @@
 
 `pecos-rslib` provides Rust extensions for the Python version of PECOS.
 
+## Building wheels
+
+Build distributable wheels through the package's PEP 517 backend:
+
+```sh
+uv build --wheel python/pecos-rslib
+```
+
+The backend uses Maturin for the extension and bundles the QIS FFI library and
+Selene runtime plugins selected from Cargo's artifact messages. These libraries
+are loaded dynamically, so they are not discovered by scanning the extension's
+link-time dependencies. The installed package registers its own library directory
+with the executor; explicit runtime overrides still take precedence.
+
+Direct `maturin build` builds only the extension and bypasses this packaging step.
+Use `uv build` (or another PEP 517 frontend) for complete wheels. Release wheels
+still pass through the platform's wheel repair step before distribution.
+
 ## Optional HUGR compiler
 
 Install `pecos-rslib[hugr]` to lower HUGR programs with Selene's compiler.
@@ -33,3 +51,26 @@ print(state.outcome_probabilities(0))
 
 Pass `seed=` when a stochastic trajectory or measurement must be reproducible.
 Omitting it uses entropy-derived randomness.
+
+## Tick request insertion
+
+Generic `TickHandle.add_gate` broadcasts preflight every chunk in the Rust tick
+before inserting any. `.meta()` and `.metas()` apply to every batch of that
+insertion. Typed broadcasts validate their complete batch before insertion too.
+
+`TickHandle.gate_on_qubit`, `get_gate`, and `get_gate_attr` inspect an individual
+stored batch without cloning its tick. `TickCircuit.gate_locations` shares the
+generic insertion arity rules with Python request preparation. Prepared Python
+requests preserve native fields, metadata, and custom signatures when committed.
+
+QuantumCircuit reserves one tick-level symbol/parameter pair for a zero-qubit
+operation. Identical repeats (symbol and canonical JSON parameters) are no-ops;
+a different operation raises `ValueError` before the request is committed.
+Identical repeats preserve the original metadata encoding, even when the same
+request also inserts physical gates.
+
+Deleting a QuantumCircuit tick clears its gates and reserved zero-qubit operation
+attributes while retaining unrelated tick metadata, such as a builder phase.
+
+Replacing a QuantumCircuit tick takes its gates and reserved operation attributes
+from the request, preserving every other attribute of the target tick.

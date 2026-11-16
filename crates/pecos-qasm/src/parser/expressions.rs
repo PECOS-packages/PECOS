@@ -26,7 +26,7 @@ fn get_precedence(op: &str) -> Option<i32> {
         "<" | ">" | "<=" | ">=" => Some(5),
         "<<" | ">>" => Some(6),
         "+" | "-" => Some(7),
-        "*" | "/" => Some(8),
+        "*" | "/" | "%" => Some(8),
         "**" => Some(9),
         _ => None,
     }

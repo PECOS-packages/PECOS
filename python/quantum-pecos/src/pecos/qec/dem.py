@@ -20,8 +20,8 @@ even when the key also matches another scheduled gate.
 
 This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, compiles Guppy inputs to a HUGR to reject unverified control
-flow and, when requested, recover the sound tag -> measurement binding via
-``pecos.qec._hugr_result_tags.extract_result_tag_measurements``, and hands
+flow, then lowers it once to QIS for both execution and tag -> measurement
+binding via ``pecos.qec._qis_result_tags.extract_result_tag_measurements``, and hands
 the caller's detector/observable JSON to the Rust DEM builder. The metadata
 validation that applies to **every** ingest path (``from_guppy``,
 ``from_circuit``, ``DemSampler.from_circuit``, public ``DemBuilder``) lives
@@ -31,7 +31,7 @@ forms, tracked-Pauli rejection, ``num_measurements`` consistency,
 out-of-range records, ``meas_id`` resolution against the circuit's stable
 stamped ``MeasId``s, and the ``records``-vs-``meas_ids`` redundancy rule.
 
-The ``result_tags`` -> record-offset resolution (loop guard included) is
+The ``result_tags`` -> record-offset resolution (measurement-count guard included) is
 applied **only** through ``from_guppy``: the rewriter
 (``pecos_qec::resolve_result_tags``, invoked via the pyo3
 ``resolve_result_tags_for_guppy`` binding) runs from this wrapper before
@@ -59,11 +59,15 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
+from pecos._value_provenance import known_provenance_traces
 from pecos.programs import Guppy
+from pecos.qec import _qis_result_tags
 from pecos.qec._idle_noise import _translate_structured_idle_noise
+from pecos.qec._qis_result_tags import _CertificationError
 from pecos.qec.dem_spec import (
     GuppyDemBuild,
     ResultRef,
+    _metadata_entry,
     _resolve_dem_specs,
     _resolved_schema_from_validated_json,
 )
@@ -325,9 +329,13 @@ def _apply_traced_idle_passes(
     *,
     strip_traced_idles: bool | None,
     idle_after_2q_duration: float | None,
-    idle_noise_parameters: Sequence[float | None],
+    idle_noise_parameters: Mapping[str, float | None],
 ) -> None:
-    """Apply requested idle passes and reject idle noise with no target gates."""
+    """Apply requested idle passes and reject idle noise with no target gates.
+
+    A rate requests idle noise when it is nonzero; ``t1`` and ``t2`` request it
+    whenever set. Zero rates stay valid, matching the Rust builders.
+    """
     if strip_traced_idles is None:
         # Inserting a uniform idle convention on top of runtime-emitted idles
         # would double-count idle noise, so insertion implies stripping first.
@@ -344,10 +352,15 @@ def _apply_traced_idle_passes(
             raise ValueError(msg)
         circuit.insert_idle_after_two_qubit_gates(idle_after_2q_duration)
 
-    if any(value is not None for value in idle_noise_parameters) and circuit.gate_counts_by_type().get("Idle", 0) == 0:
+    requested = [
+        f"{name}={value!r}"
+        for name, value in idle_noise_parameters.items()
+        if value is not None and (name in {"t1", "t2"} or value != 0.0)
+    ]
+    if requested and circuit.gate_counts_by_type().get("Idle", 0) == 0:
         msg = (
-            "idle-noise parameters have no idle gates to attach to; either pass "
-            "idle_after_2q_duration=..., or use a Selene runtime that emits scheduled idles"
+            f"idle-noise parameters have no idle gates to attach to (requested: {', '.join(requested)}); "
+            "either pass idle_after_2q_duration=..., or use a Selene runtime that emits scheduled idles"
         )
         raise ValueError(msg)
 
@@ -451,18 +464,18 @@ class _DetectorErrorModelMixin:
                 - ``result_tags``: Guppy ``result(tag, ...)`` tag strings
                   (e.g. ``[{"id": 0, "result_tags": ["syn_a"]}]``). The
                   reorder-immune ``tag -> measurement`` binding is recovered
-                  from the compiled HUGR by Python static analysis and
+                  from the executed lowered QIS by Python static analysis and
                   resolved to stable runtime ``MeasId`` values in Rust. Supported only for
                   **straight-line, canonical** programs:
                   ``result(tag, measure(q))`` of a raw scalar measurement.
                   Computed (``result(tag, m0 == m1)``), constant
                   (``result(tag, True)``), and array-valued
                   (``result(tag, measure_array(qs))``) forms are not
-                  resolvable and an unknown tag is a hard error. Runtime
-                  ``for _ in range(comptime(n))`` loops (e.g. the surface
-                  code's round structure) have one static measure op per
-                  loop body in the HUGR, not per occurrence -- ``result_tags``
-                  is rejected fail-loud for such programs. ``result_tags``
+                  resolvable and an unknown tag is a hard error. The HUGR
+                  control-flow check rejects branches and runtime loops before
+                  execution. Generator-certified programs bypass that check;
+                  their ``result_tags`` still require lowered-program certification.
+                  ``result_tags``
                   also requires ``guppy`` to be a ``@guppy``-decorated
                   function / ``GuppyFunctionDefinition`` (not an arbitrary
                   ``pecos.sim``-acceptable wrapper); use ``records`` for the
@@ -497,6 +510,8 @@ class _DetectorErrorModelMixin:
                 ``":replace:XX"`` are replacement branches that omit the ideal
                 two-qubit gate before applying the Pauli. ``"~II"`` (or
                 ``":replace:II"``) omits the gate without applying a Pauli.
+                In a label ``"AB"``, ``A`` acts on the gate's first operand and
+                ``B`` on its second, whatever their qubit indices.
                 The two replacement spellings are equivalent and cannot both
                 name the same entry. Values must sum to 1.0; ``p2`` remains the
                 total two-qubit error rate.
@@ -621,7 +636,8 @@ class _DetectorErrorModelMixin:
             ``if measure(q): x(other)``) is rejected before tracing. Generic
             branching and looping HUGR control flow is conservatively rejected
             because one sampled branch cannot certify a static circuit. Built-in
-            generators may carry a trusted static measurement-layout certificate.
+            generators may carry a measurement-layout certificate that admits their
+            static schedule; its layout is checked against independent evidence.
 
             Every measurement is anchored to a stable MeasId automatically:
             ``measure()`` itself allocates the result slot in the trace (a
@@ -658,7 +674,8 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     """Cheap gate: does any entry use ``result_tags``? (substring check).
 
     Only decides whether JSON metadata needs tag resolution. Static extraction
-    is performed in Python; the loop guard and metadata resolution stay in Rust.
+    is performed in Python; JSON metadata resolution and its measurement-count
+    guard stay in Rust.
     """
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
 
@@ -686,8 +703,8 @@ def _validated_source_measurement_ids(circuit: Any) -> list[int]:
     return source_measurement_ids
 
 
-class _GuppyHugrAnalysis:
-    """Load and analyze a HUGR on demand, sharing results within one DEM build."""
+class _GuppyProgramAnalysis:
+    """Compile and analyze a Guppy program on demand, sharing results within one DEM build."""
 
     def __init__(self, hugr_bytes: bytes) -> None:
         self.hugr_bytes = hugr_bytes
@@ -695,16 +712,32 @@ class _GuppyHugrAnalysis:
     @cached_property
     def hugr(self) -> Hugr:
         """Return the validated module, loading it only on first use."""
-        from pecos.qec._hugr_result_tags import load_hugr_from_bytes
+        from pecos.qec._hugr_preflight import load_hugr_from_bytes
 
         return load_hugr_from_bytes(self.hugr_bytes)
 
     @cached_property
+    def qis(self) -> str:
+        """Lower once with the same defaults as Hugr._to_program."""
+        from pecos_rslib.hugr_lowering import compile_hugr_to_qis
+
+        return compile_hugr_to_qis(self.hugr_bytes)
+
+    @cached_property
+    def _tag_analysis(self) -> tuple[dict[str, list[int | None]], int] | _CertificationError:
+        """Cache certification failures too, for builds with multiple consumers."""
+        try:
+            return _qis_result_tags.extract_result_tag_measurements(self.qis)
+        except _CertificationError as error:
+            return error
+
+    @property
     def result_tags(self) -> tuple[dict[str, list[int | None]], int]:
         """Extract tag occurrences and the static count only on first use."""
-        from pecos.qec._hugr_result_tags import extract_result_tag_measurements, measurement_op_count
-
-        return extract_result_tag_measurements(self.hugr), measurement_op_count(self.hugr)
+        result = self._tag_analysis
+        if isinstance(result, _CertificationError):
+            raise result
+        return result
 
 
 def _preflight_guppy_static_schedule(
@@ -712,7 +745,7 @@ def _preflight_guppy_static_schedule(
     *,
     required_tags: Sequence[str],
     json_result_tags: bool = False,
-) -> tuple[Sequence[Any] | None, _GuppyHugrAnalysis]:
+) -> tuple[Sequence[Any] | None, _GuppyProgramAnalysis]:
     """Validate program-level trust before any runtime trace is captured.
 
     Returns ``(generator_layout, analysis)``. Runs the generator-certificate
@@ -720,7 +753,7 @@ def _preflight_guppy_static_schedule(
     so an unsupported program cannot run (or hang) ahead of its rejection.
     Fails closed on any input whose HUGR cannot be obtained: one sampled
     execution of an uninspectable program is not a certifiable static circuit.
-    The analysis holds the exact bytes the caller must execute. Certified
+    The analysis holds the bytes to lower and caches the exact QIS text to execute. Certified
     generators bypass loading; other programs load for the control-flow check.
     """
     hugr_bytes = _certifiable_hugr_bytes(guppy)
@@ -750,25 +783,49 @@ def _preflight_guppy_static_schedule(
     generator_layout = (
         _generator_certified_layout(certificate_carrier, hugr_bytes) if certificate_carrier is not None else None
     )
-    analysis = _GuppyHugrAnalysis(hugr_bytes)
+    analysis = _GuppyProgramAnalysis(hugr_bytes)
     if generator_layout is not None:
         return generator_layout, analysis
 
-    from pecos.qec._hugr_result_tags import has_nontrivial_control_flow
+    from pecos.qec._hugr_preflight import has_nontrivial_control_flow
 
     if has_nontrivial_control_flow(analysis.hugr):
         msg = (
             "GuppyDemBuilder requires a statically straight-line Guppy program unless it carries "
-            "a trusted generator-owned measurement layout; branching or looping control flow cannot be "
+            "a generator-owned measurement-layout certificate; branching or looping control flow cannot be "
             "certified from one runtime trace"
         )
         raise ValueError(msg)
     return None, analysis
 
 
+def _tag_certification_message(reference: str) -> str:
+    return (
+        f"Cannot bind {reference}: the program's lowered form could not be certified; "
+        "use records, rec[-k], or meas_ids instead."
+    )
+
+
+def _check_measurement_count(static_count: int, source_ids: Sequence[int]) -> None:
+    if static_count != len(source_ids):
+        msg = (
+            f"the certified lowered program has {static_count} measurement(s) but "
+            f"the traced program emitted {len(source_ids)} measurement(s)"
+        )
+        raise _CertificationError(msg)
+
+
+def _compiler_measurement_id(ordinal: int, source_measurement_ids: Sequence[int]) -> int:
+    """Map a compiled measurement ordinal into the validated source ID stream."""
+    if not 0 <= ordinal < len(source_measurement_ids):
+        msg = f"compiler measurement ordinal {ordinal} is outside the traced source measurement stream"
+        raise ValueError(msg)
+    return int(source_measurement_ids[ordinal])
+
+
 def _compiler_certified_result_traces(
     generator_layout: Sequence[Any] | None,
-    analysis: _GuppyHugrAnalysis,
+    analysis: _GuppyProgramAnalysis,
     circuit: Any,
     runtime_result_traces: Sequence[Mapping[str, Any]],
     *,
@@ -778,6 +835,7 @@ def _compiler_certified_result_traces(
     if generator_layout is not None:
         return _generator_certified_result_traces(
             generator_layout,
+            analysis,
             circuit,
             runtime_result_traces,
             required_tags=required_tags,
@@ -792,22 +850,10 @@ def _compiler_certified_result_traces(
     if not candidate_tags:
         return []
 
-    tag_occurrences, static_measurement_count = analysis.result_tags
-    source_measurement_ids = _validated_source_measurement_ids(circuit)
-    if static_measurement_count != len(source_measurement_ids):
-        if required_tags:
-            msg = (
-                "result_ref(...) is not supported for Guppy programs with runtime loops: "
-                f"the HUGR has {static_measurement_count} static measurement op(s) but "
-                f"the traced program emits {len(source_measurement_ids)} measurement(s)"
-            )
-            raise ValueError(msg)
-        return []
-
     required = set(required_tags)
     runtime_arities: dict[tuple[str, int], int] = {}
     runtime_occurrences: dict[str, int] = {}
-    for trace in runtime_result_traces:
+    for trace in known_provenance_traces(runtime_result_traces):
         tag = trace.get("name")
         if not isinstance(tag, str):
             continue
@@ -816,6 +862,15 @@ def _compiler_certified_result_traces(
         values = trace.get("values")
         if isinstance(values, list):
             runtime_arities[(tag, occurrence)] = max(len(values), 1)
+    try:
+        tag_occurrences, static_measurement_count = analysis.result_tags
+        source_measurement_ids = _validated_source_measurement_ids(circuit)
+        _check_measurement_count(static_measurement_count, source_measurement_ids)
+    except _CertificationError as error:
+        if required_tags:
+            msg = _tag_certification_message("result_ref")
+            raise ValueError(msg) from error
+        return []
     certified: list[dict[str, Any]] = []
     for tag in candidate_tags:
         occurrences = tag_occurrences.get(tag)
@@ -833,18 +888,17 @@ def _compiler_certified_result_traces(
                         "occurrence": occurrence,
                         "values": [False] * arity,
                         "result_ids": [],
+                        "provenance": None,
+                        "control_dependent": None,
                     },
                 )
                 continue
-            if ordinal >= len(source_measurement_ids):
-                msg = f"compiler measurement ordinal {ordinal} is outside the traced source measurement stream"
-                raise ValueError(msg)
             certified.append(
                 {
                     "name": tag,
                     "occurrence": occurrence,
                     "values": [False],
-                    "result_ids": [int(source_measurement_ids[ordinal])],
+                    "result_ids": [_compiler_measurement_id(ordinal, source_measurement_ids)],
                 },
             )
     return certified
@@ -852,6 +906,7 @@ def _compiler_certified_result_traces(
 
 def _generator_certified_result_traces(
     layout: Any,
+    analysis: _GuppyProgramAnalysis,
     circuit: Any,
     runtime_result_traces: Sequence[Mapping[str, Any]],
     *,
@@ -885,7 +940,7 @@ def _generator_certified_result_traces(
         raise ValueError(msg)
 
     runtime_value_count: dict[str, int] = {}
-    for trace in runtime_result_traces:
+    for trace in known_provenance_traces(runtime_result_traces):
         tag = trace.get("name")
         values = trace.get("values")
         if isinstance(tag, str) and isinstance(values, list):
@@ -910,19 +965,27 @@ def _generator_certified_result_traces(
         msg = f"result_ref tag(s) are absent from the generator-certified layout: {missing_required}"
         raise ValueError(msg)
 
-    # The program-bound generator certificate is the authoritative binding.
-    # Guppy 1 may omit scalar IDs for collected output arrays, so absent IDs
-    # are not an error. When the runtime does provide scalar or array IDs,
-    # however, they are independent evidence and must agree slot-for-slot
-    # with the generator-certified layout. In particular, this catches a
-    # reversed array provenance record without trusting it as the source of
-    # the binding.
+    # A generator layout is a claim, never a source of measurement identity.
+    # Resolve every slot eagerly from runtime provenance or compiled scalar
+    # analysis; both must agree when available, then agree with the layout.
+    # Only an uncertifiable schedule makes static evidence unavailable. A
+    # resolved measurement-count mismatch remains a hard error.
+    try:
+        tag_occurrences, static_measurement_count = analysis.result_tags
+    except _CertificationError:
+        tag_occurrences = {}
+    else:
+        _check_measurement_count(static_measurement_count, source_measurement_ids)
+
     runtime_ids_by_slot: dict[tuple[str, int], int] = {}
     runtime_offsets: dict[str, int] = {}
-    for trace in runtime_result_traces:
+    nonscalar_tags: set[str] = set()
+    for trace in known_provenance_traces(runtime_result_traces):
         tag = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")
+        if isinstance(tag, str) and (not isinstance(values, list) or len(values) != 1):
+            nonscalar_tags.add(tag)
         if not isinstance(tag, str) or not isinstance(values, list):
             continue
         offset = runtime_offsets.get(tag, 0)
@@ -935,6 +998,7 @@ def _generator_certified_result_traces(
                 raise ValueError(msg)
             runtime_ids_by_slot[(tag, offset + element)] = result_id
 
+    certified: list[dict[str, Any]] = []
     for source_index, slot in enumerate(entries):
         runtime_result_id = runtime_ids_by_slot.get(slot)
         if runtime_result_id is None:
@@ -945,6 +1009,25 @@ def _generator_certified_result_traces(
             base_tag, separator, element_text = tag.rpartition(":meas:")
             if separator and element_text.isdecimal() and value_index == 0:
                 runtime_result_id = runtime_ids_by_slot.get((base_tag, int(element_text)))
+        static_result_id = None
+        occurrences = tag_occurrences.get(slot[0], [])
+        if slot[0] not in nonscalar_tags and slot[1] < len(occurrences):
+            ordinal = occurrences[slot[1]]
+            if ordinal is not None:
+                static_result_id = _compiler_measurement_id(ordinal, source_measurement_ids)
+        if runtime_result_id is not None and static_result_id is not None and runtime_result_id != static_result_id:
+            msg = (
+                f"runtime result trace {slot[0]!r}[{slot[1]}] has measurement id {runtime_result_id}, "
+                f"but compiled analysis identifies measurement id {static_result_id}"
+            )
+            raise ValueError(msg)
+        result_id = runtime_result_id if runtime_result_id is not None else static_result_id
+        if result_id is None:
+            msg = (
+                f"cannot bind generator layout slot {slot[0]!r}[{slot[1]}]: "
+                "neither runtime provenance nor compiled analysis identifies its measurement"
+            )
+            raise ValueError(msg)
         expected_result_id = source_measurement_ids[source_index]
         if runtime_result_id is not None and runtime_result_id != expected_result_id:
             msg = (
@@ -952,16 +1035,65 @@ def _generator_certified_result_traces(
                 f"but the generator-certified layout requires {expected_result_id}"
             )
             raise ValueError(msg)
+        if result_id != expected_result_id:
+            msg = (
+                f"compiled analysis {slot[0]!r}[{slot[1]}] has measurement id {result_id}, "
+                f"but the generator-certified layout requires {expected_result_id}"
+            )
+            raise ValueError(msg)
+        certified.append(
+            {"name": slot[0], "occurrence": slot[1], "values": [False], "result_ids": [result_id]},
+        )
+    return certified
 
-    return [
-        {
-            "name": tag,
-            "occurrence": value_index,
-            "values": [False],
-            "result_ids": [int(source_measurement_ids[source_index])],
-        }
-        for source_index, (tag, value_index) in enumerate(entries)
-    ]
+
+def _check_certified_raw_binding(
+    certified: Sequence[Mapping[str, Any]],
+    bound: Sequence[Mapping[str, Any]],
+    raw_tag: str,
+    *,
+    generator_slots: bool = False,
+) -> None:
+    """Check certified raw-tag measurement IDs against the inference binding.
+
+    Both are compared at flattened raw-tag element positions. A compiler
+    record names a runtime call occurrence, which starts after the bound calls
+    before it. A generator record names a flattened slot, either
+    ``(raw_tag, index)`` or ``(f"{raw_tag}:meas:{index}", 0)``. Certificate
+    values are placeholders and are never compared.
+    """
+    calls = [list(item["result_ids"]) for item in bound if item["name"] == raw_tag]
+    bound_ids = [identity for ids in calls for identity in ids]
+    starts = [sum(len(ids) for ids in calls[:index]) for index in range(len(calls))]
+    for item in certified:
+        ids = item.get("result_ids") or []
+        if not ids:
+            continue
+        name, occurrence = item["name"], item["occurrence"]
+        base, separator, element_text = name.rpartition(":meas:")
+        if not generator_slots and name == raw_tag:
+            if occurrence < len(calls) and len(calls[occurrence]) != len(ids):
+                msg = (
+                    f"raw tag {raw_tag!r} call {occurrence} emits {len(calls[occurrence])} value(s), "
+                    f"but its certificate names {len(ids)} measurement(s)"
+                )
+                raise ValueError(msg)
+            position = starts[occurrence] if occurrence < len(calls) else len(bound_ids)
+        elif generator_slots and name == raw_tag:
+            position = occurrence
+        elif generator_slots and separator and base == raw_tag and element_text.isdecimal() and occurrence == 0:
+            position = int(element_text)
+        else:
+            continue
+        for element, identity in enumerate(ids):
+            index = position + element
+            inferred = bound_ids[index] if index < len(bound_ids) else None
+            if inferred != identity:
+                msg = (
+                    f"raw tag {raw_tag!r} element {index}: certified measurement ID {identity} "
+                    f"disagrees with inference binding ID {inferred}"
+                )
+                raise ValueError(msg)
 
 
 _UNSET = object()
@@ -1028,9 +1160,6 @@ class GuppyDemBuilder:
         setattr(self, attribute, value)
 
     def _set_specs(self, role: str, kind: str, value: Any) -> None:
-        if self._inference is not _UNSET:
-            msg = f"with_{role}() cannot be combined with with_inference()"
-            raise ValueError(msg)
         kind_attribute = f"_{role}_kind"
         value_attribute = f"_{role}_value"
         current_kind = getattr(self, kind_attribute)
@@ -1079,7 +1208,7 @@ class GuppyDemBuilder:
         return self
 
     def with_inference(self, settings: DemInferenceSettings) -> Self:
-        """Infer detector/observable parities instead of supplying definitions.
+        """Configure inference and infer roles whose definitions are unspecified.
 
         Settings are immutable values shared with the Rust API. Inference is
         empirical; the returned build records its evidence separately from
@@ -1089,18 +1218,8 @@ class GuppyDemBuilder:
             msg = "with_inference() requires a DemInferenceSettings instance"
             raise TypeError(msg)
         settings.validate()
-        if any(
-            value is not _UNSET
-            for value in (
-                self._detectors_kind,
-                self._observables_kind,
-                self._num_measurements,
-            )
-        ):
-            msg = (
-                "with_inference() cannot be combined with explicit detector/observable definitions "
-                "or with_num_measurements()"
-            )
+        if self._num_measurements is not _UNSET:
+            msg = "with_inference() cannot be combined with with_num_measurements()"
             raise ValueError(msg)
         self._set_once("_inference", settings, "with_inference")
         return self
@@ -1236,12 +1355,16 @@ class GuppyDemBuilder:
 
     def build(self) -> GuppyDemBuild:
         """Prepare explicit or inferred annotations and return an audited DEM build."""
-        from pecos.programs import Hugr as _HugrProgram
+        from pecos.programs import Qis as _QisProgram
+        from pecos.qec.dem_spec import Detector, InferredOutput, Observable
         from pecos.tracing import _collect_program_result_traces, trace_program_to_tick_circuit
 
         program = self._required("_program", "with_program")
         num_qubits = self._required("_qubits", "with_qubits")
-        if self._detectors_kind is _UNSET and self._inference is _UNSET:
+        inferred_observables = self._observables_kind == "typed" and any(
+            isinstance(spec, Observable) and spec.inferred_output is not None for spec in self._observables_value
+        )
+        if self._detectors_kind is _UNSET and self._inference is _UNSET and not inferred_observables:
             msg = "build() requires with_detectors() or with_detectors_json() or with_inference()"
             raise ValueError(msg)
 
@@ -1299,14 +1422,66 @@ class GuppyDemBuilder:
             p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
             p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
         )
+        typed_detectors = self._detectors_value if self._detectors_kind == "typed" else ()
+        typed_observables = self._observables_value if self._observables_kind == "typed" else ()
+
+        def requested_outputs(specs: Any, kind: Any, role: str, expected_type: Any) -> Any:
+            ids = []
+            outputs = []
+            for index, spec in enumerate(specs):
+                if not isinstance(spec, expected_type):
+                    msg = f"with_{role}() requires {expected_type.__name__} definitions"
+                    raise TypeError(msg)
+                _metadata_entry(spec.metadata)
+                identity = index if spec.id is None else spec.id
+                if isinstance(identity, bool) or not isinstance(identity, int) or identity < 0:
+                    msg = f"{role} ids must be non-negative integers"
+                    raise ValueError(msg)
+                ids.append(identity)
+                if spec.inferred_output is not None:
+                    outputs.append((spec.inferred_output.tag, spec.inferred_output.element))
+            if len(set(ids)) != len(ids):
+                msg = f"{role} ids must be unique"
+                raise ValueError(msg)
+            if role == "detectors" and sorted(ids) != list(range(len(ids))):
+                msg = "detector ids must be unique and dense from 0 to len(detectors)-1"
+                raise ValueError(msg)
+            if kind is _UNSET and self._inference is not _UNSET:
+                return None
+            return outputs
+
+        detector_outputs = requested_outputs(typed_detectors, self._detectors_kind, "detectors", Detector)
+        observable_outputs = requested_outputs(typed_observables, self._observables_kind, "observables", Observable)
+        needs_inference = any(outputs is None or bool(outputs) for outputs in (detector_outputs, observable_outputs))
+        referenced_tags = sorted(
+            {
+                ref.tag
+                for item in (*typed_detectors, *typed_observables)
+                for ref in item.refs
+                if isinstance(ref, ResultRef)
+            },
+        )
+        raw_detectors_json = self._detectors_value if self._detectors_kind == "json" else "[]"
+        raw_observables_json = self._observables_value if self._observables_kind == "json" else "[]"
+        json_needs_tags = _result_tags_present(raw_detectors_json, raw_observables_json)
         inference = None
         generator_layout = None
-        if self._inference is not _UNSET:
+        analysis = None
+        # Pure inference and mixed record-ID definitions need no compiler tag
+        # analysis. Explicit programs retain their static-schedule certification.
+        if not needs_inference or referenced_tags or json_needs_tags:
+            generator_layout, analysis = _preflight_guppy_static_schedule(
+                program,
+                required_tags=referenced_tags,
+                json_result_tags=json_needs_tags,
+            )
+        inferred_supports = {}
+        if needs_inference:
             from pecos.qec.guppy_output_dem import infer_guppy_dem_annotations
 
-            settings = self._inference
+            settings = DemInferenceSettings() if self._inference is _UNSET else self._inference
             inference = infer_guppy_dem_annotations(
-                program,
+                _QisProgram(analysis.qis) if analysis is not None else program,
                 num_qubits=num_qubits,
                 raw_tag=settings.raw_tag,
                 detector_tag=settings.detector_tag,
@@ -1323,33 +1498,39 @@ class GuppyDemBuilder:
                 max_hosted_tick_separation=(
                     None if self._max_hosted_tick_separation is _UNSET else self._max_hosted_tick_separation
                 ),
+                detector_outputs=detector_outputs,
+                observable_outputs=observable_outputs,
             )
             circuit = inference.circuit
-            detectors_json = inference.detectors_json
-            observables_json = inference.observables_json
-            result_traces = inference.result_traces
+            result_traces = list(inference.result_traces)
+            if analysis is not None:
+                certified = _compiler_certified_result_traces(
+                    generator_layout,
+                    analysis,
+                    circuit,
+                    inference.source_result_traces,
+                    required_tags=referenced_tags,
+                )
+                _check_certified_raw_binding(
+                    certified,
+                    result_traces,
+                    settings.raw_tag,
+                    generator_slots=generator_layout is not None,
+                )
+                # Raw-array bindings have their own provenance evidence.
+                result_traces.extend(item for item in certified if item["name"] != settings.raw_tag)
+            inferred_supports = {
+                InferredOutput(tag, element): support
+                for labels, supports in (
+                    (inference.detector_labels, inference.detector_supports),
+                    (inference.observable_labels, inference.observable_supports),
+                )
+                for (tag, element), support in zip(labels, supports, strict=True)
+            }
         else:
-            typed_detectors = self._detectors_value if self._detectors_kind == "typed" else ()
-            typed_observables = self._observables_value if self._observables_kind == "typed" else ()
-            referenced_tags = sorted(
-                {
-                    ref.tag
-                    for item in (*typed_detectors, *typed_observables)
-                    for ref in item.refs
-                    if isinstance(ref, ResultRef)
-                },
-            )
-            raw_detectors_json = self._detectors_value if self._detectors_kind == "json" else "[]"
-            raw_observables_json = self._observables_value if self._observables_kind == "json" else "[]"
-            json_needs_tags = _result_tags_present(raw_detectors_json, raw_observables_json)
-            generator_layout, analysis = _preflight_guppy_static_schedule(
-                program,
-                required_tags=referenced_tags,
-                json_result_tags=json_needs_tags,
-            )
             with _collect_program_result_traces() as result_traces:
                 circuit = trace_program_to_tick_circuit(
-                    _HugrProgram(analysis.hugr_bytes),
+                    _QisProgram(analysis.qis),
                     num_qubits,
                     seed=0 if self._seed is _UNSET else self._seed,
                     runtime=None if self._runtime is _UNSET else self._runtime,
@@ -1362,8 +1543,12 @@ class GuppyDemBuilder:
                         None if self._max_hosted_tick_separation is _UNSET else self._max_hosted_tick_separation
                     ),
                 )
-            normalize_traced_tick_circuit(circuit, context="GuppyDemBuilder.build")
-
+            # Preserve the runtime's physical gates: each carries an independent noise site.
+            normalize_traced_tick_circuit(
+                circuit,
+                context="GuppyDemBuilder.build",
+                simplify_single_qubit_clifford_chains=False,
+            )
             result_traces = _compiler_certified_result_traces(
                 generator_layout,
                 analysis,
@@ -1371,55 +1556,69 @@ class GuppyDemBuilder:
                 result_traces,
                 required_tags=referenced_tags,
             )
+
+        detectors_json = raw_detectors_json
+        observables_json = raw_observables_json
+        if self._detectors_kind == "typed" or self._observables_kind == "typed":
             typed_schema = _resolve_dem_specs(
                 typed_detectors,
                 typed_observables,
                 circuit=circuit,
                 result_traces=result_traces,
+                inferred_supports=inferred_supports,
             )
-            detectors_json = typed_schema.detectors_json if self._detectors_kind == "typed" else raw_detectors_json
-            observables_json = (
-                typed_schema.observables_json if self._observables_kind == "typed" else raw_observables_json
-            )
-            if json_needs_tags:
-                from pecos_rslib import resolve_result_tags_for_guppy
+            if self._detectors_kind == "typed":
+                detectors_json = typed_schema.detectors_json
+            if self._observables_kind == "typed":
+                observables_json = typed_schema.observables_json
+        if inference is not None:
+            if detector_outputs is None:
+                detectors_json = inference.detectors_json
+            if observable_outputs is None:
+                observables_json = inference.observables_json
+        if json_needs_tags:
+            from pecos_rslib import resolve_result_tags_for_guppy
 
-                source_ids_json = circuit.get_meta("qis_source_measurement_ids") or circuit.get_meta(
-                    "guppy_source_measurement_ids",
-                )
-                source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
+            source_ids_json = circuit.get_meta("qis_source_measurement_ids") or circuit.get_meta(
+                "guppy_source_measurement_ids",
+            )
+            source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
+            try:
                 tag_occurrences, static_measurement_count = analysis.result_tags
-                detectors_json, observables_json = resolve_result_tags_for_guppy(
-                    detectors_json,
-                    observables_json,
-                    tag_occurrences,
-                    static_measurement_count,
-                    source_measurement_ids,
-                    measurement_ids_in_execution_order(circuit),
-                )
+            except _CertificationError as error:
+                msg = _tag_certification_message("result_tags")
+                raise ValueError(msg) from error
+            detectors_json, observables_json = resolve_result_tags_for_guppy(
+                detectors_json,
+                observables_json,
+                tag_occurrences,
+                static_measurement_count,
+                source_measurement_ids,
+                measurement_ids_in_execution_order(circuit),
+            )
 
         _apply_traced_idle_passes(
             circuit,
             strip_traced_idles=None if self._strip_traced_idles is _UNSET else self._strip_traced_idles,
             idle_after_2q_duration=None if self._idle_after_2q is _UNSET else self._idle_after_2q,
-            idle_noise_parameters=(
-                p_idle_linear,
-                p_idle_sin_squared,
-                t1,
-                t2,
-                p_idle_linear_rate,
-                p_idle_quadratic_rate,
-                p_idle_x_linear_rate,
-                p_idle_y_linear_rate,
-                p_idle_z_linear_rate,
-                p_idle_x_quadratic_rate,
-                p_idle_y_quadratic_rate,
-                p_idle_z_quadratic_rate,
-                p_idle_quadratic_sine_rate,
-                p_idle_x_quadratic_sine_rate,
-                p_idle_y_quadratic_sine_rate,
-                p_idle_z_quadratic_sine_rate,
-            ),
+            idle_noise_parameters={
+                "p_idle_linear": p_idle_linear,
+                "p_idle_sin_squared": p_idle_sin_squared,
+                "t1": t1,
+                "t2": t2,
+                "p_idle_linear_rate": p_idle_linear_rate,
+                "p_idle_quadratic_rate": p_idle_quadratic_rate,
+                "p_idle_x_linear_rate": p_idle_x_linear_rate,
+                "p_idle_y_linear_rate": p_idle_y_linear_rate,
+                "p_idle_z_linear_rate": p_idle_z_linear_rate,
+                "p_idle_x_quadratic_rate": p_idle_x_quadratic_rate,
+                "p_idle_y_quadratic_rate": p_idle_y_quadratic_rate,
+                "p_idle_z_quadratic_rate": p_idle_z_quadratic_rate,
+                "p_idle_quadratic_sine_rate": p_idle_quadratic_sine_rate,
+                "p_idle_x_quadratic_sine_rate": p_idle_x_quadratic_sine_rate,
+                "p_idle_y_quadratic_sine_rate": p_idle_y_quadratic_sine_rate,
+                "p_idle_z_quadratic_sine_rate": p_idle_z_quadratic_sine_rate,
+            },
         )
         circuit.set_meta("detectors", detectors_json)
         circuit.set_meta("observables", observables_json)
@@ -1454,8 +1653,34 @@ class GuppyDemBuilder:
             observables_json,
             circuit=circuit,
             result_traces=result_traces,
-            allow_array_bindings=inference is not None,
+            raw_array_tag=inference.raw_tag if inference is not None else None,
         )
+        definition_origins = []
+        for role, specs, ids, selectors in (
+            ("detector", typed_detectors, schema.detector_ids, detector_outputs),
+            (
+                "observable",
+                typed_observables,
+                [identity for identity, _ in schema.observable_meas_ids],
+                observable_outputs,
+            ),
+        ):
+            selected = {
+                index if spec.id is None else spec.id: spec.inferred_output
+                for index, spec in enumerate(specs)
+                if spec.inferred_output is not None
+            }
+            for identity in sorted(ids):
+                origin = {"role": role, "id": identity, "source": "explicit"}
+                if selectors is None:
+                    labels = inference.detector_labels if role == "detector" else inference.observable_labels
+                    tag, element = labels[identity]
+                    origin.update(source="inferred", tag=tag, element=element)
+                elif identity in selected:
+                    output = selected[identity]
+                    origin.update(source="inferred", tag=output.tag, element=output.element)
+                definition_origins.append(origin)
+
         circuit.set_meta("dem_schema_fingerprint", schema.schema_fingerprint)
         if inference is not None:
             named_result_binding = inference.raw_binding
@@ -1485,6 +1710,7 @@ class GuppyDemBuilder:
             _observable_meas_ids=schema.observable_meas_ids,
             _result_ids_by_tag=schema.result_ids_by_tag,
             inference=inference,
+            definition_origins=tuple(definition_origins),
         )
 
 
@@ -1559,7 +1785,7 @@ def build_dem_from_guppy(
 
     ``rec[-k]`` references the canonical dense Guppy result-id stream, not the
     runtime's scheduled measurement-gate order. ``result_ref(...)`` resolves
-    through the compiled HUGR's dataflow and is checked against the traced
+    through the executed lowered program's dataflow and is checked against the traced
     measurement count. Both forms lower to stable ``MeasId`` metadata before
     DEM construction.
 

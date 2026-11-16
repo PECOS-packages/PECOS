@@ -34,7 +34,7 @@ pub mod factor;
 pub mod streaming;
 
 pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
-pub use streaming::{StreamingProgress, TrellisStreamingDecoder};
+pub use streaming::{StreamingMode, StreamingProgress, TrellisStreamingDecoder};
 
 use factor::{FactorModel, NormalizedFactor, Outcome};
 use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
@@ -499,6 +499,64 @@ impl CompactColumn {
 }
 
 impl Column {
+    // Check both branches together, but append untoggled then toggled exactly
+    // as before. Mass arithmetic is performed by the unchanged caller.
+    fn emit_compact_pair(
+        &self,
+        destination: &mut StateBuffer<f64>,
+        parent: &[u64],
+        observed: &[u64],
+        untoggled_mass: f64,
+        toggled_mass: f64,
+        transitions: &mut u64,
+    ) {
+        *transitions += 2;
+        let plan = &self.compact;
+        debug_assert_eq!(parent.len(), plan.parent_words + self.logical_toggle.len());
+        let read = |index: usize| {
+            if index == IMPLICIT_ZERO_WORD {
+                0
+            } else {
+                parent[index]
+            }
+        };
+        let (mut keep_zero, mut keep_one) = (true, true);
+        for &(source, word, mask, toggle) in &plan.closing {
+            let difference = read(source) ^ observed[word];
+            keep_zero &= difference & mask == 0;
+            keep_one &= (difference ^ toggle) & mask == 0;
+            if !keep_zero && !keep_one {
+                return;
+            }
+        }
+        if keep_zero {
+            destination.words.extend(
+                plan.output
+                    .iter()
+                    .map(|&(source, _, active)| read(source) & active),
+            );
+            destination
+                .words
+                .extend_from_slice(&parent[plan.parent_words..]);
+            destination.masses.push(untoggled_mass);
+        }
+        if keep_one {
+            destination.words.extend(
+                plan.output
+                    .iter()
+                    .map(|&(source, toggle, active)| (read(source) ^ toggle) & active),
+            );
+            destination.words.extend(
+                parent[plan.parent_words..]
+                    .iter()
+                    .zip(&self.logical_toggle)
+                    .map(|(&word, &toggle)| word ^ toggle),
+            );
+            destination.masses.push(toggled_mass);
+        }
+    }
+
+    #[cfg(any(test, feature = "runtime-checks"))]
     fn emit_compact(
         &self,
         destination: &mut StateBuffer<f64>,
@@ -707,16 +765,391 @@ impl<M: Copy> StateBuffer<M> {
     }
 }
 
+// Fixed-size slices let the compiler inline the short state copies. The
+// original full slice remains the fallback for arbitrary detector/logical widths.
+#[inline]
+fn append_merged_key(destination: &mut Vec<u64>, key: &[u64]) {
+    match key {
+        [a] => destination.push(*a),
+        [a, b] => destination.extend_from_slice(&[*a, *b]),
+        [a, b, c] => destination.extend_from_slice(&[*a, *b, *c]),
+        [a, b, c, d] => destination.extend_from_slice(&[*a, *b, *c, *d]),
+        _ => destination.extend_from_slice(key),
+    }
+}
+
+/// Consume complete sorted keys directly, keeping each equal-key run's
+/// original left-to-right fold. All omitted words are zero in every branch.
+/// Wide keys using only a comparison prefix must use the full-key fallback.
+#[inline]
+fn merge_sorted_records<K: Eq, M: Copy>(
+    parent: &mut StateBuffer<M>,
+    branches: &StateBuffer<M>,
+    records: impl IntoIterator<Item = (K, usize)>,
+    stride: usize,
+    fold: impl Fn(M, M) -> M,
+) {
+    let mut records = records.into_iter();
+    let Some((mut key, mut first)) = records.next() else {
+        return;
+    };
+    let mut mass = branches.masses[first];
+    for (next_key, index) in records {
+        if next_key == key {
+            mass = fold(mass, branches.masses[index]);
+        } else {
+            append_merged_key(&mut parent.words, branches.key(first, stride));
+            parent.masses.push(mass);
+            key = next_key;
+            first = index;
+            mass = branches.masses[index];
+        }
+    }
+    append_merged_key(&mut parent.words, branches.key(first, stride));
+    parent.masses.push(mass);
+}
+
+// Expansion interleaves records whose parity subsequences can have different
+// amounts of existing order. Sort each independently, then merge full records.
+// The embedded arrival bits remain part of every comparison.
+fn sort_parities<T: Ord + Copy>(records: &mut [T], scratch: &mut Vec<T>) {
+    scratch.clear();
+    scratch.reserve(records.len());
+    scratch.extend(records.iter().step_by(2).copied());
+    let middle = scratch.len();
+    scratch.extend(records.iter().skip(1).step_by(2).copied());
+    let (left, right) = scratch.split_at_mut(middle);
+    left.sort_unstable();
+    right.sort_unstable();
+    let (mut i, mut j, mut out) = (0, 0, 0);
+    while i < left.len() && j < right.len() {
+        if left[i] <= right[j] {
+            records[out] = left[i];
+            i += 1;
+        } else {
+            records[out] = right[j];
+            j += 1;
+        }
+        out += 1;
+    }
+    records[out..out + left.len() - i].copy_from_slice(&left[i..]);
+    out += left.len() - i;
+    records[out..].copy_from_slice(&right[j..]);
+}
+
+#[test]
+fn compact_parity_sort_matches_full_integer_order() {
+    let mut scratch = Vec::new();
+    let mut state = 0x0072_6f75_6e64_3439_u128;
+    for count in (0_usize..=512).chain([513, 514, 767, 1023, 1024, 1025]) {
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
+        for pattern in 0..6 {
+            let mut values: Vec<u128> = (0..count)
+                .map(|i| {
+                    state = state
+                        .wrapping_mul(0x2360_ed05_1fc6_5da4_4385_df64_9fcc_f645)
+                        .wrapping_add(1);
+                    match pattern {
+                        0 => state,
+                        1 => (i as u128) << arrival_bits | i as u128,
+                        2 => ((count - i) as u128) << arrival_bits | i as u128,
+                        3 => (state % 4) << arrival_bits | i as u128,
+                        4 => u128::MAX,
+                        _ => {
+                            if i % 2 == 0 {
+                                i as u128
+                            } else {
+                                state
+                            }
+                        }
+                    }
+                })
+                .collect();
+            let mut expected = values.clone();
+            expected.sort_unstable();
+            sort_parities(&mut values, &mut scratch);
+            assert_eq!(values, expected, "length={count}, pattern={pattern}");
+        }
+    }
+}
+
+#[test]
+fn narrow_parity_sort_matches_full_integer_order() {
+    let mut scratch = Vec::new();
+    let mut state = 0x0072_6f75_6e64_3536_u64;
+    for count in (0_usize..=512).chain([513, 514, 767, 1023, 1024, 1025]) {
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
+        for pattern in 0..6 {
+            let mut values: Vec<u64> = (0..count)
+                .map(|i| {
+                    state = state.wrapping_mul(0x4385_df64_9fcc_f645).wrapping_add(1);
+                    match pattern {
+                        0 => state,
+                        1 => (i as u64) << arrival_bits | i as u64,
+                        2 => ((count - i) as u64) << arrival_bits | i as u64,
+                        3 => (state % 4) << arrival_bits | i as u64,
+                        4 => u64::MAX,
+                        _ => {
+                            if i % 2 == 0 {
+                                i as u64
+                            } else {
+                                state
+                            }
+                        }
+                    }
+                })
+                .collect();
+            let mut expected = values.clone();
+            expected.sort_unstable();
+            sort_parities(&mut values, &mut scratch);
+            assert_eq!(values, expected, "length={count}, pattern={pattern}");
+        }
+    }
+}
+
+#[test]
+fn lazy_eligible_indices_match_original_pruning() {
+    let values = SuffixValues::new(0, None);
+    let compatibility = SuffixCompatibility {
+        rows: &[],
+        values: &values,
+    };
+    for stride in [0usize, 1, 2, 3, 4, 7] {
+        for count in [1usize, 2, 3, 63, 64, 255, 256, 257, 511, 512] {
+            for pattern in 0..5 {
+                let mut original = FrontierScratch::<f64> {
+                    stride,
+                    detector_words: stride.saturating_sub(1),
+                    ..Default::default()
+                };
+                for i in 0..count {
+                    for word in 0..stride {
+                        // Deliberately unsorted keys exercise the full-key tie comparator.
+                        original
+                            .parent
+                            .words
+                            .push(((count - i) as u64).rotate_left(u32::try_from(word).unwrap()));
+                    }
+                    original.parent.masses.push(match pattern {
+                        0 => -0.0,
+                        1 => -f64::from(u32::try_from(i).unwrap()),
+                        2 => -(f64::from(u32::try_from((i * 17) % 23).unwrap())),
+                        3 => {
+                            if i % 2 == 0 {
+                                0.0
+                            } else {
+                                -0.0
+                            }
+                        }
+                        _ => [
+                            f64::NEG_INFINITY,
+                            f64::INFINITY,
+                            f64::from_bits(0x7ff8_0000_0000_0123),
+                            -1.0,
+                        ][i % 4],
+                    });
+                }
+                original.indices.extend((0..count).rev());
+                original.retained.resize(count, true);
+                for k in [0usize, 1, 64, 256, count - 1, count, count + 1, usize::MAX] {
+                    for delta in [0.0, 1.0, 14.0, f64::INFINITY] {
+                        for mode in [DecodeMode::Full, DecodeMode::PredictionOnly] {
+                            let mut actual = original.clone();
+                            let mut expected = original.clone();
+                            let a =
+                                prune_impl(&mut actual, k, delta, 0.0, compatibility, &[], mode);
+                            let b = prune_reference(
+                                &mut expected,
+                                k,
+                                delta,
+                                0.0,
+                                compatibility,
+                                &[],
+                                mode,
+                            );
+                            assert_eq!(
+                                actual.parent.words, expected.parent.words,
+                                "stride={stride}, count={count}, pattern={pattern}, k={k}, delta={delta}"
+                            );
+                            assert_eq!(
+                                actual
+                                    .parent
+                                    .masses
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>(),
+                                expected
+                                    .parent
+                                    .masses
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>()
+                            );
+                            assert_eq!(
+                                actual
+                                    .scores
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>(),
+                                expected
+                                    .scores
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>()
+                            );
+                            assert_eq!(
+                                (
+                                    a.dropped_states,
+                                    a.dropped_log_mass.to_bits(),
+                                    a.k_capped,
+                                    a.delta_pruned
+                                ),
+                                (
+                                    b.dropped_states,
+                                    b.dropped_log_mass.to_bits(),
+                                    b.k_capped,
+                                    b.delta_pruned
+                                )
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn final_score_group_matches_reference() {
+    for offset in [0usize, 2] {
+        for row_count in 0..=17 {
+            let rows: Vec<_> = (0..row_count)
+                .map(|i| SuffixRow {
+                    word: u32::try_from(offset + (60 + i) / 64).unwrap(),
+                    bit: u8::try_from((60 + i) % 64).unwrap(),
+                    epoch: u32::try_from(i).unwrap(),
+                })
+                .collect();
+            for pattern in 0..4 {
+                let mut values = SuffixValues::new(row_count, None);
+                for (i, p) in values.probabilities.iter_mut().enumerate() {
+                    let pair = match pattern {
+                        0 => (
+                            -0.125 * f64::from(u32::try_from(i + 1).unwrap()),
+                            -0.375 * f64::from(u32::try_from(i + 1).unwrap()),
+                        ),
+                        1 => (-0.0, 0.0),
+                        // Inexact sums: any change in addition order changes bits.
+                        2 => {
+                            let scale = 1.0 + f64::from(u32::try_from(i).unwrap()).sqrt();
+                            (-0.1 * scale, -1e-9 * scale - 3.0)
+                        }
+                        _ => (f64::NEG_INFINITY, -1.0),
+                    };
+                    p.zero = pair.0;
+                    p.one = pair.1;
+                }
+                let compatibility = SuffixCompatibility {
+                    rows: &rows,
+                    values: &values,
+                };
+                for count in [0usize, 1, 3, 64, 257, 512] {
+                    let mut source = FrontierScratch::<f64> {
+                        stride: 3,
+                        detector_words: 2,
+                        detector_word_offset: offset,
+                        ..Default::default()
+                    };
+                    for i in 0..count {
+                        source.parent.words.extend_from_slice(&[
+                            (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15),
+                            (i as u64).rotate_left(13),
+                            i as u64,
+                        ]);
+                        source.parent.masses.push(if i == 0 {
+                            -0.0
+                        } else {
+                            -f64::from(u32::try_from(i).unwrap())
+                        });
+                    }
+                    for observed_word in [0u64, u64::MAX, 0xa55a_a55a_a55a_a55a] {
+                        let observed = vec![observed_word; offset + 2];
+                        for alpha in [0.0, 0.8, 1.0] {
+                            let mut actual = source.clone();
+                            let mut expected = source.clone();
+                            score_candidates(&mut actual, alpha, compatibility, &observed);
+                            score_candidates_reference(
+                                &mut expected,
+                                alpha,
+                                compatibility,
+                                &observed,
+                            );
+                            assert_eq!(
+                                actual
+                                    .scores
+                                    .iter()
+                                    .map(|v| v.to_bits())
+                                    .collect::<Vec<_>>(),
+                                expected
+                                    .scores
+                                    .iter()
+                                    .map(|v| v.to_bits())
+                                    .collect::<Vec<_>>(),
+                                "offset={offset}, rows={row_count}, count={count}, pattern={pattern}"
+                            );
+                            assert_eq!(actual.parent.words, expected.parent.words);
+                            assert_eq!(
+                                actual
+                                    .parent
+                                    .masses
+                                    .iter()
+                                    .map(|v| v.to_bits())
+                                    .collect::<Vec<_>>(),
+                                expected
+                                    .parent
+                                    .masses
+                                    .iter()
+                                    .map(|v| v.to_bits())
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Both arenas and all sorting/scoring workspaces survive columns and shots.
 /// Their buffers keep their high-water capacity for the decoder's lifetime by design.
 /// `parent` is always in ascending key order at a column boundary: expansion
 /// order determines the load-bearing left-to-right floating-point merge fold.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(
+    any(test, feature = "runtime-checks"),
+    expect(
+        clippy::struct_excessive_bools,
+        reason = "The check-only path observer extends existing private merge-selection flags without changing hot-path dispatch"
+    )
+)]
 struct FrontierScratch<M> {
     parent: StateBuffer<M>,
     branches: StateBuffer<M>,
     indices: Vec<usize>,
     merge_keys: Vec<([u64; 4], usize)>,
+    merge_keys_one: Vec<(u64, usize)>,
+    merge_keys_two: Vec<([u64; 2], usize)>,
+    merge_keys_three: Vec<([u64; 3], usize)>,
+    packed_merge_keys: bool,
+    compact_merge_records: Vec<u128>,
+    compact_sort_scratch: Vec<u128>,
+    narrow_merge_records: Vec<u64>,
+    narrow_sort_scratch: Vec<u64>,
+    use_narrow_merge_records: bool,
+    use_compact_merge_records: bool,
+    #[cfg(any(test, feature = "runtime-checks"))]
+    use_generalized_merge_records: bool,
+    merge_record_arrival_bits: u32,
     merge_word_masks: Vec<u64>,
     merge_word_indices: Vec<usize>,
     scores: Vec<M>,
@@ -747,8 +1180,99 @@ impl<M: Copy> FrontierScratch<M> {
     /// Sorting preserves arrival order within each equal-key run. The
     /// first arrival is installed verbatim, then each subsequent arrival applies
     /// `fold(accumulated, next)` in arrival order.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Packed arrival indices are masked to at most ten bits and fit both 32-bit and 64-bit usize"
+    )]
     fn merge(&mut self, fold: impl Fn(M, M) -> M) {
         self.sort_merge_indices();
+        self.parent.clear(self.stride);
+        // Packed records hold a complete key above the original arrival index.
+        let arrival_bits = self.merge_record_arrival_bits;
+        let arrival_mask = (1_u64 << arrival_bits) - 1;
+        if self.use_narrow_merge_records {
+            merge_sorted_records(
+                &mut self.parent,
+                &self.branches,
+                self.narrow_merge_records
+                    .iter()
+                    .map(|&record| (record >> arrival_bits, (record & arrival_mask) as usize)),
+                self.stride,
+                fold,
+            );
+            return;
+        }
+        if self.use_compact_merge_records {
+            merge_sorted_records(
+                &mut self.parent,
+                &self.branches,
+                self.compact_merge_records.iter().map(|&record| {
+                    (
+                        record >> arrival_bits,
+                        (record & u128::from(arrival_mask)) as usize,
+                    )
+                }),
+                self.stride,
+                fold,
+            );
+            return;
+        }
+        // Packing changes the record representation, not the physical state.
+        let record_width = if self.packed_merge_keys {
+            2
+        } else {
+            self.merge_word_indices.len()
+        };
+        match record_width {
+            0 | 1 => merge_sorted_records(
+                &mut self.parent,
+                &self.branches,
+                self.merge_keys_one.iter().copied(),
+                self.stride,
+                fold,
+            ),
+            2 => merge_sorted_records(
+                &mut self.parent,
+                &self.branches,
+                self.merge_keys_two.iter().copied(),
+                self.stride,
+                fold,
+            ),
+            3 => merge_sorted_records(
+                &mut self.parent,
+                &self.branches,
+                self.merge_keys_three.iter().copied(),
+                self.stride,
+                fold,
+            ),
+            4 => merge_sorted_records(
+                &mut self.parent,
+                &self.branches,
+                self.merge_keys.iter().copied(),
+                self.stride,
+                fold,
+            ),
+            _ => {
+                self.parent.clear(self.stride);
+                for &index in &self.indices {
+                    let count = self.parent.masses.len();
+                    if count != 0
+                        && self.parent.key(count - 1, self.stride)
+                            == self.branches.key(index, self.stride)
+                    {
+                        self.parent.masses[count - 1] =
+                            fold(self.parent.masses[count - 1], self.branches.masses[index]);
+                    } else {
+                        self.parent.copy_state(&self.branches, index, self.stride);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "runtime-checks"))]
+    fn merge_reference(&mut self, fold: impl Fn(M, M) -> M) {
+        self.sort_merge_indices_reference();
         self.parent.clear(self.stride);
         for &index in &self.indices {
             let count = self.parent.masses.len();
@@ -767,6 +1291,376 @@ impl<M: Copy> FrontierScratch<M> {
     /// Detector words precede logical words, each most-significant word first.
     /// Words zero in every branch can be omitted without changing key order.
     fn sort_merge_indices(&mut self) {
+        #[cfg(any(test, feature = "runtime-checks"))]
+        let mut reference = self.clone();
+        self.sort_merge_indices_impl();
+        #[cfg(any(test, feature = "runtime-checks"))]
+        {
+            reference.sort_merge_indices_reference();
+            assert_eq!(
+                self.indices, reference.indices,
+                "exact merge and arrival order"
+            );
+            sort_equivalence_self_test();
+        }
+    }
+
+    #[cfg_attr(
+        any(test, feature = "runtime-checks"),
+        expect(
+            clippy::cast_possible_truncation,
+            reason = "Decoded arrival indices are masked to nine or ten bits and cannot truncate on supported pointer widths"
+        )
+    )]
+    fn sort_merge_indices_impl(&mut self) {
+        self.packed_merge_keys = false;
+        self.use_compact_merge_records = false;
+        self.use_narrow_merge_records = false;
+        #[cfg(any(test, feature = "runtime-checks"))]
+        {
+            self.use_generalized_merge_records = false;
+        }
+        self.merge_word_indices.clear();
+        if self.stride > 4 {
+            self.merge_word_masks.clear();
+            self.merge_word_masks.resize(self.stride, 0);
+            for key in self.branches.words.chunks_exact(self.stride) {
+                for (mask, &word) in self.merge_word_masks.iter_mut().zip(key) {
+                    *mask |= word;
+                }
+            }
+        }
+        self.merge_word_indices.extend(
+            (0..self.detector_words)
+                .rev()
+                .chain((self.detector_words..self.stride).rev())
+                .filter(|&word| self.stride <= 4 || self.merge_word_masks[word] != 0),
+        );
+
+        // Include the arrival index in the 128-bit record, rather than moving
+        // a separate usize. The guarded mapping is injective and monotonic.
+        let count = self.branches.masses.len();
+        let width = self.merge_word_indices.len();
+        // Preserve the existing nine-bit records and key budgets through 512
+        // arrivals. A K=512 expansion can emit 1024 branches and needs ten bits.
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
+        self.merge_record_arrival_bits = arrival_bits;
+        #[cfg(any(test, feature = "runtime-checks"))]
+        let arrival_mask = (1_u64 << arrival_bits) - 1;
+        let narrow_key_bits = 64 - arrival_bits;
+        'try_trimmed: {
+            if (64..=1024).contains(&count) && (width == 2 || width == 3) {
+                // Remove only bits proven zero in every branch. Each word's
+                // significant span remains in its original lexicographic position.
+                let mut masks = [0_u64; 3];
+                if self.stride > 4 {
+                    for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                        *mask = self.merge_word_masks[self.merge_word_indices[slot]];
+                    }
+                } else {
+                    // An OR-mask span can only widen. An excessive sampled span
+                    // proves complete-key packing impossible; no keys are dropped.
+                    for index in [0, (count - 1) / 3, 2 * (count - 1) / 3, count - 1] {
+                        let key = self.branches.key(index, self.stride);
+                        for slot in 0..width {
+                            masks[slot] |= key[self.merge_word_indices[slot]];
+                        }
+                    }
+                    let sampled_bits: u32 = masks
+                        .iter()
+                        .map(|&mask| {
+                            if mask == 0 {
+                                0
+                            } else {
+                                64 - mask.leading_zeros() - mask.trailing_zeros()
+                            }
+                        })
+                        .sum();
+                    if sampled_bits > narrow_key_bits {
+                        break 'try_trimmed;
+                    }
+                    for key in self.branches.words.chunks_exact(self.stride) {
+                        for slot in 0..width {
+                            masks[slot] |= key[self.merge_word_indices[slot]];
+                        }
+                    }
+                }
+                let mut shifts = [0_u32; 3];
+                let mut widths = [0_u32; 3];
+                for slot in 0..width {
+                    if masks[slot] != 0 {
+                        shifts[slot] = masks[slot].trailing_zeros();
+                        widths[slot] = 64 - masks[slot].leading_zeros() - shifts[slot];
+                    }
+                }
+                // Reserve enough arrival bits without changing the key mapping
+                // or equal-key fold order for the existing <=512 branch path.
+                if widths.iter().sum::<u32>() <= narrow_key_bits {
+                    self.narrow_merge_records.clear();
+                    let first = self.merge_word_indices[0];
+                    let second = self.merge_word_indices[1];
+                    if width == 2 {
+                        for (index, source) in self
+                            .branches
+                            .words
+                            .chunks_exact(self.stride)
+                            .take(count)
+                            .enumerate()
+                        {
+                            let key = ((source[first] >> shifts[0]) << widths[1])
+                                | (source[second] >> shifts[1]);
+                            self.narrow_merge_records
+                                .push((key << arrival_bits) | index as u64);
+                        }
+                    } else {
+                        let third = self.merge_word_indices[2];
+                        for (index, source) in self
+                            .branches
+                            .words
+                            .chunks_exact(self.stride)
+                            .take(count)
+                            .enumerate()
+                        {
+                            let key = ((((source[first] >> shifts[0]) << widths[1])
+                                | (source[second] >> shifts[1]))
+                                << widths[2])
+                                | (source[third] >> shifts[2]);
+                            self.narrow_merge_records
+                                .push((key << arrival_bits) | index as u64);
+                        }
+                    }
+                    sort_parities(
+                        &mut self.narrow_merge_records,
+                        &mut self.narrow_sort_scratch,
+                    );
+                    self.use_narrow_merge_records = true;
+                    self.use_compact_merge_records = true;
+                    #[cfg(any(test, feature = "runtime-checks"))]
+                    {
+                        self.indices.clear();
+                        self.indices.extend(
+                            self.narrow_merge_records
+                                .iter()
+                                .map(|&v| (v & arrival_mask) as usize),
+                        );
+                    }
+                    return;
+                }
+            }
+        }
+        if (64..=1024).contains(&count) && (width == 2 || width == 3) {
+            self.compact_merge_records.clear();
+            let mut eligible = true;
+            if width == 2 {
+                for (index, source) in self
+                    .branches
+                    .words
+                    .chunks_exact(self.stride)
+                    .take(count)
+                    .enumerate()
+                {
+                    let high = source[self.merge_word_indices[0]];
+                    let low = source[self.merge_word_indices[1]];
+                    if low > 1 {
+                        eligible = false;
+                        break;
+                    }
+                    self.compact_merge_records.push(
+                        (u128::from(high) << (arrival_bits + 1))
+                            | (u128::from(low) << arrival_bits)
+                            | index as u128,
+                    );
+                }
+            } else {
+                for (index, source) in self
+                    .branches
+                    .words
+                    .chunks_exact(self.stride)
+                    .take(count)
+                    .enumerate()
+                {
+                    let high = source[self.merge_word_indices[0]];
+                    let middle = source[self.merge_word_indices[1]];
+                    let low = source[self.merge_word_indices[2]];
+                    if high >> (63 - arrival_bits) != 0 || low > 1 {
+                        eligible = false;
+                        break;
+                    }
+                    self.compact_merge_records.push(
+                        (u128::from(high) << (arrival_bits + 65))
+                            | (u128::from(middle) << (arrival_bits + 1))
+                            | (u128::from(low) << arrival_bits)
+                            | index as u128,
+                    );
+                }
+            }
+            if eligible {
+                sort_parities(
+                    &mut self.compact_merge_records,
+                    &mut self.compact_sort_scratch,
+                );
+                self.use_compact_merge_records = true;
+                #[cfg(any(test, feature = "runtime-checks"))]
+                {
+                    self.indices.clear();
+                    self.indices.extend(
+                        self.compact_merge_records
+                            .iter()
+                            .map(|&v| (v & u128::from(arrival_mask)) as usize),
+                    );
+                }
+                return;
+            }
+        }
+
+        // Multibit joint classes do not fit the older logical<=1 layout. Pack
+        // complete component spans only when their original lexicographic order
+        // and every arrival index fit in u128; otherwise keep the same fallback.
+        if self.try_pack_generalized_records(count, arrival_bits) {
+            self.use_compact_merge_records = true;
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                self.use_generalized_merge_records = true;
+                self.indices.clear();
+                self.indices.extend(
+                    self.compact_merge_records
+                        .iter()
+                        .map(|&v| (v & u128::from(arrival_mask)) as usize),
+                );
+            }
+            return;
+        }
+
+        // Preserve lexicographic key order and equal-key arrival order, while
+        // moving only the key words needed by this column.
+        if self.merge_word_indices.len() <= 1 {
+            self.merge_keys_one.clear();
+            for index in 0..self.branches.masses.len() {
+                let key = self
+                    .merge_word_indices
+                    .first()
+                    .map_or(0, |&word| self.branches.key(index, self.stride)[word]);
+                self.merge_keys_one.push((key, index));
+            }
+            self.merge_keys_one.sort_unstable();
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                self.indices.clear();
+                self.indices
+                    .extend(self.merge_keys_one.iter().map(|&(_, index)| index));
+            }
+            return;
+        }
+        if self.merge_word_indices.len() == 2 {
+            self.merge_keys_two.clear();
+            for index in 0..self.branches.masses.len() {
+                let source = self.branches.key(index, self.stride);
+                self.merge_keys_two.push((
+                    [
+                        source[self.merge_word_indices[0]],
+                        source[self.merge_word_indices[1]],
+                    ],
+                    index,
+                ));
+            }
+            self.merge_keys_two.sort_unstable();
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                self.indices.clear();
+                self.indices
+                    .extend(self.merge_keys_two.iter().map(|&(_, index)| index));
+            }
+            return;
+        }
+        if self.merge_word_indices.len() == 3 {
+            // Preserve lexicographic order in 128 bits when the first word
+            // has a spare high bit and the last word is a single logical bit.
+            // Keep arrival index as the final tie-breaker for identical keys.
+            if self.branches.masses.len() >= 64 {
+                self.merge_keys_two.clear();
+                let mut eligible = true;
+                for index in 0..self.branches.masses.len() {
+                    let source = self.branches.key(index, self.stride);
+                    let high = source[self.merge_word_indices[0]];
+                    let low = source[self.merge_word_indices[1]];
+                    let logical = source[self.merge_word_indices[2]];
+                    if high >> 63 != 0 || logical > 1 {
+                        eligible = false;
+                        break;
+                    }
+                    self.merge_keys_two
+                        .push(([(high << 1) | (low >> 63), (low << 1) | logical], index));
+                }
+                if eligible {
+                    self.packed_merge_keys = true;
+                    self.merge_keys_two.sort_unstable();
+                    #[cfg(any(test, feature = "runtime-checks"))]
+                    {
+                        self.indices.clear();
+                        self.indices
+                            .extend(self.merge_keys_two.iter().map(|&(_, index)| index));
+                    }
+                    return;
+                }
+                // Any ineligible key requires the original full-width path.
+            }
+            self.merge_keys_three.clear();
+            for index in 0..self.branches.masses.len() {
+                let source = self.branches.key(index, self.stride);
+                self.merge_keys_three.push((
+                    [
+                        source[self.merge_word_indices[0]],
+                        source[self.merge_word_indices[1]],
+                        source[self.merge_word_indices[2]],
+                    ],
+                    index,
+                ));
+            }
+            self.merge_keys_three.sort_unstable();
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                self.indices.clear();
+                self.indices
+                    .extend(self.merge_keys_three.iter().map(|&(_, index)| index));
+            }
+            return;
+        }
+        self.merge_keys.clear();
+        for index in 0..self.branches.masses.len() {
+            let source = self.branches.key(index, self.stride);
+            let mut key = [0; 4];
+            for (destination, &word) in key.iter_mut().zip(&self.merge_word_indices) {
+                *destination = source[word];
+            }
+            self.merge_keys.push((key, index));
+        }
+        if self.merge_word_indices.len() <= 4 {
+            // The arrival index reproduces the stable order of equal full keys.
+            self.merge_keys.sort_unstable();
+        } else {
+            // The inline prefix decides most comparisons even for wide keys.
+            // Resolve equal prefixes with the full key before the arrival index.
+            self.merge_keys
+                .sort_unstable_by(|(left_key, left), (right_key, right)| {
+                    left_key.cmp(right_key).then_with(|| {
+                        compare_state_words(
+                            self.branches.key(*left, self.stride),
+                            self.branches.key(*right, self.stride),
+                            self.detector_words,
+                        )
+                        .then_with(|| left.cmp(right))
+                    })
+                });
+        }
+        if cfg!(any(test, feature = "runtime-checks")) || self.merge_word_indices.len() > 4 {
+            self.indices.clear();
+            self.indices
+                .extend(self.merge_keys.iter().map(|&(_, index)| index));
+        }
+    }
+
+    #[cfg(any(test, feature = "runtime-checks"))]
+    fn sort_merge_indices_reference(&mut self) {
         self.merge_word_indices.clear();
         if self.stride > 4 {
             self.merge_word_masks.clear();
@@ -815,6 +1709,67 @@ impl<M: Copy> FrontierScratch<M> {
             .extend(self.merge_keys.iter().map(|&(_, index)| index));
     }
 
+    fn try_pack_generalized_records(&mut self, count: usize, arrival_bits: u32) -> bool {
+        let width = self.merge_word_indices.len();
+        if !(64..=1024).contains(&count) || !(2..=4).contains(&width) {
+            return false;
+        }
+        let budget = 128 - arrival_bits;
+        let span = |mask: u64| {
+            if mask == 0 {
+                0
+            } else {
+                64 - mask.leading_zeros() - mask.trailing_zeros()
+            }
+        };
+        let mut masks = [0_u64; 4];
+        if self.stride > 4 {
+            // The wide-key path already scanned every branch to find zero words.
+            for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                *mask = self.merge_word_masks[self.merge_word_indices[slot]];
+            }
+        } else {
+            // Samples may prove failure, never success. Finish the full OR scan
+            // before accepting a plan; an unseen bit must never be truncated.
+            for index in [0, (count - 1) / 3, 2 * (count - 1) / 3, count - 1] {
+                let source = self.branches.key(index, self.stride);
+                for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                    *mask |= source[self.merge_word_indices[slot]];
+                }
+            }
+            if masks.iter().copied().map(span).sum::<u32>() > budget {
+                return false;
+            }
+            for source in self.branches.words.chunks_exact(self.stride) {
+                for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                    *mask |= source[self.merge_word_indices[slot]];
+                }
+            }
+        }
+        let widths = masks.map(span);
+        if widths.iter().sum::<u32>() > budget {
+            return false;
+        }
+        let shifts = masks.map(|mask| if mask == 0 { 0 } else { mask.trailing_zeros() });
+        self.compact_merge_records.clear();
+        for (index, source) in self.branches.words.chunks_exact(self.stride).enumerate() {
+            let mut key = 0_u128;
+            for slot in 0..width {
+                // Each component is at most 64 bits, and the checked total leaves
+                // the arrival budget free. Zero and full-width spans are safe.
+                key = (key << widths[slot])
+                    | u128::from(source[self.merge_word_indices[slot]] >> shifts[slot]);
+            }
+            self.compact_merge_records
+                .push((key << arrival_bits) | index as u128);
+        }
+        sort_parities(
+            &mut self.compact_merge_records,
+            &mut self.compact_sort_scratch,
+        );
+        true
+    }
+
     /// Transpose the inclusive detector-word span read by the scoring rows.
     fn transpose_detectors(&mut self, first_word: usize, last_word: usize) {
         debug_assert!(first_word <= last_word);
@@ -837,6 +1792,43 @@ impl<M: Copy> FrontierScratch<M> {
                 *destination = key[first_word + word];
             }
         }
+    }
+
+    // Preserve state/key order and every mass bit; only move retained slots.
+    fn retain_in_place(&mut self) {
+        let mut destination = 0;
+        for (source, &keep) in self.retained.iter().enumerate() {
+            if keep {
+                if destination != source {
+                    let from = source * self.stride;
+                    // Keep forward compaction and safe overlapping-copy semantics.
+                    // Constant lengths let the compiler specialize short states.
+                    match self.stride {
+                        1 => self.parent.words.copy_within(from..=from, destination),
+                        2 => self
+                            .parent
+                            .words
+                            .copy_within(from..from + 2, destination * 2),
+                        3 => self
+                            .parent
+                            .words
+                            .copy_within(from..from + 3, destination * 3),
+                        4 => self
+                            .parent
+                            .words
+                            .copy_within(from..from + 4, destination * 4),
+                        _ => self
+                            .parent
+                            .words
+                            .copy_within(from..from + self.stride, destination * self.stride),
+                    }
+                    self.parent.masses[destination] = self.parent.masses[source];
+                }
+                destination += 1;
+            }
+        }
+        self.parent.words.truncate(destination * self.stride);
+        self.parent.masses.truncate(destination);
     }
 
     /// Copy in merged key order, never score order, for the next expansion.
@@ -1000,6 +1992,53 @@ impl TrellisDecodeAttempt {
 pub struct TrellisDecoder {
     model: Arc<TrellisModel>,
     scratch: TrellisScratch,
+}
+
+/// Progress of an exact batch attempt split across bounded column ranges.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrellisBoundedProgress {
+    /// Columns in completely successful ranges. A failed range may have done
+    /// additional work, recorded exactly in the terminal attempt's telemetry.
+    pub completed_columns: usize,
+    /// Total columns in this model's binary kernel.
+    pub total_columns: usize,
+    /// The attempt can be consumed by [`TrellisResumableDecoder::finish`].
+    pub ready_to_finish: bool,
+}
+
+/// An owning, exact resumable binary-float batch decoder.
+///
+/// This changes only the boundaries of calls into the existing column walk.
+/// The full syndrome, scoring inputs, pruning parameters and arithmetic order
+/// stay fixed for the attempt. It does not retain a beam between input windows.
+/// Owning the decoder prevents another API from changing its prepared scratch
+/// while an attempt is pending. Existing [`TrellisDecoder`] APIs are unchanged.
+///
+/// A column budget bounds actual DP columns, not milliseconds. Model creation,
+/// [`Self::begin`] (including any BP refresh), and [`Self::finish`] have separate
+/// costs and must be timed separately when a host imposes invocation limits.
+pub struct TrellisResumableDecoder {
+    decoder: TrellisDecoder,
+    attempt: Option<BoundedBinaryAttempt>,
+}
+
+struct BoundedBinaryAttempt {
+    next_column: usize,
+    total_columns: usize,
+    mode: DecodeMode,
+    bp_ran: bool,
+    bp_seconds: f64,
+    terminal: Option<TrellisDecodeAttempt>,
+}
+
+impl BoundedBinaryAttempt {
+    fn progress(&self) -> TrellisBoundedProgress {
+        TrellisBoundedProgress {
+            completed_columns: self.next_column,
+            total_columns: self.total_columns,
+            ready_to_finish: self.terminal.is_some() || self.next_column == self.total_columns,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1591,6 +2630,17 @@ impl TrellisDecoder {
         self.decode_attempt_with_mode(syndrome, DecodeMode::Full)
     }
 
+    /// Decode without the discarded-mass diagnostic, retaining all other results.
+    ///
+    /// Retained class masses, evidence, confidence inputs and decoding decisions
+    /// use the same arithmetic and ordering as [`Self::decode_attempt`]. On a
+    /// successful result, `dropped_log_mass` is unavailable and set to NaN.
+    /// Preparation, error provenance and all existing default APIs are unchanged.
+    #[must_use]
+    pub fn decode_attempt_without_dropped_mass(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+        self.decode_attempt_with_mode(syndrome, DecodeMode::PredictionOnly)
+    }
+
     fn decode_attempt_with_mode(
         &mut self,
         syndrome: &[u8],
@@ -1661,18 +2711,21 @@ impl TrellisDecoder {
         self.attempt_with_mode(params, DecodeMode::Full)
     }
 
+    /// Run a fresh DP attempt on the prepared shot for its prediction only.
+    /// `LogSumExpFloat` kernels skip dropped-mass accounting, and every metric mode
+    /// reports `dropped_log_mass` as NaN on success. Validation and readiness
+    /// requirements are the same as for [`Self::attempt`].
+    ///
+    /// # Panics
+    /// Panics unless the latest prepare completed `Ready`.
+    #[must_use]
+    pub fn attempt_prediction_only(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
+        self.attempt_with_mode(params, DecodeMode::PredictionOnly)
+    }
+
     fn attempt_with_mode(&mut self, params: PruneParams, mode: DecodeMode) -> TrellisDecodeAttempt {
-        if let Err(error) = params.validate(self.model.config.metric_mode) {
+        if let Err(error) = self.validate_attempt_params(params) {
             return TrellisDecodeAttempt::Error(error);
-        }
-        if self.model.config.bp_score_iterations > 0
-            && self.model.bp_graph.is_none()
-            && !(params.k == usize::MAX && params.delta.is_infinite())
-        {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidConfiguration(
-                "non-exact pruning parameters require a BP graph when bp_score_iterations > 0"
-                    .into(),
-            ));
         }
         let (bp_ran, _) = self
             .scratch
@@ -1683,6 +2736,20 @@ impl TrellisDecoder {
             result.bp_runs = u32::from(bp_ran);
         }
         attempt
+    }
+
+    fn validate_attempt_params(&self, params: PruneParams) -> Result<(), DecoderError> {
+        params.validate(self.model.config.metric_mode)?;
+        if self.model.config.bp_score_iterations > 0
+            && self.model.bp_graph.is_none()
+            && !(params.k == usize::MAX && params.delta.is_infinite())
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "non-exact pruning parameters require a BP graph when bp_score_iterations > 0"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Configured pruning parameters used by `decode_attempt`.
@@ -1715,6 +2782,33 @@ impl TrellisDecoder {
         }
     }
 
+    /// Consume this decoder into an exact resumable batch wrapper.
+    ///
+    /// BP is prepared once by `begin`, exactly as in a normal batch attempt.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a non-binary or non-float kernel,
+    /// together with this unchanged decoder so the caller can keep using it.
+    pub fn into_resumable(self) -> Result<TrellisResumableDecoder, (DecoderError, Box<Self>)> {
+        let metric_mode = self.model.config.metric_mode;
+        let binary = matches!(self.model.kernel, Kernel::Binary(_));
+        if metric_mode != MetricMode::LogSumExpFloat || !binary {
+            let kernel = if binary { "binary" } else { "N-ary" };
+            return Err((
+                DecoderError::InvalidConfiguration(format!(
+                    "resumable batch attempts require a binary LogSumExpFloat kernel, got a \
+                     {kernel} {metric_mode:?} kernel; build from a sparse DEM with \
+                     MetricMode::LogSumExpFloat"
+                )),
+                Box::new(self),
+            ));
+        }
+        Ok(TrellisResumableDecoder {
+            decoder: self,
+            attempt: None,
+        })
+    }
+
     /// Decode dense shots in input order using independent worker scratch.
     ///
     /// Workers are capped at one per shot, with one worker for an empty batch.
@@ -1730,10 +2824,216 @@ impl TrellisDecoder {
     }
 }
 
+impl TrellisResumableDecoder {
+    /// Prepare a full-syndrome batch attempt with all diagnostics enabled.
+    ///
+    /// Preparation failures are retained as structured terminal attempts and
+    /// reported by `finish`; they are never inferred from an error string.
+    /// No DP columns or terminal class aggregation are performed here.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` if another attempt is still pending.
+    pub fn begin(&mut self, syndrome: &[u8]) -> Result<TrellisBoundedProgress, DecoderError> {
+        self.begin_with_mode(syndrome, DecodeMode::Full)
+    }
+
+    /// Begin the same exact attempt without the discarded-mass diagnostic.
+    ///
+    /// All retained results and counters are unchanged; only successful
+    /// `dropped_log_mass` is NaN. This explicit choice applies to one attempt.
+    ///
+    /// # Errors
+    /// Returns the same protocol error as [`Self::begin`].
+    pub fn begin_without_dropped_mass(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<TrellisBoundedProgress, DecoderError> {
+        self.begin_with_mode(syndrome, DecodeMode::PredictionOnly)
+    }
+
+    fn begin_with_mode(
+        &mut self,
+        syndrome: &[u8],
+        mode: DecodeMode,
+    ) -> Result<TrellisBoundedProgress, DecoderError> {
+        if self.attempt.is_some() {
+            return Err(DecoderError::InvalidConfiguration(
+                "finish or cancel the pending resumable attempt before beginning another".into(),
+            ));
+        }
+        let Kernel::Binary(columns) = &self.decoder.model.kernel else {
+            unreachable!("resumable constructor validates the binary kernel");
+        };
+        let total_columns = columns.len();
+        let mut state = BoundedBinaryAttempt {
+            next_column: 0,
+            total_columns,
+            mode,
+            bp_ran: false,
+            bp_seconds: 0.0,
+            terminal: None,
+        };
+        state.terminal = match self.decoder.prepare(syndrome) {
+            Ok(TrellisPrepared::Ready { bp_ran, bp_seconds }) => {
+                state.bp_ran = bp_ran;
+                state.bp_seconds = bp_seconds;
+                match self
+                    .decoder
+                    .validate_attempt_params(self.decoder.prune_params())
+                {
+                    Ok(()) => {
+                        self.decoder
+                            .scratch
+                            .float_progress
+                            .reset(&self.decoder.model);
+                        None
+                    }
+                    Err(error) => Some(TrellisDecodeAttempt::Error(error)),
+                }
+            }
+            Ok(TrellisPrepared::Residual { .. }) => Some(TrellisDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                dropped_states: 0,
+                bp_seconds: 0.0,
+            }),
+            Err(error) => Some(TrellisDecodeAttempt::Error(error)),
+        };
+        let progress = state.progress();
+        self.attempt = Some(state);
+        Ok(progress)
+    }
+
+    /// Process at most `max_columns` consecutive columns of the pending attempt.
+    ///
+    /// The same full-syndrome range walk, suffix values, merge/prune order and
+    /// telemetry accumulation are used by the unbounded batch decoder. A ready
+    /// attempt is unchanged by another positive-budget step. Engine failures
+    /// make the attempt ready and remain structured until `finish` consumes it.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero budget or a missing begin.
+    pub fn step(&mut self, max_columns: usize) -> Result<TrellisBoundedProgress, DecoderError> {
+        if max_columns == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "resumable attempts require a positive column budget".into(),
+            ));
+        }
+        let state = self.attempt.as_mut().ok_or_else(|| {
+            DecoderError::InvalidConfiguration("begin a resumable attempt before stepping".into())
+        })?;
+        if state.progress().ready_to_finish {
+            return Ok(state.progress());
+        }
+        let end = state
+            .next_column
+            .saturating_add(max_columns)
+            .min(state.total_columns);
+        let model = &self.decoder.model;
+        let scratch = &mut self.decoder.scratch;
+        let suffix_values = scratch
+            .bp_score
+            .as_ref()
+            .map_or(&model.suffix_values, |bp| &bp.suffix_values);
+        let failure = model.process_binary_range_with_mode(
+            &mut scratch.float_progress,
+            &scratch.observed,
+            suffix_values,
+            state.next_column..end,
+            PruneParams {
+                k: model.config.k,
+                delta: model.config.delta,
+            },
+            BinaryRangeOptions {
+                mode: state.mode,
+                known_count: None,
+            },
+        );
+        if let Err(failure) = failure {
+            state.terminal = Some(match failure {
+                BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
+                    error: failure.error(),
+                    transitions: scratch.float_progress.transitions,
+                    dropped_states: scratch.float_progress.dropped_states,
+                    bp_seconds: state.bp_seconds,
+                },
+                BinaryFailure::UnusableScores => TrellisDecodeAttempt::Error(failure.error()),
+            });
+        } else {
+            state.next_column = end;
+        }
+        Ok(state.progress())
+    }
+
+    /// Inspect the pending attempt without processing columns or aggregating classes.
+    #[must_use]
+    pub fn progress(&self) -> Option<TrellisBoundedProgress> {
+        self.attempt.as_ref().map(BoundedBinaryAttempt::progress)
+    }
+
+    /// Consume a ready attempt, using the unchanged terminal constructor.
+    ///
+    /// This performs no column work. Terminal sorting and class/evidence
+    /// aggregation have their own invocation cost, outside the column budget.
+    /// Preparation and DP failures return their original structured variant.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a missing or undrained attempt.
+    /// A failed protocol check leaves the pending attempt unchanged.
+    ///
+    /// # Panics
+    /// Panics if the checked private attempt disappears before consumption,
+    /// indicating an internal state invariant violation.
+    pub fn finish(&mut self) -> Result<TrellisDecodeAttempt, DecoderError> {
+        if !self
+            .attempt
+            .as_ref()
+            .is_some_and(|state| state.progress().ready_to_finish)
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "drain a pending resumable attempt before finishing".into(),
+            ));
+        }
+        let state = self.attempt.take().expect("checked pending attempt");
+        if let Some(terminal) = state.terminal {
+            return Ok(terminal);
+        }
+        let mut result = TrellisModel::finish_binary(
+            &self.decoder.scratch.float_progress,
+            state.total_columns,
+            state.bp_seconds,
+        );
+        result.bp_runs = u32::from(state.bp_ran);
+        if state.mode == DecodeMode::PredictionOnly {
+            result.dropped_log_mass = f64::NAN;
+        }
+        Ok(TrellisDecodeAttempt::Success(result))
+    }
+
+    /// Cancel a pending attempt. The next begin prepares and resets a fresh shot.
+    pub fn cancel(&mut self) {
+        self.attempt = None;
+        self.decoder.scratch.prepared = None;
+    }
+
+    /// Lifetime BP refresh count, including cancelled attempts.
+    #[must_use]
+    pub fn bp_refreshes(&self) -> u64 {
+        self.decoder.bp_refreshes()
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum DecodeMode {
     Full,
     PredictionOnly,
+}
+
+#[derive(Clone, Copy)]
+struct BinaryRangeOptions {
+    mode: DecodeMode,
+    /// Detectors at or above this index are unknown and excluded from scoring.
+    known_count: Option<usize>,
 }
 
 impl TrellisModel {
@@ -1788,7 +3088,10 @@ impl TrellisModel {
             suffix_values,
             0..columns.len(),
             params,
-            mode,
+            BinaryRangeOptions {
+                mode,
+                known_count: None,
+            },
         ) {
             return match failure {
                 BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
@@ -1803,25 +3106,7 @@ impl TrellisModel {
         TrellisDecodeAttempt::Success(Self::finish_binary(progress, columns.len(), bp_seconds))
     }
 
-    /// The single binary float column walk, shared by batch and streaming.
-    fn process_binary_range(
-        &self,
-        progress: &mut BinaryProgress,
-        observed: &[u64],
-        suffix_values: &SuffixValues,
-        range: std::ops::Range<usize>,
-        params: PruneParams,
-    ) -> Result<(), BinaryFailure> {
-        self.process_binary_range_with_mode(
-            progress,
-            observed,
-            suffix_values,
-            range,
-            params,
-            DecodeMode::Full,
-        )
-    }
-
+    /// The binary float column walk shared by batch and streaming.
     fn process_binary_range_with_mode(
         &self,
         progress: &mut BinaryProgress,
@@ -1829,8 +3114,35 @@ impl TrellisModel {
         suffix_values: &SuffixValues,
         range: std::ops::Range<usize>,
         params: PruneParams,
-        mode: DecodeMode,
+        options: BinaryRangeOptions,
     ) -> Result<(), BinaryFailure> {
+        self.process_binary_range_with_prefixes(
+            progress,
+            observed,
+            suffix_values,
+            range,
+            params,
+            options,
+            None,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep the shared column walk and optional scoring plan explicit"
+    )]
+    #[inline(never)]
+    fn process_binary_range_with_prefixes(
+        &self,
+        progress: &mut BinaryProgress,
+        observed: &[u64],
+        suffix_values: &SuffixValues,
+        range: std::ops::Range<usize>,
+        params: PruneParams,
+        options: BinaryRangeOptions,
+        prefix_ends: Option<&[usize]>,
+    ) -> Result<(), BinaryFailure> {
+        let BinaryRangeOptions { mode, known_count } = options;
         let BinaryProgress {
             frontier,
             transitions,
@@ -1843,7 +3155,10 @@ impl TrellisModel {
         let Kernel::Binary(columns) = &self.kernel else {
             unreachable!("binary decode called with N-ary kernel");
         };
-        for column in &columns[range] {
+        if let Some(ends) = prefix_ends {
+            assert_eq!(ends.len(), range.len());
+        }
+        for (offset, column) in columns[range].iter().enumerate() {
             debug_assert!((1..frontier.parent.masses.len()).all(|index| {
                 compare_state_words(
                     frontier.parent.key(index - 1, frontier.stride),
@@ -1852,39 +3167,115 @@ impl TrellisModel {
                 ) == Ordering::Less
             }));
             frontier.branches.clear(frontier.stride);
+            #[cfg(any(test, feature = "runtime-checks"))]
+            let before_transitions = *transitions;
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
                 let branch_base = log_mass + column.log_one_minus_probability;
-                column.emit_compact(
+                column.emit_compact_pair(
                     &mut frontier.branches,
                     state,
                     observed,
-                    false,
                     branch_base,
-                    transitions,
-                );
-                column.emit_compact(
-                    &mut frontier.branches,
-                    state,
-                    observed,
-                    true,
                     branch_base + column.log_odds,
                     transitions,
                 );
+            }
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                let mut reference_branches = StateBuffer::<f64>::default();
+                let mut reference_transitions = before_transitions;
+                for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
+                    let state = frontier.parent.key(index, frontier.stride);
+                    let branch_base = log_mass + column.log_one_minus_probability;
+                    column.emit_compact(
+                        &mut reference_branches,
+                        state,
+                        observed,
+                        false,
+                        branch_base,
+                        &mut reference_transitions,
+                    );
+                    column.emit_compact(
+                        &mut reference_branches,
+                        state,
+                        observed,
+                        true,
+                        branch_base + column.log_odds,
+                        &mut reference_transitions,
+                    );
+                }
+                assert_eq!(
+                    frontier.branches.words, reference_branches.words,
+                    "exact emitted keys and arrival order"
+                );
+                assert!(
+                    frontier
+                        .branches
+                        .masses
+                        .iter()
+                        .map(|x| x.to_bits())
+                        .eq(reference_branches.masses.iter().map(|x| x.to_bits())),
+                    "emitted mass bits"
+                );
+                assert_eq!(*transitions, reference_transitions, "transition count");
             }
             let logical_words = frontier.stride - frontier.detector_words;
             frontier.parent.clear(frontier.stride);
             frontier.detector_words = column.compact.output.len();
             frontier.detector_word_offset = column.compact.first_word;
             frontier.stride = frontier.detector_words + logical_words;
+            #[cfg(any(test, feature = "runtime-checks"))]
+            let mut merge_reference = frontier.clone();
             frontier.merge(logaddexp);
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                merge_reference.merge_reference(logaddexp);
+                assert_eq!(
+                    frontier.parent.words, merge_reference.parent.words,
+                    "merged state keys"
+                );
+                assert!(
+                    frontier
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|x| x.to_bits())
+                        .eq(merge_reference.parent.masses.iter().map(|x| x.to_bits())),
+                    "merged mass bits and fold order"
+                );
+            }
             if frontier.parent.masses.is_empty() {
                 return Err(BinaryFailure::NoPath);
             }
             let suffix_compatibility = SuffixCompatibility {
-                rows: &column.suffix_compatibility,
+                // Rows are sorted by detector index. Taking a prefix masks
+                // unknown outcomes without copying or losing vectorized scoring.
+                rows: &column.suffix_compatibility[..prefix_ends.map_or_else(
+                    || {
+                        known_count.map_or(column.suffix_compatibility.len(), |count| {
+                            column.suffix_compatibility.partition_point(|row| {
+                                row.word as usize * WORD_BITS + usize::from(row.bit) < count
+                            })
+                        })
+                    },
+                    |ends| ends[offset],
+                )],
                 values: suffix_values,
             };
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                let original_end = known_count.map_or(column.suffix_compatibility.len(), |count| {
+                    column.suffix_compatibility.partition_point(|row| {
+                        row.word as usize * WORD_BITS + usize::from(row.bit) < count
+                    })
+                });
+                assert_eq!(
+                    suffix_compatibility.rows.len(),
+                    original_end,
+                    "exact cached scoring row prefix and order"
+                );
+            }
             let pruned = prune(
                 frontier,
                 params.k,
@@ -2056,7 +3447,26 @@ impl TrellisModel {
                     );
                 }
             }
+            #[cfg(any(test, feature = "runtime-checks"))]
+            let mut merge_reference = frontier.clone();
             frontier.merge(logaddexp);
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                merge_reference.merge_reference(logaddexp);
+                assert_eq!(
+                    frontier.parent.words, merge_reference.parent.words,
+                    "merged state keys"
+                );
+                assert!(
+                    frontier
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|x| x.to_bits())
+                        .eq(merge_reference.parent.masses.iter().map(|x| x.to_bits())),
+                    "merged mass bits and fold order"
+                );
+            }
             if frontier.parent.masses.is_empty() {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
@@ -2748,9 +4158,147 @@ fn score_int_metric(log_mass: i64, parity: i64, alpha_int: i64, scale: i32) -> i
     )
 }
 
+/// One suffix row as seen by every candidate: its transposed detector word,
+/// bit mask, and the probability selected for a candidate bit of zero or one.
+#[derive(Clone, Copy)]
+struct ScoreRow<'a> {
+    candidates: &'a [u64],
+    mask: u64,
+    zero: f64,
+    one: f64,
+}
+
+/// Add `N` rows to each candidate's sum in row order, then store
+/// `finalize(candidate, sum)`.
+#[inline]
+fn add_score_rows<const N: usize>(
+    scores: &mut [f64],
+    rows: [ScoreRow<'_>; N],
+    finalize: impl Fn(usize, f64) -> f64,
+) {
+    let count = scores.len();
+    let rows = rows.map(|row| ScoreRow {
+        candidates: &row.candidates[..count],
+        ..row
+    });
+    for (index, accumulator) in scores.iter_mut().enumerate() {
+        let mut sum = *accumulator;
+        for row in &rows {
+            sum += if row.candidates[index] & row.mask != 0 {
+                row.one
+            } else {
+                row.zero
+            };
+        }
+        *accumulator = finalize(index, sum);
+    }
+}
+
 /// Rows must remain in ascending detector order: each candidate performs the
 /// original left-to-right sum. Only the independent candidates may vectorize.
 fn score_candidates(
+    frontier: &mut FrontierScratch<f64>,
+    score_alpha: f64,
+    suffix_compatibility: SuffixCompatibility<'_>,
+    observed: &[u64],
+) {
+    frontier.scores.clear();
+    if score_alpha == 0.0 {
+        frontier.scores.extend_from_slice(&frontier.parent.masses);
+        return;
+    }
+    // Bit-identity requires the standard library's Sum neutral element and
+    // left-fold order; the cfg(test) scalar oracle catches changes to either.
+    let neutral = std::iter::empty::<f64>().sum::<f64>();
+    let rows = suffix_compatibility.rows;
+    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
+        frontier.scores.extend(
+            frontier
+                .parent
+                .masses
+                .iter()
+                .map(|&log_mass| log_mass + score_alpha * neutral),
+        );
+        return;
+    };
+    let first_word = first.word as usize;
+    frontier.transpose_detectors(
+        first_word - frontier.detector_word_offset,
+        last.word as usize - frontier.detector_word_offset,
+    );
+    let count = frontier.parent.masses.len();
+    frontier.scores.resize(count, neutral);
+    // Load and store each candidate's accumulator once per group of up to four
+    // rows. Every candidate keeps exactly the same ordered additions.
+    let row_values = |row: &SuffixRow| {
+        let probabilities = &suffix_compatibility.values.probabilities[row.epoch as usize];
+        let word = row.word as usize;
+        let mask = 1_u64 << row.bit;
+        let (zero, one) = if observed[word] & mask == 0 {
+            (probabilities.zero, probabilities.one)
+        } else {
+            (probabilities.one, probabilities.zero)
+        };
+        let offset = word - first_word;
+        ScoreRow {
+            candidates: &frontier.transposed[offset * count..(offset + 1) * count],
+            mask,
+            zero,
+            one,
+        }
+    };
+    // Leave one final group of one to four rows for score finalization.
+    let prefix_len = ((rows.len() - 1) / 4) * 4;
+    let (prefix, final_rows) = rows.split_at(prefix_len);
+    let (groups, _) = prefix.as_chunks::<4>();
+    for group in groups {
+        add_score_rows(
+            &mut frontier.scores,
+            group.each_ref().map(row_values),
+            |_, sum| sum,
+        );
+    }
+    let masses = &frontier.parent.masses[..count];
+    let finalize = |index: usize, sum: f64| masses[index] + score_alpha * sum;
+    match final_rows {
+        [a] => add_score_rows(&mut frontier.scores, [row_values(a)], finalize),
+        [a, b] => add_score_rows(&mut frontier.scores, [a, b].map(row_values), finalize),
+        [a, b, c] => add_score_rows(&mut frontier.scores, [a, b, c].map(row_values), finalize),
+        [a, b, c, d] => {
+            add_score_rows(&mut frontier.scores, [a, b, c, d].map(row_values), finalize);
+        }
+        _ => unreachable!("nonempty final scoring group"),
+    }
+    #[cfg(any(test, feature = "runtime-checks"))]
+    {
+        // Independent original scalar XOR selection and left fold, reading
+        // physical parent keys rather than the transposed candidate buffer.
+        for (index, &mass) in frontier.parent.masses.iter().enumerate() {
+            let key = frontier.parent.key(index, frontier.stride);
+            let parity: f64 = suffix_compatibility
+                .rows
+                .iter()
+                .map(|row| {
+                    let pair = &suffix_compatibility.values.probabilities[row.epoch as usize];
+                    let original = (key[row.word as usize - frontier.detector_word_offset]
+                        ^ observed[row.word as usize])
+                        & (1_u64 << row.bit);
+                    if original == 0 { pair.zero } else { pair.one }
+                })
+                .sum();
+            let expected = mass + score_alpha * parity;
+            assert_eq!(
+                frontier.scores[index].to_bits(),
+                expected.to_bits(),
+                "observed-row scalar score bits"
+            );
+        }
+    }
+}
+
+/// The scorer as it was before grouping, kept verbatim as the test oracle.
+#[cfg(test)]
+fn score_candidates_reference(
     frontier: &mut FrontierScratch<f64>,
     score_alpha: f64,
     suffix_compatibility: SuffixCompatibility<'_>,
@@ -2856,6 +4404,136 @@ fn prune(
     observed: &[u64],
     mode: DecodeMode,
 ) -> PruneResult<f64> {
+    #[cfg(any(test, feature = "runtime-checks"))]
+    let mut reference = frontier.clone();
+    let result = prune_impl(
+        frontier,
+        k,
+        delta,
+        score_alpha,
+        suffix_compatibility,
+        observed,
+        mode,
+    );
+    #[cfg(any(test, feature = "runtime-checks"))]
+    {
+        retention_equivalence_self_test();
+        let expected = prune_reference(
+            &mut reference,
+            k,
+            delta,
+            score_alpha,
+            suffix_compatibility,
+            observed,
+            mode,
+        );
+        assert_eq!(
+            frontier.parent.words, reference.parent.words,
+            "retained state/key order"
+        );
+        assert!(
+            frontier
+                .parent
+                .masses
+                .iter()
+                .map(|x| x.to_bits())
+                .eq(reference.parent.masses.iter().map(|x| x.to_bits())),
+            "mass bits"
+        );
+        assert!(
+            frontier
+                .scores
+                .iter()
+                .map(|x| x.to_bits())
+                .eq(reference.scores.iter().map(|x| x.to_bits())),
+            "score bits"
+        );
+        assert_eq!(
+            (
+                frontier.stride,
+                frontier.detector_words,
+                frontier.detector_word_offset
+            ),
+            (
+                reference.stride,
+                reference.detector_words,
+                reference.detector_word_offset
+            )
+        );
+        assert_eq!(
+            (
+                result.dropped_states,
+                result.dropped_log_mass.to_bits(),
+                result.k_capped,
+                result.delta_pruned
+            ),
+            (
+                expected.dropped_states,
+                expected.dropped_log_mass.to_bits(),
+                expected.k_capped,
+                expected.delta_pruned
+            )
+        );
+    }
+    result
+}
+#[cfg(any(test, feature = "runtime-checks"))]
+fn retention_equivalence_self_test() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let mut seed = 0x89ab_cd01_2345_6789_u64;
+        let mut random = || {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            seed
+        };
+        for stride in [0, 1, 2, 4, 13] {
+            for count in [0, 1, 2, 63, 256, 512] {
+                for pattern in 0..4 {
+                    let mut a = FrontierScratch::<f64> {
+                        stride,
+                        detector_words: stride,
+                        ..Default::default()
+                    };
+                    a.parent.words.extend((0..stride * count).map(|_| random()));
+                    a.parent
+                        .masses
+                        .extend((0..count).map(|_| f64::from_bits(random())));
+                    a.retained.extend((0..count).map(|i| match pattern {
+                        0 => false,
+                        1 => true,
+                        2 => i % 2 == 0,
+                        _ => random() >> 63 != 0,
+                    }));
+                    a.branches.words.resize(3 * stride, u64::MAX);
+                    a.branches.masses.resize(3, -1.0);
+                    let mut b = a.clone();
+                    a.retain();
+                    b.retain_in_place();
+                    assert_eq!(a.parent.words, b.parent.words);
+                    assert!(
+                        a.parent.masses.iter().map(|x| x.to_bits()).eq(b
+                            .parent
+                            .masses
+                            .iter()
+                            .map(|x| x.to_bits()))
+                    );
+                    b.reset(&vec![0; stride], &[], &vec![0; stride], 0.0);
+                }
+            }
+        }
+    });
+}
+
+#[cfg(any(test, feature = "runtime-checks"))]
+fn prune_reference(
+    frontier: &mut FrontierScratch<f64>,
+    k: usize,
+    delta: f64,
+    score_alpha: f64,
+    suffix_compatibility: SuffixCompatibility<'_>,
+    observed: &[u64],
+    mode: DecodeMode,
+) -> PruneResult<f64> {
     if k == usize::MAX && delta.is_infinite() {
         return PruneResult {
             dropped_states: 0,
@@ -2913,6 +4591,86 @@ fn prune(
         }
     }
     frontier.retain();
+    PruneResult {
+        dropped_states: (original_states - retained_states) as u64,
+        dropped_log_mass,
+        k_capped: original_states > k,
+        delta_pruned: original_states.min(k) > eligible,
+    }
+}
+
+fn prune_impl(
+    frontier: &mut FrontierScratch<f64>,
+    k: usize,
+    delta: f64,
+    score_alpha: f64,
+    suffix_compatibility: SuffixCompatibility<'_>,
+    observed: &[u64],
+    mode: DecodeMode,
+) -> PruneResult<f64> {
+    if k == usize::MAX && delta.is_infinite() {
+        return PruneResult {
+            dropped_states: 0,
+            dropped_log_mass: f64::NEG_INFINITY,
+            k_capped: false,
+            delta_pruned: false,
+        };
+    }
+
+    score_candidates(frontier, score_alpha, suffix_compatibility, observed);
+    let better = |&left: &usize, &right: &usize| {
+        frontier.scores[right]
+            .total_cmp(&frontier.scores[left])
+            .then_with(|| {
+                compare_state_words(
+                    frontier.parent.key(left, frontier.stride),
+                    frontier.parent.key(right, frontier.stride),
+                    frontier.detector_words,
+                )
+            })
+    };
+    let best = (0..frontier.parent.masses.len())
+        .min_by(better)
+        .expect("a nonempty merged frontier must have a score");
+    let cutoff = frontier.scores[best] - delta;
+    frontier.indices.clear();
+    frontier.retained.clear();
+    // Most frontiers need only their cutoff mask. Count the same decisions
+    // without writing an index for every survivor unless selection needs it.
+    let mut eligible = 0;
+    for candidate in 0..frontier.parent.masses.len() {
+        let keep = frontier.scores[candidate] >= cutoff;
+        frontier.retained.push(keep);
+        eligible += usize::from(keep);
+    }
+    if eligible > k {
+        frontier.indices.extend(
+            (0..frontier.parent.masses.len()).filter(|&candidate| frontier.retained[candidate]),
+        );
+        frontier.indices.select_nth_unstable_by(k, better);
+        frontier.indices.truncate(k);
+        // Selection uses the unchanged total-score/full-key comparator. Rebuild
+        // the mask only when the cap actually removes an eligible state.
+        frontier.retained.fill(false);
+        for &candidate in &frontier.indices {
+            frontier.retained[candidate] = true;
+        }
+    }
+    let original_states = frontier.parent.masses.len();
+    let retained_states = eligible.min(k);
+    let mut dropped_log_mass = f64::NEG_INFINITY;
+    if mode == DecodeMode::Full {
+        // Keep the existing score-ordered summation for bitwise telemetry stability.
+        frontier.indices.clear();
+        frontier
+            .indices
+            .extend((0..original_states).filter(|&i| !frontier.retained[i]));
+        frontier.indices.sort_unstable_by(better);
+        for &candidate in &frontier.indices {
+            dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
+        }
+    }
+    frontier.retain_in_place();
     PruneResult {
         dropped_states: (original_states - retained_states) as u64,
         dropped_log_mass,
@@ -3312,12 +5070,344 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resumable_unusable_scores_remain_an_engine_fault_and_can_be_cancelled() {
+        let decoder = super::TrellisDecoder::from_dem_str(
+            "error(0.2) D0 L0\nerror(0.1) D0",
+            super::TrellisConfig {
+                k: 1,
+                ..super::TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let mut bounded = decoder.into_resumable().unwrap();
+        bounded.begin(&[0]).unwrap();
+        // Inject an engine fault after valid preparation. It must never be
+        // reclassified as a genuine no-path that a committee could absorb.
+        bounded
+            .decoder
+            .scratch
+            .float_progress
+            .frontier
+            .parent
+            .masses[0] = f64::NAN;
+        let progress = bounded.step(1).unwrap();
+        assert!(progress.ready_to_finish);
+        assert_eq!(bounded.step(1).unwrap(), progress);
+        assert!(matches!(
+            bounded.finish().unwrap(),
+            super::TrellisDecodeAttempt::Error(super::DecoderError::InternalError(_))
+        ));
+        bounded.begin(&[0]).unwrap();
+        bounded.step(1).unwrap();
+        bounded.cancel();
+        bounded.begin(&[1]).unwrap();
+        bounded.step(usize::MAX).unwrap();
+        assert!(matches!(
+            bounded.finish().unwrap(),
+            super::TrellisDecodeAttempt::Success(_)
+        ));
+    }
+
     use super::{
         INT_METRIC_MAX, INT_METRIC_NEG_INF, MetricMode, SparseDem, TrellisConfig, TrellisDecoder,
         bp_score_probability, fixed_mul_round, fixed_mul_round_fast, i64_to_f64, logaddexp,
         merge_indistinguishable_columns, quantize_metric,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn direct_without_dropped_mass_preserves_retained_results_and_errors() {
+        use super::TrellisDecodeAttempt::{Error, NoPath, Success};
+        let dem = SparseDem {
+            mechanisms: vec![
+                (0.2, vec![0, 1], vec![0]),
+                (0.1, vec![0], vec![1]),
+                (0.05, vec![1], vec![0]),
+            ],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 3,
+            num_observables: 2,
+        };
+        let mut full = TrellisDecoder::from_sparse_dem(
+            &dem,
+            TrellisConfig {
+                k: 1,
+                delta: 1.0,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let mut diagnostic = full.fresh_worker();
+        let mut syndromes: Vec<Vec<u8>> = (0..8)
+            .map(|value| (0..3).map(|bit| (value >> bit) & 1).collect())
+            .collect();
+        syndromes.extend([vec![], vec![0], vec![0, 0, 0, 0], vec![1, 0, 0]]);
+        for syndrome in syndromes {
+            match (
+                full.decode_attempt(&syndrome),
+                diagnostic.decode_attempt_without_dropped_mass(&syndrome),
+            ) {
+                (Success(expected), Success(mut actual)) => {
+                    assert!(actual.dropped_log_mass.is_nan());
+                    actual.dropped_log_mass = expected.dropped_log_mass;
+                    assert_eq!(actual, expected);
+                }
+                (
+                    NoPath {
+                        error: a,
+                        transitions: at,
+                        dropped_states: ad,
+                        bp_seconds: ab,
+                    },
+                    NoPath {
+                        error: b,
+                        transitions: bt,
+                        dropped_states: bd,
+                        bp_seconds: bb,
+                    },
+                ) => {
+                    assert_eq!(a.to_string(), b.to_string());
+                    assert_eq!((at, ad, ab.to_bits()), (bt, bd, bb.to_bits()));
+                }
+                (Error(a), Error(b)) => assert_eq!(a.to_string(), b.to_string()),
+                _ => panic!("full and diagnostic modes disagree on failure provenance"),
+            }
+        }
+    }
+
+    #[test]
+    fn expanded_records_preserve_scalar_order_mass_and_fallbacks() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        // Reuse across the old/new arrival-bit boundary, both packed formats,
+        // unsupported key shapes, a count fallback and a return to the old path.
+        for count in [512_u32, 513, 1023, 1024, 1025, 64] {
+            let arrival_bits = if count <= 512 { 9 } else { 10 };
+            for width in [2, 3] {
+                for wide in [false, true] {
+                    for shape in 0..4 {
+                        let stride = if wide { 7 } else { width };
+                        let detector_words = stride - 1;
+                        scratch.reset(
+                            &vec![0; detector_words],
+                            &[0],
+                            &vec![u64::MAX; detector_words],
+                            0.0,
+                        );
+                        let positions = if width == 2 {
+                            [detector_words - 1, stride - 1, 0]
+                        } else {
+                            [detector_words - 1, 0, stride - 1]
+                        };
+                        for index in 0..count {
+                            let logical = if width == 2 { 1 } else { 2 };
+                            let mut key = [0_u64; 3];
+                            if shape == 0 {
+                                key[0] = 1 + u64::from(index % 7);
+                                key[1] = 1 + u64::from((index / 7) % 5);
+                                if width == 3 {
+                                    key[2] = 1 + u64::from((index / 35) % 3);
+                                }
+                            } else {
+                                key[0] = if width == 2 {
+                                    u64::MAX - u64::from(index % 7)
+                                } else if shape == 2 {
+                                    1_u64 << (63 - arrival_bits)
+                                } else {
+                                    (1_u64 << (63 - arrival_bits)) - 1
+                                };
+                                if width == 3 {
+                                    key[1] = u64::MAX - u64::from((index / 7) % 5);
+                                }
+                                key[logical] = if shape == 3 || (shape == 2 && width == 2) {
+                                    2
+                                } else {
+                                    u64::from((index / 35) % 2)
+                                };
+                            }
+                            let mut words = vec![0_u64; stride];
+                            for slot in 0..width {
+                                words[positions[slot]] = key[slot];
+                            }
+                            scratch.branches.words.extend_from_slice(&words);
+                            scratch.branches.masses.push(match index % 4 {
+                                0 => -1e-16,
+                                1 => -80.0,
+                                2 => -0.2,
+                                _ => -5.0,
+                            });
+                        }
+                        let mut oracle = scratch.clone();
+                        oracle.merge_reference(super::logaddexp);
+                        scratch.merge(super::logaddexp);
+                        assert_eq!(scratch.indices, oracle.indices);
+                        assert_eq!(scratch.parent.words, oracle.parent.words);
+                        assert!(
+                            scratch.parent.masses.iter().map(|x| x.to_bits()).eq(oracle
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|x| x.to_bits()))
+                        );
+                        assert_eq!(scratch.merge_record_arrival_bits, arrival_bits);
+                        assert_eq!(
+                            scratch.use_narrow_merge_records,
+                            count <= 1024 && shape == 0
+                        );
+                        assert_eq!(
+                            scratch.use_compact_merge_records,
+                            (count <= 1024 && shape <= 1) || scratch.use_generalized_merge_records
+                        );
+                        if count <= 1024 && shape <= 1 {
+                            assert!(
+                                !scratch.use_generalized_merge_records,
+                                "existing packing keeps precedence"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generalized_records_preserve_multibit_classes_at_u128_boundaries() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        let cases = [
+            (2, [32, 32, 0, 0]),
+            (2, [64, 32, 0, 0]),
+            (3, [43, 43, 32, 0]), //118 bits: fits ten arrival bits exactly.
+            (3, [44, 43, 32, 0]), //119 bits: only the nine-bit path fits.
+            (3, [45, 43, 32, 0]),
+            (3, [64, 22, 32, 0]),
+            (3, [64, 23, 32, 0]),
+            (4, [22, 32, 32, 32]),
+            (4, [23, 32, 32, 32]),
+            (4, [24, 32, 32, 32]),
+            (4, [40, 0, 40, 32]),
+        ];
+        for count in [0, 1, 63, 64, 511, 512, 513, 1023, 1024, 1025, 64] {
+            for (width, spans) in cases {
+                for wide in [false, true] {
+                    for top_aligned in [false, true] {
+                        let stride = if wide { 8 } else { width };
+                        let detector_words = stride - 1;
+                        scratch.reset(
+                            &vec![0; detector_words],
+                            &[0],
+                            &vec![u64::MAX; detector_words],
+                            0.0,
+                        );
+                        let positions = match width {
+                            2 => [detector_words - 1, stride - 1, 0, 0],
+                            3 => [detector_words - 1, 0, stride - 1, 0],
+                            _ => [detector_words - 1, detector_words - 2, 0, stride - 1],
+                        };
+                        for index in 0..count {
+                            let mut words = vec![0; stride];
+                            for slot in 0..width {
+                                let bits = spans[slot];
+                                let mask = if bits == 64 {
+                                    u64::MAX
+                                } else {
+                                    (1_u64 << bits) - 1
+                                };
+                                let shift = if top_aligned && bits != 0 {
+                                    64 - bits
+                                } else {
+                                    0
+                                };
+                                words[positions[slot]] =
+                                    (mask & !(((index / (slot + 1)) % 9) as u64)) << shift;
+                            }
+                            scratch.branches.words.extend_from_slice(&words);
+                            scratch.branches.masses.push(match index % 4 {
+                                0 => -0.0,
+                                1 => -80.0,
+                                2 => -0.2,
+                                _ => -1e-10,
+                            });
+                        }
+                        let mut oracle = scratch.clone();
+                        oracle.merge_reference(super::logaddexp);
+                        scratch.merge(super::logaddexp);
+                        assert_eq!(scratch.indices, oracle.indices);
+                        assert_eq!(scratch.parent.words, oracle.parent.words);
+                        assert!(
+                            scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|v| v.to_bits()))
+                        );
+                        let arrival_bits = if count <= 512 { 9 } else { 10 };
+                        assert_eq!(
+                            scratch.use_generalized_merge_records,
+                            (64..=1024).contains(&count)
+                                && spans.iter().sum::<u32>() <= 128 - arrival_bits
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generalized_records_reject_unsampled_overflow_and_unsupported_width() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        for count in [512_u32, 513, 1024] {
+            let high_width = if count <= 512 { 44 } else { 43 };
+            for special in [0, 1, count - 1] {
+                scratch.reset(&[0, 0], &[0], &[u64::MAX; 2], 0.0);
+                for index in 0..count {
+                    let logical =
+                        u64::from(u32::MAX) | if index == special { 1_u64 << 32 } else { 0 };
+                    scratch.branches.words.extend_from_slice(&[
+                        (1_u64 << 43) - 1,
+                        (1_u64 << high_width) - 1,
+                        logical,
+                    ]);
+                    scratch.branches.masses.push(-f64::from(index) * 0.125);
+                }
+                let mut oracle = scratch.clone();
+                oracle.merge_reference(super::logaddexp);
+                scratch.merge(super::logaddexp);
+                assert!(!scratch.use_generalized_merge_records);
+                assert_eq!(scratch.indices, oracle.indices);
+                assert_eq!(scratch.parent.words, oracle.parent.words);
+                assert!(
+                    scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|v| v.to_bits()))
+                );
+            }
+            // Five nonzero components remain on the generic complete-key path,
+            // even when their small values would fit in a numeric record.
+            scratch.reset(&[0; 4], &[0], &[u64::MAX; 4], 0.0);
+            for index in 0..count {
+                scratch
+                    .branches
+                    .words
+                    .extend_from_slice(&[1, 1, 1, 1, 1 + u64::from(index % 17)]);
+                scratch.branches.masses.push(-f64::from(index) * 0.25);
+            }
+            let mut oracle = scratch.clone();
+            oracle.merge_reference(super::logaddexp);
+            scratch.merge(super::logaddexp);
+            assert!(!scratch.use_generalized_merge_records);
+            assert_eq!(scratch.indices, oracle.indices);
+            assert_eq!(scratch.parent.words, oracle.parent.words);
+            assert!(
+                scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                    .parent
+                    .masses
+                    .iter()
+                    .map(|v| v.to_bits()))
+            );
+        }
+    }
 
     #[test]
     fn short_state_comparisons_match_generic_word_order() {
@@ -3403,6 +5493,278 @@ mod tests {
                     frontier.reset(&vec![0; stride], &[], &vec![0; stride], 0.0);
                     assert_eq!(frontier.parent.words, vec![0; stride]);
                     assert_eq!(frontier.parent.masses, vec![0.0]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_records_preserve_order_and_mass_bits_across_fallbacks() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        // Reuse the same scratch across narrow, overflow, invalid logical and
+        // branch-count fallback paths, including duplicate full keys.
+        for count in [0, 1, 63, 64, 65, 127, 128, 256, 511, 512, 513, 64] {
+            for shape in [0, 1, 2, 0] {
+                scratch.reset(&[0], &[0], &[u64::MAX], 0.0);
+                for index in 0..count {
+                    let high = match shape {
+                        1 if index == count - 1 => 1_u64 << 54,
+                        _ => (index as u64 % 17) | ((1_u64 << 54) - 32),
+                    };
+                    let logical = if shape == 2 && index == count - 1 {
+                        2
+                    } else {
+                        (index as u64 / 17) % 2
+                    };
+                    scratch.branches.words.extend_from_slice(&[high, logical]);
+                    scratch
+                        .branches
+                        .masses
+                        .push(-(f64::from(u32::try_from(index % 19).unwrap())) * 0.25);
+                }
+                let mut oracle = scratch.clone();
+                oracle.indices = (0..count).collect();
+                oracle.indices.sort_unstable_by(|&left, &right| {
+                    super::compare_state_words(
+                        oracle.branches.key(left, oracle.stride),
+                        oracle.branches.key(right, oracle.stride),
+                        oracle.detector_words,
+                    )
+                    .then_with(|| left.cmp(&right))
+                });
+                oracle.parent.clear(oracle.stride);
+                for &index in &oracle.indices {
+                    let len = oracle.parent.masses.len();
+                    if len > 0
+                        && oracle.parent.key(len - 1, oracle.stride)
+                            == oracle.branches.key(index, oracle.stride)
+                    {
+                        oracle.parent.masses[len - 1] = super::logaddexp(
+                            oracle.parent.masses[len - 1],
+                            oracle.branches.masses[index],
+                        );
+                    } else {
+                        oracle
+                            .parent
+                            .copy_state(&oracle.branches, index, oracle.stride);
+                    }
+                }
+                scratch.merge(super::logaddexp);
+                assert_eq!(scratch.indices, oracle.indices);
+                assert_eq!(scratch.parent.words, oracle.parent.words);
+                assert_eq!(
+                    scratch
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|x| x.to_bits())
+                        .collect::<Vec<_>>(),
+                    oracle
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|x| x.to_bits())
+                        .collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    scratch.use_narrow_merge_records,
+                    (64..=512).contains(&count) && shape == 0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn trimmed_complete_keys_preserve_order_at_bit_and_count_boundaries() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        for width in [2, 3] {
+            for wide in [false, true] {
+                let stride = if wide { 7 } else { width };
+                for count in [0, 1, 63, 64, 65, 127, 511, 512, 513, 1023, 1024, 1025, 64] {
+                    for spans in [
+                        [0, 0, 0],
+                        [1, 1, 1],
+                        [27, 27, 1],
+                        [28, 27, 1],
+                        [54, 1, 0],
+                        [55, 0, 0],
+                        [56, 0, 0],
+                        [64, 1, 1],
+                        [0, 54, 1],
+                        [54, 0, 1],
+                        [1, 1, 1],
+                    ] {
+                        for top_aligned in [false, true] {
+                            let detector_words = stride - 1;
+                            scratch.reset(
+                                &vec![0; detector_words],
+                                &[0],
+                                &vec![u64::MAX; detector_words],
+                                0.0,
+                            );
+                            let positions = if width == 2 {
+                                [detector_words - 1, stride - 1, 0]
+                            } else {
+                                [detector_words - 1, 0, stride - 1]
+                            };
+                            for index in 0..count {
+                                let mut words = vec![0_u64; stride];
+                                for slot in 0..width {
+                                    let bits: u32 = spans[slot];
+                                    let mask = if bits == 64 {
+                                        u64::MAX
+                                    } else {
+                                        (1_u64 << bits) - 1
+                                    };
+                                    let shift = if top_aligned && bits > 0 {
+                                        64 - bits
+                                    } else {
+                                        0
+                                    };
+                                    let value = mask & !((index / (1 + slot * 3)) as u64 % 11);
+                                    words[positions[slot]] = value << shift;
+                                }
+                                scratch.branches.words.extend_from_slice(&words);
+                                scratch
+                                    .branches
+                                    .masses
+                                    .push(-(f64::from(u32::try_from(index % 19).unwrap())) * 0.25);
+                            }
+                            let mut oracle = scratch.clone();
+                            oracle.indices = (0..count).collect();
+                            oracle.indices.sort_unstable_by(|&a, &b| {
+                                super::compare_state_words(
+                                    oracle.branches.key(a, oracle.stride),
+                                    oracle.branches.key(b, oracle.stride),
+                                    oracle.detector_words,
+                                )
+                                .then_with(|| a.cmp(&b))
+                            });
+                            oracle.parent.clear(oracle.stride);
+                            for &index in &oracle.indices {
+                                let len = oracle.parent.masses.len();
+                                if len > 0
+                                    && oracle.parent.key(len - 1, oracle.stride)
+                                        == oracle.branches.key(index, oracle.stride)
+                                {
+                                    oracle.parent.masses[len - 1] = super::logaddexp(
+                                        oracle.parent.masses[len - 1],
+                                        oracle.branches.masses[index],
+                                    );
+                                } else {
+                                    oracle.parent.copy_state(
+                                        &oracle.branches,
+                                        index,
+                                        oracle.stride,
+                                    );
+                                }
+                            }
+                            scratch.merge(super::logaddexp);
+                            assert_eq!(scratch.indices, oracle.indices);
+                            assert_eq!(scratch.parent.words, oracle.parent.words);
+                            assert_eq!(
+                                scratch
+                                    .parent
+                                    .masses
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>(),
+                                oracle
+                                    .parent
+                                    .masses
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>()
+                            );
+                            let key_bits = if count <= 512 { 55 } else { 54 };
+                            let expected = (64..=1024).contains(&count)
+                                && (2..=3).contains(&scratch.merge_word_indices.len())
+                                && spans[..width].iter().sum::<u32>() <= key_bits;
+                            assert_eq!(scratch.use_narrow_merge_records, expected);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sampled_and_unsampled_overflow_preserve_exact_merge_order() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        for width in [2, 3] {
+            for count in [64, 128, 512, 513, 1023, 1024, 1025] {
+                for special in [0, 1, count / 3, count - 1] {
+                    for high_bit in [52, 53, 54] {
+                        let detector_words = width - 1;
+                        scratch.reset(
+                            &vec![0; detector_words],
+                            &[0],
+                            &vec![u64::MAX; detector_words],
+                            0.0,
+                        );
+                        for index in 0..count {
+                            let mut words = vec![0_u64; width];
+                            words[detector_words - 1] = 1;
+                            if index == special {
+                                words[detector_words - 1] |= 1_u64 << high_bit;
+                                words[width - 1] = 1;
+                            }
+                            scratch.branches.words.extend_from_slice(&words);
+                            scratch
+                                .branches
+                                .masses
+                                .push(-(f64::from(u32::try_from(index % 19).unwrap())) * 0.25);
+                        }
+                        let mut oracle = scratch.clone();
+                        oracle.indices = (0..count).collect();
+                        oracle.indices.sort_unstable_by(|&a, &b| {
+                            super::compare_state_words(
+                                oracle.branches.key(a, oracle.stride),
+                                oracle.branches.key(b, oracle.stride),
+                                oracle.detector_words,
+                            )
+                            .then_with(|| a.cmp(&b))
+                        });
+                        oracle.parent.clear(oracle.stride);
+                        for &index in &oracle.indices {
+                            let len = oracle.parent.masses.len();
+                            if len > 0
+                                && oracle.parent.key(len - 1, oracle.stride)
+                                    == oracle.branches.key(index, oracle.stride)
+                            {
+                                oracle.parent.masses[len - 1] = super::logaddexp(
+                                    oracle.parent.masses[len - 1],
+                                    oracle.branches.masses[index],
+                                );
+                            } else {
+                                oracle
+                                    .parent
+                                    .copy_state(&oracle.branches, index, oracle.stride);
+                            }
+                        }
+                        scratch.merge(super::logaddexp);
+                        assert_eq!(scratch.indices, oracle.indices);
+                        assert_eq!(scratch.parent.words, oracle.parent.words);
+                        assert_eq!(
+                            scratch
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|x| x.to_bits())
+                                .collect::<Vec<_>>(),
+                            oracle
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|x| x.to_bits())
+                                .collect::<Vec<_>>()
+                        );
+                        let key_bits = if count <= 512 { 55 } else { 54 };
+                        assert_eq!(
+                            scratch.use_narrow_merge_records,
+                            count <= 1024 && high_bit + 2 <= key_bits
+                        );
+                    }
                 }
             }
         }
@@ -3602,7 +5964,26 @@ mod tests {
                         expected.copy_state(&frontier.branches, index, stride);
                     }
                 }
+                #[cfg(any(test, feature = "runtime-checks"))]
+                let mut merge_reference = frontier.clone();
                 frontier.merge(logaddexp);
+                #[cfg(any(test, feature = "runtime-checks"))]
+                {
+                    merge_reference.merge_reference(logaddexp);
+                    assert_eq!(
+                        frontier.parent.words, merge_reference.parent.words,
+                        "merged state keys"
+                    );
+                    assert!(
+                        frontier
+                            .parent
+                            .masses
+                            .iter()
+                            .map(|x| x.to_bits())
+                            .eq(merge_reference.parent.masses.iter().map(|x| x.to_bits())),
+                        "merged mass bits and fold order"
+                    );
+                }
                 assert_eq!(frontier.indices, indices);
                 assert_eq!(frontier.parent.words, expected.words);
                 assert_eq!(
@@ -3737,7 +6118,26 @@ mod tests {
                         expected.sort_by(|&left, &right| {
                             super::compare_state_words(&keys[left], &keys[right], detector_words)
                         });
+                        #[cfg(any(test, feature = "runtime-checks"))]
+                        let mut merge_reference = frontier.clone();
                         frontier.merge(logaddexp);
+                        #[cfg(any(test, feature = "runtime-checks"))]
+                        {
+                            merge_reference.merge_reference(logaddexp);
+                            assert_eq!(
+                                frontier.parent.words, merge_reference.parent.words,
+                                "merged state keys"
+                            );
+                            assert!(
+                                frontier
+                                    .parent
+                                    .masses
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .eq(merge_reference.parent.masses.iter().map(|x| x.to_bits())),
+                                "merged mass bits and fold order"
+                            );
+                        }
                         assert_eq!(frontier.indices, expected);
                         let mut merged_keys: Vec<Vec<u64>> = Vec::new();
                         let mut merged_masses = Vec::new();
@@ -4235,4 +6635,303 @@ mod tests {
         assert_ne!(first_scratch, second_scratch);
         assert_ne!(second_graph, second_scratch);
     }
+}
+
+#[cfg(any(test, feature = "runtime-checks"))]
+fn sort_equivalence_self_test() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        for count in [0, 1, 2, 63, 64, 65, 255, 256, 512] {
+            for pattern in 0..5 {
+                let mut actual = FrontierScratch::<f64> {
+                    stride: 3,
+                    detector_words: 2,
+                    ..Default::default()
+                };
+                for index in 0..count {
+                    let high = [0, (1u64 << 63) - 1, 1, 1][index % 4];
+                    let low = [u64::MAX, 0, 1u64 << 63, (1u64 << 63) - 1][(index / 2) % 4];
+                    let mut key = [low, high, (index % 2) as u64];
+                    if pattern == 1 {
+                        key = [7, 9, 1];
+                    }
+                    if pattern == 2 && index + 1 == count {
+                        key[1] = 1u64 << 63;
+                    }
+                    if pattern == 3 && index + 1 == count {
+                        key[2] = 2;
+                    }
+                    if pattern == 4 && index + 1 == count {
+                        key = [u64::MAX; 3];
+                    }
+                    actual.branches.words.extend_from_slice(&key);
+                    actual.branches.masses.push(0.0);
+                }
+                let mut expected = actual.clone();
+                actual.sort_merge_indices_impl();
+                expected.sort_merge_indices_reference();
+                assert_eq!(
+                    actual.indices, expected.indices,
+                    "packed sort boundary ordering"
+                );
+            }
+        }
+        let mut seed = 0x7261_6e6b_736f_7274_u64;
+        let mut random = || {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            seed
+        };
+        for stride in [0, 1, 2, 3, 4, 5, 13] {
+            for detector_words in 0..=stride {
+                for count in [0, 1, 2, 63, 256, 512] {
+                    // All zero, one/two live words, wide random, and duplicate keys.
+                    for pattern in 0..6 {
+                        let mut actual = FrontierScratch::<f64> {
+                            detector_words,
+                            stride,
+                            ..Default::default()
+                        };
+                        for index in 0..count {
+                            for word in 0..stride {
+                                actual.branches.words.push(match pattern {
+                                    1 if word == stride / 2 => random(),
+                                    2 if word == 0 || word == stride - 1 => random(),
+                                    3 => random(),
+                                    4 => ((index % 5) ^ word) as u64,
+                                    5 if word < 3 => random(),
+                                    _ => 0,
+                                });
+                            }
+                            actual.branches.masses.push(0.0);
+                        }
+                        let mut expected = actual.clone();
+                        actual.sort_merge_indices_impl();
+                        expected.sort_merge_indices_reference();
+                        assert_eq!(actual.indices, expected.indices, "synthetic merge ordering");
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod bulk_emission_tests {
+    use super::*;
+    use rand::{RngExt, SeedableRng};
+
+    #[test]
+    fn paired_bulk_emission_matches_scalar_bits_order_and_growth() {
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(160_016);
+        for width in [0, 1, 2, 3, 12] {
+            for logical_words in [0, 1, 3] {
+                for trial in 0..64 {
+                    let start = rng.random_range(0..=width);
+                    let end = rng.random_range(start..=width);
+                    let toggle: Vec<u64> = (0..width).map(|_| rng.random()).collect();
+                    let close: Vec<u64> = (0..width)
+                        .map(|_| if trial % 4 == 0 { 0 } else { rng.random() })
+                        .collect();
+                    let active: Vec<u64> = close
+                        .iter()
+                        .map(|&mask| if rng.random_bool(0.5) { !mask } else { 0 })
+                        .collect();
+                    let column = Column {
+                        compact: CompactColumn::new((start, end - start), &active, &close, &toggle),
+                        detector_toggle: toggle.clone(),
+                        logical_toggle: (0..logical_words).map(|_| rng.random()).collect(),
+                        has_closing_detectors: close.iter().any(|&x| x != 0),
+                        close_mask: close,
+                        active_mask: active,
+                        suffix_compatibility: Vec::new(),
+                        log_odds: 0.0,
+                        log_one_minus_probability: 0.0,
+                        log_odds_int: 0,
+                        log_one_minus_probability_int: 0,
+                    };
+                    let stride = column.compact.output.len() + logical_words;
+                    let mut actual = StateBuffer::<f64>::default();
+                    if trial % 2 == 0 {
+                        actual.words.reserve(16 * stride);
+                        actual.masses.reserve(16);
+                    }
+                    actual.words.extend(std::iter::repeat_n(0x1234, stride));
+                    actual.masses.push(-0.0);
+                    let mut expected = actual.clone();
+                    let (mut actual_count, mut expected_count) = (17, 17);
+                    for branch in 0..8 {
+                        let mut full_parent = vec![0_u64; width];
+                        for word in &mut full_parent[start..end] {
+                            *word = rng.random();
+                        }
+                        let mut parent = full_parent[start..end].to_vec();
+                        parent.extend((0..logical_words).map(|_| rng.random::<u64>()));
+                        let observed: Vec<u64> = (0..width)
+                            .map(|i| match branch % 3 {
+                                0 => full_parent[i],
+                                1 => full_parent[i] ^ toggle[i],
+                                _ => rng.random(),
+                            })
+                            .collect();
+                        let zero_mass = f64::from_bits(rng.random());
+                        let one_mass = f64::from_bits(rng.random());
+                        column.emit_compact_pair(
+                            &mut actual,
+                            &parent,
+                            &observed,
+                            zero_mass,
+                            one_mass,
+                            &mut actual_count,
+                        );
+                        column.emit_compact(
+                            &mut expected,
+                            &parent,
+                            &observed,
+                            false,
+                            zero_mass,
+                            &mut expected_count,
+                        );
+                        column.emit_compact(
+                            &mut expected,
+                            &parent,
+                            &observed,
+                            true,
+                            one_mass,
+                            &mut expected_count,
+                        );
+                        assert_eq!(actual.words, expected.words);
+                        assert!(
+                            actual
+                                .masses
+                                .iter()
+                                .map(|x| x.to_bits())
+                                .eq(expected.masses.iter().map(|x| x.to_bits()))
+                        );
+                        assert_eq!(actual_count, expected_count);
+                        assert_eq!(actual.words.len(), actual.masses.len() * stride);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn compact_records_preserve_full_keys_arrival_and_mass_bits_at_boundaries() {
+    use rand::{RngExt, SeedableRng};
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(200_020);
+    assert_eq!(std::mem::size_of::<u128>(), 16);
+    let mut packed_cases = 0;
+    let mut fallback_cases = 0;
+    for stride in [2, 3, 6] {
+        let mut frontier = FrontierScratch::<f64> {
+            stride,
+            detector_words: stride - 1,
+            ..Default::default()
+        };
+        // Reuse scratch across packed and fallback shapes, including a shorter
+        // next column, to catch stale mode flags or partially built records.
+        for count in [
+            0, 1, 63, 64, 65, 127, 128, 129, 255, 256, 511, 512, 513, 1023, 1024, 1025, 64, 128, 1,
+        ] {
+            for pattern in 0..7 {
+                frontier.branches.words.clear();
+                frontier.branches.masses.clear();
+                let mut keys: Vec<Vec<u64>> = Vec::new();
+                for index in 0..count {
+                    let (mut low, mut high, mut logical) = (
+                        rng.random::<u64>(),
+                        rng.random::<u64>() & ((1u64 << 54) - 1),
+                        rng.random::<u64>() & 1,
+                    );
+                    if pattern == 1 {
+                        low = u64::MAX;
+                        high = (1u64 << 54) - 1;
+                        logical = 1;
+                    }
+                    if pattern == 2 {
+                        low = 0;
+                        high = 0;
+                        logical = 0;
+                    }
+                    let mut key = vec![0; stride];
+                    if stride == 2 {
+                        key[0] = low;
+                    } else {
+                        key[usize::from(stride != 3)] = low;
+                        key[stride - 2] = high;
+                    }
+                    key[stride - 1] = logical;
+                    if index % 3 == 2 {
+                        key = keys[index - 2].clone();
+                    }
+                    if pattern == 3 && index + 1 == count {
+                        key[stride - 1] = 2;
+                    }
+                    if pattern == 4 && index + 1 == count && stride > 2 {
+                        key[stride - 2] = 1u64 << 54;
+                    }
+                    if pattern == 5 && index == 0 && stride > 2 {
+                        key[stride - 2] = u64::MAX;
+                    }
+                    if pattern == 6 && index + 1 == count {
+                        key.fill(u64::MAX);
+                    }
+                    frontier.branches.words.extend_from_slice(&key);
+                    frontier.branches.masses.push(if index % 7 == 0 {
+                        -0.0
+                    } else {
+                        rng.random_range(-800.0..0.0)
+                    });
+                    keys.push(key);
+                }
+                let mut order: Vec<usize> = (0..count).collect();
+                order.sort_by(|&a, &b| compare_state_words(&keys[a], &keys[b], stride - 1));
+                let mut expected_keys: Vec<Vec<u64>> = Vec::new();
+                let mut expected_masses: Vec<f64> = Vec::new();
+                for &index in &order {
+                    let mass = frontier.branches.masses[index];
+                    if expected_keys.last() == Some(&keys[index]) {
+                        let last = expected_masses.last_mut().unwrap();
+                        *last = logaddexp(*last, mass);
+                    } else {
+                        expected_keys.push(keys[index].clone());
+                        expected_masses.push(mass);
+                    }
+                }
+                frontier.merge(logaddexp);
+                assert_eq!(frontier.indices, order, "complete key and arrival order");
+                assert_eq!(
+                    frontier.parent.words,
+                    expected_keys.into_iter().flatten().collect::<Vec<_>>()
+                );
+                assert!(
+                    frontier
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .eq(expected_masses.iter().map(|v| v.to_bits())),
+                    "original left fold bits"
+                );
+                if !(64..=1024).contains(&count)
+                    || pattern == 3
+                    || pattern == 6
+                    || (stride > 2 && (pattern == 4 || pattern == 5))
+                {
+                    assert!(
+                        !frontier.use_compact_merge_records
+                            || frontier.use_generalized_merge_records
+                    );
+                }
+                if frontier.use_compact_merge_records {
+                    packed_cases += 1;
+                } else {
+                    fallback_cases += 1;
+                }
+            }
+        }
+    }
+    assert!(packed_cases > 20 && fallback_cases > 20);
 }

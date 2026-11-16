@@ -76,8 +76,12 @@ pub mod prelude;
 // Core interface and runtime traits
 // ============================================================================
 
+pub mod control_provenance;
+pub mod decoder_batches;
+pub mod measurement_provenance;
 pub mod qis_interface;
 pub mod runtime;
+pub mod runtime_decoder;
 pub mod scheduled;
 mod scheduled_transport;
 
@@ -132,13 +136,13 @@ pub use executor::{HeliosSyncHandle, QisHeliosInterface};
 pub use selene_builder::{HeliosInterfaceBuilder, helios_interface_builder};
 #[cfg(feature = "selene")]
 pub use selene_runtime::{
-    RuntimeCustomEvent, RuntimeCustomEventDisposition, RuntimeCustomEventPolicy, RuntimeNativeGate,
-    RuntimeNativeGateSet, SeleneRuntime,
+    RuntimeClockModel, RuntimeCustomEvent, RuntimeCustomEventDisposition, RuntimeCustomEventPolicy,
+    RuntimeNativeGate, RuntimeNativeGateSet, SeleneRuntime,
 };
 #[cfg(feature = "selene")]
 pub use selene_runtimes::{
     RuntimeFetchError, find_selene_runtime, selene_runtime_auto, selene_simple_runtime,
-    selene_soft_rz_runtime,
+    selene_soft_rz_runtime, set_bundled_library_dir,
 };
 
 // Re-export pecos_qis_ffi_types for downstream crates
@@ -233,6 +237,9 @@ pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
 }
 
 #[cfg(all(test, feature = "selene"))]
+pub(crate) mod selene_test_ir;
+
+#[cfg(all(test, feature = "selene"))]
 pub(crate) mod test_env {
     use std::ffi::{OsStr, OsString};
     use std::sync::Mutex;
@@ -240,6 +247,36 @@ pub(crate) mod test_env {
     // Environment variables are process-wide. Every test in this crate that
     // reads or mutates environment state must hold this lock.
     pub(crate) static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn runtime_fixture() -> std::path::PathBuf {
+        let lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        runtime_fixture_locked(&lock)
+    }
+
+    pub(crate) fn runtime_fixture_locked(
+        _lock: &std::sync::MutexGuard<'_, ()>,
+    ) -> std::path::PathBuf {
+        let directory = std::env::var_os("PECOS_SELENE_DIR");
+        directory
+            .as_ref()
+            .and_then(|directory| {
+                crate::selene_runtimes::find_library_in_dir(
+                    std::path::Path::new(directory),
+                    pecos_qis_test_runtime::LIBRARY_NAME,
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "PECOS_SELENE_DIR={directory:?} does not contain {}; set it to the output of \
+             `pecos qis-runtime --profile <profile> --tests` using the profile you built with",
+                    crate::selene_runtimes::platform_library_name(
+                        pecos_qis_test_runtime::LIBRARY_NAME
+                    )
+                )
+            })
+    }
 
     pub(crate) struct EnvVarGuard {
         key: &'static str,
@@ -307,11 +344,24 @@ pub(crate) mod test_env {
 
     /// Spawn with a stable inherited environment, releasing `ENV_MUTEX` before waiting.
     pub(crate) fn spawn_test_child(test_name: &str, envs: &[(&str, &OsStr)]) -> TestChild {
+        spawn_test_child_removing(test_name, envs, &[])
+    }
+
+    pub(crate) fn spawn_test_child_removing(
+        test_name: &str,
+        envs: &[(&str, &OsStr)],
+        remove: &[&str],
+    ) -> TestChild {
         let mut process = {
             let _env_lock = ENV_MUTEX
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::process::Command::new(std::env::current_exe().expect("test executable"))
+            let mut command =
+                std::process::Command::new(std::env::current_exe().expect("test executable"));
+            for key in remove {
+                command.env_remove(key);
+            }
+            command
                 .args(["--exact", test_name, "--nocapture"])
                 .envs(envs.iter().copied())
                 .stdout(std::process::Stdio::piped())

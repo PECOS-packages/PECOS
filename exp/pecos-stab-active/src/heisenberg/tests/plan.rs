@@ -240,7 +240,7 @@ pub(super) fn manual(n: usize, operations: Vec<HeisenbergOp>) -> HeisenbergProgr
 }
 
 pub(super) fn fixtures() -> Vec<HeisenbergProgram> {
-    let theta = Angle64::from_radians(0.37);
+    let theta = pecos_core::radians!(0.37);
     let mut programs = vec![
         manual(
             1,
@@ -279,7 +279,7 @@ pub(super) fn fixtures() -> Vec<HeisenbergProgram> {
                 rotation(
                     1,
                     &[(0, Y)],
-                    Angle64::from_radians(0.23),
+                    pecos_core::radians!(0.23),
                     AffineSign::default(),
                 ),
                 measurement(1, &[(0, Z)], 1),
@@ -394,8 +394,8 @@ fn exact_forced_and_row_invariant_corpus() {
                     Angle64::QUARTER_TURN,
                     Angle64::THREE_QUARTERS_TURN,
                     Angle64::HALF_TURN,
-                    Angle64::from_radians(0.31),
-                    Angle64::from_radians(-0.29),
+                    pecos_core::radians!(0.31),
+                    pecos_core::radians!(-0.29),
                 ];
                 operations.push(rotation(
                     n,
@@ -518,13 +518,13 @@ fn limits_scalar_buffers_and_sync() {
             rotation(
                 2,
                 &[(0, X)],
-                Angle64::from_radians(0.31),
+                pecos_core::radians!(0.31),
                 AffineSign::default(),
             ),
             rotation(
                 2,
                 &[(1, X)],
-                Angle64::from_radians(0.31),
+                pecos_core::radians!(0.31),
                 AffineSign::default(),
             ),
         ],

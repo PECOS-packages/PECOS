@@ -101,7 +101,10 @@ def test_uncertified_gadget_is_rejected(route: str) -> None:
         .with_detectors([])
         .build(),
     }
-    with pytest.raises(ValueError, match=r"requires a statically straight-line Guppy program.*trusted generator-owned"):
+    with pytest.raises(
+        ValueError,
+        match=r"requires a statically straight-line Guppy program.*generator-owned measurement-layout certificate",
+    ):
         calls[route]()
 
 

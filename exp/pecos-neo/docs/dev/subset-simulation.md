@@ -84,9 +84,9 @@ let config = SubsetConfig::new()
 // Run with noise
 let noise_builder = || {
     Some(CompositeNoiseModelBuilder::new()
-        .with_p1(0.01)
-        .with_p2(0.05)
-        .build())
+        .with_p1(0.01).unwrap()
+        .with_p2(0.05).unwrap()
+        .build().unwrap())
 };
 
 let result = SubsetSimulation::new(circuit, 2, score_fn, is_failure_fn)
@@ -160,7 +160,7 @@ let sim = ProperSubsetSimulation::new(
     SubsetConfig::new()
         .with_samples_per_level(1000)
         .with_seed(42),
-);
+)?;
 
 let result = sim.run();
 ```
@@ -181,7 +181,7 @@ let sim = BernoulliSubsetSimulation::new(
     0.1,    // p_damage: probability of damage per step
     50,     // num_steps: number of steps
     10.0,   // failure_threshold: fail if total damage >= this
-)
+)?
 .with_config(SubsetConfig::new()
     .with_samples_per_level(5000)
     .with_seed(42));
@@ -229,7 +229,7 @@ for _ in 0..500 {
 
 // Run with synthetic syndromes
 let sim = QecSubsetSimulation::new(world, config);
-let result = sim.run_proper(0.2);  // p_syndrome = 0.2 per ancilla per round
+let result = sim.run_proper(0.2)?;  // p_syndrome = 0.2 per ancilla per round
 
 println!("P(logical_failure) = {:.2e}", result.probability());
 ```
@@ -300,7 +300,7 @@ let decisions: Vec<(EntityId, usize)> = compute_splits(&world, threshold);
 world.apply_split_decisions(&decisions);
 
 // Resample by weight
-world.resample_by_weight(target_count, &mut rng);
+world.resample_by_weight(target_count, &mut rng)?;
 ```
 
 ## Helper Circuits

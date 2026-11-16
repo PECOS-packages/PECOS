@@ -19,6 +19,7 @@ use parking_lot::RwLock;
 use pecos_core::errors::PecosError;
 use std::any::Any;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -93,7 +94,7 @@ pub struct WasmForeignObject {
     /// Cached function names (initialized once, lock-free reads)
     func_names: OnceLock<Arc<[String]>>,
     /// Stop flag for epoch increment thread
-    stop_flag: Arc<RwLock<bool>>,
+    stop_flag: Arc<AtomicBool>,
     /// Last function call results
     last_results: Vec<Val>,
     /// Timeout in seconds for WASM execution (default: 1.0 second)
@@ -259,13 +260,13 @@ impl WasmForeignObject {
             PecosError::Processing(format!("Failed to compile WebAssembly module: {e}"))
         })?;
 
-        let stop_flag = Arc::new(RwLock::new(false));
+        let stop_flag = Arc::new(AtomicBool::new(false));
         let engine_clone = engine.clone();
         let stop_flag_clone = stop_flag.clone();
 
         // Start the epoch increment thread for timeout handling
         thread::spawn(move || {
-            while !*stop_flag_clone.read() {
+            while !stop_flag_clone.load(Ordering::Relaxed) {
                 // Increment the epoch every tick length
                 engine_clone.increment_epoch();
                 thread::sleep(Duration::from_millis(WASM_EXECUTION_TICK_LENGTH_MS));
@@ -594,7 +595,7 @@ impl ForeignObject for WasmForeignObject {
 
     fn teardown(&mut self) {
         // Set the stop flag to stop the epoch increment thread
-        *self.stop_flag.write() = true;
+        self.stop_flag.store(true, Ordering::Relaxed);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -609,6 +610,6 @@ impl ForeignObject for WasmForeignObject {
 impl Drop for WasmForeignObject {
     fn drop(&mut self) {
         // Set the stop flag to stop the epoch increment thread
-        *self.stop_flag.write() = true;
+        self.stop_flag.store(true, Ordering::Relaxed);
     }
 }

@@ -250,7 +250,7 @@ fn produced_ordinal_range() {
 fn rotations_obey_causality_and_ranges() {
     let mut circuit = TickCircuit::new();
     circuit.tick().pz(&[0]);
-    circuit.tick().ry(Angle64::from_radians(0.31), &[0]);
+    circuit.tick().ry(pecos_core::radians!(0.31), &[0]);
     let program = HeisenbergProgram::compile(&circuit).unwrap();
     let mut operations = program.operations.clone();
     operations.swap(0, 1);

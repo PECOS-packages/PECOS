@@ -77,7 +77,7 @@ fn ion_trap_slice_call(
 }
 
 fn main() {
-    let theta = Angle64::from_radians(0.01);
+    let theta = pecos_core::radians!(0.01);
 
     println!("Ion-trap memory noise — scaling + per-qubit-loop vs slice-call");
     println!("{:-<80}", "");

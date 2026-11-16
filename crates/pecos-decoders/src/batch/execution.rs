@@ -17,9 +17,20 @@ use super::{
     native_sub_batches, plan_execution,
 };
 use crate::{DecodeModel, DecoderError, DecoderSpec, ExecutionTraits, ObservableDecoder};
+use pecos_decoder_core::graphlike_projection::ProjectionReport;
 use pecos_decoder_core::obs_mask::ObsMask;
+use pecos_decoder_core::window::StructuredDem;
 use rayon::prelude::*;
 use std::fmt;
+
+/// Model shared by all workers, with diagnostics from preparation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreparedModel {
+    pub model: DecodeModel,
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
+    pub projection: Option<ProjectionReport>,
+}
 
 /// Builds worker-local decoders without requiring the decoders to be `Send`.
 ///
@@ -37,8 +48,27 @@ pub trait DecoderFactory: Sync {
     /// in input order, or a decoding error.
     fn native_batch_capable(&self) -> bool;
     /// Select the model before execution timing starts; defaults to `SingleDem`.
-    fn decode_model(&self, dem: &str) -> DecodeModel {
-        DecodeModel::SingleDem(dem.to_string())
+    ///
+    /// # Errors
+    /// Returns a construction error before any workers start.
+    fn decode_model(&self, dem: &str) -> Result<PreparedModel, Self::BuildError> {
+        Ok(PreparedModel {
+            model: DecodeModel::SingleDem(dem.to_string()),
+            projection: None,
+        })
+    }
+    /// Select a structured model before execution timing starts.
+    ///
+    /// # Errors
+    /// Returns a construction error before any workers start.
+    fn decode_structured_model(
+        &self,
+        dem: &StructuredDem,
+    ) -> Result<PreparedModel, Self::BuildError> {
+        Ok(PreparedModel {
+            model: DecodeModel::StructuredDem(dem.clone()),
+            projection: None,
+        })
     }
     /// Construct one decoder.
     ///
@@ -55,14 +85,21 @@ impl DecoderFactory for DecoderSpec {
     fn native_batch_capable(&self) -> bool {
         self.native_batch_capable()
     }
-    fn decode_model(&self, dem: &str) -> DecodeModel {
-        self.embedded_hybrid_full_dem().map_or_else(
+    fn decode_model(&self, dem: &str) -> Result<PreparedModel, Self::BuildError> {
+        let model = self.embedded_hybrid_full_dem().map_or_else(
             || DecodeModel::SingleDem(dem.to_string()),
             |full| DecodeModel::HybridDem {
                 full: full.to_string(),
                 decomposed: dem.to_string(),
             },
-        )
+        );
+        crate::spec::prepare::prepare_model(self, &model)
+    }
+    fn decode_structured_model(
+        &self,
+        dem: &StructuredDem,
+    ) -> Result<PreparedModel, Self::BuildError> {
+        crate::spec::prepare::prepare_model(self, &DecodeModel::StructuredDem(dem.clone()))
     }
     fn build(&self, model: &DecodeModel) -> Result<Box<dyn ObservableDecoder>, Self::BuildError> {
         self.build(model)
@@ -105,7 +142,10 @@ impl DecodeOptions {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct DecodeResult {
-    /// Number of decoded shots.
+    /// Shared projection diagnostics. `None` means no projection was needed, or a
+    /// composition without a shared policy projected inside members with no shared report.
+    pub projection: Option<ProjectionReport>,
+    /// Number of input shots, including explicitly undecoded shots.
     pub num_shots: usize,
     /// Number of predictions that differ from their true observable flips.
     pub num_errors: usize,
@@ -115,18 +155,37 @@ pub struct DecodeResult {
     pub workers_used: usize,
     /// Planner warnings about execution-dependent reproducibility.
     pub reproducibility_warnings: Vec<String>,
-    /// Predictions in shot order, or `None` when retention was not requested.
+    /// Complete predictions in shot order; None if not retained or any shot is undecoded.
     pub predictions: Option<Vec<ObsMask>>,
+    /// Retained predictions with holes when reporting left shots undecoded.
+    /// In this case `predictions` is None; no placeholder is exposed as a correction.
+    pub partial_predictions: Option<Vec<Option<ObsMask>>>,
+    /// Diagnostics for shots requiring retries, reporting, or fallback.
+    pub recovery: Vec<pecos_decoder_core::outcome::ShotRecovery>,
     /// Seconds spent in each `decode_obs` call, excluding extraction and scoring.
     pub per_shot_seconds: Option<Vec<f64>>,
     /// Wall seconds after model selection, including decoder construction and execution.
     pub wall_elapsed: f64,
 }
 impl DecodeResult {
-    /// Empirical mismatch fraction, or zero for an empty batch.
+    /// Shots for which reporting supplied no prediction.
+    #[must_use]
+    pub fn num_undecoded(&self) -> usize {
+        self.recovery.iter().filter(|r| r.undecoded).count()
+    }
+    /// Shots scored using an explicit fallback prediction.
+    #[must_use]
+    pub fn num_fallback(&self) -> usize {
+        self.recovery.iter().filter(|r| r.fallback_used).count()
+    }
+    /// Empirical mismatch fraction, zero for an empty batch, or NaN with undecoded shots.
     #[must_use]
     pub fn logical_error_rate(&self) -> f64 {
-        logical_error_rate(self.num_errors, self.num_shots)
+        if self.num_undecoded() > 0 {
+            f64::NAN
+        } else {
+            logical_error_rate(self.num_errors, self.num_shots)
+        }
     }
 }
 
@@ -212,6 +271,30 @@ impl SampleBatch {
         factory: &F,
         options: &DecodeOptions,
     ) -> Result<DecodeResult, BatchDecodeError<F::BuildError>> {
+        self.decode_prepared_with(factory, options, || factory.decode_model(dem))
+    }
+
+    /// Decode a structured model, preserving detector fault-sector labels.
+    ///
+    /// Planning, timing, workers and retention match [`Self::decode_with`].
+    ///
+    /// # Errors
+    /// Returns planning, factory, dimension, or indexed decoding errors.
+    pub fn decode_structured_with<F: DecoderFactory + ?Sized>(
+        &self,
+        dem: &StructuredDem,
+        factory: &F,
+        options: &DecodeOptions,
+    ) -> Result<DecodeResult, BatchDecodeError<F::BuildError>> {
+        self.decode_prepared_with(factory, options, || factory.decode_structured_model(dem))
+    }
+
+    fn decode_prepared_with<F: DecoderFactory + ?Sized>(
+        &self,
+        factory: &F,
+        options: &DecodeOptions,
+        prepare: impl FnOnce() -> Result<PreparedModel, F::BuildError>,
+    ) -> Result<DecodeResult, BatchDecodeError<F::BuildError>> {
         let mut plan = plan_execution(ExecutionPlanInputs {
             traits: factory.execution_traits(),
             num_shots: self.num_shots(),
@@ -228,7 +311,7 @@ impl SampleBatch {
         }
         execute(
             self,
-            dem,
+            prepare().map_err(BatchDecodeError::Build)?,
             factory,
             &plan,
             options.predictions,
@@ -411,6 +494,7 @@ fn reduce_worker_results<E>(
 
     let mut combined = DecodeRangeResult {
         mismatches: 0,
+        recovery: Vec::new(),
         predictions: if predictions {
             Vec::with_capacity(num_shots)
         } else {
@@ -428,6 +512,7 @@ fn reduce_worker_results<E>(
         .map_err(|error| BatchDecodeError::Runtime(error.to_string()))?;
     for mut result in ordered {
         combined.mismatches += result.mismatches;
+        combined.recovery.append(&mut result.recovery);
         combined.predictions.append(&mut result.predictions);
         combined
             .per_shot_seconds
@@ -453,6 +538,7 @@ fn native_batch<F: DecoderFactory + ?Sized>(
     let mut scratch = vec![0u8; scratch_len];
     let mut result = DecodeRangeResult {
         mismatches: 0,
+        recovery: Vec::new(),
         predictions: if predictions {
             Vec::with_capacity(batch.num_shots())
         } else {
@@ -506,7 +592,7 @@ fn native_batch<F: DecoderFactory + ?Sized>(
         for (shot, prediction) in range.zip(decoded) {
             result.mismatches += usize::from(prediction != batch.observable_flips(shot));
             if predictions {
-                result.predictions.push(prediction);
+                result.predictions.push(Some(prediction));
             }
         }
     }
@@ -515,13 +601,13 @@ fn native_batch<F: DecoderFactory + ?Sized>(
 
 pub(super) fn execute<F: DecoderFactory + ?Sized>(
     batch: &SampleBatch,
-    dem: &str,
+    prepared: PreparedModel,
     spec: &F,
     plan: &ExecutionPlan,
     predictions: bool,
     timing: bool,
 ) -> Result<DecodeResult, BatchDecodeError<F::BuildError>> {
-    let model = spec.decode_model(dem);
+    let PreparedModel { model, projection } = prepared;
     let wall_start = std::time::Instant::now();
     let scored = match plan.path {
         ExecutionPath::Sequential => sequential(batch, spec, &model, predictions, timing)?,
@@ -539,16 +625,33 @@ pub(super) fn execute<F: DecoderFactory + ?Sized>(
             native_batch(batch, spec, &model, predictions)?
         }
     };
+    let (retained, partial_predictions) =
+        split_predictions(predictions.then_some(scored.predictions));
     Ok(DecodeResult {
+        projection,
         num_shots: batch.num_shots(),
         execution_path: plan.path,
         workers_used: plan.workers_used,
         reproducibility_warnings: plan.reproducibility_warnings.clone(),
         num_errors: scored.mismatches,
-        predictions: predictions.then_some(scored.predictions),
+        predictions: retained,
+        partial_predictions,
+        recovery: scored.recovery,
         per_shot_seconds: timing.then_some(scored.per_shot_seconds),
         wall_elapsed: wall_start.elapsed().as_secs_f64(),
     })
+}
+
+/// Separate complete predictions from reported holes without inventing masks.
+#[doc(hidden)]
+#[must_use]
+pub fn split_predictions(
+    predictions: Option<Vec<Option<ObsMask>>>,
+) -> (Option<Vec<ObsMask>>, Option<Vec<Option<ObsMask>>>) {
+    match predictions {
+        Some(masks) if masks.iter().all(Option::is_some) => (masks.into_iter().collect(), None),
+        partial => (None, partial),
+    }
 }
 
 /// Empirical mismatch fraction from scored counts, or zero for an empty batch.
@@ -720,7 +823,8 @@ mod tests {
                 chunk_index,
                 value: DecodeRangeResult {
                     mismatches,
-                    predictions: vec![mask],
+                    predictions: vec![Some(mask)],
+                    recovery: Vec::new(),
                     per_shot_seconds: vec![seconds],
                 },
             }
@@ -735,7 +839,7 @@ mod tests {
         let bits: Vec<_> = combined
             .predictions
             .iter()
-            .map(|mask| mask.iter_set_bits().collect::<Vec<_>>())
+            .map(|mask| mask.as_ref().unwrap().iter_set_bits().collect::<Vec<_>>())
             .collect();
         assert_eq!(bits, vec![vec![0], vec![64], vec![129]]);
         assert_eq!(combined.per_shot_seconds, vec![0.1, 0.2, 0.3]);

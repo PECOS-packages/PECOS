@@ -15,10 +15,15 @@
 //! This module provides `CompositeChannel`, an adapter that wraps a composite `Primitive`
 //! and implements the `NoiseChannel` trait, allowing composite-based noise models
 //! to be used with the existing `ComposableNoiseModel`.
+//!
+//! Noiseless operation events return before primitives run, including direct
+//! context mutations such as `leak()` and `unleak()`. `BeforeGate` is exempt
+//! because it decides suppression: even a fault primitive on that event runs.
 
 use super::Primitive;
 use super::batch::GeometricSampler;
 use super::response::CompositeResponse;
+use crate::noise::validation::{ValidationResult, validate_probability};
 use crate::noise::{EventKinds, NoiseEventKind};
 use crate::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseGateRequirement, NoiseResponse};
 use pecos_core::QubitId;
@@ -76,8 +81,10 @@ impl CompositeEventFilter {
     #[must_use]
     pub fn matches(self, event: &NoiseEvent<'_>) -> bool {
         match (self, event) {
-            (Self::SingleQubitGate, NoiseEvent::AfterGate { qubits, .. }) => qubits.len() == 1,
-            (Self::TwoQubitGate, NoiseEvent::AfterGate { qubits, .. }) => qubits.len() == 2,
+            (Self::SingleQubitGate, NoiseEvent::AfterGate { group_size, .. }) => {
+                group_size.get() == 1
+            }
+            (Self::TwoQubitGate, NoiseEvent::AfterGate { group_size, .. }) => group_size.get() == 2,
             (Self::AnyGate, NoiseEvent::AfterGate { .. }) => true,
             (Self::Preparation, NoiseEvent::AfterPreparation { .. }) => true,
             (Self::BeforeMeasurement, NoiseEvent::BeforeMeasurement { .. }) => true,
@@ -93,6 +100,119 @@ impl CompositeEventFilter {
     }
 }
 
+/// Complete operands with eligibility checked at each primitive invocation.
+#[derive(Clone, Copy)]
+struct OperandSelection<'a> {
+    qubits: &'a [QubitId],
+    suppressed: bool,
+}
+
+impl OperandSelection<'_> {
+    #[inline]
+    fn prepare(self, index: usize, ctx: &mut NoiseContext) -> bool {
+        if self.suppressed && !ctx.is_leaked(self.qubits[index]) {
+            return false;
+        }
+        if let Some(gate) = ctx.current_gate() {
+            let size = gate.num_qubits;
+            let start = index / size * size;
+            let end = (start + size).min(self.qubits.len());
+            let group = &self.qubits[start..end];
+            if ctx.select_operand_group(index - start, group) {
+                ctx.set_group_leader(
+                    group
+                        .iter()
+                        .position(|q| !self.suppressed || ctx.is_leaked(*q)),
+                );
+            }
+            ctx.set_current_gate_suppressed(self.suppressed);
+        }
+        true
+    }
+
+    /// Install non-gate operands once; a per-member copy would make the scan O(n^2).
+    fn begin_non_gate_scan(self, ctx: &mut NoiseContext) {
+        if ctx.current_gate().is_none() {
+            ctx.set_current_qubit_index(0, self.qubits);
+            ctx.set_group_leader(
+                self.qubits
+                    .iter()
+                    .position(|q| !self.suppressed || ctx.is_leaked(*q)),
+            );
+        }
+    }
+
+    /// Freeze the stage's leader within the already installed group.
+    fn begin_stage(self, ctx: &mut NoiseContext) {
+        ctx.set_current_member_index(0);
+        ctx.set_current_gate_suppressed(self.suppressed);
+        ctx.set_group_leader(
+            self.qubits
+                .iter()
+                .position(|q| !self.suppressed || ctx.is_leaked(*q)),
+        );
+    }
+
+    fn select_non_gate_member(index: usize, ctx: &mut NoiseContext) {
+        if ctx.current_gate().is_none() {
+            ctx.set_current_member_index(index);
+        }
+    }
+}
+
+/// Complete both stages within each group so local fired flags cannot cross groups.
+fn apply_two_pass(
+    primitive: &impl Primitive,
+    operands: OperandSelection<'_>,
+    mut select_stage1: impl FnMut(usize, &mut PecosRng) -> bool,
+    outcomes: Option<&[bool]>,
+    ctx: &mut NoiseContext,
+    rng: &mut PecosRng,
+) -> NoiseResponse {
+    let mut combined = NoiseResponse::None;
+    let size = ctx
+        .current_gate()
+        .map_or(operands.qubits.len(), |g| g.num_qubits);
+    for (group_index, group) in operands.qubits.chunks(size).enumerate() {
+        ctx.clear_fired_flags();
+        let group_start = group_index * size;
+        let selection = OperandSelection {
+            qubits: group,
+            suppressed: operands.suppressed,
+        };
+        ctx.set_current_qubit_index(0, group);
+        // Stage 2 is arbitrary work and runs even when stage 1 selected no members.
+        for stage in [1, 2] {
+            selection.begin_stage(ctx);
+            for (i, &q) in group.iter().enumerate() {
+                let index = group_start + i;
+                if stage == 1 && !select_stage1(index, rng) {
+                    continue;
+                }
+                if !selection.prepare(i, ctx) {
+                    continue;
+                }
+                OperandSelection::select_non_gate_member(i, ctx);
+                if let Some(outcomes) = outcomes
+                    && index < outcomes.len()
+                {
+                    ctx.set_current_outcome(outcomes[index]);
+                }
+                let response = if stage == 1 {
+                    primitive.apply_stage1(q, ctx, rng)
+                } else {
+                    primitive.apply_stage2(q, ctx, rng)
+                };
+                combined = combined.combine(composite_to_noise_response(response, q));
+                if outcomes.is_some() {
+                    ctx.clear_current_outcome();
+                }
+            }
+        }
+    }
+    combined
+}
+
 /// A noise channel backed by a composite primitive.
 ///
 /// This adapter allows composite-based primitives to be used within the
@@ -101,9 +221,13 @@ impl CompositeEventFilter {
 ///
 /// # Performance
 ///
-/// When a probability is set via `.with_probability()`, the channel uses
+/// When a probability is set via `.with_probability().unwrap()`, the channel uses
 /// geometric sampling for O(n*p) complexity instead of O(n). This enables
-/// efficient processing of millions of qubits:
+/// efficient processing of millions of qubits for primitives such as `pauli()`.
+/// On geometric single-pass non-gate events, primitives declaring
+/// [`Primitive::reads_operands`] install the full operand list before sampling,
+/// adding O(n) setup. Other primitives install no operands and retain O(n*p)
+/// processing. Every sampled member still receives its correct member index.
 ///
 /// - 1M qubits at p=1e-4: ~7 µs (vs ~16 seconds with linear)
 /// - Automatically falls back to linear for high probability or small counts
@@ -117,7 +241,7 @@ impl CompositeEventFilter {
 ///
 /// // Fast path: probability at channel level (geometric sampling)
 /// let channel = CompositeChannel::new("sq_depolarizing", pauli())
-///     .with_probability(0.01)
+///     .with_probability(0.01).unwrap()
 ///     .with_filter(CompositeEventFilter::SingleQubitGate);
 ///
 /// // Or with complex primitives (no probability = linear, applies to all)
@@ -176,14 +300,17 @@ impl<P: Primitive> CompositeChannel<P> {
     /// linear iteration. This is dramatically faster for low probabilities
     /// and high qubit counts.
     ///
-    /// **Important**: When using `.with_probability()`, the primitive should
+    /// **Important**: When using `.with_probability().unwrap()`, the primitive should
     /// NOT include a `prob()` wrapper - the channel handles probability filtering.
-    #[must_use]
-    pub fn with_probability(mut self, probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error if probability is not finite and within [0, 1].
+    pub fn with_probability(mut self, probability: f64) -> ValidationResult<Self> {
+        validate_probability(probability, "probability")?;
         if probability > 0.0 && probability < 1.0 {
-            self.sampler = Some(GeometricSampler::new(probability));
+            self.sampler = Some(GeometricSampler::new(probability)?);
         }
-        self
+        Ok(self)
     }
 
     /// Add an event filter that this channel responds to.
@@ -228,17 +355,36 @@ impl<P: Primitive> CompositeChannel<P> {
     #[inline]
     fn apply_geometric(
         &self,
-        qubits: &[QubitId],
+        operands: OperandSelection<'_>,
         event: &NoiseEvent<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let two_pass = self.primitive.needs_two_pass();
+        if !two_pass && self.primitive.reads_operands() {
+            operands.begin_non_gate_scan(ctx);
+        }
+        let qubits = operands.qubits;
         let sampler = self
             .sampler
             .as_ref()
             .expect("sampler must be set for geometric");
         let indices = sampler.sample_range(0, qubits.len(), rng);
 
+        if two_pass {
+            let outcomes = match event {
+                NoiseEvent::AfterMeasurement { outcomes, .. } => Some(*outcomes),
+                _ => None,
+            };
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |index, _| indices.binary_search(&index).is_ok(),
+                outcomes,
+                ctx,
+                rng,
+            );
+        }
         if indices.is_empty() {
             return NoiseResponse::None;
         }
@@ -249,11 +395,14 @@ impl<P: Primitive> CompositeChannel<P> {
             _ => None,
         };
 
-        // Fast path: process candidates without expensive context updates
-        // Note: We skip set_current_qubit_index to avoid O(n) copies per event
+        ctx.clear_fired_flags();
         let mut combined = NoiseResponse::None;
         for idx in indices {
             let qubit = qubits[idx];
+            if !operands.prepare(idx, ctx) {
+                continue;
+            }
+            OperandSelection::select_non_gate_member(idx, ctx);
 
             // Only set outcome context for measurement events
             if let Some(outcomes) = outcomes
@@ -280,11 +429,12 @@ impl<P: Primitive> CompositeChannel<P> {
     #[inline]
     fn apply_linear(
         &self,
-        qubits: &[QubitId],
+        operands: OperandSelection<'_>,
         event: &NoiseEvent<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let qubits = operands.qubits;
         let outcomes = match event {
             NoiseEvent::AfterMeasurement { outcomes, .. } => Some(*outcomes),
             _ => None,
@@ -298,10 +448,18 @@ impl<P: Primitive> CompositeChannel<P> {
 
         // Check if this primitive needs two-pass processing
         if self.primitive.needs_two_pass() {
-            return self.apply_two_pass(qubits, outcomes, threshold, ctx, rng);
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |_, rng| threshold.is_none_or(|threshold| rng.next_u64() < threshold),
+                outcomes,
+                ctx,
+                rng,
+            );
         }
 
         // Single-pass processing (standard)
+        operands.begin_non_gate_scan(ctx);
         let mut combined = NoiseResponse::None;
         for (i, &qubit) in qubits.iter().enumerate() {
             // If probability is set, do threshold check
@@ -312,7 +470,10 @@ impl<P: Primitive> CompositeChannel<P> {
             }
 
             // Set qubit index for correlated actions
-            ctx.set_current_qubit_index(i, qubits);
+            if !operands.prepare(i, ctx) {
+                continue;
+            }
+            OperandSelection::select_non_gate_member(i, ctx);
 
             // Only set outcome context for measurement events
             if let Some(outcomes) = outcomes
@@ -322,70 +483,6 @@ impl<P: Primitive> CompositeChannel<P> {
             }
 
             let composite_response = self.primitive.apply(qubit, ctx, rng);
-            let noise_response = composite_to_noise_response(composite_response, qubit);
-            combined = combined.combine(noise_response);
-
-            if outcomes.is_some() {
-                ctx.clear_current_outcome();
-            }
-        }
-
-        combined
-    }
-
-    /// Apply using two-pass processing for `TwoStage` primitives.
-    ///
-    /// Pass 1: Run `apply_stage1` on all qubits (sampling phase)
-    /// Pass 2: Run `apply_stage2` on all qubits (effect phase)
-    #[inline]
-    fn apply_two_pass(
-        &self,
-        qubits: &[QubitId],
-        outcomes: Option<&[bool]>,
-        threshold: Option<u64>,
-        ctx: &mut NoiseContext,
-        rng: &mut PecosRng,
-    ) -> NoiseResponse {
-        let mut combined = NoiseResponse::None;
-
-        // === Pass 1: Stage 1 on all qubits ===
-        for (i, &qubit) in qubits.iter().enumerate() {
-            // If probability is set, do threshold check
-            // Note: For two-stage, the probability is typically in stage1
-            if let Some(thresh) = threshold
-                && rng.next_u64() >= thresh
-            {
-                continue;
-            }
-
-            ctx.set_current_qubit_index(i, qubits);
-
-            if let Some(outcomes) = outcomes
-                && i < outcomes.len()
-            {
-                ctx.set_current_outcome(outcomes[i]);
-            }
-
-            let composite_response = self.primitive.apply_stage1(qubit, ctx, rng);
-            let noise_response = composite_to_noise_response(composite_response, qubit);
-            combined = combined.combine(noise_response);
-
-            if outcomes.is_some() {
-                ctx.clear_current_outcome();
-            }
-        }
-
-        // === Pass 2: Stage 2 on all qubits ===
-        for (i, &qubit) in qubits.iter().enumerate() {
-            ctx.set_current_qubit_index(i, qubits);
-
-            if let Some(outcomes) = outcomes
-                && i < outcomes.len()
-            {
-                ctx.set_current_outcome(outcomes[i]);
-            }
-
-            let composite_response = self.primitive.apply_stage2(qubit, ctx, rng);
             let noise_response = composite_to_noise_response(composite_response, qubit);
             combined = combined.combine(noise_response);
 
@@ -415,20 +512,31 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let qubits = event.qubits();
-        if qubits.is_empty() {
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
-
+        let qubits = event.qubits();
+        let suppressed = event.leaked_suppressed();
+        if qubits.is_empty() && suppressed.is_empty() {
+            return NoiseResponse::None;
+        }
+        let enclosing = ctx.enter_event();
         // For gate events, set gate context for dynamic probability primitives
         match event {
             NoiseEvent::BeforeGate {
-                gate_type, angles, ..
+                gate_type,
+                angles,
+                group_size,
+                ..
             }
             | NoiseEvent::AfterGate {
-                gate_type, angles, ..
+                gate_type,
+                angles,
+                group_size,
+                ..
             } => {
-                ctx.set_current_gate(*gate_type, angles, qubits.len());
+                ctx.set_current_gate(*gate_type, angles, *group_size);
             }
             NoiseEvent::IdleTime { duration, .. } => {
                 ctx.set_current_idle(*duration);
@@ -437,16 +545,29 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
         }
 
         // Choose processing strategy based on probability and qubit count
-        let result = if self.use_geometric(qubits.len()) {
-            self.apply_geometric(qubits, event, ctx, rng)
-        } else {
-            self.apply_linear(qubits, event, ctx, rng)
-        };
+        let mut result = NoiseResponse::None;
+        for operands in [
+            OperandSelection {
+                qubits,
+                suppressed: false,
+            },
+            OperandSelection {
+                qubits: suppressed,
+                suppressed: true,
+            },
+        ] {
+            if operands.qubits.is_empty() {
+                continue;
+            }
+            let response = if self.use_geometric(operands.qubits.len()) {
+                self.apply_geometric(operands, event, ctx, rng)
+            } else {
+                self.apply_linear(operands, event, ctx, rng)
+            };
+            result = result.combine(response);
+        }
 
-        // Clear context after processing
-        ctx.clear_current_gate();
-        ctx.clear_current_idle();
-        ctx.clear_correlation();
+        ctx.exit_event(enclosing);
 
         result
     }
@@ -471,11 +592,12 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
 /// Convert a `CompositeResponse` to a `NoiseResponse`.
 ///
 /// The qubit parameter is used for leak/unleak/flip responses since
-/// `CompositeResponse` doesn't track which qubit is affected (it's applied per-qubit).
+/// ordinary primitive responses are per-qubit. Wrapped channel responses retain their targets.
 fn composite_to_noise_response(response: CompositeResponse, qubit: QubitId) -> NoiseResponse {
     match response {
-        CompositeResponse::None => NoiseResponse::None,
-        CompositeResponse::SkipGate => NoiseResponse::SkipGate,
+        CompositeResponse::None | CompositeResponse::SkipGateAlreadyReported => NoiseResponse::None,
+        CompositeResponse::Channel(response) => *response,
+        CompositeResponse::SkipGate => NoiseResponse::SkipGate(smallvec![qubit]),
         CompositeResponse::Leak => NoiseResponse::MarkLeaked(smallvec![qubit]),
         CompositeResponse::Unleak => NoiseResponse::MarkUnleaked(smallvec![qubit]),
         CompositeResponse::FlipOutcome => NoiseResponse::FlipOutcomes(smallvec![qubit]),
@@ -569,7 +691,7 @@ impl CompositeChannelBuilder {
     ///
     /// // T1-like relaxation with linear time dependence
     /// let t1_channel = CompositeChannelBuilder::idle("t1_decay",
-    ///     prob_linear(0.001, inject_z())
+    ///     prob_linear(0.001, inject_z()).unwrap()
     /// );
     /// ```
     #[must_use]
@@ -610,7 +732,7 @@ impl CompositeChannelBuilder {
     ///
     /// // Apply preparation-like noise after reset
     /// let reset_channel = CompositeChannelBuilder::after_reset("reset_noise",
-    ///     prob(0.001, pauli())
+    ///     prob(0.001, pauli()).unwrap()
     /// );
     /// ```
     #[must_use]
@@ -630,7 +752,7 @@ impl CompositeChannelBuilder {
     ///
     /// // Initialize all qubits with small preparation error
     /// let init_channel = CompositeChannelBuilder::before_circuit("initial_noise",
-    ///     prob(0.001, pauli())
+    ///     prob(0.001, pauli()).unwrap()
     /// );
     /// ```
     #[must_use]
@@ -659,7 +781,7 @@ impl CompositeChannelBuilder {
     ///
     /// // Apply dephasing between circuit layers
     /// let layer_channel = CompositeChannelBuilder::between_layers("layer_dephasing",
-    ///     prob(0.0005, inject_z())
+    ///     prob(0.0005, inject_z()).unwrap()
     /// );
     /// ```
     #[must_use]
@@ -709,7 +831,7 @@ pub type BoxedCompositeChannel = CompositeChannel<Box<dyn Primitive>>;
 ///
 /// // Create a batch channel for single-qubit depolarizing
 /// let noise = pauli();  // Just the Pauli selection, no prob wrapper
-/// let channel = BatchCompositeChannel::new("batch_depol", 1e-4, noise)
+/// let channel = BatchCompositeChannel::new("batch_depol", 1e-4, noise).unwrap()
 ///     .with_filter(CompositeEventFilter::SingleQubitGate);
 ///
 /// // With 1M qubits, this runs in ~1µs instead of ~700µs
@@ -751,19 +873,19 @@ impl<P: Primitive> BatchCompositeChannel<P> {
     /// * `probability` - Error probability (used for geometric sampling)
     /// * `primitive` - The inner primitive to apply (should NOT include prob wrapper)
     ///
-    /// # Panics
-    /// Panics if probability is not in (0, 1).
-    #[must_use]
-    pub fn new(name: &'static str, probability: f64, primitive: P) -> Self {
-        Self {
+    /// # Errors
+    /// Returns an error if probability is outside [0, 1] or NaN.
+    pub fn new(name: &'static str, probability: f64, primitive: P) -> ValidationResult<Self> {
+        validate_probability(probability, "probability")?;
+        Ok(Self {
             name,
-            sampler: GeometricSampler::new(probability.clamp(1e-15, 1.0 - 1e-15)),
+            sampler: GeometricSampler::new(probability)?,
             primitive,
             filters: Vec::new(),
             priority: 0,
             geometric_threshold: 0.01,
             min_qubits_for_geometric: 100,
-        }
+        })
     }
 
     /// Add an event filter.
@@ -813,13 +935,28 @@ impl<P: Primitive> BatchCompositeChannel<P> {
     #[inline]
     fn process_geometric_inline(
         &self,
-        qubits: &[QubitId],
+        operands: OperandSelection<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        let two_pass = self.primitive.needs_two_pass();
+        if !two_pass && self.primitive.reads_operands() {
+            operands.begin_non_gate_scan(ctx);
+        }
+        let qubits = operands.qubits;
         // Sample indices using geometric distribution (O(n*p))
         let indices = self.sampler.sample_range(0, qubits.len(), rng);
 
+        if two_pass {
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |index, _| indices.binary_search(&index).is_ok(),
+                None,
+                ctx,
+                rng,
+            );
+        }
         if indices.is_empty() {
             return NoiseResponse::None;
         }
@@ -828,6 +965,10 @@ impl<P: Primitive> BatchCompositeChannel<P> {
         let mut combined = NoiseResponse::None;
         for idx in indices {
             let qubit = qubits[idx];
+            if !operands.prepare(idx, ctx) {
+                continue;
+            }
+            OperandSelection::select_non_gate_member(idx, ctx);
             let composite_response = self.primitive.apply(qubit, ctx, rng);
             if !composite_response.is_none() {
                 let noise_response = composite_to_noise_response(composite_response, qubit);
@@ -842,29 +983,27 @@ impl<P: Primitive> BatchCompositeChannel<P> {
     #[inline]
     fn process_linear_inline(
         &self,
-        qubits: &[QubitId],
+        operands: OperandSelection<'_>,
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let prob = self.sampler.probability();
-        let threshold = self.sampler.threshold();
-
-        let mut combined = NoiseResponse::None;
-        for &qubit in qubits {
-            // Use u64 threshold comparison for speed
-            if rng.next_u64() < threshold {
-                let composite_response = self.primitive.apply(qubit, ctx, rng);
-                if !composite_response.is_none() {
-                    let noise_response = composite_to_noise_response(composite_response, qubit);
-                    combined = combined.combine(noise_response);
-                }
-            }
+        if self.primitive.needs_two_pass() {
+            return apply_two_pass(
+                &self.primitive,
+                operands,
+                |_, rng| self.sampler.check_single(rng),
+                None,
+                ctx,
+                rng,
+            );
         }
-
-        // Handle edge case: if prob >= 1.0, threshold wraps and we miss everything
-        // This shouldn't happen with proper clamping, but be safe
-        if prob >= 1.0 {
-            for &qubit in qubits {
+        let qubits = operands.qubits;
+        operands.begin_non_gate_scan(ctx);
+        let mut combined = NoiseResponse::None;
+        for (i, &qubit) in qubits.iter().enumerate() {
+            // Use u64 threshold comparison for speed
+            if self.sampler.check_single(rng) && operands.prepare(i, ctx) {
+                OperandSelection::select_non_gate_member(i, ctx);
                 let composite_response = self.primitive.apply(qubit, ctx, rng);
                 if !composite_response.is_none() {
                     let noise_response = composite_to_noise_response(composite_response, qubit);
@@ -894,20 +1033,31 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let qubits = event.qubits();
-        if qubits.is_empty() {
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
-
+        let qubits = event.qubits();
+        let suppressed = event.leaked_suppressed();
+        if qubits.is_empty() && suppressed.is_empty() {
+            return NoiseResponse::None;
+        }
+        let enclosing = ctx.enter_event();
         // For gate events, set gate context
         match event {
             NoiseEvent::BeforeGate {
-                gate_type, angles, ..
+                gate_type,
+                angles,
+                group_size,
+                ..
             }
             | NoiseEvent::AfterGate {
-                gate_type, angles, ..
+                gate_type,
+                angles,
+                group_size,
+                ..
             } => {
-                ctx.set_current_gate(*gate_type, angles, qubits.len());
+                ctx.set_current_gate(*gate_type, angles, *group_size);
             }
             NoiseEvent::IdleTime { duration, .. } => {
                 ctx.set_current_idle(*duration);
@@ -916,18 +1066,29 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
         }
 
         // Optimized inline processing: sample indices and process without collecting
-        let result = if self.use_geometric(qubits.len()) {
-            // Geometric sampling: generate candidate indices directly (O(n*p))
-            // Process inline without intermediate Vec allocation
-            self.process_geometric_inline(qubits, ctx, rng)
-        } else {
-            // Linear fallback for small counts or high probability
-            self.process_linear_inline(qubits, ctx, rng)
-        };
+        let mut result = NoiseResponse::None;
+        for operands in [
+            OperandSelection {
+                qubits,
+                suppressed: false,
+            },
+            OperandSelection {
+                qubits: suppressed,
+                suppressed: true,
+            },
+        ] {
+            if operands.qubits.is_empty() {
+                continue;
+            }
+            let response = if self.use_geometric(operands.qubits.len()) {
+                self.process_geometric_inline(operands, ctx, rng)
+            } else {
+                self.process_linear_inline(operands, ctx, rng)
+            };
+            result = result.combine(response);
+        }
 
-        ctx.clear_current_gate();
-        ctx.clear_current_idle();
-        ctx.clear_correlation();
+        ctx.exit_event(enclosing);
 
         result
     }
@@ -955,91 +1116,107 @@ impl CompositeChannelBuilder {
     ///
     /// The primitive should NOT include a probability wrapper - the batch
     /// channel handles probability filtering.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn batch_single_qubit<P: Primitive>(
         name: &'static str,
         probability: f64,
         primitive: P,
-    ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive)
-            .with_filter(CompositeEventFilter::SingleQubitGate)
+    ) -> ValidationResult<BatchCompositeChannel<P>> {
+        Ok(BatchCompositeChannel::new(name, probability, primitive)?
+            .with_filter(CompositeEventFilter::SingleQubitGate))
     }
 
     /// Create a batch two-qubit gate noise channel with geometric sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn batch_two_qubit<P: Primitive>(
         name: &'static str,
         probability: f64,
         primitive: P,
-    ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive)
-            .with_filter(CompositeEventFilter::TwoQubitGate)
+    ) -> ValidationResult<BatchCompositeChannel<P>> {
+        Ok(BatchCompositeChannel::new(name, probability, primitive)?
+            .with_filter(CompositeEventFilter::TwoQubitGate))
     }
 
     /// Create a batch any-gate noise channel with geometric sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn batch_any_gate<P: Primitive>(
         name: &'static str,
         probability: f64,
         primitive: P,
-    ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive)
-            .with_filter(CompositeEventFilter::AnyGate)
+    ) -> ValidationResult<BatchCompositeChannel<P>> {
+        Ok(BatchCompositeChannel::new(name, probability, primitive)?
+            .with_filter(CompositeEventFilter::AnyGate))
     }
 
     /// Create a batch idle noise channel with geometric sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn batch_idle<P: Primitive>(
         name: &'static str,
         probability: f64,
         primitive: P,
-    ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive)
-            .with_filter(CompositeEventFilter::IdleTime)
+    ) -> ValidationResult<BatchCompositeChannel<P>> {
+        Ok(BatchCompositeChannel::new(name, probability, primitive)?
+            .with_filter(CompositeEventFilter::IdleTime))
     }
 
     /// Create a batch reset noise channel with geometric sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn batch_after_reset<P: Primitive>(
         name: &'static str,
         probability: f64,
         primitive: P,
-    ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive)
-            .with_filter(CompositeEventFilter::AfterReset)
+    ) -> ValidationResult<BatchCompositeChannel<P>> {
+        Ok(BatchCompositeChannel::new(name, probability, primitive)?
+            .with_filter(CompositeEventFilter::AfterReset))
     }
 
     /// Create a batch before-circuit noise channel with geometric sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn batch_before_circuit<P: Primitive>(
         name: &'static str,
         probability: f64,
         primitive: P,
-    ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive)
-            .with_filter(CompositeEventFilter::BeforeCircuit)
+    ) -> ValidationResult<BatchCompositeChannel<P>> {
+        Ok(BatchCompositeChannel::new(name, probability, primitive)?
+            .with_filter(CompositeEventFilter::BeforeCircuit))
     }
 
     /// Create a batch after-circuit noise channel with geometric sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn batch_after_circuit<P: Primitive>(
         name: &'static str,
         probability: f64,
         primitive: P,
-    ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive)
-            .with_filter(CompositeEventFilter::AfterCircuit)
+    ) -> ValidationResult<BatchCompositeChannel<P>> {
+        Ok(BatchCompositeChannel::new(name, probability, primitive)?
+            .with_filter(CompositeEventFilter::AfterCircuit))
     }
 
     /// Create a batch between-layers noise channel with geometric sampling.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
     pub fn batch_between_layers<P: Primitive>(
         name: &'static str,
         probability: f64,
         primitive: P,
-    ) -> BatchCompositeChannel<P> {
-        BatchCompositeChannel::new(name, probability, primitive)
-            .with_filter(CompositeEventFilter::BetweenLayers)
+    ) -> ValidationResult<BatchCompositeChannel<P>> {
+        Ok(BatchCompositeChannel::new(name, probability, primitive)?
+            .with_filter(CompositeEventFilter::BetweenLayers))
     }
 }
 
@@ -1061,7 +1238,7 @@ pub type NeighborFn = fn(&[QubitId]) -> Vec<QubitId>;
 /// use pecos_neo::noise::composite::prelude::*;
 ///
 /// // Create crosstalk that applies Pauli errors to other qubits during measurement
-/// let crosstalk = CompositeCrosstalkChannel::new("meas_crosstalk", prob(0.01, pauli()))
+/// let crosstalk = CompositeCrosstalkChannel::new("meas_crosstalk", prob(0.01, pauli()).unwrap())
 ///     .responds_to_measurement()
 ///     .global();  // Affects all other active qubits
 /// ```
@@ -1172,12 +1349,18 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let gated_qubits = event.qubits();
-        let targets = self.get_targets(gated_qubits, ctx);
+        // BeforeGate decides suppression; its primitives must still run.
+        if !matches!(event, NoiseEvent::BeforeGate { .. }) && ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
+        let gated_qubits = event.gated_qubits();
+        let targets = self.get_targets(&gated_qubits, ctx);
 
         if targets.is_empty() {
             return NoiseResponse::None;
         }
+
+        let enclosing = ctx.enter_event();
 
         // Apply the primitive to each target qubit and combine responses
         let mut combined = NoiseResponse::None;
@@ -1186,6 +1369,8 @@ impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<
             let noise_response = composite_to_noise_response(composite_response, target);
             combined = combined.combine(noise_response);
         }
+
+        ctx.exit_event(enclosing);
 
         combined
     }
@@ -1238,6 +1423,14 @@ impl CompositeChannelBuilder {
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {
     #[test]
+    fn batch_probability_is_preserved_without_clamping() {
+        for probability in [0.0, 1.0, 1e-300, 1.0 - f64::EPSILON] {
+            let channel = BatchCompositeChannel::new("test", probability, inject_x()).unwrap();
+            assert_eq!(channel.probability().to_bits(), probability.to_bits());
+        }
+    }
+
+    #[test]
     fn each_composite_filter_has_a_positive_kind_witness() {
         use crate::noise::event_kind_tests::assert_channel_kinds;
         use CompositeEventFilter::{
@@ -1264,7 +1457,9 @@ mod tests {
                 kinds,
             );
             assert_channel_kinds(
-                &BatchCompositeChannel::new("batch", 0.2, pauli()).with_filter(filter),
+                &BatchCompositeChannel::new("batch", 0.2, pauli())
+                    .unwrap()
+                    .with_filter(filter),
                 kinds,
             );
             let mut crosstalk = CompositeCrosstalkChannel::new("crosstalk", pauli());
@@ -1272,11 +1467,12 @@ mod tests {
             assert_channel_kinds(&crosstalk, kinds);
         }
 
-        // Arity filters inspect qubit count, not the gate type.
+        // Arity filters use group size: batched H stays single-qubit; incomplete CX
+        // uses the documented whole-slice fallback.
         let two_targets = NoiseEvent::after_gate(GateType::H, &[QubitId(0), QubitId(1)], &[]);
         let one_target = NoiseEvent::after_gate(GateType::CX, &[QubitId(0)], &[]);
-        assert!(TwoQubitGate.matches(&two_targets));
-        assert!(!SingleQubitGate.matches(&two_targets));
+        assert!(!TwoQubitGate.matches(&two_targets));
+        assert!(SingleQubitGate.matches(&two_targets));
         assert!(SingleQubitGate.matches(&one_target));
         assert!(!TwoQubitGate.matches(&one_target));
     }
@@ -1288,7 +1484,7 @@ mod tests {
 
     #[test]
     fn test_flow_channel_single_qubit() {
-        let noise = prob(1.0, pauli());
+        let noise = prob(1.0, pauli()).unwrap();
         let channel = CompositeChannelBuilder::single_qubit("test", noise);
 
         let qubits = [QubitId(0)];
@@ -1298,6 +1494,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
@@ -1309,6 +1507,8 @@ mod tests {
             qubits: &qubits2,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits2.len()),
+            leaked_suppressed: &[],
         };
         assert!(!NoiseChannel::responds_to(&channel, &event2));
     }
@@ -1329,6 +1529,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1354,22 +1556,23 @@ mod tests {
         // Mark qubit as leaked
         ctx.mark_leaked(QubitId(0));
 
-        let qubits = [QubitId(0)];
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
         let angles = [];
         let event = NoiseEvent::BeforeGate {
-            gate_type: GateType::H,
+            gate_type: GateType::CX,
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
         };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
-        assert!(response.should_skip_gate());
+        assert_eq!(response.skipped_qubits().as_slice(), &[QubitId(0)]);
     }
 
     #[test]
     fn test_flow_channel_leak_response() {
-        let noise = prob(1.0, leak());
+        let noise = prob(1.0, leak()).unwrap();
         let channel = CompositeChannelBuilder::single_qubit("test", noise);
 
         let mut ctx = NoiseContext::new();
@@ -1382,6 +1585,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
@@ -1410,6 +1615,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
@@ -1432,7 +1639,10 @@ mod tests {
     #[test]
     fn test_flow_channel_complex_tree() {
         // Build realistic SQ noise
-        let noise = seq![skip_if_leaked(), prob(0.5, when_leaked(seep(), pauli())),];
+        let noise = seq![
+            skip_if_leaked(),
+            prob(0.5, when_leaked(seep(), pauli())).unwrap(),
+        ];
 
         let channel = CompositeChannelBuilder::single_qubit("sq_noise", noise);
 
@@ -1446,6 +1656,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Run multiple times to get statistical coverage
@@ -1496,6 +1708,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -1560,6 +1773,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(NoiseChannel::responds_to(&crosstalk, &event));
@@ -1595,9 +1810,10 @@ mod tests {
     #[test]
     fn test_crosstalk_channel_probabilistic() {
         // Create crosstalk with 50% probability
-        let crosstalk = CompositeCrosstalkChannel::new("prob_crosstalk", prob(0.5, inject_x()))
-            .responds_to_preparation()
-            .global();
+        let crosstalk =
+            CompositeCrosstalkChannel::new("prob_crosstalk", prob(0.5, inject_x()).unwrap())
+                .responds_to_preparation()
+                .global();
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
@@ -1608,7 +1824,10 @@ mod tests {
         ctx.mark_prepared(QubitId(2));
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         // Run many times and count how often qubit 1 is affected
         let mut affected_count = 0;
@@ -1661,6 +1880,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -1692,6 +1912,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -1709,7 +1930,8 @@ mod tests {
     #[test]
     fn test_batch_composite_channel_basic() {
         // Create a batch channel that always applies X (100% probability)
-        let channel = BatchCompositeChannel::new("test", 1.0 - 1e-10, inject_x())
+        let channel = BatchCompositeChannel::new("test", 1.0, inject_x())
+            .unwrap()
             .with_filter(CompositeEventFilter::SingleQubitGate);
 
         let mut ctx = NoiseContext::new();
@@ -1722,6 +1944,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert!(NoiseChannel::responds_to(&channel, &event));
@@ -1740,7 +1964,8 @@ mod tests {
     #[test]
     fn test_batch_composite_channel_zero_probability() {
         // Zero probability should produce no events
-        let channel = BatchCompositeChannel::new("test", 1e-15, inject_x())
+        let channel = BatchCompositeChannel::new("test", 0.0, inject_x())
+            .unwrap()
             .with_filter(CompositeEventFilter::SingleQubitGate);
 
         let mut ctx = NoiseContext::new();
@@ -1754,17 +1979,20 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
-        // Very low probability - should almost always be empty
+        // Zero probability must always be empty
         let response = channel.apply(&event, &mut ctx, &mut rng);
-        assert!(response.is_none(), "Expected no events at p=1e-15");
+        assert!(response.is_none(), "Expected no events at p=0");
     }
 
     #[test]
     fn test_batch_composite_channel_statistical() {
         // Test that batch channel produces correct statistical distribution
         let channel = BatchCompositeChannel::new("test", 0.1, pauli())
+            .unwrap()
             .with_filter(CompositeEventFilter::SingleQubitGate)
             .with_min_qubits(10); // Lower threshold for testing
 
@@ -1778,6 +2006,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Run once and check we get roughly 10% affected
@@ -1808,6 +2038,7 @@ mod tests {
     fn test_batch_composite_channel_low_probability() {
         // Test geometric sampling with low probability
         let channel = BatchCompositeChannel::new("test", 0.001, inject_x())
+            .unwrap()
             .with_filter(CompositeEventFilter::SingleQubitGate)
             .with_min_qubits(100);
 
@@ -1821,6 +2052,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Run and verify roughly 0.1% affected
@@ -1847,13 +2080,16 @@ mod tests {
     #[test]
     fn test_batch_composite_channel_builder_methods() {
         // Test the builder helper methods
-        let sq_channel = CompositeChannelBuilder::batch_single_qubit("sq_test", 0.01, pauli());
+        let sq_channel =
+            CompositeChannelBuilder::batch_single_qubit("sq_test", 0.01, pauli()).unwrap();
         assert_eq!(sq_channel.probability(), 0.01);
 
-        let tq_channel = CompositeChannelBuilder::batch_two_qubit("tq_test", 0.001, pauli());
+        let tq_channel =
+            CompositeChannelBuilder::batch_two_qubit("tq_test", 0.001, pauli()).unwrap();
         assert_eq!(tq_channel.probability(), 0.001);
 
-        let any_channel = CompositeChannelBuilder::batch_any_gate("any_test", 0.005, pauli());
+        let any_channel =
+            CompositeChannelBuilder::batch_any_gate("any_test", 0.005, pauli()).unwrap();
         assert_eq!(any_channel.probability(), 0.005);
     }
 
@@ -1861,6 +2097,7 @@ mod tests {
     fn test_batch_composite_channel_uses_geometric_for_low_p() {
         // Verify that geometric sampling is used when conditions are met
         let channel = BatchCompositeChannel::new("test", 0.001, inject_x())
+            .unwrap()
             .with_filter(CompositeEventFilter::SingleQubitGate)
             .with_geometric_threshold(0.01)
             .with_min_qubits(100);
@@ -1873,6 +2110,7 @@ mod tests {
 
         // Should NOT use geometric: probability too high
         let high_p_channel = BatchCompositeChannel::new("test", 0.1, inject_x())
+            .unwrap()
             .with_filter(CompositeEventFilter::SingleQubitGate);
         assert!(!high_p_channel.use_geometric(1000));
     }
@@ -1899,7 +2137,7 @@ mod tests {
 
         // Qubit 0: fires
         ctx.set_current_qubit_index(0, &qubits);
-        let action0 = SampleEmissionWithProb::new(1.0);
+        let action0 = SampleEmissionWithProb::new(1.0).unwrap();
         let _ = crate::noise::composite::action::GateAction::apply(
             &action0,
             QubitId(0),
@@ -1909,7 +2147,7 @@ mod tests {
 
         // Qubit 1: does not fire (0% probability)
         ctx.set_current_qubit_index(1, &qubits);
-        let action1 = SampleEmissionWithProb::new(0.0);
+        let action1 = SampleEmissionWithProb::new(0.0).unwrap();
         let _ = crate::noise::composite::action::GateAction::apply(
             &action1,
             QubitId(1),
@@ -1970,7 +2208,7 @@ mod tests {
             let mut rng = PecosRng::seed_from_u64(seed);
             let qubits = [QubitId(0), QubitId(1)];
 
-            let action = IndependentEmissionWithPartnerDepolarize::new(emission_prob);
+            let action = IndependentEmissionWithPartnerDepolarize::new(emission_prob).unwrap();
 
             // Process qubit 0
             ctx.set_current_qubit_index(0, &qubits);
@@ -2055,6 +2293,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         // Qubit 0 perspective: partner (qubit 1) didn't fire, I did -> PartnerOnlyFired = false
@@ -2116,6 +2356,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         assert!(!NoiseChannel::responds_to(&channel, &gate_event));
 
@@ -2148,6 +2390,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         assert!(!NoiseChannel::responds_to(&channel, &gate_event));
     }
@@ -2162,6 +2406,7 @@ mod tests {
 
         // Should NOT respond to preparation
         let prep_event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
             qubits: &[QubitId(0)],
         };
         assert!(!NoiseChannel::responds_to(&channel, &prep_event));
@@ -2169,8 +2414,10 @@ mod tests {
 
     #[test]
     fn test_between_layers_channel() {
-        let channel =
-            CompositeChannelBuilder::between_layers("layer_dephasing", prob(0.5, inject_z()));
+        let channel = CompositeChannelBuilder::between_layers(
+            "layer_dephasing",
+            prob(0.5, inject_z()).unwrap(),
+        );
 
         let qubits = [QubitId(0), QubitId(1)];
         let layer_event = NoiseEvent::BetweenLayers {
@@ -2218,16 +2465,19 @@ mod tests {
     #[test]
     fn test_batch_new_event_builders() {
         // Test that batch versions compile and work
-        let reset_ch = CompositeChannelBuilder::batch_after_reset("reset", 0.01, pauli());
+        let reset_ch = CompositeChannelBuilder::batch_after_reset("reset", 0.01, pauli()).unwrap();
         assert_eq!(reset_ch.probability(), 0.01);
 
-        let before_ch = CompositeChannelBuilder::batch_before_circuit("before", 0.005, inject_x());
+        let before_ch =
+            CompositeChannelBuilder::batch_before_circuit("before", 0.005, inject_x()).unwrap();
         assert_eq!(before_ch.probability(), 0.005);
 
-        let after_ch = CompositeChannelBuilder::batch_after_circuit("after", 0.001, inject_z());
+        let after_ch =
+            CompositeChannelBuilder::batch_after_circuit("after", 0.001, inject_z()).unwrap();
         assert_eq!(after_ch.probability(), 0.001);
 
-        let layers_ch = CompositeChannelBuilder::batch_between_layers("layers", 0.0001, pauli());
+        let layers_ch =
+            CompositeChannelBuilder::batch_between_layers("layers", 0.0001, pauli()).unwrap();
         assert_eq!(layers_ch.probability(), 0.0001);
     }
 

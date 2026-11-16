@@ -14,7 +14,7 @@ produces a `NoiseResponse` when those events fire during simulation.
 | PreparationChannel | `AfterPreparation` |
 | IdleChannel | `IdleTime` |
 | CrosstalkChannel | `AfterGate` |
-| LeakageChannel | `BeforeGate`, `AfterGate`, `BeforeMeasurement` |
+| LeakageChannel | `BeforeGate`; `AfterGate` only with positive partner Pauli probability |
 | Custom channels | Any event, including `Signal` |
 
 You don't need to wire this up yourself -- each channel self-selects which
@@ -31,12 +31,12 @@ combination of these.
 Pauli errors after single-qubit gates:
 
 ```rust
-SingleQubitChannel::depolarizing(0.001)
+SingleQubitChannel::depolarizing(0.001)?
 
 // With more control
-SingleQubitChannel::depolarizing(0.001)
-    .with_pauli_weights(PauliWeights::z_biased(0.9))   // 90% Z errors
-    .with_emission(0.1, 0.05)                           // 10% emission, 5% leakage
+SingleQubitChannel::depolarizing(0.001)?
+    .with_pauli_weights(PauliWeights::z_biased(0.9)?)?   // 90% Z errors
+    .with_emission(0.1, 0.05)?                           // 10% emission, 5% leakage
 ```
 
 Other constructors: `dephasing(p)`, `bit_flip(p)`.
@@ -46,11 +46,11 @@ Other constructors: `dephasing(p)`, `bit_flip(p)`.
 Pauli errors after two-qubit gates:
 
 ```rust
-TwoQubitChannel::depolarizing(0.01)
+TwoQubitChannel::depolarizing(0.01)?
 
 // With angle scaling (for parameterized gates like RZZ)
-TwoQubitChannel::depolarizing(0.01)
-    .with_angle_scaling(AngleScaling::linear())
+TwoQubitChannel::depolarizing(0.01)?
+    .with_angle_scaling(AngleScaling::linear())?
 ```
 
 Angle scaling options: `constant()`, `linear()`, `quadratic()`,
@@ -61,17 +61,26 @@ Angle scaling options: `constant()`, `linear()`, `quadratic()`,
 Readout errors -- flips measurement outcomes with given probabilities.
 
 ```rust
-MeasurementChannel::symmetric(0.02)              // Same rate both directions
-MeasurementChannel::asymmetric(0.02, 0.03)       // P(0->1), P(1->0)
+MeasurementChannel::symmetric(0.02)?              // Same rate both directions
+MeasurementChannel::asymmetric(0.02, 0.03)?       // P(0->1), P(1->0)
 ```
 
 ### PreparationChannel
 
 Errors during state preparation -- bit flips or leakage.
 
+`NoiseModelBuilder`, `GeneralNoiseModelBuilder` and `CompositeNoiseModelBuilder`
+register `CorePlugin` automatically. Its `AfterPreparation` handler marks qubits
+active and clears previous leakage before preparation noise runs, so a new leak
+from that same preparation remains. Its `AfterMeasurement` handler marks qubits
+inactive without clearing leakage. Thus crosstalk targets other prepared,
+unmeasured, non-leaked qubits, and custom `active()` conditions follow this
+lifecycle. A bare `ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
+these preparation and measurement state updates.
+
 ```rust
-PreparationChannel::new(0.001)
-    .with_leakage(0.1)    // 10% of prep errors cause leakage
+PreparationChannel::new(0.001)?
+    .with_leakage(0.1)?    // 10% of prep errors cause leakage
 ```
 
 ### IdleChannel
@@ -79,11 +88,11 @@ PreparationChannel::new(0.001)
 T1/T2 decay during idle periods. Rate scales with duration.
 
 ```rust
-IdleChannel::linear(0.0001)                   // Rate per time unit
+IdleChannel::linear(0.0001).unwrap()                   // Rate per time unit
     .with_linear_depolarizing()               // Uniform X/Y/Z
 
 // T1=50us and total T2=30us when one abstract time unit is 1ns
-IdleChannel::from_t1_t2(50_000.0, 30_000.0)
+IdleChannel::from_t1_t2(50_000.0, 30_000.0).unwrap()
 ```
 
 `from_t1_t2` uses the first-order Pauli twirl, requires total `T2 <= 2 * T1`, and is valid for
@@ -100,18 +109,18 @@ Errors on bystander qubits when gates or measurements happen nearby.
 
 ```rust
 CrosstalkChannel::new()
-    .with_global_rate(0.001)       // Affects all other qubits
-    .with_local_rate(0.01)         // Affects nearby qubits
+    .with_global_rate(0.001)?       // Affects all other qubits
+    .with_local_rate(0.01)?         // Affects nearby qubits
 ```
 
 ### LeakageChannel
 
-Handles the effects of leaked qubits on gates -- runs at high priority so it
-processes before other channels.
+Suppresses gates on leaked operands. Every builder registers it, and suppression
+does not depend on where it sits among the other channels.
 
 ```rust
 LeakageChannel::new()
-    .with_scale(1.0)
+    .with_scale(1.0)?
 ```
 
 ### GateDependentChannel
@@ -120,9 +129,9 @@ Different error rates for different gate types:
 
 ```rust
 GateDependentChannel::new()
-    .with_gate_error(GateType::H, 0.0005)
-    .with_gate_error(GateType::CX, 0.005)
-    .with_default(0.001)
+    .with_gate_error(GateType::H, 0.0005)?
+    .with_gate_error(GateType::CX, 0.005)?
+    .with_default(0.001)?
 ```
 
 ### CategoryBasedChannel
@@ -131,8 +140,8 @@ Error rates by gate category (single-qubit, two-qubit, etc.):
 
 ```rust
 CategoryBasedChannel::new()
-    .with_category(GateCategory::SingleQubit, 0.001)
-    .with_category(GateCategory::TwoQubit, 0.01)
+    .with_category(GateCategory::SingleQubit, 0.001)?
+    .with_category(GateCategory::TwoQubit, 0.01)?
 ```
 
 ## Signal-Reactive Channels
@@ -158,3 +167,80 @@ and implementation pattern.
 For implementing custom channels, `CompositeChannel` with primitive decision
 trees, and geometric sampling, see the
 [developer noise guide](../dev/noise.md).
+
+Gate-event `qubits` contains executed groups only after a gate. Custom channels
+that model seepage, partner noise or idle effects on suppressed groups must read
+`leaked_suppressed` explicitly; `gated_qubits()` includes both sets. Composite
+filters classify by `group_size` and now also fire on batched commands, with
+partner conditions evaluated within each group. On noisy operations, suppressed groups run primitives
+only on currently leaked members.
+
+The seepage parameter is conditional on an emission fault: its marginal rate is
+`p * emission_ratio * seepage`, where `p` includes angle scaling. Leakage scale
+does not scale seepage. Two-qubit channels share the outer fault and emission
+draws per pair, including through `channel_action`; composite builders
+preserve the per-qubit marginal rate.
+
+`channel_action` returns a `ValidationResult` and rejects wrapped channels whose
+`event_kinds()` omit `AfterGate`, naming the channel in the error. It calls the
+wrapped channel's `apply` with a synthesized `AfterGate` event for the operand
+group and runs that channel once per group per stage. The
+leader is the first eligible member at the start of each stage (the first leaked
+member of a suppressed group, otherwise member 0), and remains fixed within that
+stage. Probability and condition guards decide on the leader's invocation. Each
+sequence records wrapped-channel skip targets at the step that returned them.
+After evaluating that step, the sequence stops only for a named member, even if
+a guard on that member bypasses the adapter or an inner sequence. Unnamed members,
+including the leader, continue. Earlier steps and the evaluated step retain their
+effects; later steps do not run on skipped members. Skip targets reach the runner
+only once. This stop guarantee applies to later steps of every enclosing sequence
+for named members. Without an enclosing sequence, guard branches are evaluated
+per member as usual, even for members named in a wrapped skip. Leak and unleak
+marks retain all named targets.
+
+On geometric single-pass non-gate events, `Primitive::reads_operands` opts into
+installing all operands before sampling, independently of whether member 0 is
+sampled. Actions and conditions declare the same capability, and combinators
+forward it from their children. Custom readers using `current_gate_qubits()`,
+`other_qubit()` or partner conditions must declare it; otherwise they see no
+operands on that path. Function conditions opt in with
+`FnCondition::with_operand_reads()`. `channel_action` declares operand reads;
+`pauli()` does not and keeps O(n*p) processing. Linear and two-pass paths always
+install operands once per group, sharing the same list between stages.
+`CompositeChannel` and `BatchCompositeChannel` set member indices on their linear,
+geometric and two-pass paths; crosstalk's per-target loop keeps index 0.
+
+`SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
+sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity
+injects no gate. This fully depolarizing channel also discards correlations with
+other qubits. The draw happens only after seep selection, for both executed and
+leaked-suppressed groups; it does not change the seepage rate. No reset gate is
+injected.
+Composite `seep()` retains its configurable Pauli weights. `unleak()` and
+`NoiseResponse::MarkUnleaked` clear only the leakage flag and preserve the
+simulator state; use `seep()` for the physical channel.
+
+### Noiseless operations and leakage
+
+All three noise builders always register leakage suppression, even with zero
+fault rates or custom leakage sources. Gates on leaked operands never run,
+including noiseless gates. Partner Pauli noise defaults to zero; opt in on
+`LeakageChannel` with `with_partner_pauli_probability(p)`. Each complete pair
+with exactly one leaked member receives a probability draw, then a uniform
+X/Y/Z on the healthy partner if it succeeds. This covers executed and
+leaked-suppressed groups. Noiseless operations produce neither draws nor faults.
+
+`with_noiseless_gate` and `with_noiseless_gates` suppress faults from the declared
+operation: injected gates, readout flips, leakage, seepage, crosstalk and
+idle-after-two-qubit noise. This includes composite primitives on suppressed
+groups. A scheduled `IdleTime` still produces its configured noise. Preparation
+still clears prior leakage, and lifecycle tracking still runs. A fault primitive
+placed on a `BeforeGate` composite is not silenced: that event decides suppression.
+Custom non-composite fault channels must check the noiseless setting themselves.
+
+`AfterPreparation`, `BeforeMeasurement` and `AfterMeasurement` carry the actual
+`gate_type`, distinguishing PZ from QAlloc and MZ from MeasureLeaked.
+On `CircuitRunner`'s command queue, leaked MZ reads 1 and leaked MeasureLeaked
+reports leaked, including when noiseless. `LeakageChannel` never changes an
+older measurement record. `execute_measure` and `ImportanceSamplingRunner`
+retain their separate measurement behavior without a leakage check.

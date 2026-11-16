@@ -94,10 +94,8 @@ impl BitAnd for PauliString {
         let mut paulis: Vec<(Pauli, QubitId)> = self.iter_pairs().collect();
         paulis.extend(rhs.iter_pairs());
 
-        // Sort by qubit for canonical form
-        paulis.sort_by_key(|(_, q)| *q);
-
         PauliString::with_phase_and_paulis(new_phase, paulis)
+            .expect("Pauli algebra constructs one entry per distinct qubit")
     }
 }
 
@@ -186,6 +184,7 @@ impl Mul for PauliString {
         }
 
         PauliString::with_phase_and_paulis(phase, result)
+            .expect("Pauli algebra constructs one entry per distinct qubit")
     }
 }
 
@@ -220,9 +219,10 @@ impl Mul<&PauliString> for &PauliString {
 impl Neg for PauliString {
     type Output = PauliString;
 
-    fn neg(self) -> PauliString {
+    fn neg(mut self) -> PauliString {
         let new_phase = self.phase().multiply(&QuarterPhase::MinusOne);
-        PauliString::with_phase_and_paulis(new_phase, self.iter_pairs().collect())
+        self.set_phase(new_phase);
+        self
     }
 }
 
@@ -241,9 +241,10 @@ impl Neg for &PauliString {
 impl Mul<PauliString> for ImaginaryUnit {
     type Output = PauliString;
 
-    fn mul(self, rhs: PauliString) -> PauliString {
+    fn mul(self, mut rhs: PauliString) -> PauliString {
         let new_phase = rhs.phase().multiply(&QuarterPhase::PlusI);
-        PauliString::with_phase_and_paulis(new_phase, rhs.iter_pairs().collect())
+        rhs.set_phase(new_phase);
+        rhs
     }
 }
 
@@ -258,9 +259,10 @@ impl Mul<&PauliString> for ImaginaryUnit {
 impl Mul<PauliString> for NegImaginaryUnit {
     type Output = PauliString;
 
-    fn mul(self, rhs: PauliString) -> PauliString {
+    fn mul(self, mut rhs: PauliString) -> PauliString {
         let new_phase = rhs.phase().multiply(&QuarterPhase::MinusI);
-        PauliString::with_phase_and_paulis(new_phase, rhs.iter_pairs().collect())
+        rhs.set_phase(new_phase);
+        rhs
     }
 }
 

@@ -1,7 +1,7 @@
 // Copyright 2026 The PECOS Developers
 use crate::prelude::*;
 use crate::simulator_utils::{
-    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_gate_locations,
 };
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -27,17 +27,16 @@ use std::collections::BTreeMap;
 #[pyclass(name = "PauliProp", module = "pecos_rslib")]
 pub struct PyPauliProp {
     inner: PauliProp,
-    num_qubits: Option<usize>,
     track_sign: bool,
 }
 
 #[cfg(test)]
 crate::simulator_utils::direct_surface_test!(
     direct_surface_matches_predicate,
-    { PyPauliProp::new(Some(2), false) },
+    { PyPauliProp::new(false) },
     ignored_forcing = (
         |seed: u64| {
-            let mut sim = PyPauliProp::new(Some(2), true);
+            let mut sim = PyPauliProp::new(true);
             if seed & 1 != 0 {
                 sim.inner.track_y(&[0]);
             }
@@ -161,33 +160,23 @@ impl PyPauliProp {
     /// Create a new `PauliProp` simulator
     ///
     /// Args:
-    ///     `num_qubits`: Optional number of qubits (for string representation)
     ///     `track_sign`: Whether to track sign and phase
     #[new]
-    #[pyo3(signature = (num_qubits=None, *, track_sign=false))]
-    pub fn new(num_qubits: Option<usize>, track_sign: bool) -> Self {
+    #[pyo3(signature = (*, track_sign=false))]
+    pub fn new(track_sign: bool) -> Self {
         let inner = if track_sign {
-            if let Some(n) = num_qubits {
-                PauliProp::with_sign_tracking(n)
-            } else {
-                // Default to tracking with 0 qubits if not specified
-                PauliProp::with_sign_tracking(0)
-            }
+            PauliProp::with_sign_tracking()
         } else {
             PauliProp::new()
         };
 
-        PyPauliProp {
-            inner,
-            num_qubits,
-            track_sign,
-        }
+        PyPauliProp { inner, track_sign }
     }
 
-    /// Get `num_qubits` (for backwards compatibility)
+    /// Fixed register capacity, or None for a growable simulator.
     #[getter]
-    pub fn num_qubits(&self) -> Option<usize> {
-        self.num_qubits
+    fn gate_capacity(&self) -> Option<usize> {
+        self.inner.qubit_capacity()
     }
 
     /// Get `track_sign` setting (for backwards compatibility)
@@ -209,6 +198,7 @@ impl PyPauliProp {
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
+        crate::simulator_utils::validate_qubit(symbol, location, self.inner.qubit_capacity())?;
         let q = &[QubitId(location)];
         match symbol {
             "I" => Ok(None),
@@ -379,19 +369,448 @@ impl PyPauliProp {
     fn run_2q_gate(
         &mut self,
         symbol: &str,
+        location: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = crate::simulator_utils::extract_pair(symbol, location)?;
+        crate::simulator_utils::validate_pair(
+            symbol,
+            pair.0.0,
+            pair.1.0,
+            self.inner.qubit_capacity(),
+        )?;
+        self.dispatch_2q_gate(symbol, pair, params)
+    }
+
+    #[pyo3(signature = (symbol, location, params=None))]
+    fn run_gate_internal(
+        &mut self,
+        symbol: &str,
         location: &Bound<'_, PyTuple>,
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
-        if location.len() != 2 {
+        match location.len() {
+            1 => self.run_1q_gate(symbol, location.get_item(0)?.extract()?, params),
+            2 => self.run_2q_gate(symbol, location, params),
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Gate location must be specified for either 1 or 2 qubits",
+            )),
+        }
+    }
+
+    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        self.run_gate_highlevel(symbol, locations, params, py)
+    }
+
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate_highlevel(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let output = PyDict::new(py);
+
+        if matches!(symbol, "force output" | "check" | "measure") {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Two-qubit gate requires exactly 2 qubit locations",
+                "Unsupported gate",
             ));
         }
 
-        let q1: usize = location.get_item(0)?.extract()?;
-        let q2: usize = location.get_item(1)?.extract()?;
-        let pair = &[(QubitId(q1), QubitId(q2))];
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        let crate::simulator_utils::ValidatedLocations { qubits, pairs } = validate_gate_locations(
+            symbol,
+            &locations_set,
+            supports,
+            self.inner.qubit_capacity(),
+        )?;
 
+        if let Some(p) = params
+            && let Ok(Some(simulate_gate)) = p.get_item("simulate_gate")
+            && let Ok(false) = simulate_gate.extract::<bool>()
+        {
+            return Ok(output.into());
+        }
+
+        if locations_set.is_empty() {
+            return Ok(output.into());
+        }
+
+        let has_special_params = params.is_some_and(|p| !p.is_empty());
+        if !has_special_params
+            && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
+                &mut self.inner,
+                symbol,
+                &qubits,
+                pairs.as_deref(),
+                py,
+            )?
+        {
+            return Ok(result);
+        }
+
+        if let Some(pairs) = pairs {
+            for pair in pairs {
+                if let Some(value) = self.dispatch_2q_gate(symbol, pair, params)? {
+                    output.set_item((pair.0.0, pair.1.0), value)?;
+                }
+            }
+            return Ok(output.into());
+        }
+
+        for (&qubit, location) in qubits.iter().zip(locations_set.iter()) {
+            let result = self.run_1q_gate(symbol, qubit, params)?;
+
+            if let Some(value) = result {
+                output.set_item(location, value)?;
+            }
+        }
+
+        Ok(output.into())
+    }
+
+    /// Check if a qubit has an X operator
+    pub fn contains_x(&self, qubit: usize) -> bool {
+        self.inner.contains_x(qubit)
+    }
+
+    /// Check if a qubit has a Z operator
+    pub fn contains_z(&self, qubit: usize) -> bool {
+        self.inner.contains_z(qubit)
+    }
+
+    /// Check if a qubit has a Y operator
+    pub fn contains_y(&self, qubit: usize) -> bool {
+        self.inner.contains_y(qubit)
+    }
+
+    /// Track X Pauli(s) on qubit(s)
+    pub fn track_x(&mut self, qubits: Vec<usize>) {
+        self.inner.track_x(&qubits);
+    }
+
+    /// Track Z Pauli(s) on qubit(s)
+    pub fn track_z(&mut self, qubits: Vec<usize>) {
+        self.inner.track_z(&qubits);
+    }
+
+    /// Track Y Pauli(s) on qubit(s)
+    pub fn track_y(&mut self, qubits: Vec<usize>) {
+        self.inner.track_y(&qubits);
+    }
+
+    /// Flip the sign of the Pauli string
+    pub fn flip_sign(&mut self) {
+        self.inner.flip_sign();
+    }
+
+    /// Add imaginary factors
+    pub fn flip_img(&mut self, num_is: usize) {
+        self.inner.flip_img(num_is);
+    }
+
+    /// Add Pauli operators from a dictionary
+    ///
+    /// Args:
+    ///     paulis: Dictionary with keys "X", "Y", "Z" mapping to sets of qubit indices
+    pub fn add_paulis(&mut self, paulis: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut btree_map = BTreeMap::new();
+
+        // Convert Python dict to BTreeMap<String, VecSet<usize>>
+        for (key, value) in paulis.iter() {
+            let key_str: String = key.extract()?;
+
+            if let Ok(py_set) = value.cast::<PySet>() {
+                let mut vec_set = VecSet::new();
+                for item in py_set.iter() {
+                    let qubit: usize = item.extract()?;
+                    vec_set.insert(qubit);
+                }
+                btree_map.insert(key_str, vec_set);
+            } else {
+                // Try to handle it as a Python set-like object
+                let iter = value.call_method0("__iter__")?;
+                let mut vec_set = VecSet::new();
+                while let Ok(item) = iter.call_method0("__next__") {
+                    let qubit: usize = item.extract()?;
+                    vec_set.insert(qubit);
+                }
+                btree_map.insert(key_str, vec_set);
+            }
+        }
+
+        self.inner.add_paulis(&btree_map);
+        Ok(())
+    }
+
+    /// Get the weight of the Pauli string (number of non-identity operators)
+    pub fn weight(&self) -> usize {
+        self.inner.weight()
+    }
+
+    /// Get the sign string representation
+    pub fn sign_string(&self) -> String {
+        self.inner.sign_string()
+    }
+
+    /// Get the sparse string representation
+    pub fn sparse_string(&self) -> String {
+        self.inner.sparse_string()
+    }
+
+    /// Get the dense string representation (for `PauliProp`)
+    /// Raises `ValueError` if a tracked qubit is outside the requested dense width.
+    #[pyo3(signature = (num_qubits=None))]
+    pub fn dense_string(&self, num_qubits: Option<usize>) -> PyResult<String> {
+        num_qubits
+            .map_or_else(
+                || Ok(self.inner.dense_string()),
+                |n| self.inner.dense_string_width(n),
+            )
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Get the full Pauli string with sign
+    pub fn to_pauli_string(&self) -> String {
+        self.inner.to_pauli_string()
+    }
+
+    /// Get the full dense Pauli string with sign
+    /// Raises `ValueError` if a tracked qubit is outside the requested dense width.
+    #[pyo3(signature = (num_qubits=None))]
+    pub fn to_dense_string(&self, num_qubits: Option<usize>) -> PyResult<String> {
+        num_qubits
+            .map_or_else(
+                || Ok(self.inner.to_dense_string()),
+                |n| self.inner.to_dense_string_width(n),
+            )
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    // Clifford gates
+
+    /// Apply Hadamard gate(s)
+    pub fn h(&mut self, qubits: Vec<usize>) {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.h(&qs);
+    }
+
+    /// Apply S gate(s) (sqrt(Z))
+    pub fn sz(&mut self, qubits: Vec<usize>) {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.sz(&qs);
+    }
+
+    /// Apply sqrt(X) gate(s)
+    pub fn sx(&mut self, qubits: Vec<usize>) {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.sx(&qs);
+    }
+
+    /// Apply sqrt(Y) gate(s)
+    pub fn sy(&mut self, qubits: Vec<usize>) {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.sy(&qs);
+    }
+
+    /// Apply CNOT/CX gate(s)
+    pub fn cx(&mut self, pairs: Vec<(usize, usize)>) -> PyResult<()> {
+        for &(a, b) in &pairs {
+            crate::simulator_utils::validate_pair("CX", a, b, self.inner.qubit_capacity())?;
+        }
+        let ps: Vec<(QubitId, QubitId)> = pairs
+            .into_iter()
+            .map(|(c, t)| (QubitId(c), QubitId(t)))
+            .collect();
+        self.inner.cx(&ps);
+        Ok(())
+    }
+
+    /// Apply CY gate(s)
+    pub fn cy(&mut self, pairs: Vec<(usize, usize)>) -> PyResult<()> {
+        for &(a, b) in &pairs {
+            crate::simulator_utils::validate_pair("CY", a, b, self.inner.qubit_capacity())?;
+        }
+        let ps: Vec<(QubitId, QubitId)> = pairs
+            .into_iter()
+            .map(|(c, t)| (QubitId(c), QubitId(t)))
+            .collect();
+        self.inner.cy(&ps);
+        Ok(())
+    }
+
+    /// Apply CZ gate(s)
+    pub fn cz(&mut self, pairs: Vec<(usize, usize)>) -> PyResult<()> {
+        for &(a, b) in &pairs {
+            crate::simulator_utils::validate_pair("CZ", a, b, self.inner.qubit_capacity())?;
+        }
+        let ps: Vec<(QubitId, QubitId)> = pairs
+            .into_iter()
+            .map(|(c, t)| (QubitId(c), QubitId(t)))
+            .collect();
+        self.inner.cz(&ps);
+        Ok(())
+    }
+
+    /// Apply SWAP gate(s)
+    pub fn swap(&mut self, pairs: Vec<(usize, usize)>) -> PyResult<()> {
+        for &(a, b) in &pairs {
+            crate::simulator_utils::validate_pair("SWAP", a, b, self.inner.qubit_capacity())?;
+        }
+        let ps: Vec<(QubitId, QubitId)> = pairs
+            .into_iter()
+            .map(|(a, b)| (QubitId(a), QubitId(b)))
+            .collect();
+        self.inner.swap(&ps);
+        Ok(())
+    }
+
+    /// Measure in Z basis
+    pub fn mz(&mut self, qubits: Vec<usize>) -> Vec<bool> {
+        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
+        self.inner.mz(&qs).into_iter().map(|r| r.outcome).collect()
+    }
+
+    /// Check if this is the identity operator
+    pub fn is_identity(&self) -> bool {
+        self.inner.is_identity()
+    }
+
+    /// Get the sign as a boolean (false for +, true for -)
+    pub fn get_sign(&self) -> bool {
+        self.inner.get_sign()
+    }
+
+    /// Get the imaginary component (0 for real, 1 for imaginary)
+    pub fn get_img(&self) -> u8 {
+        self.inner.get_img()
+    }
+
+    /// Get all faults as a dictionary (compatible with Python `PauliFaultProp`)
+    /// Also accessible as a property via the `faults` getter
+    pub fn get_faults(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.build_faults_dict(py)
+    }
+
+    /// Property getter for faults (backwards compatibility with `PauliPropRs` wrapper)
+    #[getter(faults)]
+    pub fn get_faults_property(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.build_faults_dict(py)
+    }
+
+    /// Set faults by clearing and adding new ones
+    pub fn set_faults(&mut self, paulis: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        self.reset();
+        if let Some(p) = paulis {
+            self.add_paulis(p)?;
+        }
+        Ok(())
+    }
+
+    /// Alias for `get_sign` (backwards compatibility)
+    pub fn get_sign_bool(&self) -> bool {
+        self.inner.get_sign()
+    }
+
+    /// Alias for `get_img` (backwards compatibility)
+    pub fn get_img_value(&self) -> u8 {
+        self.inner.get_img()
+    }
+
+    /// Alias for `to_pauli_string` (backwards compatibility with `PauliFaultProp`)
+    pub fn fault_string(&self) -> String {
+        self.inner.to_pauli_string()
+    }
+
+    /// Alias for weight (backwards compatibility with `PauliFaultProp`)
+    pub fn fault_wt(&self) -> usize {
+        self.inner.weight()
+    }
+
+    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+        let faults = self.build_faults_dict(py)?;
+        let sign = self.inner.get_sign();
+        let img = self.inner.get_img();
+
+        let cls = py.get_type::<PyPauliProp>();
+        let from_pickle = cls.getattr("_from_pickle")?;
+        pyo3::types::PyTuple::new(
+            py,
+            &[
+                from_pickle.into_any(),
+                pyo3::types::PyTuple::new(
+                    py,
+                    &[
+                        self.track_sign.into_pyobject(py)?.to_owned().into_any(),
+                        faults.into_bound(py).into_any(),
+                        sign.into_pyobject(py)?.to_owned().into_any(),
+                        img.into_pyobject(py)?.into_any(),
+                    ],
+                )?
+                .into_any(),
+            ],
+        )
+    }
+
+    #[staticmethod]
+    #[pyo3(name = "_from_pickle")]
+    fn from_pickle(
+        track_sign: bool,
+        faults: &Bound<'_, PyDict>,
+        sign: bool,
+        img: u8,
+    ) -> PyResult<Self> {
+        let mut obj = PyPauliProp::new(track_sign);
+        obj.add_paulis(faults)?;
+        // Restore sign: if stored sign is negative, flip it (default is false/positive)
+        if sign {
+            obj.inner.flip_sign();
+        }
+        // Restore img: add the stored imaginary count
+        if img > 0 {
+            obj.inner.flip_img(img as usize);
+        }
+        Ok(obj)
+    }
+
+    #[getter]
+    fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
+        let py = slf.py();
+        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
+        Ok(crate::simulator_utils::GateBindingsDict::new(
+            sim_obj, supports,
+        ))
+    }
+
+    /// String representation
+    fn __repr__(&self) -> String {
+        format!("PauliProp({})", self.inner.to_pauli_string())
+    }
+
+    /// String representation
+    fn __str__(&self) -> String {
+        self.inner.to_pauli_string()
+    }
+}
+
+impl PyPauliProp {
+    // Operands have already been extracted and validated for the entire batch.
+    fn dispatch_2q_gate(
+        &mut self,
+        symbol: &str,
+        operands: (QubitId, QubitId),
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        let pair = &[operands];
         match symbol {
             "CX" | "CNOT" => {
                 self.inner.cx(pair);
@@ -490,383 +909,5 @@ impl PyPauliProp {
                 "Unsupported two-qubit gate",
             )),
         }
-    }
-
-    #[pyo3(signature = (symbol, location, params=None))]
-    fn run_gate_internal(
-        &mut self,
-        symbol: &str,
-        location: &Bound<'_, PyTuple>,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Option<u8>> {
-        match location.len() {
-            1 => self.run_1q_gate(symbol, location.get_item(0)?.extract()?, params),
-            2 => self.run_2q_gate(symbol, location, params),
-            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Gate location must be specified for either 1 or 2 qubits",
-            )),
-        }
-    }
-
-    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
-    #[pyo3(signature = (symbol, locations, **params))]
-    fn run_gate(
-        &mut self,
-        symbol: &str,
-        locations: &Bound<'_, PyAny>,
-        params: Option<&Bound<'_, PyDict>>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyDict>> {
-        self.run_gate_highlevel(symbol, locations, params, py)
-    }
-
-    #[pyo3(signature = (symbol, locations, **params))]
-    fn run_gate_highlevel(
-        &mut self,
-        symbol: &str,
-        locations: &Bound<'_, PyAny>,
-        params: Option<&Bound<'_, PyDict>>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyDict>> {
-        let output = PyDict::new(py);
-
-        if matches!(symbol, "force output" | "check" | "measure") {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Unsupported gate",
-            ));
-        }
-
-        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
-        validate_supported_symbol(symbol, &locations_set, supports)?;
-
-        if let Some(p) = params
-            && let Ok(Some(simulate_gate)) = p.get_item("simulate_gate")
-            && let Ok(false) = simulate_gate.extract::<bool>()
-        {
-            return Ok(output.into());
-        }
-
-        if locations_set.is_empty() {
-            return Ok(output.into());
-        }
-
-        let has_special_params = params.is_some_and(|p| !p.is_empty());
-        if !has_special_params
-            && let Some(result) = crate::simulator_utils::try_clifford_batch_dispatch(
-                &mut self.inner,
-                symbol,
-                &locations_set,
-                py,
-            )?
-        {
-            return Ok(result);
-        }
-
-        for location in locations_set.iter() {
-            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.clone().cast_into()?
-            } else {
-                PyTuple::new(py, std::slice::from_ref(&location))?
-            };
-            if let Some(value) = self.run_gate_internal(symbol, &loc_tuple, params)? {
-                output.set_item(location, value)?;
-            }
-        }
-
-        Ok(output.into())
-    }
-
-    /// Check if a qubit has an X operator
-    pub fn contains_x(&self, qubit: usize) -> bool {
-        self.inner.contains_x(qubit)
-    }
-
-    /// Check if a qubit has a Z operator
-    pub fn contains_z(&self, qubit: usize) -> bool {
-        self.inner.contains_z(qubit)
-    }
-
-    /// Check if a qubit has a Y operator
-    pub fn contains_y(&self, qubit: usize) -> bool {
-        self.inner.contains_y(qubit)
-    }
-
-    /// Track X Pauli(s) on qubit(s)
-    pub fn track_x(&mut self, qubits: Vec<usize>) {
-        self.inner.track_x(&qubits);
-    }
-
-    /// Track Z Pauli(s) on qubit(s)
-    pub fn track_z(&mut self, qubits: Vec<usize>) {
-        self.inner.track_z(&qubits);
-    }
-
-    /// Track Y Pauli(s) on qubit(s)
-    pub fn track_y(&mut self, qubits: Vec<usize>) {
-        self.inner.track_y(&qubits);
-    }
-
-    /// Flip the sign of the Pauli string
-    pub fn flip_sign(&mut self) {
-        self.inner.flip_sign();
-    }
-
-    /// Add imaginary factors
-    pub fn flip_img(&mut self, num_is: usize) {
-        self.inner.flip_img(num_is);
-    }
-
-    /// Add Pauli operators from a dictionary
-    ///
-    /// Args:
-    ///     paulis: Dictionary with keys "X", "Y", "Z" mapping to sets of qubit indices
-    pub fn add_paulis(&mut self, paulis: &Bound<'_, PyDict>) -> PyResult<()> {
-        let mut btree_map = BTreeMap::new();
-
-        // Convert Python dict to BTreeMap<String, VecSet<usize>>
-        for (key, value) in paulis.iter() {
-            let key_str: String = key.extract()?;
-
-            if let Ok(py_set) = value.cast::<PySet>() {
-                let mut vec_set = VecSet::new();
-                for item in py_set.iter() {
-                    let qubit: usize = item.extract()?;
-                    vec_set.insert(qubit);
-                }
-                btree_map.insert(key_str, vec_set);
-            } else {
-                // Try to handle it as a Python set-like object
-                let iter = value.call_method0("__iter__")?;
-                let mut vec_set = VecSet::new();
-                while let Ok(item) = iter.call_method0("__next__") {
-                    let qubit: usize = item.extract()?;
-                    vec_set.insert(qubit);
-                }
-                btree_map.insert(key_str, vec_set);
-            }
-        }
-
-        self.inner.add_paulis(&btree_map);
-        Ok(())
-    }
-
-    /// Get the weight of the Pauli string (number of non-identity operators)
-    pub fn weight(&self) -> usize {
-        self.inner.weight()
-    }
-
-    /// Get the sign string representation
-    pub fn sign_string(&self) -> String {
-        self.inner.sign_string()
-    }
-
-    /// Get the sparse string representation
-    pub fn sparse_string(&self) -> String {
-        self.inner.sparse_string()
-    }
-
-    /// Get the dense string representation (for `PauliProp`)
-    pub fn dense_string(&self) -> String {
-        self.inner.dense_string()
-    }
-
-    /// Get the full Pauli string with sign
-    pub fn to_pauli_string(&self) -> String {
-        self.inner.to_pauli_string()
-    }
-
-    /// Get the full dense Pauli string with sign
-    pub fn to_dense_string(&self) -> String {
-        self.inner.to_dense_string()
-    }
-
-    // Clifford gates
-
-    /// Apply Hadamard gate(s)
-    pub fn h(&mut self, qubits: Vec<usize>) {
-        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.h(&qs);
-    }
-
-    /// Apply S gate(s) (sqrt(Z))
-    pub fn sz(&mut self, qubits: Vec<usize>) {
-        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sz(&qs);
-    }
-
-    /// Apply sqrt(X) gate(s)
-    pub fn sx(&mut self, qubits: Vec<usize>) {
-        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sx(&qs);
-    }
-
-    /// Apply sqrt(Y) gate(s)
-    pub fn sy(&mut self, qubits: Vec<usize>) {
-        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.sy(&qs);
-    }
-
-    /// Apply CNOT/CX gate(s)
-    pub fn cx(&mut self, pairs: Vec<(usize, usize)>) {
-        let ps: Vec<(QubitId, QubitId)> = pairs
-            .into_iter()
-            .map(|(c, t)| (QubitId(c), QubitId(t)))
-            .collect();
-        self.inner.cx(&ps);
-    }
-
-    /// Apply CY gate(s)
-    pub fn cy(&mut self, pairs: Vec<(usize, usize)>) {
-        let ps: Vec<(QubitId, QubitId)> = pairs
-            .into_iter()
-            .map(|(c, t)| (QubitId(c), QubitId(t)))
-            .collect();
-        self.inner.cy(&ps);
-    }
-
-    /// Apply CZ gate(s)
-    pub fn cz(&mut self, pairs: Vec<(usize, usize)>) {
-        let ps: Vec<(QubitId, QubitId)> = pairs
-            .into_iter()
-            .map(|(c, t)| (QubitId(c), QubitId(t)))
-            .collect();
-        self.inner.cz(&ps);
-    }
-
-    /// Apply SWAP gate(s)
-    pub fn swap(&mut self, pairs: Vec<(usize, usize)>) {
-        let ps: Vec<(QubitId, QubitId)> = pairs
-            .into_iter()
-            .map(|(a, b)| (QubitId(a), QubitId(b)))
-            .collect();
-        self.inner.swap(&ps);
-    }
-
-    /// Measure in Z basis
-    pub fn mz(&mut self, qubits: Vec<usize>) -> Vec<bool> {
-        let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.mz(&qs).into_iter().map(|r| r.outcome).collect()
-    }
-
-    /// Check if this is the identity operator
-    pub fn is_identity(&self) -> bool {
-        self.inner.is_identity()
-    }
-
-    /// Get the sign as a boolean (false for +, true for -)
-    pub fn get_sign(&self) -> bool {
-        self.inner.get_sign()
-    }
-
-    /// Get the imaginary component (0 for real, 1 for imaginary)
-    pub fn get_img(&self) -> u8 {
-        self.inner.get_img()
-    }
-
-    /// Get all faults as a dictionary (compatible with Python `PauliFaultProp`)
-    /// Also accessible as a property via the `faults` getter
-    pub fn get_faults(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.build_faults_dict(py)
-    }
-
-    /// Property getter for faults (backwards compatibility with `PauliPropRs` wrapper)
-    #[getter(faults)]
-    pub fn get_faults_property(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.build_faults_dict(py)
-    }
-
-    /// Set faults by clearing and adding new ones
-    pub fn set_faults(&mut self, paulis: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
-        self.reset();
-        if let Some(p) = paulis {
-            self.add_paulis(p)?;
-        }
-        Ok(())
-    }
-
-    /// Alias for `get_sign` (backwards compatibility)
-    pub fn get_sign_bool(&self) -> bool {
-        self.inner.get_sign()
-    }
-
-    /// Alias for `get_img` (backwards compatibility)
-    pub fn get_img_value(&self) -> u8 {
-        self.inner.get_img()
-    }
-
-    /// Alias for `to_pauli_string` (backwards compatibility with `PauliFaultProp`)
-    pub fn fault_string(&self) -> String {
-        self.inner.to_pauli_string()
-    }
-
-    /// Alias for weight (backwards compatibility with `PauliFaultProp`)
-    pub fn fault_wt(&self) -> usize {
-        self.inner.weight()
-    }
-
-    fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
-        let faults = self.build_faults_dict(py)?;
-        let sign = self.inner.get_sign();
-        let img = self.inner.get_img();
-
-        let cls = py.get_type::<PyPauliProp>();
-        let from_pickle = cls.getattr("_from_pickle")?;
-        pyo3::types::PyTuple::new(
-            py,
-            &[
-                from_pickle.into_any(),
-                pyo3::types::PyTuple::new(
-                    py,
-                    &[
-                        self.num_qubits.into_pyobject(py)?.into_any(),
-                        self.track_sign.into_pyobject(py)?.to_owned().into_any(),
-                        faults.into_bound(py).into_any(),
-                        sign.into_pyobject(py)?.to_owned().into_any(),
-                        img.into_pyobject(py)?.into_any(),
-                    ],
-                )?
-                .into_any(),
-            ],
-        )
-    }
-
-    #[staticmethod]
-    fn _from_pickle(
-        num_qubits: Option<usize>,
-        track_sign: bool,
-        faults: &Bound<'_, PyDict>,
-        sign: bool,
-        img: u8,
-    ) -> PyResult<Self> {
-        let mut obj = PyPauliProp::new(num_qubits, track_sign);
-        obj.add_paulis(faults)?;
-        // Restore sign: if stored sign is negative, flip it (default is false/positive)
-        if sign {
-            obj.inner.flip_sign();
-        }
-        // Restore img: add the stored imaginary count
-        if img > 0 {
-            obj.inner.flip_img(img as usize);
-        }
-        Ok(obj)
-    }
-
-    #[getter]
-    fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
-        let py = slf.py();
-        let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
-        Ok(crate::simulator_utils::GateBindingsDict::new(
-            sim_obj, supports,
-        ))
-    }
-
-    /// String representation
-    fn __repr__(&self) -> String {
-        format!("PauliProp({})", self.inner.to_pauli_string())
-    }
-
-    /// String representation
-    fn __str__(&self) -> String {
-        self.inner.to_pauli_string()
     }
 }

@@ -199,7 +199,7 @@ def test_fold_dagger_descriptor_matches_s():
     dagger = fold_builder("pair_adjacent")
     phase = fold_builder("pair_sz_sz")
     assert dagger.to_tick_circuit().num_measurements() == 41
-    dem = stim.DetectorErrorModel(dagger.build_dem())
+    dem = stim.DetectorErrorModel(str(dagger.build_dem()))
     assert dem.num_detectors == 32
     assert dem.num_observables == 1
     assert dagger.build_algorithm_descriptor() == phase.build_algorithm_descriptor()
@@ -285,7 +285,7 @@ def test_logical_readout_combines_x_z_on_same_patch():
         LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
         LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=1, basis="X"),
     ]
-    assert _logical_readout_flow(operations, 3, "A", "X") == (True, (("B", 2), ("A", 1)))
+    assert _logical_readout_flow(operations, 3, "A", "X") == (True, (("B", 2), ("A", 1)), ())
 
 
 @pytest.mark.parametrize("family", ["X", "Z"])
@@ -393,7 +393,7 @@ def y_builder(patch, before, after, *, explicit=False, swapped=False, shared=Fal
 def assert_y_composition(builder, explicit, *, empty_commit):
     """Compare all compilation products, including repeated calls on one builder."""
     expected = explicit.to_tick_circuit()
-    expected_dem = explicit.build_dem()
+    expected_dem = str(explicit.build_dem())
     if empty_commit:
         with pytest.raises(ValueError, match=EMPTY_COMMIT) as expected_error:
             explicit.build_algorithm_descriptor()
@@ -404,7 +404,7 @@ def assert_y_composition(builder, explicit, *, empty_commit):
         assert tick_circuit_to_stim(actual) == tick_circuit_to_stim(expected)
         for key in ("detectors", "observables", "num_measurements", "measurement_keys", "teleportation_readouts"):
             assert actual.get_meta(key) == expected.get_meta(key), key
-        assert builder.build_dem() == expected_dem
+        assert str(builder.build_dem()) == expected_dem
         if empty_commit:
             with pytest.raises(ValueError, match=EMPTY_COMMIT) as actual_error:
                 builder.build_algorithm_descriptor()
@@ -442,7 +442,7 @@ def test_y_product_readout(rounds):
         assert _rank([*space, *emitted]) == len(space)
         assert _rank(emitted) == 4 + 8 * rounds
         assert len(space) == _rank(emitted) + 1 == circuit.count_determined_measurements()
-    assert builder.build_dem()
+    assert str(builder.build_dem())
     with pytest.raises(ValueError, match=EMPTY_COMMIT):
         builder.build_algorithm_descriptor()
     for seed in range(8):
@@ -678,7 +678,7 @@ def test_y_readout_h_composition(shared):
             p_meas=0.001,
             p_prep=0.0,
         )
-        assert builder.build_dem() == dem.to_string()
+        assert str(builder.build_dem()) == dem.to_string()
 
 
 @pytest.mark.parametrize("basis", ["X", "Y"])

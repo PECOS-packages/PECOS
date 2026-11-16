@@ -184,7 +184,7 @@ pub fn find_llvm(repo_root: Option<PathBuf>) -> Option<PathBuf> {
     }
 
     // 2. Check legacy top-level path: ~/.pecos/llvm/
-    if let Some(home_dir) = dirs::home_dir() {
+    if let Some(home_dir) = std::env::home_dir() {
         let pecos_dir = home_dir.join(".pecos");
 
         #[cfg(target_os = "windows")]

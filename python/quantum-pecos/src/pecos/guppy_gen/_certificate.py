@@ -1,25 +1,38 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Certify generated surface programs against their abstract measurement order."""
+"""Certify generated programs against their abstract measurement order."""
+
+from __future__ import annotations
 
 import hashlib
 import json
 from typing import TYPE_CHECKING
 
+from pecos.qec.measurement_layout import abstract_result_refs
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pecos_rslib.quantum import TickCircuit
 
+    from pecos.qec.measurement_layout import ResultRef
 
-def certify_surface_measurement_layout(program: object, abstract_tc: "TickCircuit") -> None:
-    """Bind a generated surface program to its abstract measurement order."""
+
+def certify_measurement_layout(
+    program: object,
+    abstract_tc: TickCircuit,
+    new_classifier: Callable[[], Callable[[str, Callable[[str], object]], ResultRef]],
+    *,
+    family: str,
+) -> None:
+    """Bind a generated program to its abstract measurement order."""
     # Imported here so that `import pecos` does not load guppylang.
     from pecos._compilation import guppy_to_hugr
-    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
 
     occurrence_by_tag: dict[str, int] = {}
     layout: list[tuple[str, int]] = []
-    for ref in _surface_abstract_measurement_result_refs(abstract_tc):
+    for ref in abstract_result_refs(abstract_tc, new_classifier, family=family):
         if ref[0] == "scalar":
             _, tag = ref
             occurrence = occurrence_by_tag.get(tag, 0)

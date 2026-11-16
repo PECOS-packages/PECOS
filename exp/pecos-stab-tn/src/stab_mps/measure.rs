@@ -569,9 +569,12 @@ fn find_replaced_stabilizer(tableau: &SparseStabY, q_idx: usize) -> usize {
     let mut best_weight = usize::MAX;
     for stab_id in col_x {
         let weight = stabs.row_x[stab_id].len() + stabs.row_z[stab_id].len();
-        if weight < best_weight {
+        if (weight, stab_id) < (best_weight, best_id.unwrap_or(usize::MAX)) {
             best_weight = weight;
             best_id = Some(stab_id);
+            // Weight 1 here forces row_x = {q}, row_z = {}: X_q up to phase.
+            // Independent generators cannot contain two such rows, so this
+            // is the unique minimum regardless of iteration order.
             if weight == 1 {
                 break;
             }

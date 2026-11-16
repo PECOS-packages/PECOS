@@ -39,7 +39,8 @@ pub(crate) fn overlapping_qubits(
     overlap
 }
 
-pub(crate) fn duplicate_qubits(qubits: impl IntoIterator<Item = usize>) -> Vec<usize> {
+/// Returns the sorted, distinct qubit indices that occur more than once.
+pub fn duplicate_qubits(qubits: impl IntoIterator<Item = usize>) -> Vec<usize> {
     let mut qubits: Vec<usize> = qubits.into_iter().collect();
     qubits.sort_unstable();
 

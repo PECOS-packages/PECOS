@@ -35,7 +35,7 @@
 //!
 //! # Implementation Selection
 //!
-//! Currently uses [`SparseStab`] (BitSet-based sparse row+column representation),
+//! Currently uses [`SparseStab`] (adaptive sparse row+column representation),
 //! which benchmarks show is fastest for QEC workloads at realistic distances
 //! (d >= 11). The selection logic may be refined in future versions based on
 //! qubit count and workload patterns.
@@ -143,6 +143,10 @@ impl QuantumSimulator for Stabilizer {
 }
 
 impl CliffordGateable for Stabilizer {
+    fn validate_qubits(&self, qubits: &[QubitId]) {
+        self.inner.validate_qubits(qubits);
+    }
+
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.inner.h(qubits);

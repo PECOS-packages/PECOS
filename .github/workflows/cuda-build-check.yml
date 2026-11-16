@@ -51,6 +51,8 @@ concurrency:
 jobs:
   cuda-build-check:
     runs-on: ubuntu-latest
+    env:
+      CARGO_NET_RETRY: "10"
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -75,21 +77,21 @@ jobs:
           rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
+        uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
         id: cuda-toolkit
         # This step downloads from an external host and normally finishes in a couple of
         # minutes. Without a bound, a stalled download hangs the job indefinitely -- one did
         # so for four hours on 2026-08-18, and every dependent job waits behind it.
         timeout-minutes: 15
         with:
-          cuda: '12.6.3'
+          cuda: '13.3.1'
           method: 'network'
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
@@ -169,21 +171,31 @@ jobs:
           rustup show
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: false
           shared-key: python-core
 
+      - name: Identify the runner image for the LLVM cache key
+        # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+        # or ubuntu26) keeps a copy from one image from being restored onto another.
+        id: runner-image
+        shell: bash
+        run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-21.1
-          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env

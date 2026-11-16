@@ -15,7 +15,7 @@ import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, ClassVar
 
-from pecos.guppy_gen._certificate import certify_surface_measurement_layout
+from pecos.guppy_gen._certificate import certify_measurement_layout
 from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
@@ -241,6 +241,7 @@ def generate_guppy_source(
     Raises:
         ValueError: If exactly one of ``twirl`` / ``rng`` is supplied.
     """
+    from pecos.qec.circuit_steps import OpType
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
     from pecos.qec.surface._check_plan import (
         ancilla_schedule_for_check_plan,
@@ -250,7 +251,6 @@ def generate_guppy_source(
     from pecos.qec.surface.circuit_builder import (
         _SZZ_FLOW_IDENTITY,
         _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING,
-        OpType,
         _resolve_szz_clifford_frame_for_builder,
         _szz_flow_clifford_name,
         _szz_flow_compose_pending_gate,
@@ -2856,5 +2856,7 @@ def make_surface_code(
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
     )
-    certify_surface_measurement_layout(program, abstract_tc)
+    from pecos.qec.surface.decode import _surface_result_classifier
+
+    certify_measurement_layout(program, abstract_tc, _surface_result_classifier, family="surface")
     return program

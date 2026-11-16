@@ -419,3 +419,15 @@ fn emitted_dialect() {
     assert!(to_stim(&one.circuit(0.0).unwrap()).contains("EXP_VAL X0 Y0"));
     assert!(one.pattern_oracle(&[]).is_err());
 }
+
+#[test]
+fn repeated_logical_output_qubits_return_an_error() {
+    let mut sim = PhasePoly::new(1);
+    let ops = [Op::ExpectW(vec![QubitId(0); 3])];
+    assert!(matches!(
+        run_shot(&mut sim, &ops, &mut |_, _, _| false),
+        Err(ShotError::InvalidOutput(
+            pecos_core::ParsePauliStringError::DuplicateQubit { qubit: 0 }
+        ))
+    ));
+}

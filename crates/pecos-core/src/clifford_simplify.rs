@@ -197,6 +197,8 @@ pub fn try_simplify_rxy1q(theta: A64, phi: A64) -> Option<GateType> {
 // -------------------------------------------------------------------------
 
 fn snap_clifford_angle(angle: A64) -> A64 {
+    let epsilon = A64::try_epsilon_from_turns(CLIFFORD_SNAP_EPSILON_TURNS)
+        .expect("the Clifford snap tolerance is a finite constant");
     [
         A64::ZERO,
         A64::QUARTER_TURN,
@@ -204,7 +206,7 @@ fn snap_clifford_angle(angle: A64) -> A64 {
         A64::THREE_QUARTERS_TURN,
     ]
     .into_iter()
-    .find(|target| angle.abs_diff_eq_turns(target, CLIFFORD_SNAP_EPSILON_TURNS))
+    .find(|target| angle.abs_diff_eq(target, epsilon))
     .unwrap_or(angle)
 }
 
@@ -367,16 +369,16 @@ mod tests {
         assert_eq!(
             try_lower_rotation_to_clifford(&Gate::rxyxy2q(
                 Angle64::ZERO,
-                Angle64::from_radians(0.123),
+                crate::radians!(0.123),
                 &[(0, 1)]
             )),
             Some(CliffordLowering::Named(GateType::I))
         );
         for (theta, phi) in [
-            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123)),
-            (Angle64::from_radians(0.3), Angle64::ZERO),
-            (Angle64::from_turns(0.25 + 1e-12), Angle64::ZERO),
-            (Angle64::QUARTER_TURN, Angle64::from_turns(0.25 + 1e-12)),
+            (Angle64::QUARTER_TURN, crate::radians!(0.123)),
+            (crate::radians!(0.3), Angle64::ZERO),
+            (crate::turns!(0.25 + 1e-12), Angle64::ZERO),
+            (Angle64::QUARTER_TURN, crate::turns!(0.25 + 1e-12)),
         ] {
             assert_eq!(
                 try_lower_rotation_to_clifford(&Gate::rxyxy2q(theta, phi, &[(0, 1)])),
@@ -436,11 +438,7 @@ mod tests {
         use crate::Gate;
         use CliffordLowering::Named;
         assert_eq!(
-            try_lower_rotation_to_clifford(&Gate::rxy1q(
-                Angle64::ZERO,
-                Angle64::from_radians(0.3),
-                &[0]
-            )),
+            try_lower_rotation_to_clifford(&Gate::rxy1q(Angle64::ZERO, crate::radians!(0.3), &[0])),
             Some(Named(GateType::I))
         );
         assert_eq!(
@@ -452,7 +450,7 @@ mod tests {
             Some(Named(GateType::SX))
         );
         for gate in [
-            Gate::rxy1q(Angle64::from_turns(0.1), Angle64::ZERO, &[0]),
+            Gate::rxy1q(crate::turns!(0.1), Angle64::ZERO, &[0]),
             Gate::rz(Angle64::from_turn_ratio(1, 8), &[0]),
             Gate::h(&[0]),
             Gate::t(&[0]),
@@ -499,7 +497,7 @@ mod tests {
         assert_eq!(try_simplify_rotation(GateType::RZ, -eighth_turn), None);
         // Non-Clifford angle
         assert_eq!(
-            try_simplify_rotation(GateType::RZ, Angle64::from_radians(0.123)),
+            try_simplify_rotation(GateType::RZ, crate::radians!(0.123)),
             None
         );
     }
@@ -687,10 +685,7 @@ mod tests {
     #[test]
     fn rxy1q_near_quarter_turn_sqrt_gates() {
         assert_eq!(
-            try_simplify_rxy1q(
-                Angle64::from_turns(0.25 + 1e-12),
-                Angle64::from_turns(0.75 - 1e-12),
-            ),
+            try_simplify_rxy1q(crate::turns!(0.25 + 1e-12), crate::turns!(0.75 - 1e-12),),
             Some(GateType::SYdg)
         );
     }
@@ -732,7 +727,7 @@ mod tests {
     fn rxy1q_non_clifford_angles() {
         // Non-Clifford theta
         assert_eq!(
-            try_simplify_rxy1q(Angle64::from_radians(0.123), Angle64::ZERO),
+            try_simplify_rxy1q(crate::radians!(0.123), Angle64::ZERO),
             None
         );
         // Non-axis phi (pi/4 is not along X or Y axis)
@@ -744,61 +739,59 @@ mod tests {
 
     #[test]
     fn negative_angles_via_wrapping_rz() {
-        let neg_pi = Angle64::from_radians(-std::f64::consts::PI);
+        let neg_pi = Angle64::HALF_TURN;
         assert_eq!(
             try_simplify_rotation(GateType::RZ, neg_pi),
             Some(GateType::Z)
         );
 
-        let neg_half_pi = Angle64::from_radians(-std::f64::consts::FRAC_PI_2);
+        let neg_half_pi = Angle64::THREE_QUARTERS_TURN;
         assert_eq!(
             try_simplify_rotation(GateType::RZ, neg_half_pi),
             Some(GateType::SZdg)
         );
 
-        let neg_quarter_pi = Angle64::from_radians(-std::f64::consts::FRAC_PI_4);
+        let neg_quarter_pi = Angle64::from_turn_ratio(7, 8);
         assert_eq!(try_simplify_rotation(GateType::RZ, neg_quarter_pi), None);
     }
 
     #[test]
     fn negative_angles_via_wrapping_rx_ry() {
-        use std::f64::consts::{FRAC_PI_2, PI};
         // RX
         assert_eq!(
-            try_simplify_rotation(GateType::RX, Angle64::from_radians(-PI)),
+            try_simplify_rotation(GateType::RX, Angle64::HALF_TURN),
             Some(GateType::X)
         );
         assert_eq!(
-            try_simplify_rotation(GateType::RX, Angle64::from_radians(-FRAC_PI_2)),
+            try_simplify_rotation(GateType::RX, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SXdg)
         );
         // RY
         assert_eq!(
-            try_simplify_rotation(GateType::RY, Angle64::from_radians(-PI)),
+            try_simplify_rotation(GateType::RY, Angle64::HALF_TURN),
             Some(GateType::Y)
         );
         assert_eq!(
-            try_simplify_rotation(GateType::RY, Angle64::from_radians(-FRAC_PI_2)),
+            try_simplify_rotation(GateType::RY, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SYdg)
         );
     }
 
     #[test]
     fn negative_angles_via_wrapping_two_qubit() {
-        use std::f64::consts::FRAC_PI_2;
         // RZZ
         assert_eq!(
-            try_simplify_rotation(GateType::RZZ, Angle64::from_radians(-FRAC_PI_2)),
+            try_simplify_rotation(GateType::RZZ, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SZZdg)
         );
         // RXX
         assert_eq!(
-            try_simplify_rotation(GateType::RXX, Angle64::from_radians(-FRAC_PI_2)),
+            try_simplify_rotation(GateType::RXX, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SXXdg)
         );
         // RYY
         assert_eq!(
-            try_simplify_rotation(GateType::RYY, Angle64::from_radians(-FRAC_PI_2)),
+            try_simplify_rotation(GateType::RYY, Angle64::THREE_QUARTERS_TURN),
             Some(GateType::SYYdg)
         );
     }
@@ -818,7 +811,7 @@ mod tests {
             Some(GateType::Y)
         );
         // Negative pi
-        let neg_pi = Angle64::from_radians(-std::f64::consts::PI);
+        let neg_pi = Angle64::HALF_TURN;
         assert_eq!(
             half_turn_decomposition(GateType::RZZ, neg_pi),
             Some(GateType::Z)
@@ -847,9 +840,7 @@ mod tests {
     #[test]
     fn is_rzz_z_tensor_z_wraps_half_turn_decomposition() {
         assert!(is_rzz_z_tensor_z(Angle64::HALF_TURN));
-        assert!(is_rzz_z_tensor_z(Angle64::from_radians(
-            -std::f64::consts::PI
-        )));
+        assert!(is_rzz_z_tensor_z(Angle64::HALF_TURN));
         assert!(!is_rzz_z_tensor_z(Angle64::ZERO));
         assert!(!is_rzz_z_tensor_z(Angle64::QUARTER_TURN));
     }
@@ -865,21 +856,20 @@ mod tests {
 
     #[test]
     fn from_radians_round_trip() {
-        use std::f64::consts::{FRAC_PI_2, PI};
         assert_eq!(
-            try_simplify_rotation(GateType::RZ, Angle64::from_radians(PI)),
+            try_simplify_rotation(GateType::RZ, Angle64::HALF_TURN),
             Some(GateType::Z)
         );
         assert_eq!(
-            try_simplify_rotation(GateType::RZ, Angle64::from_radians(FRAC_PI_2)),
+            try_simplify_rotation(GateType::RZ, Angle64::QUARTER_TURN),
             Some(GateType::SZ)
         );
         assert_eq!(
-            try_simplify_rotation(GateType::RX, Angle64::from_radians(PI)),
+            try_simplify_rotation(GateType::RX, Angle64::HALF_TURN),
             Some(GateType::X)
         );
         assert_eq!(
-            try_simplify_rotation(GateType::RY, Angle64::from_radians(PI)),
+            try_simplify_rotation(GateType::RY, Angle64::HALF_TURN),
             Some(GateType::Y)
         );
     }
@@ -889,15 +879,15 @@ mod tests {
         let one_qubit = [GateType::RZ, GateType::RX, GateType::RY];
         for rotation in one_qubit {
             assert_eq!(
-                try_simplify_rotation(rotation, Angle64::from_turns(0.75 - 1e-12)),
+                try_simplify_rotation(rotation, crate::turns!(0.75 - 1e-12)),
                 None
             );
             assert_eq!(
-                try_simplify_rotation(rotation, Angle64::from_turns(0.25 + 1e-12)),
+                try_simplify_rotation(rotation, crate::turns!(0.25 + 1e-12)),
                 None
             );
             assert_eq!(
-                try_simplify_rotation(rotation, Angle64::from_turns(0.5 + 1e-12)),
+                try_simplify_rotation(rotation, crate::turns!(0.5 + 1e-12)),
                 None
             );
         }
@@ -905,15 +895,15 @@ mod tests {
         let two_qubit = [GateType::RZZ, GateType::RXX, GateType::RYY];
         for rotation in two_qubit {
             assert_eq!(
-                try_simplify_rotation(rotation, Angle64::from_turns(0.75 - 1e-12)),
+                try_simplify_rotation(rotation, crate::turns!(0.75 - 1e-12)),
                 None
             );
             assert_eq!(
-                try_simplify_rotation(rotation, Angle64::from_turns(0.25 + 1e-12)),
+                try_simplify_rotation(rotation, crate::turns!(0.25 + 1e-12)),
                 None
             );
             assert_eq!(
-                half_turn_decomposition(rotation, Angle64::from_turns(0.5 + 1e-12)),
+                half_turn_decomposition(rotation, crate::turns!(0.5 + 1e-12)),
                 None
             );
         }
@@ -937,13 +927,19 @@ mod tests {
         for (rotation, sqrt, sqrt_dg) in rotations {
             for radians in dagger_angles {
                 assert_eq!(
-                    try_simplify_rotation_snapped(rotation, Angle64::from_radians(radians)),
+                    try_simplify_rotation_snapped(
+                        rotation,
+                        Angle64::try_from_radians(radians).unwrap()
+                    ),
                     Some(sqrt_dg)
                 );
             }
             for radians in sqrt_angles {
                 assert_eq!(
-                    try_simplify_rotation_snapped(rotation, Angle64::from_radians(radians)),
+                    try_simplify_rotation_snapped(
+                        rotation,
+                        Angle64::try_from_radians(radians).unwrap()
+                    ),
                     Some(sqrt)
                 );
             }

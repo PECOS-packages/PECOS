@@ -432,7 +432,7 @@ fn rxyxy2q_dense_exact_axis_identities() {
         Angle64::THREE_QUARTERS_TURN,
     ];
     let pairs = [(QubitId(0), QubitId(1))];
-    for theta in grid.into_iter().chain([Angle64::from_radians(0.73)]) {
+    for theta in grid.into_iter().chain([pecos_core::radians!(0.73)]) {
         for (axis, phi) in grid.into_iter().enumerate() {
             let actual = dense_two_qubit_matrix(|sim| {
                 sim.rxyxy2q(theta, phi, &pairs);
@@ -511,7 +511,7 @@ fn rxyxy2q_dense_lowering_residual_phase() {
 
 /// Build CRZ(angle) as a composition: RZ(angle/2) on target, CX, RZ(-angle/2) on target, CX.
 fn crz_operator(angle: Angle64, control: usize, target: usize) -> UnitaryRep {
-    let half = Angle64::from_radians(angle.to_radians_signed() / 2.0);
+    let half = Angle64::try_from_radians(angle.to_radians_signed() / 2.0).unwrap();
     // CRZ(theta) = CX * RZ(-theta/2)_target * CX * RZ(theta/2)_target
     // Read right-to-left: first RZ(theta/2), then CX, then RZ(-theta/2), then CX
     RZ(half, target) * CX(control, target) * RZ(-half, target) * CX(control, target)

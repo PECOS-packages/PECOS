@@ -45,6 +45,7 @@ def _capture_qis_operation_traces(
     seed: int = 0,
     runtime: object | None = None,
     batch_adapter_factory: object | None = None,
+    clock_model: str | None = None,
 ) -> list[dict[str, Any]]:
     """Capture one or more QIS trace shots for internal certification."""
     if shots <= 0:
@@ -56,12 +57,7 @@ def _capture_qis_operation_traces(
 
     sim_builder = (
         pecos.sim(program)
-        .classical(
-            pecos.selene_engine(
-                runtime,
-                **({"batch_adapter_factory": batch_adapter_factory} if batch_adapter_factory is not None else {}),
-            ),
-        )
+        .classical(pecos.selene_engine(runtime, batch_adapter_factory=batch_adapter_factory, clock_model=clock_model))
         .quantum(pecos_rslib.coin_toss())
         .qubits(num_qubits)
         .seed(seed)
@@ -76,6 +72,7 @@ def capture_qis_operation_trace(
     seed: int = 0,
     runtime: object | None = None,
     batch_adapter_factory: object | None = None,
+    clock_model: str | None = None,
 ) -> list[dict[str, Any]]:
     """Capture structured QIS operation-trace chunks from a program.
 
@@ -92,6 +89,9 @@ def capture_qis_operation_trace(
         seed: Seed for the ideal trace execution.
         runtime: Optional Selene runtime selector or plugin. ``None`` selects
             the default runtime.
+        clock_model: Optional ``"continuous"`` or ``"shot_relative"`` native
+            clock convention; defaults to the plugin declaration or continuous.
+            Independent of custom-event handling and native instance reuse.
         batch_adapter_factory: Optional zero-argument factory returning a fresh
             event adapter with ``normalize(batch)``. Uses the same normalization
             as simulation; defaults to the runtime plugin's factory when present.
@@ -105,7 +105,8 @@ def capture_qis_operation_trace(
         shots=1,
         seed=seed,
         runtime=runtime,
-        **({"batch_adapter_factory": batch_adapter_factory} if batch_adapter_factory is not None else {}),
+        batch_adapter_factory=batch_adapter_factory,
+        clock_model=clock_model,
     )
 
 
@@ -133,7 +134,7 @@ def _qis_operation_trace_to_tick_circuit(
         runtime_measurement_ids = [
             mid
             for _, gate in tick_circuit.gate_batches()
-            if gate.gate_type.name in {"MZ", "MeasureLeaked"}
+            if gate.gate_type.name in {"MZ", "MeasureLeaked", "MeasureZLeaked"}
             for mid in gate.meas_ids
         ]
     else:
@@ -224,6 +225,7 @@ def _trace_program_to_tick_circuit_with_result_traces(
     seed: int = 0,
     runtime: object | None = None,
     batch_adapter_factory: object | None = None,
+    clock_model: str | None = None,
     measurement_crosstalk_topology: str | None = None,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
@@ -240,7 +242,8 @@ def _trace_program_to_tick_circuit_with_result_traces(
         num_qubits,
         seed=seed,
         runtime=runtime,
-        **({"batch_adapter_factory": batch_adapter_factory} if batch_adapter_factory is not None else {}),
+        batch_adapter_factory=batch_adapter_factory,
+        clock_model=clock_model,
     )
     tick_circuit = _qis_operation_trace_to_tick_circuit(
         chunks,
@@ -271,6 +274,7 @@ def trace_program_to_tick_circuit(
     seed: int = 0,
     runtime: object | None = None,
     batch_adapter_factory: object | None = None,
+    clock_model: str | None = None,
     measurement_crosstalk_topology: str | None = None,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
@@ -289,6 +293,9 @@ def trace_program_to_tick_circuit(
         seed: Seed for the ideal trace execution.
         runtime: Optional Selene runtime selector or plugin. ``None`` selects
             the default runtime.
+        clock_model: Optional ``"continuous"`` or ``"shot_relative"`` native
+            clock convention; defaults to the plugin declaration or continuous.
+            Independent of custom-event handling and native instance reuse.
         batch_adapter_factory: Optional zero-argument factory returning a fresh
             event adapter with ``normalize(batch)``. Uses the same normalization
             as simulation; defaults to the runtime plugin's factory when present.
@@ -314,7 +321,8 @@ def trace_program_to_tick_circuit(
         num_qubits,
         seed=seed,
         runtime=runtime,
-        **({"batch_adapter_factory": batch_adapter_factory} if batch_adapter_factory is not None else {}),
+        batch_adapter_factory=batch_adapter_factory,
+        clock_model=clock_model,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,

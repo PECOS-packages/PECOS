@@ -76,6 +76,7 @@
 use crate::command::{CommandQueue, GateCommand, GateType};
 use crate::extensible::is_clifford_angle;
 use crate::noise::ComposableNoiseModel;
+use crate::noise::validation::{ValidationResult, validate_probability};
 use crate::outcome::MeasurementOutcomes;
 use crate::runner::CircuitRunner;
 use crate::sampling::weight::SampleWeight;
@@ -605,7 +606,7 @@ where
 /// - This mirrors how QEC simulation works (clone simulator state)
 pub struct BernoulliSubsetSimulation {
     /// Probability of damage per step.
-    pub p_damage: f64,
+    p_damage: f64,
     /// Damage increment per event.
     pub damage_increment: f64,
     /// Number of steps.
@@ -619,17 +620,26 @@ pub struct BernoulliSubsetSimulation {
 }
 
 impl BernoulliSubsetSimulation {
-    /// Create a new Bernoulli subset simulation.
+    /// Return the configured `p_damage`.
     #[must_use]
-    pub fn new(p_damage: f64, num_steps: usize, failure_threshold: f64) -> Self {
-        Self {
+    pub fn p_damage(&self) -> f64 {
+        self.p_damage
+    }
+
+    /// Create a new Bernoulli subset simulation.
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn new(p_damage: f64, num_steps: usize, failure_threshold: f64) -> ValidationResult<Self> {
+        validate_probability(p_damage, "p_damage")?;
+        Ok(Self {
             p_damage,
             damage_increment: 1.0,
             num_steps,
             failure_threshold,
             steps_per_round: num_steps / 10, // Default: 10 rounds
             config: SubsetConfig::default(),
-        }
+        })
     }
 
     /// Set steps per round (for finer-grained splitting).
@@ -898,6 +908,7 @@ pub struct RoundResult {
 /// ## Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::sampling::subset::{EcsSubsetSimulation, SubsetConfig};
 /// use pecos_neo::ecs::World;
 /// use pecos_simulators::SparseStab;
@@ -919,7 +930,9 @@ pub struct RoundResult {
 ///         0.0_f64
 ///     },
 ///     |score| score >= 5.0,  // Failure condition
-/// );
+/// )?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct EcsSubsetSimulation<S: pecos_simulators::CliffordGateable + Clone> {
     /// The ECS World containing all trajectories.
@@ -981,8 +994,15 @@ impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
     /// 2. Return the criticality score increment for this round
     ///
     /// The `is_failure_fn` checks if the accumulated score indicates failure.
+    ///
+    /// # Errors
+    /// Rejects invalid entity weights before weighted resampling.
     #[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
-    pub fn run_round<F, G>(&mut self, round_fn: F, is_failure_fn: G) -> RoundResult
+    pub fn run_round<F, G>(
+        &mut self,
+        round_fn: F,
+        is_failure_fn: G,
+    ) -> ValidationResult<RoundResult>
     where
         F: Fn(&mut World<S>, EntityId) -> f64,
         G: Fn(f64) -> bool,
@@ -1038,7 +1058,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
 
         // Resample: keep trajectories above threshold
         if num_above > 0 && num_above < self.trajectories.len() {
-            self.resample_trajectories(threshold);
+            self.resample_trajectories(threshold)?;
         }
 
         let weight_after = self.total_weight();
@@ -1054,11 +1074,11 @@ impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
         };
 
         self.levels.push(result.clone());
-        result
+        Ok(result)
     }
 
     /// Resample trajectories: keep those above threshold, clone to restore population.
-    fn resample_trajectories(&mut self, threshold: f64) {
+    fn resample_trajectories(&mut self, threshold: f64) -> ValidationResult<()> {
         let target_count = self.config.samples_per_level;
 
         // Identify survivors (above threshold)
@@ -1070,7 +1090,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
             .collect();
 
         if survivors.is_empty() {
-            return;
+            return Ok(());
         }
 
         // Despawn entities below threshold
@@ -1105,7 +1125,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
         }
 
         // Resample weights to preserve total
-        self.world.resample_by_weight(target_count, &mut self.rng);
+        self.world.resample_by_weight(target_count, &mut self.rng)?;
 
         // Update trajectory list with new entity IDs
         self.trajectories = self
@@ -1129,6 +1149,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> EcsSubsetSimulation<S> {
                     })
             })
             .collect();
+        Ok(())
     }
 }
 
@@ -1225,7 +1246,7 @@ pub struct ProperSubsetSimulation {
     /// Configuration.
     pub config: SubsetConfig,
     /// Damage probability per round.
-    pub p_damage: f64,
+    p_damage: f64,
     /// Damage increment per event.
     pub damage_increment: f64,
     /// Failure threshold.
@@ -1243,15 +1264,24 @@ pub struct ProperSubsetSimulation {
 }
 
 impl ProperSubsetSimulation {
-    /// Create a new proper subset simulation.
+    /// Return the configured `p_damage`.
     #[must_use]
+    pub fn p_damage(&self) -> f64 {
+        self.p_damage
+    }
+
+    /// Create a new proper subset simulation.
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
     pub fn new(
         p_damage: f64,
         damage_increment: f64,
         failure_threshold: f64,
         num_rounds: usize,
         config: SubsetConfig,
-    ) -> Self {
+    ) -> ValidationResult<Self> {
+        validate_probability(p_damage, "p_damage")?;
         let seed = resolve_seed(config.seed);
         let rng = PecosRng::seed_from_u64(seed);
         let samples_per_level = config.samples_per_level;
@@ -1261,7 +1291,7 @@ impl ProperSubsetSimulation {
             .map(|i| HistoryTrajectory::new(i, seed.wrapping_add(i * 1_000_000)))
             .collect();
 
-        Self {
+        Ok(Self {
             config,
             p_damage,
             damage_increment,
@@ -1271,7 +1301,7 @@ impl ProperSubsetSimulation {
             trajectories,
             next_id: samples_per_level as u64,
             levels: Vec::new(),
-        }
+        })
     }
 
     /// Run a trajectory from a starting point to completion (static version to avoid borrow issues).
@@ -2009,6 +2039,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecHistoryTrajectory<S> {
 /// ## Example
 ///
 /// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::sampling::subset::{QecSubsetSimulation, QecSubsetConfig};
 /// use pecos_neo::ecs::World;
 /// use pecos_simulators::SparseStab;
@@ -2032,9 +2063,11 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecHistoryTrajectory<S> {
 ///
 /// // Run with synthetic syndromes (each ancilla has 20% chance per round)
 /// let sim = QecSubsetSimulation::new(world, config);
-/// let result = sim.run_proper(0.2);  // p_syndrome = 0.2
+/// let result = sim.run_proper(0.2)?;  // p_syndrome = 0.2
 ///
 /// println!("P(logical_failure) = {:.2e}", result.probability());
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// [`SubsetSimulation`]: struct.SubsetSimulation.html
@@ -2099,9 +2132,11 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
     ///
     /// ## Parameters
     /// - `p_syndrome`: Probability that each ancilla triggers per round
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
     #[allow(clippy::cast_precision_loss)] // statistical calculations use count as f64
-    pub fn run_proper(mut self, p_syndrome: f64) -> SubsetResult {
+    pub fn run_proper(mut self, p_syndrome: f64) -> ValidationResult<SubsetResult> {
         // Data structure to track trajectory history
         #[allow(dead_code)]
         struct TrajHistory {
@@ -2112,6 +2147,7 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
             base_seed: u64, // Kept for debugging/tracing
         }
 
+        validate_probability(p_syndrome, "p_syndrome")?;
         let n = self.config.base.samples_per_level;
         let p0 = self.config.base.threshold_fraction;
         let num_rounds = self.config.num_rounds;
@@ -2343,13 +2379,13 @@ impl<S: pecos_simulators::CliffordGateable + Clone> QecSubsetSimulation<S> {
             })
             .collect();
 
-        SubsetResult {
+        Ok(SubsetResult {
             levels,
             probability,
             coefficient_of_variation: cv_squared.sqrt(),
             total_samples,
             direct_failures: num_failures,
-        }
+        })
     }
 }
 
@@ -2404,9 +2440,9 @@ mod tests {
     fn rxyxy2q_support_uses_shared_policy() {
         use pecos_core::Angle64;
         for (theta, phi, expected) in [
-            (Angle64::ZERO, Angle64::from_radians(0.123), true),
+            (Angle64::ZERO, pecos_core::radians!(0.123), true),
             (Angle64::HALF_TURN, Angle64::QUARTER_TURN, true),
-            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123), false),
+            (Angle64::QUARTER_TURN, pecos_core::radians!(0.123), false),
         ] {
             let commands = crate::CommandBuilder::new()
                 .rxyxy2q(&[(0, 1)], theta, phi)
@@ -2445,7 +2481,7 @@ mod tests {
                 GateCommand::with_angles(
                     gate_type,
                     qubits,
-                    vec![pecos_core::Angle64::from_radians(0.3); angle_arity],
+                    vec![pecos_core::radians!(0.3); angle_arity],
                 ),
             ),
         ]
@@ -2612,7 +2648,7 @@ mod tests {
     fn single_level_proper_subset_is_direct_monte_carlo() {
         let config = single_level_config();
         let n = config.samples_per_level;
-        let sim = ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config);
+        let sim = ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config).unwrap();
         let direct = sim.run_direct_mc(n);
         let result = sim.run();
 
@@ -2625,7 +2661,7 @@ mod tests {
     fn single_level_adaptive_subset_is_direct_monte_carlo() {
         let config = single_level_config();
         let n = config.samples_per_level;
-        let sim = ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config);
+        let sim = ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config).unwrap();
         let direct = sim.run_direct_mc(n);
         let result = sim.run_adaptive();
 
@@ -2638,7 +2674,9 @@ mod tests {
     fn adaptive_subset_zero_score_preserves_failures() {
         let config = single_level_config();
         let n = config.samples_per_level;
-        let result = ProperSubsetSimulation::new(0.0, 1.0, 0.0, 40, config).run_adaptive();
+        let result = ProperSubsetSimulation::new(0.0, 1.0, 0.0, 40, config)
+            .unwrap()
+            .run_adaptive();
 
         assert_eq!(result.total_samples, n);
         assert_eq!(result.direct_failures, n);
@@ -2650,8 +2688,9 @@ mod tests {
         let config = single_level_config();
         let n = config.samples_per_level;
         // One ancilla has the same initial damage process and seed stream.
-        let direct =
-            ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config.clone()).run_direct_mc(n);
+        let direct = ProperSubsetSimulation::new(0.1, 1.0, 11.0, 40, config.clone())
+            .unwrap()
+            .run_direct_mc(n);
         let mut world = World::new(902);
         for _ in 0..n {
             world.spawn_with_simulator(SparseStab::with_seed(1, 902));
@@ -2660,7 +2699,8 @@ mod tests {
             world,
             QecSubsetConfig::new(40, vec![QubitId(0)], 11.0).with_base_config(config),
         )
-        .run_proper(0.1);
+        .run_proper(0.1)
+        .unwrap();
 
         assert_eq!(direct, 0.0015);
         assert_eq!(result.total_samples, n, "a single level must not resample");
@@ -2671,7 +2711,9 @@ mod tests {
     fn single_level_bernoulli_subset_is_direct_monte_carlo() {
         let config = single_level_config();
         let n = config.samples_per_level;
-        let sim = BernoulliSubsetSimulation::new(0.1, 40, 11.0).with_config(config);
+        let sim = BernoulliSubsetSimulation::new(0.1, 40, 11.0)
+            .unwrap()
+            .with_config(config);
         let direct = sim.run_direct_mc(n, 902);
         let result = sim.run();
 
@@ -2708,7 +2750,7 @@ mod tests {
     fn test_bernoulli_analytical() {
         // Easy case: n=10, p=0.5, threshold=6
         // P(X >= 6) = sum of P(X=6) + P(X=7) + ... + P(X=10)
-        let sim = BernoulliSubsetSimulation::new(0.5, 10, 6.0);
+        let sim = BernoulliSubsetSimulation::new(0.5, 10, 6.0).unwrap();
         let analytical = sim.analytical_probability();
 
         // Should be about 0.377
@@ -2723,6 +2765,7 @@ mod tests {
         // Test with moderate probability that's easy to verify
         // n=20, p=0.3, threshold=10 (need 10+ successes out of 20 with p=0.3)
         let sim = BernoulliSubsetSimulation::new(0.3, 20, 10.0)
+            .unwrap()
             .with_steps_per_round(5)
             .with_config(
                 SubsetConfig::new()
@@ -2757,6 +2800,7 @@ mod tests {
         // n=100, p=0.05, threshold=10 (need 10+ errors out of 100 with p=0.05)
         // E[X] = 5, so P(X >= 10) is moderately rare
         let sim = BernoulliSubsetSimulation::new(0.05, 100, 10.0)
+            .unwrap()
             .with_steps_per_round(10)
             .with_config(
                 SubsetConfig::new()
@@ -2792,7 +2836,7 @@ mod tests {
     fn test_bernoulli_direct_mc_validates_analytical() {
         // Validate that our analytical formula is correct using direct MC
         // Use case where MC is accurate: moderate probability
-        let sim = BernoulliSubsetSimulation::new(0.2, 50, 15.0);
+        let sim = BernoulliSubsetSimulation::new(0.2, 50, 15.0).unwrap();
 
         let analytical = sim.analytical_probability();
         let direct_mc = sim.run_direct_mc(100_000, 789);
@@ -2815,6 +2859,7 @@ mod tests {
         // Test that subset simulation can find events that direct MC would miss
         // n=100, p=0.02, threshold=8 (need 8+ errors when E[X]=2)
         let sim = BernoulliSubsetSimulation::new(0.02, 100, 8.0)
+            .unwrap()
             .with_steps_per_round(10)
             .with_config(
                 SubsetConfig::new()
@@ -2861,7 +2906,9 @@ mod tests {
             .with_threshold_fraction(0.2)
             .with_max_levels(20)
             .with_seed(42);
-        let result = ProperSubsetSimulation::new(0.05, 1.0, 15.0, 100, config).run();
+        let result = ProperSubsetSimulation::new(0.05, 1.0, 15.0, 100, config)
+            .unwrap()
+            .run();
 
         let first = result
             .levels
@@ -2895,6 +2942,7 @@ mod tests {
         let samples_per_level = 3000;
 
         let analytical = BernoulliSubsetSimulation::new(p_damage, num_rounds, failure_threshold)
+            .unwrap()
             .analytical_probability();
         assert!(
             analytical > 0.0 && analytical < 1.0 / samples_per_level as f64,
@@ -2908,6 +2956,7 @@ mod tests {
             .with_seed(42);
         let estimate =
             ProperSubsetSimulation::new(p_damage, increment, failure_threshold, num_rounds, config)
+                .unwrap()
                 .run()
                 .probability();
 
@@ -2955,6 +3004,7 @@ mod tests {
                 num_rounds,
                 config,
             )
+            .unwrap()
             .run();
             estimates.push(result.probability);
             reported_cv.push(result.coefficient_of_variation);
@@ -3044,6 +3094,7 @@ mod tests {
             .with_seed(1);
         let result =
             ProperSubsetSimulation::new(p_damage, increment, failure_threshold, num_rounds, config)
+                .unwrap()
                 .run();
 
         // The committed factors are exactly the non-terminal recorded levels.
@@ -3120,16 +3171,18 @@ mod tests {
         let mut sim = EcsSubsetSimulation::new(world, config);
 
         // Custom round function: each round adds 0-2 damage randomly
-        let round_result = sim.run_round(
-            |world, entity| {
-                // Use entity ID for deterministic randomness
-                let seed = world.base_seed() + entity.0 * 1000;
-                let mut rng = PecosRng::seed_from_u64(seed);
+        let round_result = sim
+            .run_round(
+                |world, entity| {
+                    // Use entity ID for deterministic randomness
+                    let seed = world.base_seed() + entity.0 * 1000;
+                    let mut rng = PecosRng::seed_from_u64(seed);
 
-                if rng.random::<f64>() < 0.3 { 1.0 } else { 0.0 }
-            },
-            |score| score >= 3.0, // Failure if damage >= 3
-        );
+                    if rng.random::<f64>() < 0.3 { 1.0 } else { 0.0 }
+                },
+                |score| score >= 3.0, // Failure if damage >= 3
+            )
+            .unwrap();
 
         println!("\nCustom Round Test:");
         println!(
@@ -3304,7 +3357,7 @@ mod tests {
 
         // Parameters: p=0.2, n=30, threshold=10
         // E[damage] = 6, so failure (damage >= 10) is moderately rare
-        let sim = ProperSubsetSimulation::new(0.2, 1.0, 10.0, 30, config);
+        let sim = ProperSubsetSimulation::new(0.2, 1.0, 10.0, 30, config).unwrap();
 
         let result = sim.run();
 
@@ -3323,7 +3376,7 @@ mod tests {
         }
 
         // Compare to Bernoulli analytical
-        let bernoulli = BernoulliSubsetSimulation::new(0.2, 30, 10.0);
+        let bernoulli = BernoulliSubsetSimulation::new(0.2, 30, 10.0).unwrap();
         let analytical = bernoulli.analytical_probability();
         println!("  Bernoulli analytical: {analytical:.6}");
 
@@ -3344,7 +3397,7 @@ mod tests {
         let threshold = 10.0;
 
         // Analytical
-        let bernoulli = BernoulliSubsetSimulation::new(p_damage, num_rounds, threshold);
+        let bernoulli = BernoulliSubsetSimulation::new(p_damage, num_rounds, threshold).unwrap();
         let analytical = bernoulli.analytical_probability();
 
         // Run multiple seeds to average out variance
@@ -3358,7 +3411,8 @@ mod tests {
                 .with_max_levels(15)
                 .with_seed(seed);
 
-            let sim = ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config);
+            let sim =
+                ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config).unwrap();
             results.push(sim.run().probability());
         }
 
@@ -3376,7 +3430,7 @@ mod tests {
             .with_threshold_fraction(0.2)
             .with_seed(12345);
         let direct_mc_sim =
-            ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config);
+            ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config).unwrap();
         let direct_mc = direct_mc_sim.run_direct_mc(50000);
 
         println!("\nProper Subset Validation Test (Multi-Seed):");
@@ -3434,11 +3488,12 @@ mod tests {
         let num_rounds = 100;
         let threshold = 15.0;
 
-        let sim = ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config);
+        let sim =
+            ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config).unwrap();
         let result = sim.run();
 
         // Analytical
-        let bernoulli = BernoulliSubsetSimulation::new(p_damage, num_rounds, threshold);
+        let bernoulli = BernoulliSubsetSimulation::new(p_damage, num_rounds, threshold).unwrap();
         let analytical = bernoulli.analytical_probability();
 
         println!("\nProper Subset Rare Event Test:");
@@ -3475,7 +3530,7 @@ mod tests {
             .with_seed(7777);
 
         // Simple case: high damage rate so many cross thresholds
-        let sim = ProperSubsetSimulation::new(0.4, 1.0, 8.0, 20, config);
+        let sim = ProperSubsetSimulation::new(0.4, 1.0, 8.0, 20, config).unwrap();
         let result = sim.run();
 
         println!("\nCheckpoint Continuation Test:");
@@ -3506,11 +3561,12 @@ mod tests {
         let num_rounds = 20;
         let threshold = 8.0;
 
-        let sim = ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config);
+        let sim =
+            ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config).unwrap();
         let direct_mc = sim.run_direct_mc(10000);
 
         // Bernoulli analytical
-        let bernoulli = BernoulliSubsetSimulation::new(p_damage, num_rounds, threshold);
+        let bernoulli = BernoulliSubsetSimulation::new(p_damage, num_rounds, threshold).unwrap();
         let analytical = bernoulli.analytical_probability();
 
         println!("\nDirect MC Consistency Test:");
@@ -3546,7 +3602,8 @@ mod tests {
         let num_rounds = 30;
         let threshold = 6.0;
 
-        let sim = ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config);
+        let sim =
+            ProperSubsetSimulation::new(p_damage, 1.0, threshold, num_rounds, config).unwrap();
         let result = sim.run_adaptive();
 
         println!("\nAdaptive Subset Simulation Test:");
@@ -3602,7 +3659,7 @@ mod tests {
         .with_seed(42);
 
         let sim = QecSubsetSimulation::new(world, config);
-        let result = sim.run_proper(p_syndrome);
+        let result = sim.run_proper(p_syndrome).unwrap();
 
         // Compute analytical probability: sum of Bernoulli(p_syndrome) over all ancilla-rounds
         // Total trials = num_ancillas * num_rounds = 2 * 20 = 40

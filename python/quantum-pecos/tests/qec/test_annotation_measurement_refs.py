@@ -177,3 +177,52 @@ def test_scrambled_mz_with_ids_annotations_survive_to_the_dag() -> None:
     dag_by_label = {a["label"]: a for a in dag_anns}
     assert dag_by_label["d"]["measurement_ids"] == [9, 5]
     assert dag_by_label["o"]["measurement_ids"] == [5]
+
+
+@pytest.mark.parametrize("circuit_type", ["dag", "tick"])
+def test_annotation_measured_paulis_preserve_spacetime(circuit_type: str) -> None:
+    """Readout annotations resolve each basis at its own measurement point."""
+    from pecos.quantum import DagCircuit, Gate, TickCircuit
+
+    circuit = DagCircuit() if circuit_type == "dag" else TickCircuit()
+    if circuit_type == "dag":
+        first = circuit.mz([3])
+        node = circuit.add_gate(Gate.mx([3]))
+        second = [(node, 3)]
+    else:
+        first = circuit.tick().mz([3])
+        second = circuit.tick().mx([3])
+    refs = [second[0], first[0], second[0]]
+    circuit.detector(refs)
+    circuit.observable(refs)
+
+    for annotation in circuit.annotations():
+        assert "pauli" not in annotation
+        assert annotation["measurement_ids"] == [1, 0, 1]
+        assert "measured_paulis" not in annotation
+        ids = annotation["measurement_ids"]
+        expected = [circuit.measured_pauli(mid) for mid in ids]
+        assert circuit.measured_paulis(ids) == expected == [("X", 3), ("Z", 3), ("X", 3)]
+    assert circuit.measured_pauli(0) == ("Z", 3)
+    assert circuit.measured_pauli(1) == ("X", 3)
+    with pytest.raises(ValueError, match="does not name a measurement"):
+        circuit.measured_pauli(99)
+
+
+@pytest.mark.parametrize("circuit_type", ["dag", "tick"])
+def test_dangling_annotations_remain_inspectable(circuit_type: str) -> None:
+    from pecos.quantum import DagCircuit, TickCircuit
+
+    circuit = DagCircuit() if circuit_type == "dag" else TickCircuit()
+    refs = circuit.mz([3]) if circuit_type == "dag" else circuit.tick().mz([3])
+    circuit.detector(refs)
+    stored = circuit.annotations()
+    if circuit_type == "dag":
+        circuit.remove_gate(refs[0][0])
+        reason = "removed"
+    else:
+        circuit.discard([3], refs[0][0])
+        reason = "does not name a measurement"
+    assert circuit.annotations() == stored
+    with pytest.raises(ValueError, match=rf"MeasId\(0\).*{reason}"):
+        circuit.measured_paulis(stored[0]["measurement_ids"])

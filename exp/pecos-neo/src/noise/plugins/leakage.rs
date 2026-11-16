@@ -10,26 +10,30 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Leakage plugin providing all leakage-related effects.
+//! Leakage plugin providing unconditional gate suppression.
 //!
 //! This plugin handles:
 //! - Gate skipping when qubits are leaked
-//! - Depolarizing non-leaked partners in two-qubit gates
-//! - Random measurement outcomes for leaked qubits
-//! - Conversion of leakage to depolarizing based on scale factor
+//!
+//! Partner Pauli noise stays off. Opt in with a separately configured
+//! `LeakageChannel::with_partner_pauli_probability` instead of this plugin.
+//! Leaked readout is owned by `CircuitRunner::record_measurements` and reports 1.
+//! The leakage scale setting is retained.
 
 use crate::noise::leakage::LeakageChannel;
 use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
+use crate::noise::validation::ValidationResult;
 
-/// Plugin that handles all leakage-related effects.
+/// Plugin that suppresses gates on leaked operands, even when noiseless.
 ///
 /// Leakage occurs when qubits leave the computational subspace.
 /// This plugin ensures correct handling of leaked qubits:
 ///
 /// - **Gate skipping**: Gates on leaked qubits are not applied
-/// - **Partner depolarizing**: For two-qubit gates, non-leaked partners
-///   receive random Pauli errors
-/// - **Measurement handling**: Leaked qubits produce random results
+/// - **Partner noise**: Disabled by default, including in this plugin
+/// - **Readout**: Owned by `CircuitRunner::record_measurements`, which reports 1
+///
+/// The plugin never flips an earlier measurement record.
 ///
 /// ## Leakage Scale
 ///
@@ -41,6 +45,7 @@ use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
 /// # Example
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::plugins::LeakagePlugin;
 ///
 /// // Full leakage (default)
@@ -50,12 +55,14 @@ use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
 /// let plugin = LeakagePlugin::no_leakage();
 ///
 /// // Partial leakage
-/// let plugin = LeakagePlugin::with_scale(0.5);
+/// let plugin = LeakagePlugin::with_scale(0.5)?;
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct LeakagePlugin {
     /// Scale factor for leakage (0.0 = all depolarizing, 1.0 = all leakage).
-    pub leakage_scale: f64,
+    channel: LeakageChannel,
 }
 
 impl Default for LeakagePlugin {
@@ -65,33 +72,43 @@ impl Default for LeakagePlugin {
 }
 
 impl LeakagePlugin {
+    /// Return the configured leakage fraction.
+    #[must_use]
+    pub fn leakage_scale(&self) -> f64 {
+        self.channel.leakage_scale()
+    }
+
     /// Create a leakage plugin with full leakage (scale = 1.0).
     #[must_use]
     pub fn new() -> Self {
-        Self { leakage_scale: 1.0 }
+        Self {
+            channel: LeakageChannel::new(),
+        }
     }
 
     /// Create a leakage plugin that converts all leakage to depolarizing.
     #[must_use]
     pub fn no_leakage() -> Self {
-        Self { leakage_scale: 0.0 }
+        Self {
+            channel: LeakageChannel::no_leakage(),
+        }
     }
 
     /// Create a leakage plugin with a specific scale factor.
-    #[must_use]
-    pub fn with_scale(scale: f64) -> Self {
-        Self {
-            leakage_scale: scale,
-        }
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_scale(scale: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            channel: LeakageChannel::new().with_scale(scale)?,
+        })
     }
 }
 
 impl NoisePlugin for LeakagePlugin {
     fn build(&self, config: &mut NoiseModelConfig) {
         // Register the leakage channel which handles all leakage effects
-        config.add_channel(LeakageChannel {
-            leakage_scale: self.leakage_scale,
-        });
+        config.add_channel(self.channel.clone());
     }
 
     fn name(&self) -> &'static str {
@@ -106,19 +123,19 @@ mod tests {
     #[test]
     fn test_leakage_plugin_default() {
         let plugin = LeakagePlugin::new();
-        assert!((plugin.leakage_scale - 1.0).abs() < f64::EPSILON);
+        assert!((plugin.leakage_scale() - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_leakage_plugin_no_leakage() {
         let plugin = LeakagePlugin::no_leakage();
-        assert!((plugin.leakage_scale - 0.0).abs() < f64::EPSILON);
+        assert!((plugin.leakage_scale() - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_leakage_plugin_with_scale() {
-        let plugin = LeakagePlugin::with_scale(0.5);
-        assert!((plugin.leakage_scale - 0.5).abs() < f64::EPSILON);
+        let plugin = LeakagePlugin::with_scale(0.5).unwrap();
+        assert!((plugin.leakage_scale() - 0.5).abs() < f64::EPSILON);
     }
 
     #[test]

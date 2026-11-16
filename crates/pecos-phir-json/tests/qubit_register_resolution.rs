@@ -41,48 +41,57 @@ fn program(registers: &[(&str, usize)], gates: Vec<Value>) -> Value {
     json!({"format":"PHIR/JSON", "version":"0.1.0", "ops":ops})
 }
 
+fn measured_program(registers: &[(&str, usize)], gates: Vec<Value>) -> Value {
+    let mut source = program(registers, gates);
+    source["ops"].as_array_mut().unwrap().insert(
+        registers.len(),
+        json!({"data":"cvar_define","data_type":"u32","variable":"m","size":2}),
+    );
+    source
+}
+
 // Expected flat IDs are explicit oracle inputs, never derived from the resolver.
 fn equivalent_programs() -> Vec<(Value, Value)> {
     vec![
         (
-            program(
+            measured_program(
                 &[("a", 2), ("b", 2)],
                 vec![
                     json!({"qop":"X", "args":[["b",0]], "returns":[]}),
                     json!({"qop":"X", "args":[["a",1]], "returns":[]}),
                     json!({"qop":"H", "args":[["b",1]], "returns":[]}),
                     json!({"qop":"CX", "args":[[["b",0],["a",1]]], "returns":[]}),
-                    json!({"qop":"Measure", "args":[["b",1]], "returns":[]}),
+                    json!({"qop":"Measure", "args":[["b",1]], "returns":[["m",0]]}),
                 ],
             ),
-            program(
+            measured_program(
                 &[("q", 4)],
                 vec![
                     json!({"qop":"X", "args":[["q",2]], "returns":[]}),
                     json!({"qop":"X", "args":[["q",1]], "returns":[]}),
                     json!({"qop":"H", "args":[["q",3]], "returns":[]}),
                     json!({"qop":"CX", "args":[[["q",2],["q",1]]], "returns":[]}),
-                    json!({"qop":"Measure", "args":[["q",3]], "returns":[]}),
+                    json!({"qop":"Measure", "args":[["q",3]], "returns":[["m",0]]}),
                 ],
             ),
         ),
         (
-            program(
+            measured_program(
                 &[("x", 1), ("y", 3), ("z", 2)],
                 vec![
                     json!({"qop":"X", "args":[["y",2]], "returns":[]}),
                     json!({"qop":"H", "args":[["z",1]], "returns":[]}),
                     json!({"qop":"CX", "args":[[["z",0],["x",0]],[["y",0],["z",1]]], "returns":[]}),
-                    json!({"qop":"Measure", "args":[["z",0],["y",1]], "returns":[]}),
+                    json!({"qop":"Measure", "args":[["z",0],["y",1]], "returns":[["m",0],["m",1]]}),
                 ],
             ),
-            program(
+            measured_program(
                 &[("q", 6)],
                 vec![
                     json!({"qop":"X", "args":[["q",3]], "returns":[]}),
                     json!({"qop":"H", "args":[["q",5]], "returns":[]}),
                     json!({"qop":"CX", "args":[[["q",4],["q",0]],[["q",1],["q",5]]], "returns":[]}),
-                    json!({"qop":"Measure", "args":[["q",4],["q",2]], "returns":[]}),
+                    json!({"qop":"Measure", "args":[["q",4],["q",2]], "returns":[["m",0],["m",1]]}),
                 ],
             ),
         ),
@@ -103,10 +112,29 @@ fn equivalent_programs() -> Vec<(Value, Value)> {
 fn executable_module(program: &Value) -> Module {
     let mut module = phir_json_to_module(&program.to_string()).unwrap();
     // The declarations necessarily differ. Compare the entire remaining module,
-    // including quantum instructions, operands, results, types, and attributes.
+    // including quantum instructions, operands, results, types, and attributes,
+    // up to SSA renaming (different declaration counts allocate different IDs).
     module.body.blocks[0]
         .operations
         .retain(|op| !matches!(op.operation, Operation::Builtin(BuiltinOp::VarDefine(_))));
+    let qubits = program["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|op| op["data"] == "qvar_define")
+        .map(|op| u32::try_from(op["size"].as_u64().unwrap()).unwrap())
+        .sum::<u32>();
+    let mut ids: std::collections::BTreeMap<_, _> = (0..qubits).map(|id| (id, id)).collect();
+    let mut next = qubits;
+    for op in &mut module.body.blocks[0].operations {
+        for value in op.operands.iter_mut().chain(&mut op.results) {
+            value.id = *ids.entry(value.id).or_insert_with(|| {
+                let id = next;
+                next += 1;
+                id
+            });
+        }
+    }
     module
 }
 
@@ -359,8 +387,6 @@ fn ssa_exhaustion_at_instruction_emission() {
         json!({"qop":"X", "args":[["q",0]]}),
         json!({"qop":"X", "args":[["q",0]], "returns":["result"]}),
         json!({"qop":"Measure", "args":[["q",0]], "returns":[["m",0]]}),
-        json!({"cop":"Result", "args":["source"], "returns":[]}),
-        json!({"cop":"Result", "args":[], "returns":["destination"]}),
     ] {
         // The qvar declaration consumes the last available allocation.
         assert_ssa_exhausted(&program(&[("q", max - 1)], vec![op]));
@@ -374,19 +400,19 @@ fn ssa_exhaustion_at_measurement_combining_emission() {
         json!({"data":"cvar_define", "data_type":"u32", "variable":"m", "size":2}),
         json!({"qop":"Measure", "args":[["q",0]], "returns":[["m",0]]}),
     ];
-    // Two declarations and one measurement fit, but the combining zero constant does not.
+    // Two declarations and one measurement fit, but the combining bitcast does not.
     assert_ssa_exhausted(&program(&[("q", max - 3)], single));
 
     let multiple = vec![
         json!({"data":"cvar_define", "data_type":"u32", "variable":"m", "size":2}),
         json!({"qop":"Measure", "args":[["q",0],["q",1]], "returns":[["m",0],["m",1]]}),
     ];
-    // After two declarations and two measurement results, exhaust at each
-    // generated constant, cast, shift, and OR (including the bit-zero branch).
-    for available in 4..10 {
+    // Two declarations, two measurement results, five replacement operations
+    // per bit, then the export bitcast: exhaust at each allocation boundary.
+    for available in 4..15 {
         assert_ssa_exhausted(&program(&[("q", max - available)], multiple.clone()));
     }
-    assert!(phir_json_to_module(&program(&[("q", max - 10)], multiple).to_string()).is_ok());
+    assert!(phir_json_to_module(&program(&[("q", max - 15)], multiple).to_string()).is_ok());
 }
 
 #[test]
@@ -433,18 +459,28 @@ fn omitted_quantum_data_type_defaults_to_qubits() {
 }
 
 #[test]
-fn converter_requires_quantum_variable_and_size() {
-    for (field, error) in [
-        ("variable", "requires a variable name"),
-        ("size", "requires a size"),
-    ] {
-        let mut input = program(&[("q", 1)], vec![]);
-        let declaration = input["ops"][0].as_object_mut().unwrap();
-        declaration.remove("data_type");
-        declaration.remove(field);
-        let result = phir_json_to_module(&input.to_string()).unwrap_err();
-        assert!(result.to_string().contains(error), "{result}");
-    }
+fn converter_entry_point_runs_shared_name_validation() {
+    let mut input = program(&[("q", 1)], vec![]);
+    input["ops"][0].as_object_mut().unwrap().remove("variable");
+    let shared =
+        pecos_phir_json::v0_1::classical_validation::validate_classical_inputs(&input).unwrap_err();
+    let converted = phir_json_to_module(&input.to_string()).unwrap_err();
+    assert_eq!(converted.to_string(), shared.to_string());
+    assert!(
+        converted
+            .to_string()
+            .contains("Declaration qvar_define has invalid variable <missing>")
+    );
+}
+
+#[test]
+fn converter_requires_quantum_size() {
+    let mut input = program(&[("q", 1)], vec![]);
+    let declaration = input["ops"][0].as_object_mut().unwrap();
+    declaration.remove("data_type");
+    declaration.remove("size");
+    let result = phir_json_to_module(&input.to_string()).unwrap_err();
+    assert!(result.to_string().contains("requires a size"), "{result}");
 }
 
 #[test]

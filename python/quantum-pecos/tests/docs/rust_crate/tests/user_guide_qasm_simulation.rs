@@ -195,10 +195,10 @@ let noise = GeneralNoiseModelBuilder::new()
     .with_p2(0.01)         // Two-qubit gate error
     .with_p_idle_linear(0.0001, &idle_model) // Idle noise rate
     .with_idle_after_2q(1.0)             // Idle duration after two-qubit gates
-    .with_seed(42);                    // Deterministic noise
+    .with_seed(42);                    // Standalone use only; sim() reseeds the noise model every shot
 
 // Use with sim()
-let results = sim(program).noise(noise).shots(1000).run()?;
+let results = sim(program).noise(noise).seed(42).shots(1000).run()?;
 
     Ok(())
 }
@@ -375,7 +375,7 @@ fn ghz_noise_example() -> Result<(), PecosError> {
         .with_p2(0.01)         // 1% two-qubit gate error
         .with_p_meas_0(0.02)     // 2% false positive rate
         .with_p_meas_1(0.03)     // 3% false negative rate
-        .with_seed(12345);                 // Deterministic noise
+        .with_seed(12345);                 // Standalone use only; sim() reseeds the noise model every shot
 
     // Run simulation
     let results = sim(program).noise(noise).seed(42).shots(1000).run()?;

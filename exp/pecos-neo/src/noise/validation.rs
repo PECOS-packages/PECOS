@@ -112,26 +112,18 @@ pub fn validate_probability(p: f64, field: &str) -> ValidationResult<f64> {
     Ok(p)
 }
 
-/// Validate that a value is a valid probability, clamping to [0.0, 1.0].
-///
-/// This is a lenient version that clamps instead of returning an error.
-/// Useful when you want to accept slightly out-of-range values due to
-/// floating point errors.
-#[must_use]
-pub fn clamp_probability(p: f64) -> f64 {
-    if p.is_nan() { 0.0 } else { p.clamp(0.0, 1.0) }
-}
-
-/// Validate that weights are non-negative.
+/// Validate that weights are finite and non-negative.
 ///
 /// # Errors
 ///
-/// Returns an error if any weight is negative or NaN.
+/// Returns an error if any weight is negative or non-finite.
 pub fn validate_weights(weights: &[f64], field: &str) -> ValidationResult<()> {
     for (i, &w) in weights.iter().enumerate() {
-        if w.is_nan() {
+        if !w.is_finite() {
             return Err(
-                ValidationError::new(field, format!("weight[{i}] cannot be NaN")).with_value(&w),
+                ValidationError::new(field, format!("weight[{i}] must be finite"))
+                    .with_value(&w)
+                    .with_suggestion("Use finite non-negative weights"),
             );
         }
         if w < 0.0 {
@@ -145,33 +137,159 @@ pub fn validate_weights(weights: &[f64], field: &str) -> ValidationResult<()> {
     Ok(())
 }
 
-/// Validate that weights sum to a positive value.
+/// Validate finite, non-negative weights whose sum is finite and positive.
 ///
 /// # Errors
 ///
-/// Returns an error if the sum is zero or negative.
+/// Returns an error for invalid weights, an empty or zero total, or sum overflow.
 pub fn validate_weights_sum(weights: &[f64], field: &str) -> ValidationResult<()> {
     validate_weights(weights, field)?;
     let sum: f64 = weights.iter().sum();
-    if sum <= 0.0 {
+    if !sum.is_finite() || sum <= 0.0 {
         return Err(
-            ValidationError::new(field, "weights must sum to a positive value")
+            ValidationError::new(field, "weights must sum to a finite positive value")
                 .with_value(&sum)
-                .with_suggestion("Ensure at least one weight is positive"),
+                .with_suggestion("Ensure at least one weight is positive and reduce weights if their sum overflows"),
         );
     }
     Ok(())
+}
+
+/// Tolerance for distributions supplied with approximate normalized weights.
+const DISTRIBUTION_SUM_TOLERANCE: f64 = 1e-6;
+
+/// Validate rates whose total is at most one, allowing roundoff in the sum.
+/// Each individual rate is checked strictly; the remainder is identity probability.
+///
+/// # Errors
+/// Rejects invalid individual probabilities or a total exceeding one by the
+/// summation roundoff bound, with an at-most-one remedy.
+pub fn validate_probability_sum_at_most_one(rates: &[f64], field: &str) -> ValidationResult<()> {
+    for (index, &rate) in rates.iter().enumerate() {
+        validate_probability(rate, &format!("{field}[{index}]"))?;
+    }
+    let total: f64 = rates.iter().sum();
+    // Unit roundoff is EPSILON/2. For nonnegative rates totaling near one,
+    // n * EPSILON conservatively bounds accumulated addition roundoff.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "Rate counts are far below 2^53, so conversion to f64 is exact"
+    )]
+    let count = rates.len() as f64;
+    let roundoff = count * f64::EPSILON;
+    if total - 1.0 > roundoff {
+        return Err(ValidationError::new(
+            format!("{field} total"),
+            format!("the rates sum to {total}, which exceeds 1.0"),
+        )
+        .with_value(&total)
+        .with_suggestion("Reduce the rates so their total is at most 1.0"));
+    }
+    Ok(())
+}
+
+/// Validate probabilities forming a normalized discrete distribution.
+///
+/// # Errors
+/// Rejects non-finite or negative weights and totals differing from one.
+pub fn validate_distribution(weights: &[f64], field: &str) -> ValidationResult<()> {
+    validate_weights_sum(weights, field)?;
+    let total: f64 = weights.iter().sum();
+    if (total - 1.0).abs() >= DISTRIBUTION_SUM_TOLERANCE {
+        return Err(ValidationError::new(field, "weights must sum to 1.0")
+            .with_value(&total)
+            .with_suggestion("Normalize the weights so their sum is 1.0"));
+    }
+    Ok(())
+}
+
+/// Validate a finite signed angle, rate, or scale.
+///
+/// # Errors
+/// Returns an error naming the parameter and its non-finite value.
+pub fn validate_finite(value: f64, field: &str) -> ValidationResult<f64> {
+    if !value.is_finite() {
+        return Err(ValidationError::new(field, "must be finite")
+            .with_value(&value)
+            .with_suggestion("Use a finite value and check the computation that produced it"));
+    }
+    Ok(value)
+}
+
+/// Largest `TimeUnits` duration after conversion to f64 (`u64::MAX` rounds to 2^64).
+pub const MAX_DURATION: f64 = 18_446_744_073_709_551_616.0;
+
+/// Largest rate whose product with every representable duration remains finite.
+pub const MAX_ANGLE_RATE: f64 = f64::MAX / MAX_DURATION;
+
+/// Largest fraction whose product with a gate angle (at most TAU) remains finite.
+pub const MAX_ANGLE_FRACTION: f64 = f64::MAX / std::f64::consts::TAU;
+
+/// Validate a signed scalar against a finite magnitude bound.
+///
+/// # Errors
+/// Returns an error naming the parameter if it is non-finite or exceeds the bound.
+pub fn validate_bounded(value: f64, bound: f64, field: &str) -> ValidationResult<f64> {
+    validate_finite(value, field)?;
+    if value.abs() > bound {
+        return Err(
+            ValidationError::new(field, format!("magnitude must not exceed {bound}"))
+                .with_value(&value),
+        );
+    }
+    Ok(value)
+}
+
+/// Validate the product of an already validated rate and scale before duration scaling.
+///
+/// # Errors
+/// Returns an error naming both parameters if their product can overflow at `MAX_DURATION`.
+pub(crate) fn validate_scaled_angle_rate(
+    rate: f64,
+    factor: f64,
+    rate_name: &str,
+    factor_name: &str,
+) -> ValidationResult<f64> {
+    validate_bounded(
+        rate * factor,
+        MAX_ANGLE_RATE,
+        &format!("{rate_name} * {factor_name}"),
+    )
+    .map_err(|error| {
+        error.with_suggestion(format!(
+            "Reduce {rate_name} or {factor_name} so their product is at most {MAX_ANGLE_RATE}; \
+             larger products overflow once multiplied by an idle duration"
+        ))
+    })
+}
+
+/// Validate a duration supplied as f64 against the `TimeUnits` domain.
+///
+/// # Errors
+/// Returns an error for negative, non-finite, or excessively large durations.
+pub fn validate_duration(value: f64, field: &str) -> ValidationResult<f64> {
+    validate_rate(value, field)?;
+    validate_bounded(value, MAX_DURATION, field)
+}
+
+/// Validate a non-negative rate that becomes an angle after multiplication by duration.
+///
+/// # Errors
+/// Returns an error for negative, non-finite, or excessively large rates.
+pub fn validate_angle_rate(value: f64, field: &str) -> ValidationResult<f64> {
+    validate_rate(value, field)?;
+    validate_bounded(value, MAX_ANGLE_RATE, field).map_err(|error| {
+        error.with_suggestion(format!("Reduce {field} to at most {MAX_ANGLE_RATE} so multiplication by an idle duration stays finite"))
+    })
 }
 
 /// Validate a rate (non-negative value).
 ///
 /// # Errors
 ///
-/// Returns an error if the rate is negative or NaN.
+/// Returns an error if the rate is negative or non-finite.
 pub fn validate_rate(rate: f64, field: &str) -> ValidationResult<f64> {
-    if rate.is_nan() {
-        return Err(ValidationError::new(field, "rate cannot be NaN").with_value(&rate));
-    }
+    validate_finite(rate, field)?;
     if rate < 0.0 {
         return Err(ValidationError::new(field, "rate cannot be negative")
             .with_value(&rate)
@@ -186,9 +304,7 @@ pub fn validate_rate(rate: f64, field: &str) -> ValidationResult<f64> {
 ///
 /// Returns an error if the value is not positive.
 pub fn validate_positive(value: f64, field: &str) -> ValidationResult<f64> {
-    if value.is_nan() {
-        return Err(ValidationError::new(field, "value cannot be NaN").with_value(&value));
-    }
+    validate_finite(value, field)?;
     if value <= 0.0 {
         return Err(ValidationError::new(field, "value must be positive")
             .with_value(&value)
@@ -283,14 +399,6 @@ mod tests {
         assert!(validate_probability(-0.1, "test").is_err());
         assert!(validate_probability(1.1, "test").is_err());
         assert!(validate_probability(f64::NAN, "test").is_err());
-    }
-
-    #[test]
-    fn test_clamp_probability() {
-        assert_eq!(clamp_probability(0.5), 0.5);
-        assert_eq!(clamp_probability(-0.1), 0.0);
-        assert_eq!(clamp_probability(1.5), 1.0);
-        assert_eq!(clamp_probability(f64::NAN), 0.0);
     }
 
     #[test]

@@ -9,9 +9,9 @@
 //!
 //! Inverse functions ([`asin`](Angle::asin), [`acos`](Angle::acos),
 //! [`atan`](Angle::atan), [`atan2`](Angle::atan2)) wrap the stdlib and convert
-//! back via [`from_radians`](Angle::from_radians).
+//! back via [`try_from_radians`](Angle::try_from_radians).
 
-use super::Angle;
+use super::{Angle, InverseTrigError, NonFiniteAngleError};
 use num_complex::Complex64;
 use num_traits::{
     Bounded, FromPrimitive, ToPrimitive, Unsigned, WrappingAdd, WrappingNeg, WrappingSub, Zero,
@@ -309,43 +309,74 @@ where
 
     /// Returns the angle whose sine is `value`.
     ///
-    /// # Panics
-    /// Panics if the conversion from radians fails.
+    /// # Errors
+    /// Rejects non-finite inputs and values outside the inverse function domain.
     #[inline]
-    #[must_use]
-    pub fn asin(value: f64) -> Self {
-        Self::from_radians(value.asin())
+    pub fn try_asin(value: f64) -> Result<Self, InverseTrigError> {
+        if !value.is_finite() {
+            return Err(InverseTrigError::NonFinite(NonFiniteAngleError {
+                value,
+                unit: "asin input",
+            }));
+        }
+        if !(-1.0..=1.0).contains(&value) {
+            return Err(InverseTrigError::OutOfDomain {
+                value,
+                function: "asin",
+            });
+        }
+        Self::try_from_radians(value.asin()).map_err(InverseTrigError::NonFinite)
     }
 
     /// Returns the angle whose cosine is `value`.
     ///
-    /// # Panics
-    /// Panics if the conversion from radians fails.
+    /// # Errors
+    /// Rejects non-finite inputs and values outside the inverse function domain.
     #[inline]
-    #[must_use]
-    pub fn acos(value: f64) -> Self {
-        Self::from_radians(value.acos())
+    pub fn try_acos(value: f64) -> Result<Self, InverseTrigError> {
+        if !value.is_finite() {
+            return Err(InverseTrigError::NonFinite(NonFiniteAngleError {
+                value,
+                unit: "acos input",
+            }));
+        }
+        if !(-1.0..=1.0).contains(&value) {
+            return Err(InverseTrigError::OutOfDomain {
+                value,
+                function: "acos",
+            });
+        }
+        Self::try_from_radians(value.acos()).map_err(InverseTrigError::NonFinite)
     }
 
     /// Returns the angle whose tangent is `value`.
     ///
-    /// # Panics
-    /// Panics if the conversion from radians fails.
+    /// # Errors
+    /// Rejects NaN inputs or results; infinite inputs are valid.
     #[inline]
-    #[must_use]
-    pub fn atan(value: f64) -> Self {
-        Self::from_radians(value.atan())
+    pub fn try_atan(value: f64) -> Result<Self, NonFiniteAngleError> {
+        if value.is_nan() {
+            return Err(NonFiniteAngleError {
+                value,
+                unit: "atan input",
+            });
+        }
+        Self::try_from_radians(value.atan())
     }
 
     /// Returns the angle whose tangent is `y / x`, using signs to determine
     /// the quadrant.
     ///
-    /// # Panics
-    /// Panics if the conversion from radians fails.
+    /// # Errors
+    /// Rejects NaN inputs or results; infinite inputs are valid.
     #[inline]
-    #[must_use]
-    pub fn atan2(y: f64, x: f64) -> Self {
-        Self::from_radians(y.atan2(x))
+    pub fn try_atan2(y: f64, x: f64) -> Result<Self, NonFiniteAngleError> {
+        for (value, unit) in [(y, "atan2 y input"), (x, "atan2 x input")] {
+            if value.is_nan() {
+                return Err(NonFiniteAngleError { value, unit });
+            }
+        }
+        Self::try_from_radians(y.atan2(x))
     }
 
     /// Returns `(sin(theta/2), cos(theta/2))`.
@@ -445,7 +476,7 @@ mod tests {
 
     #[test]
     fn sin_cos_pi_over_4() {
-        let angle = Angle64::from_radians(FRAC_PI_4);
+        let angle = Angle64::from_turn_ratio(1, 8);
         let (s, c) = angle.sin_cos();
         let expected = std::f64::consts::FRAC_1_SQRT_2;
         assert!(
@@ -460,7 +491,7 @@ mod tests {
 
     #[test]
     fn sin_cos_pi_over_6() {
-        let angle = Angle64::from_radians(FRAC_PI_6);
+        let angle = crate::radians!(FRAC_PI_6);
         let (s, c) = angle.sin_cos();
         let sqrt3_over_2 = 3.0_f64.sqrt() / 2.0;
         assert!((s - 0.5).abs() < TOL_LOOSE, "sin(pi/6) = {s}, expected 0.5");
@@ -472,7 +503,7 @@ mod tests {
 
     #[test]
     fn sin_cos_pi_over_3() {
-        let angle = Angle64::from_radians(FRAC_PI_3);
+        let angle = crate::radians!(FRAC_PI_3);
         let (s, c) = angle.sin_cos();
         let sqrt3_over_2 = 3.0_f64.sqrt() / 2.0;
         assert!(
@@ -552,7 +583,7 @@ mod tests {
     #[test]
     fn sin_odd_symmetry() {
         for &rad in &[0.1, 1.0, 2.5] {
-            let a = Angle64::from_radians(rad);
+            let a = Angle64::try_from_radians(rad).unwrap();
             let neg = Angle64::ZERO - a;
             assert!(
                 (a.sin() + neg.sin()).abs() < 1e-14,
@@ -564,7 +595,7 @@ mod tests {
     #[test]
     fn cos_even_symmetry() {
         for &rad in &[0.1, 1.0, 2.5] {
-            let a = Angle64::from_radians(rad);
+            let a = Angle64::try_from_radians(rad).unwrap();
             let neg = Angle64::ZERO - a;
             assert!(
                 (a.cos() - neg.cos()).abs() < 1e-14,
@@ -635,8 +666,8 @@ mod tests {
 
     #[test]
     fn asin_round_trip() {
-        let angle = Angle64::from_radians(0.3);
-        let recovered = Angle64::asin(angle.sin());
+        let angle = crate::radians!(0.3);
+        let recovered = Angle64::try_asin(angle.sin()).unwrap();
         assert!(
             (recovered.to_radians() - 0.3).abs() < TOL_LOOSE,
             "asin round-trip failed: got {}",
@@ -646,8 +677,8 @@ mod tests {
 
     #[test]
     fn acos_round_trip() {
-        let angle = Angle64::from_radians(1.0);
-        let recovered = Angle64::acos(angle.cos());
+        let angle = crate::radians!(1.0);
+        let recovered = Angle64::try_acos(angle.cos()).unwrap();
         assert!(
             (recovered.to_radians() - 1.0).abs() < TOL_LOOSE,
             "acos round-trip failed: got {}",
@@ -657,8 +688,8 @@ mod tests {
 
     #[test]
     fn atan_round_trip() {
-        let angle = Angle64::from_radians(0.5);
-        let recovered = Angle64::atan(angle.tan());
+        let angle = crate::radians!(0.5);
+        let recovered = Angle64::try_atan(angle.tan()).unwrap();
         assert!(
             (recovered.to_radians() - 0.5).abs() < TOL_LOOSE,
             "atan round-trip failed: got {}",
@@ -668,7 +699,7 @@ mod tests {
 
     #[test]
     fn atan2_basic() {
-        let angle = Angle64::atan2(1.0, 1.0);
+        let angle = Angle64::try_atan2(1.0, 1.0).unwrap();
         assert!(
             (angle.to_radians() - FRAC_PI_4).abs() < TOL_LOOSE,
             "atan2(1,1) = {}, expected pi/4",

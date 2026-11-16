@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from operator import index
 from typing import TYPE_CHECKING
 
 from pecos_rslib import lower_clifford_rotation
@@ -28,25 +29,33 @@ if TYPE_CHECKING:
 
 
 _ONE_ANGLE_ROTATIONS = ("RZ", "RX", "RY", "RZZ", "RXX", "RYY")
+CLIFFORD_ROTATION_SYMBOLS = (*_ONE_ANGLE_ROTATIONS, "RXY1Q", "R1XY", "RXYXY2Q")
+
+
+def lower_rotation_params(symbol: str, **params: object) -> list:
+    """Pure lowering check shared by validation and rotation dispatch."""
+    if symbol in {"RXY1Q", "R1XY", "RXYXY2Q"}:
+        if "angles" not in params:
+            msg = f"{symbol} requires an 'angles' parameter"
+            raise ValueError(msg)
+        angles = params["angles"]
+    else:
+        if "angle" not in params:
+            msg = f"{symbol} requires an 'angle' parameter"
+            raise ValueError(msg)
+        angles = (params["angle"],)
+    return lower_clifford_rotation(symbol, angles)
 
 
 def _rotation_binding(
     symbol: str,
 ) -> Callable[..., None]:
     def apply_rotation(state: _BindingState, location: int | tuple[int, ...], **params: object) -> None:
-        if symbol in {"RXY1Q", "R1XY", "RXYXY2Q"}:
-            if "angles" not in params:
-                msg = f"{symbol} requires an 'angles' parameter"
-                raise ValueError(msg)
-            angles = params["angles"]
-        else:
-            if "angle" not in params:
-                msg = f"{symbol} requires an 'angle' parameter"
-                raise ValueError(msg)
-            angles = (params["angle"],)
-
-        operands = (location,) if isinstance(location, int) else tuple(location)
-        for named, positions in lower_clifford_rotation(symbol, angles):
+        try:
+            operands = (index(location),)
+        except TypeError:
+            operands = tuple(location)
+        for named, positions in lower_rotation_params(symbol, **params):
             named_operands = tuple(operands[position] for position in positions)
             named_location = named_operands[0] if len(named_operands) == 1 else named_operands
             try:
@@ -62,7 +71,7 @@ def _rotation_binding(
 def install_clifford_rotation_bindings(
     bindings: dict[str, Callable[..., object]],
     *,
-    symbols: tuple[str, ...] = (*_ONE_ANGLE_ROTATIONS, "RXY1Q", "R1XY", "RXYXY2Q"),
+    symbols: tuple[str, ...] = CLIFFORD_ROTATION_SYMBOLS,
 ) -> None:
     """Install projective rotation lowerings for stabilizer/tableau consumers.
 

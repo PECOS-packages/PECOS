@@ -29,8 +29,8 @@ pub use engine_system::{
 pub use hybrid::HybridEngine;
 pub use monte_carlo::MonteCarloEngine;
 pub use noise::{
-    DepolarizingNoiseModel, GeneralNoiseModel, GeneralNoiseModelBuilder, NoiseModel,
-    PassThroughNoiseModel, PassThroughNoiseModelBuilder,
+    DepolarizingNoiseModel, GeneralNoiseConfig, GeneralNoiseModel, GeneralNoiseModelBuilder,
+    NoiseModel, PassThroughNoiseModel, PassThroughNoiseModelBuilder,
 };
 pub use pecos_core::errors::PecosError;
 pub use quantum::{
@@ -47,8 +47,8 @@ pub use quantum_system::QuantumSystem;
 pub use sampling::MonteCarloBuilder;
 pub use shot_results::data_vec::DataVecType;
 pub use shot_results::{
-    BitVecDisplayFormat, Data, DataVec, Shot, ShotMap, ShotMapDisplay, ShotMapDisplayExt,
-    ShotMapDisplayOptions, ShotVec,
+    BitVecDisplayFormat, Data, DataVec, ProgramExit, Shot, ShotMap, ShotMapDisplay,
+    ShotMapDisplayExt, ShotMapDisplayOptions, ShotVec,
 };
 pub use sim_builder::{
     BiasedDepolarizingNoise, DepolarizingNoise, PassThroughNoise, SimBuilder, SimConfig,

@@ -190,8 +190,8 @@ fn test_eeg_vs_statevec_bell_parity() {
         sim.cx(&[(qid(0), qid(1))]);
 
         // Idle RZ noise (same as EEG coherent_only model)
-        sim.rz(Angle64::from_radians(theta), &[qid(0)]);
-        sim.rz(Angle64::from_radians(theta), &[qid(1)]);
+        sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
+        sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
 
         sim.h(&[qid(0)]);
         sim.h(&[qid(1)]);
@@ -276,8 +276,8 @@ fn test_eeg_vs_statevec_larger_angle() {
         sim.pz(&[qid(0), qid(1)]);
         sim.h(&[qid(0)]);
         sim.cx(&[(qid(0), qid(1))]);
-        sim.rz(Angle64::from_radians(theta), &[qid(0)]);
-        sim.rz(Angle64::from_radians(theta), &[qid(1)]);
+        sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
+        sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
         sim.h(&[qid(0)]);
         sim.h(&[qid(1)]);
         let r = sim.mz(&[qid(0), qid(1)]);
@@ -342,8 +342,8 @@ fn bench_bell_parity_theta_sweep() {
             sim.pz(&[qid(0), qid(1)]);
             sim.h(&[qid(0)]);
             sim.cx(&[(qid(0), qid(1))]);
-            sim.rz(Angle64::from_radians(theta), &[qid(0)]);
-            sim.rz(Angle64::from_radians(theta), &[qid(1)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
             sim.h(&[qid(0)]);
             sim.h(&[qid(1)]);
             let r = sim.mz(&[qid(0), qid(1)]);
@@ -414,11 +414,11 @@ fn bench_x_check_multi_round() {
                 {
                     sim.h(&[qid(2)]);
                     sim.cx(&[(qid(2), qid(0))]);
-                    sim.rz(Angle64::from_radians(theta), &[qid(0)]);
-                    sim.rz(Angle64::from_radians(theta), &[qid(2)]);
+                    sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
+                    sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
                     sim.cx(&[(qid(2), qid(1))]);
-                    sim.rz(Angle64::from_radians(theta), &[qid(1)]);
-                    sim.rz(Angle64::from_radians(theta), &[qid(2)]);
+                    sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
+                    sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
                     sim.h(&[qid(2)]);
                     let r = sim.mz(&[qid(2)]);
                     if r[0].outcome {
@@ -501,11 +501,11 @@ fn bench_z_basis_check() {
         for _ in 0..num_shots {
             sim.pz(&[qid(0), qid(1), qid(2)]);
             sim.cx(&[(qid(0), qid(2))]);
-            sim.rz(Angle64::from_radians(theta), &[qid(0)]);
-            sim.rz(Angle64::from_radians(theta), &[qid(2)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
             sim.cx(&[(qid(1), qid(2))]);
-            sim.rz(Angle64::from_radians(theta), &[qid(1)]);
-            sim.rz(Angle64::from_radians(theta), &[qid(2)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
             let r = sim.mz(&[qid(2)]);
             if r[0].outcome {
                 det_count += 1;
@@ -697,13 +697,13 @@ fn bench_repetition_code_comparison() {
 
                     for (i, &anc) in ancillas.iter().enumerate().take(num_ancilla) {
                         sim.cx(&[(qid(anc), qid(i))]);
-                        sim.rz(Angle64::from_radians(theta), &[qid(anc)]);
-                        sim.rz(Angle64::from_radians(theta), &[qid(i)]);
+                        sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(anc)]);
+                        sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(i)]);
                     }
                     for (i, &anc) in ancillas.iter().enumerate().take(num_ancilla) {
                         sim.cx(&[(qid(anc), qid(i + 1))]);
-                        sim.rz(Angle64::from_radians(theta), &[qid(anc)]);
-                        sim.rz(Angle64::from_radians(theta), &[qid(i + 1)]);
+                        sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(anc)]);
+                        sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(i + 1)]);
                     }
 
                     sim.h(&anc_qubits);
@@ -817,11 +817,11 @@ fn bench_expansion_equivalence() {
             for (r, out) in outs.iter_mut().enumerate() {
                 sim.h(&[qid(2)]);
                 sim.cx(&[(qid(2), qid(0))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(2)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(0)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
                 sim.cx(&[(qid(2), qid(1))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(1)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(2)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
                 sim.h(&[qid(2)]);
                 *out = sim.mz(&[qid(2)])[0].outcome;
                 if r == 0 {
@@ -873,8 +873,8 @@ fn bench_expansion_equivalence() {
                     && (g.gate_type == pecos_core::gate_type::GateType::CX)
                     && qs.len() >= 2
                 {
-                    sim.rz(Angle64::from_radians(theta), &[qid(qs[0])]);
-                    sim.rz(Angle64::from_radians(theta), &[qid(qs[1])]);
+                    sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(qs[0])]);
+                    sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(qs[1])]);
                 }
             }
 
@@ -1388,11 +1388,11 @@ fn bench_weight_isolation() {
             sim.pz(&[qid(0), qid(1), qid(2)]);
             sim.h(&[qid(2)]);
             sim.cx(&[(qid(2), qid(0))]);
-            sim.rz(Angle64::from_radians(theta), &[qid(2)]);
-            sim.rz(Angle64::from_radians(theta), &[qid(0)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
             sim.cx(&[(qid(2), qid(1))]);
-            sim.rz(Angle64::from_radians(theta), &[qid(1)]);
-            sim.rz(Angle64::from_radians(theta), &[qid(2)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
+            sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
             sim.h(&[qid(2)]);
             if sim.mz(&[qid(2)])[0].outcome {
                 det += 1;
@@ -1436,11 +1436,11 @@ fn bench_weight_isolation() {
             for (r, out) in outs.iter_mut().enumerate() {
                 sim.h(&[qid(2)]);
                 sim.cx(&[(qid(2), qid(0))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(2)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(0)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
                 sim.cx(&[(qid(2), qid(1))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(1)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(2)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
                 sim.h(&[qid(2)]);
                 *out = sim.mz(&[qid(2)])[0].outcome;
                 if r == 0 {
@@ -1486,8 +1486,8 @@ fn bench_weight_isolation() {
             sim.h(&[qid(4)]);
             for &d in &[0usize, 1, 2, 3] {
                 sim.cx(&[(qid(4), qid(d))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(4)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(d)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(4)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(d)]);
             }
             sim.h(&[qid(4)]);
             if sim.mz(&[qid(4)])[0].outcome {
@@ -1539,8 +1539,8 @@ fn bench_weight_isolation() {
                 sim.h(&[qid(4)]);
                 for &d in &[0usize, 1, 2, 3] {
                     sim.cx(&[(qid(4), qid(d))]);
-                    sim.rz(Angle64::from_radians(theta), &[qid(4)]);
-                    sim.rz(Angle64::from_radians(theta), &[qid(d)]);
+                    sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(4)]);
+                    sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(d)]);
                 }
                 sim.h(&[qid(4)]);
                 *out = sim.mz(&[qid(4)])[0].outcome;
@@ -1609,17 +1609,17 @@ fn bench_weight_isolation() {
             for (r, out_pair) in outs.chunks_mut(2).enumerate() {
                 sim.h(&[qid(3), qid(4)]);
                 sim.cx(&[(qid(3), qid(0))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(3)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(0)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(3)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(0)]);
                 sim.cx(&[(qid(4), qid(1))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(4)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(1)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(4)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
                 sim.cx(&[(qid(3), qid(1))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(3)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(1)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(3)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(1)]);
                 sim.cx(&[(qid(4), qid(2))]);
-                sim.rz(Angle64::from_radians(theta), &[qid(4)]);
-                sim.rz(Angle64::from_radians(theta), &[qid(2)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(4)]);
+                sim.rz(Angle64::try_from_radians(theta).unwrap(), &[qid(2)]);
                 sim.h(&[qid(3), qid(4)]);
                 out_pair[0] = sim.mz(&[qid(3)])[0].outcome;
                 out_pair[1] = sim.mz(&[qid(4)])[0].outcome;
@@ -1867,12 +1867,12 @@ fn bench_combined_noise() {
             sim.h(&[qid(2)]);
             // CX(2,0) + idle RZ noise
             sim.cx(&[(qid(2), qid(0))]);
-            sim.rz(Angle64::from_radians(idle_rz), &[qid(2)]);
-            sim.rz(Angle64::from_radians(idle_rz), &[qid(0)]);
+            sim.rz(Angle64::try_from_radians(idle_rz).unwrap(), &[qid(2)]);
+            sim.rz(Angle64::try_from_radians(idle_rz).unwrap(), &[qid(0)]);
             // CX(2,1) + idle RZ noise
             sim.cx(&[(qid(2), qid(1))]);
-            sim.rz(Angle64::from_radians(idle_rz), &[qid(1)]);
-            sim.rz(Angle64::from_radians(idle_rz), &[qid(2)]);
+            sim.rz(Angle64::try_from_radians(idle_rz).unwrap(), &[qid(1)]);
+            sim.rz(Angle64::try_from_radians(idle_rz).unwrap(), &[qid(2)]);
             sim.h(&[qid(2)]);
             // MZ with measurement error
             let mut outcome = sim.mz(&[qid(2)])[0].outcome;
@@ -1924,11 +1924,11 @@ fn bench_combined_noise() {
             for (r, out_slot) in os.iter_mut().enumerate() {
                 sim.h(&[qid(2)]);
                 sim.cx(&[(qid(2), qid(0))]);
-                sim.rz(Angle64::from_radians(idle_rz), &[qid(2)]);
-                sim.rz(Angle64::from_radians(idle_rz), &[qid(0)]);
+                sim.rz(Angle64::try_from_radians(idle_rz).unwrap(), &[qid(2)]);
+                sim.rz(Angle64::try_from_radians(idle_rz).unwrap(), &[qid(0)]);
                 sim.cx(&[(qid(2), qid(1))]);
-                sim.rz(Angle64::from_radians(idle_rz), &[qid(1)]);
-                sim.rz(Angle64::from_radians(idle_rz), &[qid(2)]);
+                sim.rz(Angle64::try_from_radians(idle_rz).unwrap(), &[qid(1)]);
+                sim.rz(Angle64::try_from_radians(idle_rz).unwrap(), &[qid(2)]);
                 sim.h(&[qid(2)]);
                 let mut out = sim.mz(&[qid(2)])[0].outcome;
                 if rng.check_probability(pm_threshold) {

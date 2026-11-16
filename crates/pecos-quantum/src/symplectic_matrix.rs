@@ -15,12 +15,14 @@
 //! Validated binary symplectic matrices for Pauli operators.
 
 use crate::{F2Matrix, PauliSequence};
-use pecos_core::{Pauli, PauliString, QuarterPhase, QubitId};
+use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
 use std::fmt;
 
 /// Errors that can occur when constructing a [`SymplecticMatrix`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymplecticMatrixError {
+    /// The requested width cannot be represented by matrix columns.
+    WidthOverflow { num_qubits: usize },
     /// No rows were supplied, so the matrix width cannot be inferred.
     EmptyRows,
     /// A row has a different width from the first row.
@@ -60,6 +62,11 @@ pub enum SymplecticMatrixError {
 impl fmt::Display for SymplecticMatrixError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::WidthOverflow { num_qubits } => write!(
+                f,
+                "num_qubits {num_qubits} exceeds the symplectic width limit {}; use at most that many qubits",
+                isize::MAX as usize / 2
+            ),
             Self::EmptyRows => write!(
                 f,
                 "cannot infer symplectic matrix width from empty input; use SymplecticMatrix::zeros"
@@ -86,7 +93,7 @@ impl fmt::Display for SymplecticMatrixError {
                 num_qubits,
             } => write!(
                 f,
-                "Pauli operator at row {row} acts on qubit {qubit}, outside the explicit width of {num_qubits} qubits"
+                "Pauli operator at row {row} acts on qubit {qubit}, outside the explicit width of {num_qubits} qubits; pass a width greater than qubit {qubit}"
             ),
         }
     }
@@ -104,6 +111,10 @@ pub struct SymplecticMatrix {
 }
 
 impl SymplecticMatrix {
+    pub(crate) fn matrix(&self) -> &F2Matrix {
+        &self.matrix
+    }
+
     /// Constructs a validated symplectic matrix from dense binary rows.
     ///
     /// # Errors
@@ -145,8 +156,15 @@ impl SymplecticMatrix {
     #[must_use]
     pub fn zeros(num_rows: usize, num_qubits: usize) -> Self {
         Self {
-            matrix: F2Matrix::zeros(num_rows, 2 * num_qubits),
+            matrix: F2Matrix::zeros(num_rows, num_qubits * 2),
         }
+    }
+
+    fn checked_columns(num_qubits: usize) -> Result<usize, SymplecticMatrixError> {
+        num_qubits
+            .checked_mul(2)
+            .filter(|&n| isize::try_from(n).is_ok())
+            .ok_or(SymplecticMatrixError::WidthOverflow { num_qubits })
     }
 
     /// Converts a Pauli sequence to symplectic form at an explicit width.
@@ -162,30 +180,22 @@ impl SymplecticMatrix {
         num_qubits: usize,
     ) -> Result<Self, SymplecticMatrixError> {
         for (row, operator) in sequence.iter().enumerate() {
-            if let Some(qubit) = operator
-                .qubits()
-                .into_iter()
-                .find(|&qubit| qubit >= num_qubits)
-            {
-                return Err(SymplecticMatrixError::OperatorExceedsWidth {
+            operator.validate_width(num_qubits).map_err(|error| {
+                SymplecticMatrixError::OperatorExceedsWidth {
                     row,
-                    qubit,
-                    num_qubits,
-                });
-            }
+                    qubit: error.qubit,
+                    num_qubits: error.num_qubits,
+                }
+            })?;
         }
 
-        let inferred_num_qubits = sequence.num_qubits();
-        let inferred = sequence.to_symplectic_matrix();
-        let mut matrix = F2Matrix::zeros(sequence.len(), 2 * num_qubits);
-        for row in 0..sequence.len() {
-            for qubit in 0..inferred_num_qubits {
-                matrix.set(row, qubit, inferred.get(row, qubit));
-                matrix.set(
-                    row,
-                    num_qubits + qubit,
-                    inferred.get(row, inferred_num_qubits + qubit),
-                );
+        let mut matrix = F2Matrix::zeros(sequence.len(), Self::checked_columns(num_qubits)?);
+        for (row, operator) in sequence.iter().enumerate() {
+            for qubit in operator.x_positions() {
+                matrix.set(row, qubit, 1);
+            }
+            for qubit in operator.z_positions() {
+                matrix.set(row, num_qubits + qubit, 1);
             }
         }
         Ok(Self { matrix })
@@ -195,6 +205,9 @@ impl SymplecticMatrix {
     ///
     /// Symplectic matrices contain no sign or quarter-phase information, so
     /// every returned operator necessarily has positive phase.
+    ///
+    /// # Panics
+    /// Panics if the internal invariant that matrix conversion emits one Pauli per distinct column pair is broken.
     #[must_use]
     pub fn to_positive_paulis(&self) -> Vec<PauliString> {
         let num_qubits = self.num_qubits();
@@ -215,6 +228,7 @@ impl SymplecticMatrix {
                     }
                 }
                 PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
+                    .expect("matrix conversion emits one Pauli per column pair")
             })
             .collect()
     }
@@ -281,6 +295,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn explicit_width_ignores_out_of_range_identity_entries() {
+        let p = PauliString::with_phase_and_paulis(
+            QuarterPhase::PlusOne,
+            vec![(Pauli::X, QubitId::new(0)), (Pauli::I, QubitId::new(5))],
+        )
+        .unwrap();
+        let matrix =
+            SymplecticMatrix::from_pauli_sequence_ignoring_phase(&PauliSequence::new(vec![p]), 1)
+                .unwrap();
+        assert_eq!(matrix.to_positive_paulis(), vec![PauliString::x(0)]);
+    }
+
+    #[test]
     fn pauli_round_trip_ignores_phase_and_preserves_explicit_width() {
         let negative_y: PauliString = "-Y0".parse().unwrap();
         let imaginary_xz: PauliString = "+i X1 Z3".parse().unwrap();
@@ -295,8 +322,8 @@ mod tests {
         let positive = matrix.to_positive_paulis();
         assert_eq!(positive[0].get_phase(), QuarterPhase::PlusOne);
         assert_eq!(positive[1].get_phase(), QuarterPhase::PlusOne);
-        assert_eq!(positive[0].to_dense_str(Some(5)), "+YIIII");
-        assert_eq!(positive[1].to_dense_str(Some(5)), "+IXIZI");
+        assert_eq!(positive[0].to_dense_str_width(5).unwrap(), "+YIIII");
+        assert_eq!(positive[1].to_dense_str_width(5).unwrap(), "+IXIZI");
     }
 
     #[test]

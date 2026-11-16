@@ -110,7 +110,7 @@ A repetition code encodes a single logical qubit across multiple physical qubits
     d = results.to_dict()
     syndrome = [[d["s0"][i], d["s1"][i]] for i in range(10)]
     print(syndrome)
-    # [[0, 0], [1, 0], [0, 0], [0, 0], [0, 0], [0, 1], [0, 1], [0, 0], [0, 0], [0, 0]]
+    # [[1, 0], [1, 0], [0, 0], [0, 0], [0, 1], [0, 1], [0, 1], [0, 0], [1, 0], [1, 0]]
     ```
 
 === ":fontawesome-brands-rust: Rust"

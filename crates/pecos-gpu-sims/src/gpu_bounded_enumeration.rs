@@ -509,7 +509,7 @@ pub fn gpu_bounded_enumeration_stabilizer_distance(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn shader_parses_and_validates_without_an_adapter() {
+    fn gpu_free_shader_parses_and_validates_without_an_adapter() {
         let module =
             wgpu::naga::front::wgsl::parse_str(include_str!("bounded_enumeration_shader.wgsl"))
                 .expect("bounded-enumeration WGSL must parse");

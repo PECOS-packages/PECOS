@@ -28,12 +28,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._allocator_layout import allocator_offsets
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
-from pecos.slr.ast.codegen._permutation import reject_permute_in_region
+from pecos.slr.ast.codegen._loop_bounds import static_for_range
+from pecos.slr.ast.codegen._permutation import parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    AssignOp,
     BarrierOp,
+    BlockCall,
+    CommentOp,
     ForStmt,
     GateKind,
     GateOp,
@@ -46,6 +51,7 @@ from pecos.slr.ast.nodes import (
     PrintOp,
     RegisterDecl,
     RepeatStmt,
+    ReturnOp,
     WhileStmt,
 )
 
@@ -114,9 +120,12 @@ CONTROLLED_ROTATION_GATES = {GateKind.CRX, GateKind.CRY, GateKind.CRZ}
 class QCCodeGenContext:
     """Context for QuantumCircuit code generation."""
 
+    is_fragment: bool = False
     qubit_map: dict[tuple[str, int], int] = field(default_factory=dict)
     next_qubit_id: int = 0
     current_tick: dict[str, set] = field(default_factory=dict)
+    # Insertion order preserves measurement order within a parallel tick.
+    measurement_results: dict[int, tuple[str, int] | None] = field(default_factory=dict)
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
     qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
@@ -131,11 +140,16 @@ class QCCodeGenContext:
         current = name
         while self.allocator_parents.get(current) is not None:
             current = self.allocator_parents[current]
+        if current not in self.allocator_parents and not self.is_fragment:
+            msg = f"Undeclared allocator {current!r}; declare it before generating code."
+            raise ValueError(msg)
         return current
 
     def get_absolute_index(self, allocator: str, index: int) -> int:
         """Get the absolute index in the root allocator."""
-        offset = self.allocator_offsets.get(allocator, 0)
+        if self.is_fragment and allocator not in self.allocator_offsets:
+            return index
+        offset = self.allocator_offsets[allocator]
         return offset + index
 
     def get_qubit(self, allocator: str, index: int) -> int:
@@ -186,8 +200,8 @@ class AstToQuantumCircuit:
 
         program = flatten_block_calls(program)
 
-        self.context = QCCodeGenContext()
-        self.circuit = QuantumCircuit()
+        self.context = QCCodeGenContext(is_fragment=program.is_fragment)
+        self.circuit = QuantumCircuit(cvar_spec={})
         self._in_parallel = False
 
         # Process declarations to allocate qubits
@@ -200,10 +214,16 @@ class AstToQuantumCircuit:
         # Flush any remaining operations
         self._flush_tick()
 
+        self.circuit.metadata["qvars"] = {qubit: ref for ref, qubit in self.context.qubit_map.items()}
+        qvar_spec: dict[str, int] = {}
+        for name, index in self.context.qubit_map:
+            qvar_spec[name] = max(qvar_spec.get(name, 0), index + 1)
+        self.circuit.metadata["qvar_spec"] = qvar_spec
+
         return self.circuit
 
     def _process_declarations(self, program: Program) -> None:
-        """Process declarations to allocate qubits."""
+        """Process declarations to allocate qubits and declare classical storage."""
         # First pass: collect allocator parent info
         for decl in program.declarations:
             if isinstance(decl, AllocatorDecl):
@@ -213,7 +233,7 @@ class AstToQuantumCircuit:
             self.context.allocator_parents[program.allocator.name] = program.allocator.parent
 
         # Calculate offsets for child allocators
-        self._calculate_allocator_offsets(program)
+        self.context.allocator_offsets = allocator_offsets(program)
 
         # Allocate qubits only for root allocators
         for decl in program.declarations:
@@ -223,36 +243,13 @@ class AstToQuantumCircuit:
                     for i in range(decl.capacity):
                         self.context.get_qubit(decl.name, i)
             elif isinstance(decl, RegisterDecl):
-                pass  # Classical registers don't need qubit allocation
+                self.circuit.metadata["cvar_spec"][decl.name] = decl.size
 
         if program.allocator:
             self.context.qreg_sizes[program.allocator.name] = program.allocator.capacity
         if program.allocator and program.allocator.parent is None:
             for i in range(program.allocator.capacity):
                 self.context.get_qubit(program.allocator.name, i)
-
-    def _calculate_allocator_offsets(self, program: Program) -> None:
-        """Calculate the offset of each child allocator within its parent."""
-        parent_next_offset: dict[str, int] = {}
-
-        # Root allocators have offset 0
-        for decl in program.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is None:
-                self.context.allocator_offsets[decl.name] = 0
-
-        if program.allocator and program.allocator.parent is None:
-            self.context.allocator_offsets[program.allocator.name] = 0
-
-        # Process child allocators in declaration order
-        for decl in program.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is not None:
-                parent = decl.parent
-                if parent not in parent_next_offset:
-                    parent_next_offset[parent] = 0
-
-                parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
-                parent_next_offset[parent] += decl.capacity
 
     def _process_statement(self, stmt: Statement) -> None:
         """Process a statement using recursive descent."""
@@ -282,6 +279,21 @@ class AstToQuantumCircuit:
             self._process_parallel(stmt)
         elif isinstance(stmt, PermuteOp):
             self._process_permute(stmt)
+        elif isinstance(stmt, AssignOp):
+            msg = (
+                f"QuantumCircuit codegen does not yet support {type(stmt).__name__}: "
+                "classical assignments are not lowered. "
+                "Use the QASM, QIR or Guppy targets for these operations."
+            )
+            raise NotImplementedError(msg)
+        elif isinstance(stmt, BlockCall):
+            msg = (
+                f"QuantumCircuit codegen cannot lower BlockCall {stmt.callee!r}; "
+                "provide its block declaration so the call can be flattened."
+            )
+            raise NotImplementedError(msg)
+        elif isinstance(stmt, CommentOp | ReturnOp):
+            pass  # Comments and output declarations have no circuit effect.
         elif isinstance(stmt, PrintOp):
             # Print is not yet implemented for the QuantumCircuit
             # backend. Fail LOUD rather than silently drop observable
@@ -294,6 +306,12 @@ class AstToQuantumCircuit:
                 "backend; it is silently-drop-free by design -- fail "
                 "loud. PECOS controls this format, so Print support may "
                 "be added in future)."
+            )
+            raise NotImplementedError(msg)
+        else:
+            msg = (
+                f"QuantumCircuit codegen does not support statement {type(stmt).__name__}; "
+                "lower it to supported operations before conversion."
             )
             raise NotImplementedError(msg)
 
@@ -420,9 +438,10 @@ class AstToQuantumCircuit:
 
     def _process_measure(self, node: MeasureOp) -> None:
         """Process a measurement operation."""
-        for target in node.targets:
+        for i, target in enumerate(node.targets):
             qubit = self.context.get_qubit(target.allocator, target.index)
-            self._add_to_tick("Measure", qubit)
+            result = node.results[i] if i < len(node.results) else None
+            self._add_to_tick("Measure", qubit, result=None if result is None else (result.register, result.index))
 
     def _process_prepare(self, node: PrepareOp) -> None:
         """Process a prepare/reset operation (Z-reset + canonical basis tail).
@@ -432,13 +451,14 @@ class AstToQuantumCircuit:
         tail -> byte-identical to the prior behaviour).
         """
         tail = prep_tail(node.basis)
-        if node.slots is None:
-            if tail:
-                msg = f"QuantumCircuit codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
-                raise NotImplementedError(msg)
-            return
-
-        qubits = [self.context.get_qubit(node.allocator, slot) for slot in node.slots]
+        if node.slots is None and node.allocator not in self.context.qreg_sizes:
+            msg = (
+                f"QuantumCircuit codegen: prepare_all references unknown allocator {node.allocator!r}; "
+                "declare the allocator before preparing it."
+            )
+            raise ValueError(msg)
+        slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
+        qubits = [self.context.get_qubit(node.allocator, slot) for slot in slots]
         for qubit in qubits:
             self._add_to_tick("RESET", qubit)
         for gk in tail:
@@ -446,8 +466,25 @@ class AstToQuantumCircuit:
             for qubit in qubits:
                 self._add_to_tick(GATE_TO_QC[gk], qubit)
 
-    def _add_to_tick(self, gate_name: str, target: int | tuple[int, int]) -> None:
-        """Add a gate to the current tick."""
+    def _add_to_tick(
+        self,
+        gate_name: str,
+        target: int | tuple[int, int],
+        *,
+        result: tuple[str, int] | None = None,
+    ) -> None:
+        """Add a gate, flushing any overlapping operation to preserve qubit order."""
+        qubits = {target} if isinstance(target, int) else set(target)
+        occupied = {
+            qubit
+            for targets in self.context.current_tick.values()
+            for location in targets
+            for qubit in ((location,) if isinstance(location, int) else location)
+        }
+        if qubits.intersection(occupied):
+            self._flush_tick()
+        if gate_name == "Measure":
+            self.context.measurement_results[target] = result
         if gate_name not in self.context.current_tick:
             self.context.current_tick[gate_name] = set()
         self.context.current_tick[gate_name].add(target)
@@ -455,23 +492,26 @@ class AstToQuantumCircuit:
     def _flush_tick(self) -> None:
         """Flush the current tick to the circuit."""
         if self.context.current_tick:
-            self.circuit.append(dict(self.context.current_tick))
+            tick = len(self.circuit)
+            for gate_name, targets in self.context.current_tick.items():
+                if gate_name == "Measure":
+                    for qubit, result in self.context.measurement_results.items():
+                        params = {} if result is None else {"var_output": {qubit: result}}
+                        self.circuit.update(gate_name, {qubit}, tick=tick, emptyappend=True, **params)
+                else:
+                    self.circuit.update(gate_name, targets, tick=tick, emptyappend=True)
             self.context.current_tick = {}
+            self.context.measurement_results = {}
 
     def _process_if(self, node: IfStmt) -> None:
-        """Process an if statement."""
+        """Reject an if statement: classical control flow is not lowered here."""
         reject_permute_in_region(node, "QuantumCircuit")
-        # QuantumCircuit doesn't support conditionals directly
-        # Process both branches
-        self._flush_tick()
-
-        for stmt in node.then_body:
-            self._process_statement(stmt)
-
-        if node.else_body:
-            self._flush_tick()
-            for stmt in node.else_body:
-                self._process_statement(stmt)
+        msg = (
+            "If cannot be converted to QuantumCircuit format: this backend does not lower "
+            "classical conditions onto branch operations. "
+            "Use the QASM, QIR or Guppy targets for programs with conditionals."
+        )
+        raise NotImplementedError(msg)
 
     def _process_while(self, node: WhileStmt) -> None:
         """Process a while loop."""
@@ -482,38 +522,9 @@ class AstToQuantumCircuit:
         )
         raise NotImplementedError(msg)
 
-    def _static_int_bound(self, expr: object, which: str) -> int:
-        """Resolve a static integer `For` bound.
-
-        The AST converter wraps integer range bounds in `LiteralExpr`
-        (`converter.py` `_convert_for`), so the bound is never a raw
-        `int` -- the old `isinstance(int)` guard was always false, so
-        the `else` branch *rejected every* static `For` (even valid
-        `For(i, 0, 3)`). Resolve the literal; a non-literal / non-int
-        bound is a symbolic/dynamic `For`: fail LOUD.
-        """
-        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
-            return expr.value
-        msg = (
-            f"QuantumCircuit codegen: For loop {which} bound is not a "
-            f"static integer ({type(expr).__name__}); only fixed-bound "
-            "`For(i, <int>, <int>)` is supported (symbolic/dynamic For "
-            "is out of scope)."
-        )
-        raise NotImplementedError(msg)
-
     def _process_for(self, node: ForStmt) -> None:
-        """Unroll a static fixed-bound `For` (v1-supported)."""
-        start = self._static_int_bound(node.start, "start")
-        stop = self._static_int_bound(node.stop, "stop")
-        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
-        if step == 0:
-            msg = (
-                "QuantumCircuit codegen: For loop step is 0 (infinite "
-                "loop); only a non-zero static step is supported."
-            )
-            raise NotImplementedError(msg)
-        for _ in range(start, stop, step):
+        """Unroll a static fixed-bound For."""
+        for _ in static_for_range(node, "QuantumCircuit"):
             for stmt in node.body:
                 self._process_statement(stmt)
 
@@ -529,34 +540,40 @@ class AstToQuantumCircuit:
 
     def _process_parallel(self, node: ParallelBlock) -> None:
         """Process a parallel block."""
+        was_parallel = self._in_parallel
         self._in_parallel = True
 
         for stmt in node.body:
             self._process_statement(stmt)
 
-        self._in_parallel = False
-        self._flush_tick()
+        self._in_parallel = was_parallel
+        if not self._in_parallel:
+            self._flush_tick()
 
     def _expand_permute_ref(self, ref: str) -> list[tuple[str, int]]:
         """Expand a Permute ref string to logical (reg, index) pairs.
 
         `name[idx]` -> a single element; bare `name` -> every element
-        of the qubit register. QuantumCircuit has no realized
-        classical-register model, so a bare CReg permute is not
-        realizable -> fail loud (never a silent no-op). Mirrors the
-        QIR codegen's helper.
+        of the qubit register. Classical Permute requires runtime
+        assignments, which this backend does not lower.
         """
-        if ref.endswith("]") and "[" in ref:
-            name, idx = ref[:-1].split("[", 1)
-            return [(name, int(idx))]
-        if ref in self.context.qreg_sizes:
-            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
-        msg = (
-            f"QuantumCircuit codegen: whole-register Permute of {ref!r} "
-            "is not supported (no classical-register model); a "
-            "qubit-register or element-wise Permute is realizable."
-        )
-        raise NotImplementedError(msg)
+        parsed = parse_permute_ref(ref, "QuantumCircuit")
+        name = parsed[0] if parsed is not None else ref
+        if name in self.circuit.metadata.get("cvar_spec", {}):
+            msg = (
+                f"QuantumCircuit codegen: classical Permute of {ref!r} is not supported; "
+                "use the QASM, QIR or Guppy targets for classical permutations."
+            )
+            raise NotImplementedError(msg)
+        if name not in self.context.qreg_sizes:
+            msg = (
+                f"QuantumCircuit codegen: Permute reference {ref!r} is not a known qubit allocator; "
+                "declare a qubit allocator or use the QASM, QIR or Guppy targets for classical permutations."
+            )
+            raise ValueError(msg)
+        if parsed is not None:
+            return [parsed]
+        return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
 
     def _process_permute(self, node: PermuteOp) -> None:
         """Realize a Permute as a static logical relabel.

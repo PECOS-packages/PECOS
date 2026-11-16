@@ -22,7 +22,6 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use pecos_core::Angle64;
 use pecos_cuquantum::{CuStateVec, QubitId, TryClone, is_cuquantum_available};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
-use std::f64::consts::PI;
 use std::hint::black_box;
 
 /// Benchmark state vector simulation for different qubit counts
@@ -125,7 +124,7 @@ fn bench_rotation_gates(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("rx", num_qubits), &num_qubits, |b, &n| {
             b.iter(|| {
                 for i in 0..n {
-                    sim.rx(Angle64::from_radians(PI / 4.0), &[QubitId(i)]);
+                    sim.rx(Angle64::from_turn_ratio(1, 8), &[QubitId(i)]);
                 }
                 black_box(&sim);
             });
@@ -135,7 +134,7 @@ fn bench_rotation_gates(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("rz", num_qubits), &num_qubits, |b, &n| {
             b.iter(|| {
                 for i in 0..n {
-                    sim.rz(Angle64::from_radians(PI / 4.0), &[QubitId(i)]);
+                    sim.rz(Angle64::from_turn_ratio(1, 8), &[QubitId(i)]);
                 }
                 black_box(&sim);
             });
@@ -181,7 +180,7 @@ fn bench_two_qubit_rotation_gates(c: &mut Criterion) {
                 b.iter(|| {
                     for i in 0..n - 1 {
                         sim.rzz(
-                            Angle64::from_radians(PI / 4.0),
+                            Angle64::from_turn_ratio(1, 8),
                             &[(QubitId(i), QubitId(i + 1))],
                         );
                     }
@@ -198,7 +197,7 @@ fn bench_two_qubit_rotation_gates(c: &mut Criterion) {
                 b.iter(|| {
                     for i in 0..n - 1 {
                         sim.rxx(
-                            Angle64::from_radians(PI / 4.0),
+                            Angle64::from_turn_ratio(1, 8),
                             &[(QubitId(i), QubitId(i + 1))],
                         );
                     }
@@ -215,7 +214,7 @@ fn bench_two_qubit_rotation_gates(c: &mut Criterion) {
                 b.iter(|| {
                     for i in 0..n - 1 {
                         sim.ryy(
-                            Angle64::from_radians(PI / 4.0),
+                            Angle64::from_turn_ratio(1, 8),
                             &[(QubitId(i), QubitId(i + 1))],
                         );
                     }

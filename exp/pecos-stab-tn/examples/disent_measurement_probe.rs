@@ -119,8 +119,8 @@ fn run_stn(repeats: usize) -> (Counts, u64, u64, f64) {
                         let q = (next(&mut random) % num_qubits as u64) as usize;
                         let angle = match next(&mut random) % 3 {
                             0 => Angle64::QUARTER_TURN / 2_u64,
-                            1 => Angle64::from_radians(0.37),
-                            _ => Angle64::from_radians(-0.61),
+                            1 => pecos_core::radians!(0.37),
+                            _ => pecos_core::radians!(-0.61),
                         };
                         stn.rz(angle, &[QubitId(q)]);
                         rotations += 1;
@@ -210,7 +210,7 @@ fn run_mast_post_projection(repeats: usize) -> (Counts, u64, f64) {
                 let angle = if injection & 1 == 0 {
                     Angle64::QUARTER_TURN / 2_u64
                 } else {
-                    Angle64::from_radians(0.37)
+                    pecos_core::radians!(0.37)
                 };
                 mast.rz(angle, &[QubitId(q)]);
                 post_rotations += 1;

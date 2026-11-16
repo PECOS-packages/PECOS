@@ -95,7 +95,7 @@ class TestFullPipeline:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c[0] == 1).Then(
                 qb.X(q[0]),
             ),
@@ -150,7 +150,7 @@ class TestAnalysisIntegration:
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.CX(q[1], q[2]),
-            qb.Measure(q[2]) > c[0],
+            qb.MeasureZ(q[2]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -300,7 +300,7 @@ class TestSerializationRoundtrip:
             c := CReg("c", 1),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            qb.Measure(q[1]) > c[0],
+            qb.MeasureZ(q[1]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -426,7 +426,7 @@ class TestQECPatterns:
             # ZZ stabilizer measurement
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
-            qb.Measure(ancilla[0]) > syndrome[0],
+            qb.MeasureZ(ancilla[0]) > syndrome[0],
         )
         ast = slr_to_ast(prog)
 
@@ -475,7 +475,7 @@ class TestQECPatterns:
             Repeat(cond=3).block(
                 qb.CX(data[0], ancilla[0]),
                 qb.CX(data[1], ancilla[0]),
-                qb.Measure(ancilla[0]) > c[0],
+                qb.MeasureZ(ancilla[0]) > c[0],
             ),
         )
         ast = slr_to_ast(prog)
@@ -603,9 +603,11 @@ class TestEdgeCases:
         validation = validate(ast)
         assert validation.valid
 
-        # Should generate
-        qasm = generate(ast, "qasm")
-        assert len(qasm) > 0
+        # Should generate where nested conditionals exist; QASM 2.0 cannot combine conditions
+        qir = generate(ast, "qir")
+        assert len(qir) > 0
+        with pytest.raises(NotImplementedError, match="nested If"):
+            generate(ast, "qasm")
 
 
 class TestMultipleCodegenTargets:
@@ -632,7 +634,7 @@ class TestMultipleCodegenTargets:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 

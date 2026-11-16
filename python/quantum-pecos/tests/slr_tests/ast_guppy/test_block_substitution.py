@@ -325,8 +325,7 @@ class TestRejectOnPartialNameLevel:
             substitute_stmt(b, _bundle_remap())
 
     def test_empty_barrier_passthrough(self) -> None:
-        # Barrier(a, d[i]) lowers TODAY to BarrierOp(allocators=()) -- nothing
-        # partial left to substitute; global barrier passes through.
+        # An explicitly global Barrier() has no named operands to substitute.
         b = BarrierOp(allocators=())
         out = substitute_stmt(b, _bundle_remap())
         assert out.allocators == ()

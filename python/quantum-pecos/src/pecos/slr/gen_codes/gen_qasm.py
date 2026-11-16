@@ -11,11 +11,20 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 
 import pecos as pc
+from pecos.slr._literals import is_bool_literal
+from pecos.slr._qubit_args import gate_target_groups
 from pecos.slr.gen_codes._permutation import iter_permutes, reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
+
+# A register or bit reference such as `c` or `c[0]`, captured as (name, index or "")
+_BIT_PATTERN = re.compile(r"([A-Za-z_]\w*)(?:\[(\d+)\])?")
+# The classical target a QASM statement writes: `measure ... -> c[0]` or `c[0] = ...`
+_MEASURE_TARGET = re.compile(r"->\s*([A-Za-z_]\w*)(?:\[(\d+)\])?\s*$")
+_ASSIGN_TARGET = re.compile(r"([A-Za-z_]\w*)(?:\[(\d+)\])?\s*=(?!=)")
 
 
 def _param_qasm(p: object) -> str:
@@ -24,6 +33,8 @@ def _param_qasm(p: object) -> str:
 
     if isinstance(p, Angle):
         return str(p.value.to_radians_signed())
+    if is_bool_literal(p):
+        return "1" if p else "0"
     return str(p)
 
 
@@ -50,8 +61,12 @@ class QASMGenerator(Generator):
             )
         self.output = []
         self.current_scope = None
+        self._register_names: set[str] = set()
+        self._bit_swap_temp: str | None = None
         self.includes = includes
         self.cond = None
+        self._cond_reads: set[tuple[str, str]] = set()  # (register, index or "") the condition reads
+        self._cond_written = False  # Whether the current If has written a bit its condition reads
         self.skip_headers = skip_headers
         self.add_versions = add_versions
         self.permutation_map = {}  # Maps (reg_name, index) to (new_reg_name, new_index)
@@ -62,6 +77,10 @@ class QASMGenerator(Generator):
     def enter_block(self, block):
         previous_scope = self.current_scope
         self.current_scope = block
+        self._register_names.update(var.sym for var in block.vars if var is not None)
+        for op in block.ops:
+            if type(op).__name__ == "Vars":
+                self._register_names.update(var.sym for var in op.vars if var is not None)
 
         block_name = type(block).__name__
 
@@ -76,18 +95,20 @@ class QASMGenerator(Generator):
                 self.write('include "qelib1.inc";')
             if self.add_versions:
                 self.write(f"// Generated using: PECOS version {pc.__version__}")
-            for var in block.vars:
+            # QASM allows one declaration per register name.
+            declared: dict[str, str] = {}
+            op_vars = [var for op in block.ops if type(op).__name__ == "Vars" for var in op.vars]
+            for var in [*block.vars, *op_vars]:
                 var_def = self.process_var_def(var)
-                if var_def:
+                if not var_def:
+                    continue
+                previous = declared.get(var.sym)
+                if previous is None:
+                    declared[var.sym] = var_def
                     self.write(var_def)
-
-            for op in block.ops:
-                op_name = type(op).__name__
-                if op_name == "Vars":
-                    for var in op.vars:
-                        var_def = self.process_var_def(var)
-                        if var_def:
-                            self.write(var_def)
+                elif previous != var_def:
+                    msg = f"Register {var.sym!r} is declared as both {previous!r} and {var_def!r}; rename one."
+                    raise ValueError(msg)
         return previous_scope
 
     def process_var_def(self, var) -> str:
@@ -139,8 +160,20 @@ class QASMGenerator(Generator):
             )
 
         if block_name == "If":
+            if self.cond is not None:
+                msg = "Nested If is not supported in QASM 2.0: a condition cannot be combined with the enclosing one."
+                raise NotImplementedError(msg)
+            if block.else_block:
+                msg = (
+                    "QASMGenerator does not support If with an else block. "
+                    "Use pecos.slr.generate(prog, 'qasm'), which emits it under the negated condition."
+                )
+                raise NotImplementedError(msg)
+
             # Generate the condition with permutations applied
             self.cond = self.generate_op(block.cond)
+            self._cond_reads = set(_BIT_PATTERN.findall(self.cond))
+            self._cond_written = False
 
             # Process the operations inside the If block
             # We need to create a new instance of the block_op_loop method
@@ -162,11 +195,6 @@ class QASMGenerator(Generator):
 
             # Reset the condition
             self.cond = None
-
-            # Process the else block if it exists
-            if block.else_block:
-                # TODO: Handle else blocks
-                pass
 
         elif block_name == "Repeat":
             for _ in range(block.cond):
@@ -348,8 +376,13 @@ class QASMGenerator(Generator):
                         cycles.append(cycle)
 
                 # Declare a temporary bit once
-                temp_var = "_bit_swap"
-                self.write(f"creg {temp_var}[1];")
+                if cycles and self._bit_swap_temp is None:
+                    temp_var = "bitswap"
+                    while temp_var in self._register_names:
+                        temp_var += "x"
+                    self._bit_swap_temp = temp_var
+                    self.write(f"creg {temp_var}[1];")
+                temp_var = self._bit_swap_temp
 
                 # Process each cycle
                 for cycle in cycles:
@@ -358,7 +391,7 @@ class QASMGenerator(Generator):
 
                     # Move each element's value to its predecessor in the cycle
                     for i in range(len(cycle) - 1):
-                        self.write(f"{cycle[i]} = {cycle[i+1]};")
+                        self.write(f"{cycle[i]} = {cycle[i + 1]};")
 
                     # Assign the temporary bit to the last element
                     self.write(f"{cycle[-1]} = {temp_var}[0];")
@@ -480,6 +513,9 @@ class QASMGenerator(Generator):
         elif op_name in {"Bit", "Qubit"}:
             op_str = f"{op.reg.sym}[{op.index}]"
 
+        elif is_bool_literal(op):
+            op_str = "1" if op else "0"
+
         elif isinstance(op, int):
             op_str = str(op)
 
@@ -494,7 +530,7 @@ class QASMGenerator(Generator):
             stat = True
             op_str = op.qasm()
 
-        elif op_name == "Measure":
+        elif op_name == "MeasureZ":
             # Check if this is a register-wide measurement (QReg > CReg)
             if (
                 len(op.qargs) == 1
@@ -568,13 +604,36 @@ class QASMGenerator(Generator):
                     for qi in o.split(";"):
                         qi = qi.strip()
                         if qi != "" and not qi.startswith("//"):
-                            op_new.append(f"if({cond}) {qi};")
+                            op_new.append(self._guard(cond, qi))
                 else:
                     op_new.append(o)
 
             op_str = "\n".join(op_new)
 
         return op_str
+
+    def _guard(self, cond: str, statement: str) -> str:
+        """Guard one statement with the If condition.
+
+        QASM 2.0 re-reads the condition for every guarded statement, so a statement
+        guarded after one that wrote a bit the condition reads would check the new value.
+        """
+        guarded = f"if({cond}) {statement};"
+        if self._cond_written:
+            msg = (
+                "QASMGenerator: an If writes a bit its condition reads and then runs "
+                f"`{guarded}`, which would check the changed value. Make the write the last "
+                "operation of the If, or write a different register."
+            )
+            raise NotImplementedError(msg)
+        target = _MEASURE_TARGET.search(statement) or _ASSIGN_TARGET.match(statement)
+        if target is not None:
+            register, index = target.groups()
+            self._cond_written = any(
+                read_register == register and (not read_index or not index or read_index == index)
+                for read_register, read_index in self._cond_reads
+            )
+        return guarded
 
     def process_qgate(self, op):
         sym = op.sym
@@ -598,7 +657,7 @@ class QASMGenerator(Generator):
 
         else:
             match sym:
-                case "Measure":
+                case "MeasureZ":
                     measurements = []
                     for q, c in zip(op.qargs, op.cout, strict=True):
                         # Apply permutation to the qubit
@@ -732,21 +791,10 @@ class QASMGenerator(Generator):
 
         str_list = []
 
-        if not isinstance(op.qargs[0], tuple) and len(op.qargs) == 2:
-            op.qargs = (op.qargs,)
-
-        for q in op.qargs:
-            if isinstance(q, tuple):
-                q1, q2 = q
-
-                # Apply permutation to the qubits
-                q1_str = self.apply_permutation(q1)
-                q2_str = self.apply_permutation(q2)
-
-                str_list.append(f"{repr_str} {q1_str}, {q2_str};")
-            else:
-                msg = f"For TQ gate, expected args to be a collection of size two tuples! Got: {op.qargs}"
-                raise TypeError(msg)
+        for q1, q2 in gate_target_groups(op.qargs, op.qsize, op.sym):
+            q1_str = self.apply_permutation(q1)
+            q2_str = self.apply_permutation(q2)
+            str_list.append(f"{repr_str} {q1_str}, {q2_str};")
 
         return "\n".join(str_list)
 
@@ -776,7 +824,7 @@ class QASMGenerator(Generator):
         return f"({left_qasm} {op.symbol} {right_qasm})"
 
     def process_general_unary_op(self, op):
-        right_qasm = op.value.qasm() if hasattr(op.value, "qasm") else self.generate_op(op.vale)
+        right_qasm = op.value.qasm() if hasattr(op.value, "qasm") else self.generate_op(op.value)
         return f"({op.symbol}{right_qasm})"
 
     def get_output(self):

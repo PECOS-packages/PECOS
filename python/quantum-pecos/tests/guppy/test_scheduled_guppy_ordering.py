@@ -22,7 +22,23 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Native aggregat
 
 
 def _operations(trace):
-    return [op for chunk in trace for op in chunk["operations"]]
+    operations = []
+    for chunk in trace:
+        for source_op in chunk["operations"]:
+            op = source_op
+            native = op.get("RuntimeRequest", {}).get("request", {}).get("Native") if isinstance(op, dict) else None
+            if isinstance(native, dict):
+                if "Measure" in native:
+                    m = native["Measure"]
+                    assert not m["leaked"]
+                    op = {"Quantum": {"Measure": [m["qubit"], m["result_id"]]}}
+                elif "Reset" in native:
+                    op = {"Quantum": {"Reset": native["Reset"]}}
+                elif "Rxy" in native:
+                    r = native["Rxy"]
+                    op = {"Quantum": {"RXY": [r["theta"], r["phi"], r["qubit"]]}}
+            operations.append(op)
+    return operations
 
 
 @pytest.mark.parametrize("n", [1, 2, 3, 4])

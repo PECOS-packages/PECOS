@@ -159,6 +159,7 @@ mod foreign {
 
     fn engine(quantum: bool) -> (PhirJsonEngine, Arc<AtomicUsize>) {
         let mut ops = vec![
+            json!({"data":"cvar_define","data_type":"i32","variable":"sum","size":31}),
             json!({"cop":"ffcall","function":"add","args":[7,3],"returns":["sum"]}),
             json!({"cop":"Result","args":["sum"],"returns":["out"]}),
             json!({"cop":"Result","args":[["sum",1]],"returns":["bit"]}),

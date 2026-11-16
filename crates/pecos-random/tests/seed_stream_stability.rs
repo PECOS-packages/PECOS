@@ -16,9 +16,10 @@
 //! simulation runs. These values were captured from the rapidhash 4.4
 //! `RapidRng`-backed implementation; any change to them is a breaking change
 //! to seeded reproducibility and must be deliberate (and release-noted), not
-//! an accident of a dependency swap.
+//! an accident of a dependency swap. The `derive_seed` values were captured
+//! from the `DefaultHasher`-based implementation that its fixed hash replaced.
 
-use pecos_random::{ParallelRapidRng, PecosScalarRng};
+use pecos_random::{ParallelRapidRng, PecosScalarRng, derive_seed};
 
 #[test]
 fn parallel_rapid_rng_seed_42_stream_is_stable() {
@@ -57,3 +58,40 @@ const GOLDEN_SCALAR_SEED_42: [u64; 8] = [
     12_169_232_296_622_201_862,
     13_970_818_894_244_782_829,
 ];
+
+#[test]
+fn derive_seed_values_are_stable() {
+    let long = "x".repeat(100);
+    let wrapped_length = "y".repeat(255);
+    for (base, purpose, expected) in [
+        (42, "noise", 4_853_411_367_290_695_164),
+        (42, "measurement", 3_392_018_874_687_868_882),
+        (0, "", 3_410_042_138_156_595_269),
+        (u64::MAX, "noise_model", 7_354_911_115_145_454_653),
+        // The purposes HybridEngine and QuantumSystem derive component seeds with.
+        (42, "classical_engine", 10_633_337_267_899_434_960),
+        (42, "quantum_system", 6_768_816_764_539_692_319),
+        (42, "quantum_engine", 10_075_785_296_346_441_876),
+        (7, "worker_0", 13_979_981_128_284_556_205),
+        (123, "quantum", 6_503_438_428_033_344_226),
+        // Length 2: with the rows above, every byte length mod 8 is covered.
+        (3, "xy", 12_234_639_505_916_456_087),
+        (
+            1,
+            "h\u{e9}llo \u{2713} \u{91cf}\u{5b50}",
+            6_045_238_936_066_559_765,
+        ),
+        (5, long.as_str(), 10_847_697_514_060_669_651),
+        // 255 bytes plus the terminator: the length byte wraps to 0.
+        (11, wrapped_length.as_str(), 18_429_410_612_856_369_901),
+        // Lengths 7 and 8: with the 0xFF terminator, one fills a block exactly.
+        (9, "abcdefg", 12_570_786_958_402_476_676),
+        (9, "abcdefgh", 1_102_260_455_885_514_446),
+    ] {
+        assert_eq!(
+            derive_seed(base, purpose),
+            expected,
+            "derive_seed({base}, {purpose:?})"
+        );
+    }
+}

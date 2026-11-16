@@ -75,12 +75,9 @@ def test_multiple_permutations_qasm() -> None:
     print("\nQASM Output:")
     print(qasm)
 
-    # Verify that the QASM contains the correct permuted operations
-    assert "h a[1];" in qasm  # First H gate
-    # The second H gate is applied to a[0] which is mapped to b[0] after both permutations
-    assert "h b[0];" in qasm  # Second H gate
-    # The X gate is applied to a[1] which is mapped to a[0] after both permutations
-    assert "x a[0];" in qasm  # X gate after both permutations
+    # The second swap changes a[1] and b[0], leaving a[0]'s binding alone.
+    assert qasm.count("h a[1];") == 2
+    assert "x b[0];" in qasm
 
 
 def test_permutation_with_conditional_qasm() -> None:
@@ -106,16 +103,8 @@ def test_permutation_with_conditional_qasm() -> None:
         Return(b),
     )
 
-    qasm = SlrConverter(prog).qasm()
-
-    # Print the QASM for debugging
-    print("\nQASM Output:")
-    print(qasm)
-
-    # Verify that the QASM contains the correct permuted operations
-    assert "b[0] = 1;" in qasm  # The classical bit assignment happens before permutation
-    # The condition and operation should both be permuted
-    assert "if(b[1] == 1) x a[1];" in qasm
+    with pytest.raises(NotImplementedError, match=r"Permute.*quantum and classical"):
+        SlrConverter(prog).qasm()
 
 
 # QIR Tests

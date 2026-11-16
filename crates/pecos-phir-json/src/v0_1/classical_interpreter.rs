@@ -110,8 +110,7 @@ impl PhirClassicalInterpreter {
         json: &str,
         foreign_object: Option<Box<dyn ForeignObject>>,
     ) -> Result<usize, PecosError> {
-        let program: PHIRProgram = serde_json::from_str(json)
-            .map_err(|e| PecosError::Input(format!("Failed to parse PHIR JSON: {e}")))?;
+        let program = PHIRProgram::from_json(json)?;
 
         // Validate format
         if program.format != "PHIR/JSON" && program.format != "PHIR" {
@@ -136,9 +135,12 @@ impl PhirClassicalInterpreter {
 
         self.foreign_object = foreign_object;
         self.environment = Environment::new();
+        self.environment.exports = super::exports::collect(&program.ops)?;
 
         // Process variable definitions from the ops
-        for op in &program.ops {
+        let definitions =
+            super::exports::declarations(&program.ops, self.environment.exports.is_some());
+        for op in definitions {
             if let Operation::VariableDefinition {
                 data,
                 data_type,
@@ -164,6 +166,7 @@ impl PhirClassicalInterpreter {
             }
         }
 
+        super::exports::prepare_results(&program.ops, &mut self.environment)?;
         self.program = Some(program);
         Ok(self.num_qubits())
     }
@@ -275,10 +278,10 @@ impl PhirClassicalInterpreter {
         Ok(())
     }
 
-    /// Extract specific bits from classical state, filtering private vars.
+    /// Extract specific bits from classical state for measurement transfer.
     ///
     /// Returns `{(name, bit_idx): bit_value}` for each measurement bit,
-    /// excluding variables that start with `__`.
+    /// including user variables that start with `__`.
     #[must_use]
     pub fn result_bits(
         &self,
@@ -288,10 +291,6 @@ impl PhirClassicalInterpreter {
         for meas_dict in measurements {
             for key in meas_dict.keys() {
                 let (name, idx) = key;
-                // Filter private vars
-                if name.starts_with("__") {
-                    continue;
-                }
                 if let Ok(bit) = self.environment.get_bit(name, *idx) {
                     result.insert((name.clone(), *idx), i64::from(bool::from(bit)));
                 }
@@ -300,57 +299,67 @@ impl PhirClassicalInterpreter {
         result
     }
 
-    /// Return all classical variable values.
+    /// Return the selected final classical variable values.
     ///
     /// If `return_int` is true, returns integer values.
     /// If false, returns zero-padded binary strings.
-    #[must_use]
-    pub fn results(&self, return_int: bool) -> BTreeMap<String, ResultValue> {
+    ///
+    /// # Errors
+    /// Reports a broken result-source invariant instead of omitting an output.
+    pub fn results(&self, return_int: bool) -> Result<BTreeMap<String, ResultValue>, PecosError> {
         let mut result = BTreeMap::new();
-        for info in self.environment.get_all_variables() {
-            if info.data_type == DataType::Qubits {
-                continue;
-            }
-            if let Some(val) = self.environment.get(&info.name) {
-                if return_int {
-                    let dtype_name = info.data_type.to_string();
-                    if info.data_type.is_signed() {
-                        result.insert(
-                            info.name.clone(),
-                            ResultValue::Int(val.as_i64(), dtype_name),
-                        );
-                    } else {
-                        result.insert(
-                            info.name.clone(),
-                            ResultValue::UInt(val.as_u64(), dtype_name),
-                        );
-                    }
+        let outputs = self.environment.selected_outputs().unwrap_or_else(|| {
+            self.environment
+                .get_all_variables()
+                .iter()
+                .filter(|info| info.data_type != DataType::Qubits)
+                .map(|info| (info.name.clone(), info.name.clone()))
+                .collect()
+        });
+        for (output, source) in outputs {
+            let broken_source = || {
+                PecosError::Input(format!(
+                    "Result source invariant broken: output {output:?} requires classical source {source:?} registered at load time; reload the program before retrieving results"
+                ))
+            };
+            let info = self
+                .environment
+                .get_variable_info_opt(&source)
+                .filter(|info| info.data_type != DataType::Qubits)
+                .ok_or_else(broken_source)?;
+            let val = self.environment.get(&source).ok_or_else(broken_source)?;
+            if return_int {
+                let dtype_name = info.data_type.to_string();
+                if info.data_type.is_signed() {
+                    result.insert(output.clone(), ResultValue::Int(val.as_i64(), dtype_name));
                 } else {
-                    // A signed size-S register is an i(S+1) integer, so it
-                    // prints S+1 bits (S data bits + a sign bit); an unsigned
-                    // size-S register prints S bits. Register widths are
-                    // validated to fit the backing type at definition time.
-                    let width = if info.data_type.is_signed() {
-                        info.size + 1
-                    } else {
-                        info.size
-                    };
-                    // Render the raw two's-complement bit pattern rather than
-                    // sign-and-magnitude (which prints a leading "-" for
-                    // negative values). `as_u64()` already holds the value
-                    // sign-extended, so reinterpreting it at `width` bits makes
-                    // the sign bit print as a "1"/"0" like every other bit.
-                    let mask = if width >= 64 {
-                        u64::MAX
-                    } else {
-                        (1u64 << width) - 1
-                    };
-                    let bits = format!("{:0>width$b}", val.as_u64() & mask, width = width);
-                    result.insert(info.name.clone(), ResultValue::BitString(bits));
+                    result.insert(output.clone(), ResultValue::UInt(val.as_u64(), dtype_name));
                 }
+            } else {
+                // A signed size-S register is an i(S+1) integer, so it
+                // prints S+1 bits (S data bits + a sign bit); an unsigned
+                // size-S register prints S bits. Register widths are
+                // validated to fit the backing type at definition time.
+                let width = if info.data_type.is_signed() {
+                    info.size + 1
+                } else {
+                    info.size
+                };
+                // Render the raw two's-complement bit pattern rather than
+                // sign-and-magnitude (which prints a leading "-" for
+                // negative values). `as_u64()` already holds the value
+                // sign-extended, so reinterpreting it at `width` bits makes
+                // the sign bit print as a "1"/"0" like every other bit.
+                let mask = if width >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << width) - 1
+                };
+                let bits = format!("{:0>width$b}", val.as_u64() & mask, width = width);
+                result.insert(output.clone(), ResultValue::BitString(bits));
             }
         }
-        result
+        Ok(result)
     }
 
     /// Get the number of qubits.
@@ -379,7 +388,8 @@ impl PhirClassicalInterpreter {
     ///
     /// # Errors
     ///
-    /// Returns `PecosError` for unknown quantum variables or out-of-bounds qubit indices.
+    /// Returns `PecosError` for invalid gate names, argument grouping, signatures,
+    /// duplicate qubits, unknown quantum registers or out-of-bounds indices.
     pub fn make_qop(
         &self,
         qop_name: &str,
@@ -388,10 +398,8 @@ impl PhirClassicalInterpreter {
         returns: &[(String, usize)],
         metadata: &Option<BTreeMap<String, serde_json::Value>>,
     ) -> Result<YieldedQOp, PecosError> {
-        if qop_name == "RXYXY2Q" {
-            crate::v0_1::ast::validate_rxyxy2q_args(angles.as_deref(), args)
-                .map_err(PecosError::ValidationInvalidGateParameters)?;
-        }
+        let gate = super::operations::quantum_gate_type(qop_name)?;
+        super::operations::validate_quantum_args(qop_name, gate.quantum_arity(), args)?;
 
         // Resolve qubit args to integer IDs
         let mut is_multi = false;
@@ -416,6 +424,18 @@ impl PhirClassicalInterpreter {
             QOpArgs::Single(flat)
         };
 
+        let flat_args: Vec<_> = match &resolved_args {
+            QOpArgs::Single(ids) => ids.clone(),
+            QOpArgs::Multi(groups) => groups.iter().flatten().copied().collect(),
+        };
+        super::operations::validate_quantum_signature(
+            qop_name,
+            gate,
+            flat_args.len(),
+            angles.as_ref().map_or(0, Vec::len),
+        )?;
+        super::operations::validate_quantum_qubits(qop_name, &flat_args)?;
+
         // Build metadata
         let mut meta = metadata.clone().unwrap_or_default();
         if let Some(angs) = angles {
@@ -426,12 +446,12 @@ impl PhirClassicalInterpreter {
             }
         }
 
+        if qop_name == "Measure" {
+            super::operations::validate_measurement_counts(flat_args.len(), returns.len())?;
+        }
+
         // Build var_output for measurement compatibility
         if !returns.is_empty() {
-            let flat_args: Vec<usize> = match &resolved_args {
-                QOpArgs::Single(ids) => ids.clone(),
-                QOpArgs::Multi(groups) => groups.iter().flatten().copied().collect(),
-            };
             let mut var_output = serde_json::Map::new();
             for (q, r) in flat_args.iter().zip(returns.iter()) {
                 var_output.insert(q.to_string(), serde_json::json!([r.0, r.1]));
@@ -442,7 +462,7 @@ impl PhirClassicalInterpreter {
             );
         }
 
-        let sim_name = resolve_sim_name(qop_name, angles.as_deref());
+        let sim_name = resolve_sim_name(qop_name, angles.as_deref())?;
 
         let ret = if returns.is_empty() {
             None
@@ -453,7 +473,11 @@ impl PhirClassicalInterpreter {
         Ok(YieldedQOp {
             name: qop_name.to_string(),
             sim_name,
-            args: resolved_args,
+            args: if qop_name == "Measure" {
+                QOpArgs::Single(flat_args)
+            } else {
+                resolved_args
+            },
             returns: ret,
             metadata: meta,
             angles: angles.clone(),
@@ -517,13 +541,14 @@ impl PhirClassicalInterpreter {
     /// The Environment's `BitValue` storage automatically masks to the declared
     /// bit width, so no manual masking is needed.
     fn assign_int_var(&mut self, name: &str, val: u64) -> Result<(), PecosError> {
-        // Assigning a measurement result to an undeclared variable is an error
-        // (matching Python's `csym2id[cvar]` lookup), not a silent no-op.
+        // Measurement destinations must already be declared classical registers.
+        self.environment.classical_info_for(name, "Measurement")?;
         self.environment.set_raw(name, val)
     }
 
     /// Assign a bit value to a specific bit of a classical variable.
     fn assign_int_bit(&mut self, name: &str, idx: usize, val: i64) -> Result<(), PecosError> {
+        self.environment.validate_measurement_write(name, idx)?;
         self.environment.set_bit(name, idx, (val & 1) != 0)
     }
 
@@ -559,6 +584,9 @@ impl PhirClassicalInterpreter {
         returns: &[ArgItem],
         function: &Option<String>,
     ) -> Result<(), PecosError> {
+        if matches!(cop, "=" | "ffcall") {
+            self.environment.validate_assignment_targets(returns)?;
+        }
         match cop {
             "=" => {
                 // Evaluate ALL args first (before any assignment),
@@ -587,27 +615,7 @@ impl PhirClassicalInterpreter {
                 }
             }
             "Result" => {
-                // Map source register to destination register
-                for (src_arg, dst_arg) in args.iter().zip(returns.iter()) {
-                    let src_name = match src_arg {
-                        ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => name.clone(),
-                        _ => {
-                            return Err(PecosError::Input(
-                                "Result source must be a variable".to_string(),
-                            ));
-                        }
-                    };
-                    let dst_name = match dst_arg {
-                        ArgItem::Simple(name) | ArgItem::Indexed((name, _)) => name.clone(),
-                        _ => {
-                            return Err(PecosError::Input(
-                                "Result destination must be a variable".to_string(),
-                            ));
-                        }
-                    };
-                    // Copy variable value from source to destination
-                    self.environment.copy_variable(&src_name, &dst_name)?;
-                }
+                self.environment.apply_result(args, returns)?;
             }
             "ffcall" => {
                 let func_name = function
@@ -764,7 +772,7 @@ impl<'a> ExecuteIter<'a> {
                     metadata,
                 } => {
                     let yielded = self.interp.make_qop(qop, angles, args, returns, metadata)?;
-                    let is_measure = matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
+                    let is_measure = qop == "Measure";
                     self.buffer.push(YieldedOp::QOp(yielded));
 
                     if is_measure {
@@ -876,7 +884,7 @@ mod tests {
         meas.insert(MeasKey::Bit("m".to_string(), 1), 0i64);
         interp.receive_results(&[meas]).unwrap();
 
-        let results = interp.results(true);
+        let results = interp.results(true).unwrap();
         let m_val = results.get("m").unwrap();
         match m_val {
             ResultValue::Int(v, _) => assert_eq!(*v, 1), // bit 0 = 1, bit 1 = 0 -> value = 1
@@ -904,7 +912,7 @@ mod tests {
         interp.environment.set("n", 5).unwrap();
         interp.environment.set("narrow", 0xFFFF_FFFF).unwrap();
 
-        let results = interp.results(false);
+        let results = interp.results(false).unwrap();
         match results.get("w").unwrap() {
             ResultValue::BitString(s) => {
                 assert_eq!(s, &"1".repeat(32));
@@ -925,7 +933,7 @@ mod tests {
         }
 
         // The integer view sees the correct signed values.
-        let ints = interp.results(true);
+        let ints = interp.results(true).unwrap();
         match ints.get("w").unwrap() {
             ResultValue::Int(v, _) => assert_eq!(*v, -1),
             other => panic!("Expected Int, got {other:?}"),
@@ -954,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn test_result_bits_filters_private() {
+    fn test_result_bits_includes_private() {
         let mut interp = PhirClassicalInterpreter::new();
         interp.init(SIMPLE_PROGRAM, None).unwrap();
 
@@ -970,8 +978,33 @@ mod tests {
         meas.insert(("__q0__".to_string(), 0usize), 1i64);
 
         let bits = interp.result_bits(&[meas]);
-        // Should include m but NOT __q0__
+        // Measurement transfer includes every requested destination.
         assert!(bits.contains_key(&("m".to_string(), 0)));
-        assert!(!bits.contains_key(&("__q0__".to_string(), 0)));
+        assert!(bits.contains_key(&("__q0__".to_string(), 0)));
+    }
+}
+
+#[cfg(test)]
+mod result_invariant_tests {
+    use super::PhirClassicalInterpreter;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn missing_result_source_reports_broken_invariant() {
+        let mut interpreter = PhirClassicalInterpreter::new();
+        // Simulate corrupt internal selection; valid program loading cannot produce it.
+        interpreter.environment.exports = Some(BTreeMap::from([("out".into(), "missing".into())]));
+        for return_int in [false, true] {
+            let diagnostic = format!("{:?}", interpreter.results(return_int));
+            assert!(diagnostic.starts_with("Err("), "{diagnostic}");
+            assert!(
+                diagnostic.contains("Result source invariant broken"),
+                "{diagnostic}"
+            );
+            assert!(
+                diagnostic.contains("missing") && diagnostic.contains("out"),
+                "{diagnostic}"
+            );
+        }
     }
 }

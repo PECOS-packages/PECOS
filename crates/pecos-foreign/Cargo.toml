@@ -17,7 +17,6 @@ pecos-decoder-core.workspace = true
 pecos-engines.workspace = true
 pecos-random.workspace = true
 pecos-simulators.workspace = true
-dirs.workspace = true
 libloading.workspace = true
 log.workspace = true
 ndarray.workspace = true

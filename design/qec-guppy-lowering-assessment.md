@@ -1505,3 +1505,35 @@ shard's directory selection; CI itself was not run here. A fresh scoped Sol
 reviewer found no blocking issues and independently verified the four planar
 example exports. Source/native fingerprints and verification records are under
 `output/qec-guppy-assessment/measurement-manifests/`.
+
+## Integration with origin/dev (2026-11-16)
+
+Local source work was checkpointed in `0635d525` before integrating upstream
+`f14157f9` (185 commits beyond the common base). All 46 conflicted paths were
+resolved. Upstream's native future protocol, explicit runtime library discovery,
+measurement provenance, and unified explicit/inferred DEM builder are retained.
+Local affine XOR constants, raw measurement manifests, named gadgets/schedules,
+inline noise payloads, arbitrary detector coordinates, and visualization survive.
+Inferred Detector/Observable selectors retain their identity when XORed with 1.
+
+Ordered Guppy allocation now uses protocol-aware Selene allocation/reset rather
+than mixing logical QIR IDs with native handles. Lifetime audits recognize native
+requests and distinguish recycled handles by allocation occurrence; legacy QIR
+IDs remain unique. The PECOS runtime plugin declares its shot-relative clock,
+including frozen comparison profiles. Tagged allocation provenance remains a
+flat-trace feature: scheduled transports retain upstream's explicit metadata
+rejection. Runtime loading checks both upstream ABI version and the shared Rust
+build fingerprint before exchanging Rust-owned values. Leakage visualizations
+accept saved legacy names and expose the canonical MeasureZLeaked gate.
+
+Both the Python extension and runtime libraries were rebuilt with LLVM 21.1.8
+and Rust 1.100.0. Validation covers raw/affine Guppy outputs, all ordering modes,
+compiled lifetime traces, paper-code and signed-flow contracts, native inline
+DEM versus Stim, mixed inferred definitions, runtime adapters, repeated-shot
+feedback, leakage, native-handle reuse, ABI guards, coordinates and visualization.
+Independent scoped runtime/QEC reviews found no remaining blocking issues after
+fixes. Larger distance-8/12 cases were excluded from the final debug-build DEM
+matrix; one distance-12 case passed before stopping that slower run. This is
+merge integration verification, not a new performance/noise claim or full CI run.
+Logs, exact selections, source/library hashes and review records remain in
+`output/merge-origin-dev/` and are not part of the merge commit.

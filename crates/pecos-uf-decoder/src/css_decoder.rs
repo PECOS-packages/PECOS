@@ -120,9 +120,7 @@ impl CssUfDecoder {
                 return Err(DecoderError::InvalidConfiguration(format!(
                     "css_uf needs graphlike models, but the {basis}-basis DEM has {} \
                      mechanism(s) touching three or more detectors. Decoding it here would \
-                     silently ignore them. Pass a decomposed model \
-                     (DetectorErrorModel.to_string_terminal_graphlike_decomposed() or \
-                     to_string_source_graphlike_decomposed()), or use a decoder that accepts \
+                     silently ignore them. Pass a graphlike (^ decomposed) model, or use a decoder that accepts \
                      hyperedges such as bp_osd or tesseract.",
                     graph.skipped_hyperedges,
                 )));

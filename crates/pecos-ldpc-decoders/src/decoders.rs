@@ -1165,19 +1165,12 @@ impl BeliefFindDecoder {
         let llrs = self.bp_decoder.log_prob_ratios()?;
         let llrs_slice = llrs.as_slice().expect("LLR array must be contiguous");
 
-        // Convert LLRs to bit weights for Union Find
-        // Union Find expects weights where lower values = more likely to be in error
-        // LLR: positive = likely 0, negative = likely 1
-        // So we convert: weight = 1 / (1 + exp(llr))
-        let bit_weights: Vec<f64> = llrs_slice
-            .iter()
-            .map(|&llr| 1.0 / (1.0 + llr.exp()))
-            .collect();
-
-        // Run Union Find decoder with the bit weights
+        // Union Find visits bits in ascending weight order, so lower means more
+        // likely to be in error. LLRs already have that order: positive = likely
+        // 0, negative = likely 1.
         let uf_result = self
             .uf_decoder
-            .decode(syndrome, &bit_weights, self.bits_per_step)?;
+            .decode(syndrome, llrs_slice, self.bits_per_step)?;
 
         // Return the Union Find result but keep BP iteration count for diagnostics
         Ok(DecodingResult {

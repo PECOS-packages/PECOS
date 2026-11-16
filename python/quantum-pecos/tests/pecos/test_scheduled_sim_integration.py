@@ -47,7 +47,7 @@ def test_sim_ramsey_responds_to_synthetic_timing(timed_runtime: tuple[Path, int,
 
 
 def test_sim_rejects_scheduled_transport_without_capability(timed_runtime: tuple[Path, int, str]) -> None:
-    with pytest.raises(RuntimeError, match="scheduled idle capability required"):
+    with pytest.raises(ValueError, match="scheduled idle capability required"):
         simulation(timed_runtime[0], timed_runtime[2]).run(1)
 
 
@@ -86,13 +86,17 @@ done:
 
 @pytest.mark.parametrize("runtime_name", ["selene_simple_runtime", "selene_soft_rz_runtime"])
 def test_public_native_route_with_zero_timing(runtime_name: str, scheduled_support) -> None:
-    """Zero timing checks scheduling/terminal drain, not idle-noise sensitivity."""
+    """A requested read releases the lazy result under either public runtime."""
     import pecos
     import pecos_rslib as pr
 
     classical = pr.qis_engine().selene_runtime(runtime_name).scheduled_batches().interface(pr.qis_helios_interface())
+    program = scheduled_support.ramsey.replace(
+        "declare void @setup",
+        "declare i1 @___read_future_bool(i64)\ndeclare void @setup",
+    ).replace("  %end =", "  %read = call i1 @___read_future_bool(i64 %r)\n  %end =")
     result = (
-        pecos.sim(pecos.Qis(scheduled_support.ramsey))
+        pecos.sim(pecos.Qis(program))
         .classical(classical)
         .qubits(1)
         .quantum(pr.state_vector())

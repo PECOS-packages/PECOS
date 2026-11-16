@@ -112,14 +112,15 @@ def test_rxyxy2q_stabilizer_statistics(backend: type, theta: float, phi: float, 
 @pytest.mark.parametrize("backend", [Stabilizer, SparseStab, PauliProp])
 def test_rxyxy2q_non_clifford_rejected(backend: type) -> None:
     """Unsupported Clifford rotations surface the Rust error with the gate name."""
+    state = backend() if backend is PauliProp else backend(2)
     with pytest.raises(ValueError, match="RXYXY2Q"):
-        backend(2).run_gate("RXYXY2Q", {(0, 1)}, angles=(0.3, 0))
+        state.run_gate("RXYXY2Q", {(0, 1)}, angles=(0.3, 0))
 
 
 @pytest.mark.parametrize(("theta", "phi"), CLIFFORD_ANGLES)
 def test_rxyxy2q_pauli_propagation(theta: float, phi: float) -> None:
     """PauliProp follows the same Clifford conjugation as RXX or RYY."""
-    actual, reference = PauliProp(2), PauliProp(2)
+    actual, reference = PauliProp(), PauliProp()
     for state in (actual, reference):
         state.track_x([0])
         state.track_z([1])

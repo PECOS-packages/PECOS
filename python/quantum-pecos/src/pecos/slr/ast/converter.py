@@ -31,8 +31,12 @@ Example:
 
 from __future__ import annotations
 
+from dataclasses import replace
+from numbers import Integral, Real
 from typing import TYPE_CHECKING, Any
 
+from pecos.slr._literals import is_bool_literal
+from pecos.slr._qubit_args import expand_qubit_args, gate_target_groups, iter_qubit_args
 from pecos.slr.ast._block_substitution import BodyRemap, substitute_stmt
 from pecos.slr.ast.nodes import (
     AllocatorArg,
@@ -74,8 +78,12 @@ from pecos.slr.ast.nodes import (
     VarExpr,
     WhileStmt,
 )
+from pecos.slr.main import Main
+from pecos.slr.vars import LoopVar, SymbolicBit
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pecos.slr.ast.nodes import (
         BlockArg,
         Expression,
@@ -83,7 +91,6 @@ if TYPE_CHECKING:
         TypeExpr,
     )
     from pecos.slr.block import Block
-    from pecos.slr.main import Main
 
 
 # SLR prep-gate symbol -> canonical AST prep basis. The basis
@@ -191,6 +198,8 @@ class SlrToAst:
         # position/count (a single final root ReturnOp can come from a qeclib
         # block, e.g. `Main(q, EncodingCircuit(q))`).
         self._in_flattened_block = False
+        # LoopVars of the For loops being converted; one used elsewhere is unbound.
+        self._loop_vars: list[LoopVar] = []
 
     def convert(self, block: Main | Block) -> Program:
         """Convert an SLR Main/Block to an AST Program.
@@ -204,6 +213,8 @@ class SlrToAst:
         self._position = 0
         self._block_decls = []
         self._decl_counter = 0
+
+        self._validate_names(block)
 
         # Get the block name
         name = getattr(block, "block_name", block.__class__.__name__)
@@ -221,11 +232,7 @@ class SlrToAst:
         allocator = None
         for var in block.vars:
             if hasattr(var, "capacity"):  # QAlloc detection
-                allocator = AllocatorDecl(
-                    name=var.name,
-                    capacity=var.capacity,
-                    parent=var.parent.name if var.parent else None,
-                )
+                allocator = self._convert_var_to_declaration(var)
                 break
 
         return Program(
@@ -235,34 +242,120 @@ class SlrToAst:
             returns=returns,
             allocator=allocator,
             block_decls=tuple(self._block_decls),
+            is_fragment=not isinstance(block, Main),
         )
 
-    def _convert_declarations(self, block: Block) -> list:
-        """Convert block variables to AST declarations.
+    def _validate_names(self, block: Block) -> None:
+        """Reject ambiguous register and LoopVar names before SLR identity is lost."""
+        register_names: dict[str, str] = {}
+        self._collect_register_names(block, register_names)
+        self._check_loop_variables(block, {name: f"{kind} {name!r}" for name, kind in register_names.items()})
 
-        This scans both block.vars (for traditional QReg/CReg declarations)
-        and block.ops (for QAllocs created with walrus operator).
+    def _collect_register_names(self, block: Block, register_names: dict[str, str]) -> None:
+        """Record every register name in the program, rejecting quantum/classical clashes.
+
+        Flattened blocks share backend register storage, including siblings,
+        so register names are program-wide. A block input's formal name is not
+        a register name; only the register bound to it is recorded.
         """
-        declarations = []
-        seen_names: set[str] = set()
-
-        # First, scan block.vars for declarations
-        for var in block.vars:
+        bound = [*block.vars, *block.ops]
+        if _has_block_inputs(block):
+            bound.extend(getattr(block, name, None) for name in type(block).block_inputs)
+        for var in bound:
             decl = self._convert_var_to_declaration(var)
-            if decl is not None:
-                declarations.append(decl)
-                seen_names.add(decl.name)
+            if decl is None:
+                continue
+            kind = type(var).__name__
+            previous = register_names.get(decl.name)
+            if previous is not None and (previous == "CReg") != (kind == "CReg"):
+                msg = (
+                    f"SLR conversion: quantum register/allocator and classical register share name {decl.name!r}; "
+                    "rename one of them."
+                )
+                raise ValueError(msg)
+            register_names[decl.name] = kind
+        for child in _nested_blocks(block):
+            self._collect_register_names(child, register_names)
 
-        # Also scan block.ops for QAllocs (they end up in ops when using walrus operator)
-        for op in block.ops:
-            # Only add if QAlloc and not already seen (avoid duplicates)
-            if op.__class__.__name__ == "QAlloc" and op.name not in seen_names:
-                decl = self._convert_var_to_declaration(op)
+    def _check_loop_variables(self, block: Block, names: dict[str, str]) -> None:
+        """Reject a LoopVar named like any register or an enclosing block input.
+
+        `names` maps each conflicting name to its description for the error.
+        """
+        if _has_block_inputs(block):
+            names = {**names, **{name: f"block input {name!r}" for name in type(block).block_inputs}}
+        if type(block).__name__ == "For" and not block.var_is_string and block.var.name in names:
+            name = block.var.name
+            msg = (
+                f"For loop variable {name!r} conflicts with {names[name]}. "
+                "Rename the loop variable or the register, allocator or block input."
+            )
+            raise ValueError(msg)
+        for child in _nested_blocks(block):
+            self._check_loop_variables(child, names)
+
+    def _convert_declarations(self, block: Block) -> list:
+        """Collect ordinary storage before checking function-local declarations.
+
+        The root is always inlined. Nested function blocks may repeat ordinary
+        declarations or their own bound inputs, but cannot introduce local storage.
+        """
+        declarations: dict[str, RegisterDecl | AllocatorDecl] = {}
+        entries: list[tuple[Block, Block | None]] = []
+
+        def walk(current: Block, function: Block | None = None) -> None:
+            entries.append((current, function))
+            for child in _nested_blocks(current):
+                walk(child, child if _has_block_inputs(child) else function)
+
+        def variables(current: Block) -> Iterator[RegisterDecl | AllocatorDecl]:
+            for var in [*current.vars, *(op for op in current.ops if type(op).__name__ == "QAlloc")]:
+                decl = self._convert_var_to_declaration(var)
                 if decl is not None:
-                    declarations.append(decl)
-                    seen_names.add(decl.name)
+                    yield decl
 
-        return declarations
+        def add(decl: RegisterDecl | AllocatorDecl) -> None:
+            previous = declarations.get(decl.name)
+            if previous is not None:
+                size = decl.size if isinstance(decl, RegisterDecl) else decl.capacity
+                previous_size = previous.size if isinstance(previous, RegisterDecl) else previous.capacity
+                if size != previous_size:
+                    msg = (
+                        f"Register {decl.name!r} has conflicting sizes {previous_size} and {size}; "
+                        "rename one or use one size."
+                    )
+                    raise ValueError(msg)
+                if decl != previous:
+                    msg = (
+                        f"Register {decl.name!r} is declared twice as different storage "
+                        f"({previous!r} and {decl!r}); rename one."
+                    )
+                    raise ValueError(msg)
+            else:
+                declarations[decl.name] = decl
+
+        walk(block)
+        for current, function in entries:
+            if function is None:
+                for decl in variables(current):
+                    add(decl)
+        ordinary = dict(declarations)
+        for current, function in entries:
+            if function is None:
+                continue
+            bound = [
+                self._convert_var_to_declaration(getattr(function, name, None)) for name in type(function).block_inputs
+            ]
+            for decl in variables(current):
+                if decl.name not in ordinary and decl not in bound:
+                    msg = (
+                        f"Block {type(function).__name__!r} declares register {decl.name!r}; "
+                        "blocks with block_inputs cannot declare registers yet: "
+                        "declare it in Main or in an ordinary Block."
+                    )
+                    raise ValueError(msg)
+                add(decl)
+        return list(declarations.values())
 
     def _convert_return_types(self, block: Block) -> tuple[TypeExpr, ...]:
         """Convert block return type annotations to AST TypeExpr nodes.
@@ -336,27 +429,42 @@ class SlrToAst:
             return AllocatorDecl(
                 name=var.name,
                 capacity=var.capacity,
-                parent=var.parent.name if var.parent else None,
+                parent=var.parent.name if var.parent is not None else None,
+                offset=var.parent_offset,
             )
 
         # Unknown variable type - skip
         return None
 
-    def _convert_statements(self, ops: list) -> list[Statement]:
+    def _convert_statements(self, ops: list, remap: BodyRemap | None = None) -> list[Statement]:
         """Convert a list of SLR operations to AST statements."""
         statements = []
         for op in ops:
-            stmt = self._convert_statement(op)
+            stmt = self._convert_statement(op, remap)
             if stmt is not None:
                 # Handle flattening of nested blocks
                 if isinstance(stmt, tuple) and len(stmt) == 2 and stmt[0] == "__FLATTEN__":
-                    # Flatten the nested statements into this list
-                    statements.extend(stmt[1])
+                    # Nested blocks are already mapped; gate broadcasting
+                    # produces fresh leaf nodes that still need substitution.
+                    expanded = stmt[1]
+                    if remap is not None and getattr(op, "is_qgate", False):
+                        expanded = [substitute_stmt(gate, remap) for gate in expanded]
+                    statements.extend(expanded)
                 else:
+                    if remap is not None and not isinstance(stmt, BarrierOp):
+                        # Child bodies have already been converted in this scope.
+                        # Substitute only this statement's own references once.
+                        bodies = {}
+                        if isinstance(stmt, IfStmt):
+                            bodies = {"then_body": stmt.then_body, "else_body": stmt.else_body}
+                        elif isinstance(stmt, WhileStmt | ForStmt | RepeatStmt | ParallelBlock):
+                            bodies = {"body": stmt.body}
+                        shell = replace(stmt, **dict.fromkeys(bodies, ()))
+                        stmt = replace(substitute_stmt(shell, remap), **bodies)
                     statements.append(stmt)
         return statements
 
-    def _convert_statement(self, op: Any) -> Statement | None:
+    def _convert_statement(self, op: Any, remap: BodyRemap | None = None) -> Statement | None:
         """Convert a single SLR operation to an AST statement."""
         op_class = op.__class__.__name__
 
@@ -366,23 +474,23 @@ class SlrToAst:
 
         # Control flow
         if op_class == "If":
-            return self._convert_if(op)
+            return self._convert_if(op, remap)
 
         if op_class == "While":
-            return self._convert_while(op)
+            return self._convert_while(op, remap)
 
         if op_class == "For":
-            return self._convert_for(op)
+            return self._convert_for(op, remap)
 
         if op_class == "Repeat":
-            return self._convert_repeat(op)
+            return self._convert_repeat(op, remap)
 
         if op_class == "Parallel":
-            return self._convert_parallel(op)
+            return self._convert_parallel(op, remap)
 
         # Misc statements
         if op_class == "Barrier":
-            return self._convert_barrier(op)
+            return self._convert_barrier(op, remap)
 
         if op_class == "Comment":
             return CommentOp(text=op.txt)
@@ -419,7 +527,7 @@ class SlrToAst:
             prev_in_flattened = self._in_flattened_block
             self._in_flattened_block = True
             try:
-                flattened = self._convert_statements(op.ops)
+                flattened = self._convert_statements(op.ops, remap)
             finally:
                 self._in_flattened_block = prev_in_flattened
             return ("__FLATTEN__", flattened)
@@ -450,7 +558,7 @@ class SlrToAst:
 
         inputs_spec = type(block).block_inputs  # type: ignore[attr-defined]
         cls_name = type(block).__name__
-        remap = BodyRemap()
+        remap = BodyRemap(block_name=cls_name)
         block_inputs: list[BlockInput] = []
         arg_bindings: list[BlockArg] = []
         out_bindings: list[BlockArg] = []
@@ -575,13 +683,14 @@ class SlrToAst:
                 scratch_inputs.append(input_name)
 
         # Build the BlockDecl body by converting block.ops in a NEW sub-converter,
-        # then remapping outer -> param via the shared substitute_stmt. Share
+        # resolving outer -> param refs before widening Barrier operands. Share
         # `_decl_counter` so nested converted Blocks get globally-unique names.
         sub = SlrToAst()
         sub._decl_counter = self._decl_counter  # type: ignore[attr-defined]
-        sub_body = sub._convert_statements(block.ops)  # type: ignore[attr-defined]
+        sub._loop_vars = list(self._loop_vars)
+        sub_body = sub._convert_statements(block.ops, remap)  # type: ignore[attr-defined]
         self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
-        rewritten_body = tuple(substitute_stmt(stmt, remap) for stmt in sub_body)
+        rewritten_body = tuple(sub_body)
 
         # A SCRATCH input is only sound if the block
         # resets it before any other use and never touches it after the
@@ -617,7 +726,7 @@ class SlrToAst:
         if gate_name in _PREP_BASIS:
             return self._convert_prep(gate, basis=_PREP_BASIS[gate_name])
 
-        if gate_name == "Measure":
+        if gate_name == "MeasureZ":
             return self._convert_measure(gate)
 
         # Regular gate
@@ -627,46 +736,13 @@ class SlrToAst:
             msg = f"Unknown gate type: {gate_name}"
             raise ValueError(msg)
 
-        # Check if qargs contains tuples of qubit pairs (for multi-qubit gates)
-        # Pattern: CX((q1, q2), (q3, q4), ...) where each tuple is one gate application
-        if gate.qargs and gate_kind.arity > 1 and isinstance(gate.qargs[0], tuple):
-            # Each element of qargs is a tuple of qubits for one gate application
-            gates = []
-            for qubit_tuple in gate.qargs:
-                # Expand any registers in the tuple
-                expanded_tuple = self._expand_qubit_args(list(qubit_tuple))
-                targets = tuple(self._convert_qubit_ref(q) for q in expanded_tuple)
-                params: tuple = ()
-                if gate.params:
-                    params = tuple(self._convert_expression(p) for p in gate.params)
-                gates.append(GateOp(gate=gate_kind, targets=targets, params=params))
-            return ("__FLATTEN__", gates)
-
-        # Expand full registers into individual qubits
-        expanded_qargs = self._expand_qubit_args(gate.qargs)
-
-        # For single-qubit gates applied to full register, generate multiple gates
-        if gate_kind.arity == 1 and len(expanded_qargs) > 1:
-            # Return a special marker to generate multiple gate operations
-            gates = []
-            for q in expanded_qargs:
-                target = self._convert_qubit_ref(q)
-                params: tuple = ()
-                if gate.params:
-                    params = tuple(self._convert_expression(p) for p in gate.params)
-                gates.append(GateOp(gate=gate_kind, targets=(target,), params=params))
-            # Return flattening marker
-            return ("__FLATTEN__", gates)
-
-        # Convert targets
-        targets = tuple(self._convert_qubit_ref(q) for q in expanded_qargs)
-
-        # Convert parameters if present
-        params = ()
-        if gate.params:
-            params = tuple(self._convert_expression(p) for p in gate.params)
-
-        return GateOp(gate=gate_kind, targets=targets, params=params)
+        groups = gate_target_groups(gate.qargs, gate_kind.arity, gate_name)
+        params = tuple(self._convert_expression(p) for p in gate.params) if gate.params else ()
+        gates = [
+            GateOp(gate=gate_kind, targets=tuple(self._convert_qubit_ref(q) for q in group), params=params)
+            for group in groups
+        ]
+        return ("__FLATTEN__", gates)
 
     def _convert_prep(self, gate: Any, basis: str = "PZ") -> Statement:
         """Convert an SLR prep gate to an AST PrepareOp.
@@ -680,11 +756,8 @@ class SlrToAst:
             raise ValueError(msg)
 
         # A stray STRING qarg on ANY prep gate is rejected loudly.
-        # `_expand_qubit_args` silently drops strings, so a basis
-        # string (`PZ(q, "X")`, the legacy `Prep(q, "X")`, etc.)
-        # would otherwise be silently dropped and the gate lowered as
-        # its plain basis -- a miscompile under the prep-basis
-        # symmetry rule. The prep basis is the gate identity; pass NO string.
+        # Give a basis-specific diagnostic before general qubit validation.
+        # The prep basis is the gate identity; pass NO string.
         for arg in gate.qargs:
             if isinstance(arg, str):
                 msg = (
@@ -696,7 +769,7 @@ class SlrToAst:
                 raise NotImplementedError(msg)
 
         # Expand full registers into individual qubits
-        expanded_qargs = self._expand_qubit_args(gate.qargs)
+        expanded_qargs = expand_qubit_args(gate.qargs, gate.sym)
 
         if not expanded_qargs:
             msg = "Prep gate has no expanded qubit arguments"
@@ -715,9 +788,9 @@ class SlrToAst:
         return PrepareOp(allocator=allocator, slots=slots, basis=basis)
 
     def _convert_measure(self, gate: Any) -> MeasureOp:
-        """Convert an SLR Measure gate to an AST MeasureOp."""
+        """Convert an SLR MeasureZ gate to an AST MeasureOp."""
         # Expand full registers into individual qubits
-        expanded_qargs = self._expand_qubit_args(gate.qargs)
+        expanded_qargs = expand_qubit_args(gate.qargs, gate.sym)
         targets = tuple(self._convert_qubit_ref(q) for q in expanded_qargs)
 
         # Convert classical output bits if present
@@ -727,32 +800,6 @@ class SlrToAst:
             results = tuple(self._convert_bit_ref(b) for b in expanded_cout)
 
         return MeasureOp(targets=targets, results=results)
-
-    def _expand_qubit_args(self, qargs: list) -> list:
-        """Expand qubit arguments, converting full registers to individual qubits.
-
-        Filters out non-qubit arguments like strings (a stray basis
-        string on a prep gate is rejected upstream in `_convert_prep`).
-        """
-        expanded = []
-        for q in qargs:
-            if isinstance(q, str):
-                # Skip non-qubit string arguments
-                continue
-            if isinstance(q, list):
-                # This is a slice (list of qubits) - recursively expand
-                expanded.extend(self._expand_qubit_args(q))
-            elif hasattr(q, "size") and hasattr(q, "elems"):
-                # This is a full register (QReg) - expand to all qubits
-                expanded.extend(q.elems)
-            elif hasattr(q, "index") and isinstance(q.index, int):
-                # This is an individual qubit with integer index
-                expanded.append(q)
-            elif hasattr(q, "reg"):
-                # This is an individual qubit reference
-                expanded.append(q)
-            # Skip other non-qubit arguments
-        return expanded
 
     def _expand_bit_args(self, bits: list) -> list:
         """Expand bit arguments, converting full registers to individual bits."""
@@ -783,28 +830,33 @@ class SlrToAst:
 
     def _convert_bit_ref(self, bit: Any) -> BitRef:
         """Convert an SLR Bit to an AST BitRef."""
+        if isinstance(bit, SymbolicBit):
+            msg = (
+                f"For loop variable {bit.index_var.name!r}: symbolic bit indices are not supported by this conversion."
+            )
+            raise NotImplementedError(msg)
         register = bit.reg.sym if hasattr(bit.reg, "sym") else str(bit.reg)
         return BitRef(register=register, index=bit.index)
 
-    def _convert_if(self, op: Any) -> IfStmt:
+    def _convert_if(self, op: Any, remap: BodyRemap | None = None) -> IfStmt:
         """Convert an SLR If block to an AST IfStmt."""
         condition = self._convert_expression(op.cond)
-        then_body = tuple(self._convert_statements(op.ops))
+        then_body = tuple(self._convert_statements(op.ops, remap))
 
         else_body: tuple = ()
         if op.else_block is not None:
-            else_body = tuple(self._convert_statements(op.else_block.ops))
+            else_body = tuple(self._convert_statements(op.else_block.ops, remap))
 
         return IfStmt(condition=condition, then_body=then_body, else_body=else_body)
 
-    def _convert_while(self, op: Any) -> WhileStmt:
+    def _convert_while(self, op: Any, remap: BodyRemap | None = None) -> WhileStmt:
         """Convert an SLR While block to an AST WhileStmt."""
         condition = self._convert_expression(op.cond)
-        body = tuple(self._convert_statements(op.ops))
+        body = tuple(self._convert_statements(op.ops, remap))
 
         return WhileStmt(condition=condition, body=body)
 
-    def _convert_for(self, op: Any) -> ForStmt:
+    def _convert_for(self, op: Any, remap: BodyRemap | None = None) -> ForStmt:
         """Convert an SLR For block to an AST ForStmt."""
         variable = str(op.var) if not isinstance(op.var, str) else op.var
 
@@ -826,32 +878,43 @@ class SlrToAst:
             stop = self._convert_expression(op.stop)
             step = self._convert_expression(op.step) if op.step is not None and op.step != 1 else None
 
-        body = tuple(self._convert_statements(op.ops))
+        self._loop_vars.append(op.var)
+        try:
+            body = tuple(self._convert_statements(op.ops, remap))
+        finally:
+            self._loop_vars.pop()
 
         return ForStmt(variable=variable, start=start, stop=stop, step=step, body=body)
 
-    def _convert_repeat(self, op: Any) -> RepeatStmt:
+    def _convert_repeat(self, op: Any, remap: BodyRemap | None = None) -> RepeatStmt:
         """Convert an SLR Repeat block to an AST RepeatStmt."""
         count = op.cond  # Repeat uses cond to store the count
-        body = tuple(self._convert_statements(op.ops))
+        body = tuple(self._convert_statements(op.ops, remap))
 
         return RepeatStmt(count=count, body=body)
 
-    def _convert_parallel(self, op: Any) -> ParallelBlock:
+    def _convert_parallel(self, op: Any, remap: BodyRemap | None = None) -> ParallelBlock:
         """Convert an SLR Parallel block to an AST ParallelBlock."""
-        body = tuple(self._convert_statements(op.ops))
+        body = tuple(self._convert_statements(op.ops, remap))
         return ParallelBlock(body=body)
 
-    def _convert_barrier(self, op: Any) -> BarrierOp:
+    def _convert_barrier(self, op: Any, remap: BodyRemap | None = None) -> BarrierOp:
         """Convert an SLR Barrier to an AST BarrierOp."""
-        allocators: tuple = ()
-        if op.qregs:
-            allocators = tuple(
-                q.sym if hasattr(q, "sym") else str(q)
-                for q in op.qregs
-                if not hasattr(q, "index")  # Skip individual qubits
-            )
-        return BarrierOp(allocators=allocators)
+        # BarrierOp stores allocator names. Widen single-qubit operands to
+        # their owner rather than losing the requested fence entirely.
+        allocators = []
+        for operand in iter_qubit_args(op.qregs, "Barrier"):
+            if hasattr(operand, "reg"):
+                ref = self._convert_qubit_ref(operand)
+                if remap is not None:
+                    ref = remap.slot(ref)
+                name = ref.allocator
+            else:
+                name = operand.sym
+                if remap is not None:
+                    name = remap.whole_name(name, context="Barrier")
+            allocators.append(name)
+        return BarrierOp(allocators=tuple(dict.fromkeys(allocators)))
 
     def _convert_return(self, op: Any) -> ReturnOp:
         """Convert an SLR Return to an AST ReturnOp.
@@ -1001,8 +1064,21 @@ class SlrToAst:
             return LiteralExpr(value=expr)
 
         # Literal values
-        if isinstance(expr, bool | int | float):
-            return LiteralExpr(value=expr)
+        if is_bool_literal(expr):
+            return LiteralExpr(value=bool(expr))
+        if isinstance(expr, Integral):
+            return LiteralExpr(value=int(expr))
+        if isinstance(expr, Real):
+            return LiteralExpr(value=float(expr))
+
+        if isinstance(expr, LoopVar):
+            if not any(var is expr for var in self._loop_vars):
+                msg = (
+                    f"LoopVar {expr.name!r} is used outside the For loop that binds it; "
+                    "use it only inside that loop's body, and pass this LoopVar object to For(...) to bind it."
+                )
+                raise ValueError(msg)
+            return VarExpr(name=expr.name)
 
         expr_class = expr.__class__.__name__
 
@@ -1078,6 +1154,13 @@ def _has_block_inputs(block: Block) -> bool:
     return isinstance(getattr(type(block), "block_inputs", None), dict)
 
 
+def _nested_blocks(block: Block) -> Iterator[Block]:
+    yield from (op for op in block.ops if hasattr(op, "ops"))
+    else_block = getattr(block, "else_block", None)
+    if else_block is not None:
+        yield else_block
+
+
 def _normalize_effect(value: Any, *, where: str) -> ResourceEffect:
     """Accept either a ResourceEffect enum or its lowercased string name."""
     if isinstance(value, ResourceEffect):
@@ -1108,7 +1191,7 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
     (scratch inputs must have a flat Prep -> ... -> Measure
     lifecycle).
     """
-    if isinstance(stmt, CommentOp):
+    if isinstance(stmt, CommentOp | BarrierOp):
         return []
     if isinstance(stmt, PrepareOp):
         return ["PREP"] if stmt.allocator == name else []
@@ -1116,8 +1199,6 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
         return ["MEASURE"] if any(t.allocator == name for t in stmt.targets) else []
     if isinstance(stmt, GateOp):
         return ["USE"] if any(t.allocator == name for t in stmt.targets) else []
-    if isinstance(stmt, BarrierOp):
-        return ["USE"] if name in stmt.allocators else []
     if isinstance(stmt, PermuteOp):
         refs = (*stmt.sources, *stmt.targets)
         return ["UNSUPPORTED"] if any(_ref_base_name(r) == name for r in refs) else []
@@ -1197,7 +1278,7 @@ def _validate_scratch_input(
         )
         raise ValueError(msg)
     if not events:
-        msg = f"{where}: declared SCRATCH but never used in the block body (expected PZ(...) then Measure(...))"
+        msg = f"{where}: declared SCRATCH but never used in the block body (expected PZ(...) then MeasureZ(...))"
         raise ValueError(msg)
     if events[0] != "PREP":
         msg = (

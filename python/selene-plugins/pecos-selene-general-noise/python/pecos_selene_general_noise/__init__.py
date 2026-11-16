@@ -5,9 +5,12 @@ from pecos_selene_general_noise.plugin import (
     GeneralNoiseParameters,
     GeneralNoisePlugin,
     IdleNoise,
+    IndependentHook,
     MeasurementNoise,
     NoiseScaling,
+    PauliLeakageHook,
     PreparationNoise,
+    TransitionHook,
     TwoQubitGateNoise,
 )
 
@@ -16,8 +19,11 @@ __all__ = [
     "GeneralNoiseParameters",
     "GeneralNoisePlugin",
     "IdleNoise",
+    "IndependentHook",
     "MeasurementNoise",
     "NoiseScaling",
+    "PauliLeakageHook",
     "PreparationNoise",
+    "TransitionHook",
     "TwoQubitGateNoise",
 ]

@@ -61,10 +61,16 @@ impl PyParityCheckMatrix {
     }
 
     #[classmethod]
-    fn zeros(_cls: &Bound<'_, PyType>, num_checks: usize, num_qubits: usize) -> Self {
-        Self {
+    fn zeros(
+        _cls: &Bound<'_, PyType>,
+        num_checks: &Bound<'_, PyAny>,
+        num_qubits: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        let num_checks = crate::pauli_bindings::extract_usize_index(num_checks, "num_checks")?;
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
+        Ok(Self {
             inner: RustParityCheckMatrix::zeros(num_checks, num_qubits),
-        }
+        })
     }
 
     fn num_checks(&self) -> usize {
@@ -137,10 +143,16 @@ impl PySymplecticMatrix {
     }
 
     #[classmethod]
-    fn zeros(_cls: &Bound<'_, PyType>, num_rows: usize, num_qubits: usize) -> Self {
-        Self {
+    fn zeros(
+        _cls: &Bound<'_, PyType>,
+        num_rows: &Bound<'_, PyAny>,
+        num_qubits: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        let num_rows = crate::pauli_bindings::extract_usize_index(num_rows, "num_rows")?;
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
+        Ok(Self {
             inner: RustSymplecticMatrix::zeros(num_rows, num_qubits),
-        }
+        })
     }
 
     fn num_rows(&self) -> usize {

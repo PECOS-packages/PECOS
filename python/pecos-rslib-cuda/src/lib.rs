@@ -396,123 +396,163 @@ impl PyCuStateVec {
     }
 
     /// Apply RX rotation gate.
-    fn rx(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn rx(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let angle = Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.rx(Angle64::from_radians(angle), &qubits);
+        self.inner.rx(angle, &qubits);
+        Ok(())
     }
 
     /// Apply RY rotation gate.
-    fn ry(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn ry(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let angle = Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.ry(Angle64::from_radians(angle), &qubits);
+        self.inner.ry(angle, &qubits);
+        Ok(())
     }
 
     /// Apply RZ rotation gate.
-    fn rz(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn rz(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let angle = Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.rz(Angle64::from_radians(angle), &qubits);
+        self.inner.rz(angle, &qubits);
+        Ok(())
     }
 
     /// Apply RXX rotation gate.
-    fn rxx(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn rxx(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let angle = Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
             .iter()
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
-        self.inner.rxx(Angle64::from_radians(angle), &pairs);
+        self.inner.rxx(angle, &pairs);
+        Ok(())
     }
 
     /// Apply RYY rotation gate.
-    fn ryy(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn ryy(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let angle = Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
             .iter()
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
-        self.inner.ryy(Angle64::from_radians(angle), &pairs);
+        self.inner.ryy(angle, &pairs);
+        Ok(())
     }
 
     /// Apply RZZ rotation gate.
-    fn rzz(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn rzz(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let angle = Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
             .iter()
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
-        self.inner.rzz(Angle64::from_radians(angle), &pairs);
+        self.inner.rzz(angle, &pairs);
+        Ok(())
     }
 
     /// Apply RXYXY2Q with angles (theta, phi) in radians.
-    fn rxyxy2q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
+    fn rxyxy2q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let theta = Angle64::try_from_radians(theta)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let phi = Angle64::try_from_radians(phi)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
             .iter()
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
-        self.inner.rxyxy2q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
-            &pairs,
-        );
+        self.inner.rxyxy2q(theta, phi, &pairs);
+        Ok(())
     }
 
     /// Apply controlled-RX gate. Pairs of qubits = (control, target).
-    fn crx(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn crx(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
-            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_crx(
-                angle,
-                QubitId(pair[0]),
-                QubitId(pair[1]),
-            ));
+            self.apply_lowered_controlled_rotation(
+                pecos_core::controlled_rotations::lower_crx(
+                    angle,
+                    QubitId(pair[0]),
+                    QubitId(pair[1]),
+                )
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
+        Ok(())
     }
 
     /// Apply controlled-RY gate. Pairs of qubits = (control, target).
-    fn cry(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn cry(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
-            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_cry(
-                angle,
-                QubitId(pair[0]),
-                QubitId(pair[1]),
-            ));
+            self.apply_lowered_controlled_rotation(
+                pecos_core::controlled_rotations::lower_cry(
+                    angle,
+                    QubitId(pair[0]),
+                    QubitId(pair[1]),
+                )
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
+        Ok(())
     }
 
     /// Apply controlled-RZ gate. Pairs of qubits = (control, target).
-    fn crz(&mut self, angle: f64, qubits: Vec<usize>) {
+    fn crz(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        Angle64::try_from_radians(angle)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
-            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_crz(
-                angle,
-                QubitId(pair[0]),
-                QubitId(pair[1]),
-            ));
+            self.apply_lowered_controlled_rotation(
+                pecos_core::controlled_rotations::lower_crz(
+                    angle,
+                    QubitId(pair[0]),
+                    QubitId(pair[1]),
+                )
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            );
         }
+        Ok(())
     }
 
     /// Apply U gate (general single-qubit rotation).
-    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: Vec<usize>) {
+    fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let theta = Angle64::try_from_radians(theta)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let phi = Angle64::try_from_radians(phi)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let lambda = Angle64::try_from_radians(lambda)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.u(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
-            Angle64::from_radians(lambda),
-            &qubits,
-        );
+        self.inner.u(theta, phi, lambda, &qubits);
+        Ok(())
     }
 
     /// Apply RXY1Q gate (rotation in XY plane).
-    fn rxy1q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
+    fn rxy1q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) -> PyResult<()> {
+        let theta = Angle64::try_from_radians(theta)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let phi = Angle64::try_from_radians(phi)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
-            &qubits,
-        );
+        self.inner.rxy1q(theta, phi, &qubits);
+        Ok(())
     }
 
     // =========================================================================

@@ -24,7 +24,7 @@ pub fn get_pecos_cuda_dir() -> Result<PathBuf> {
 
 /// Get the legacy CUDA installation directory (`~/.pecos/cuda/`)
 fn get_legacy_cuda_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".pecos").join("cuda"))
+    std::env::home_dir().map(|h| h.join(".pecos").join("cuda"))
 }
 
 /// Find CUDA installation, checking local first, then system
@@ -111,11 +111,7 @@ pub fn is_valid_cuda_installation(path: &Path) -> bool {
 
     // Check for cuda_runtime.h
     let runtime_header = path.join("include").join("cuda_runtime.h");
-    if !runtime_header.exists() {
-        return false;
-    }
-
-    true
+    runtime_header.exists()
 }
 
 /// Get CUDA version from an installation

@@ -118,6 +118,7 @@ pub fn z_distance(
 
 fn single_qubit_pauli(pauli: Pauli, qubit: usize) -> PauliString {
     PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, vec![(pauli, QubitId::new(qubit))])
+        .expect("witness conversion emits at most one Pauli per enumerated qubit")
 }
 
 pub(crate) fn mechanisms_from_stabilizer_code(
@@ -180,6 +181,7 @@ fn mechanism_witness_to_pauli(num_qubits: usize, mechanism_indices: &[usize]) ->
             .map(|(qubit, pauli)| (pauli, QubitId::new(qubit)))
             .collect(),
     )
+    .expect("witness conversion emits at most one Pauli per enumerated qubit")
 }
 
 /// Computes connected-cluster distance for any stabilizer code specification.
@@ -315,7 +317,7 @@ mod tests {
         // the weight-1 logical Z0 stays invisible to the Z-only searches.
         let mut spec =
             StabilizerCodeSpec::from_stabilizers(3, vec![Zs([0, 1]), Zs([1, 2])]).unwrap();
-        spec.add_logical_z(Zs([0]));
+        spec.add_logical_z(Zs([0])).unwrap();
         assert_eq!(
             stabilizer_code_distance(&spec, 3).unwrap_err(),
             DistanceProblemError::StabilizerSpec(StabilizerCodeSpecError::MismatchedLogicalLists {

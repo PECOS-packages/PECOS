@@ -182,10 +182,10 @@ def compare_guppy_schedules(
     gates = _runtime_native_gates(runtime)
     gates = None if gates is None else tuple(gates)
     search_dirs = tuple(str(Path(p).resolve()) for p in getattr(runtime, "library_search_dirs", []))
-    defer_measurements = bool(getattr(runtime, "defer_measurements", False))
+    clock_model = getattr(runtime, "clock_model", "continuous")
     frozen_runtime = SimpleNamespace(library_file=library, get_init_args=lambda: list(args),
                                      batch_adapter_factory=factory, native_gates=gates,
-                                     library_search_dirs=search_dirs, defer_measurements=defer_measurements)
+                                     library_search_dirs=search_dirs, clock_model=clock_model)
     audits = []
     for plan in (circuit, candidate):
         if hashlib.sha256(library.read_bytes()).hexdigest() != digest:
@@ -204,6 +204,6 @@ def compare_guppy_schedules(
                                  "library_file": str(library), "library_sha256": digest,
                                  "init_args": list(args), "seed": seed,
                                  "native_gates": gates, "library_search_dirs": search_dirs,
-                                 "defer_measurements": defer_measurements,
+                                 "native_future_protocol": True, "clock_model": clock_model,
                                  "event_adapter": "identity" if factory is None else "delegated"}
     return GuppyScheduleComparison(*audits, json.dumps(report))

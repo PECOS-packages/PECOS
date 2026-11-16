@@ -134,24 +134,6 @@ attributes #0 = { "EntryPoint" }
             if "__quantum__qis__m__body" in content:
                 assert "i32" in content, f"{llvm_file.name} measurements should return i32"
 
-    def test_python_api_availability(self) -> None:
-        """Test Python API for HUGR compilation is available."""
-        from pecos import get_guppy_backends
-
-        backends = get_guppy_backends()
-
-        # Verify backends is a dictionary
-        assert isinstance(backends, dict), "get_guppy_backends should return a dict"
-
-        # Check for expected keys
-        expected_keys = {"guppy_available", "rust_backend"}
-        for key in expected_keys:
-            assert key in backends, f"backends should have '{key}' key"
-            assert isinstance(
-                backends[key],
-                bool,
-            ), f"backends['{key}'] should be boolean"
-
     def test_compile_guppy_to_hugr_api(self) -> None:
         """Test the compile_guppy_to_hugr function."""
         from guppylang import guppy

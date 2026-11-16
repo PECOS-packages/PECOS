@@ -8,6 +8,16 @@ use std::collections::BTreeMap;
 /// Structured metadata attached to QIS operations or lowered quantum operations.
 pub type TraceMetadata = BTreeMap<String, String>;
 
+/// Measurement identity carried by a single output byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "class", rename_all = "snake_case")]
+pub enum ValueProvenance {
+    Constant,
+    Measurement { id: usize },
+    Derived,
+    Unknown,
+}
+
 /// Runtime provenance for a named `result(...)` output.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NamedResultTrace {
@@ -17,6 +27,99 @@ pub struct NamedResultTrace {
     pub values: Vec<bool>,
     /// Runtime measurement result IDs read to produce `values`, in element order.
     pub result_ids: Vec<usize>,
+    /// Byte provenance, unavailable on uninstrumented or integer outputs.
+    pub provenance: Option<Vec<ValueProvenance>>,
+    /// Whether measurement-dependent control has occurred before this output.
+    pub control_dependent: Option<bool>,
+}
+
+/// Program requests handled by the runtime, in source order.
+/// Timing requests use Selene's integer nanosecond units. Custom data is opaque.
+/// Legacy future references are QIR result slots; `Native` requests retain the
+/// Selene ABI's unsigned handles unchanged.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum RuntimeRequest {
+    /// Host-side decoding of observed detector bits. Never submitted to the runtime.
+    /// The instance is a shot-local, contiguous call index, starting at zero.
+    Decode {
+        window_id: u64,
+        instance_id: u64,
+        syndrome: Vec<u8>,
+        /// Version-one UTF-8 JSON supplied by the program, not runtime-certified.
+        /// None identifies the original unbound intrinsic.
+        #[serde(default)]
+        context: Option<Vec<u8>>,
+        /// Runtime-getter snapshots, never populated from caller JSON. Some(empty)
+        /// requests checked decoding of a constant schema; None is legacy/v1.
+        #[serde(default)]
+        observed_reads: Option<Vec<crate::RuntimeObservedRead>>,
+    },
+    /// Selene ABI request: operands are native handles, never QIR slots.
+    Native(SeleneRequest),
+    LocalBarrier {
+        qubits: Vec<usize>,
+        sleep_ns: u64,
+    },
+    GlobalBarrier {
+        sleep_ns: u64,
+    },
+    Custom {
+        tag: u64,
+        data: Vec<u8>,
+    },
+    SimulateDelay {
+        nanoseconds: u64,
+    },
+    IncrementFutureRefcount {
+        result_id: usize,
+    },
+    DecrementFutureRefcount {
+        result_id: usize,
+    },
+}
+
+/// Requests at the Selene ABI boundary. Measurement provenance is a separate,
+/// dense source slot; only the native future is returned to the program.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SeleneRequest {
+    Qalloc,
+    Qfree(u64),
+    Rxy {
+        qubit: u64,
+        theta: f64,
+        phi: f64,
+    },
+    Rz {
+        qubit: u64,
+        theta: f64,
+    },
+    Rzz {
+        qubits: [u64; 2],
+        theta: f64,
+    },
+    Rpp {
+        qubits: [u64; 2],
+        theta: f64,
+        phi: f64,
+    },
+    Reset(u64),
+    Measure {
+        qubit: u64,
+        result_id: usize,
+        leaked: bool,
+    },
+    ReadFuture {
+        future: u64,
+        boolean: bool,
+    },
+    Refcount {
+        future: u64,
+        increment: bool,
+    },
+    LocalBarrier {
+        qubits: Vec<u64>,
+        sleep_ns: u64,
+    },
 }
 
 /// High-level quantum operations that include both QIS and control flow
@@ -54,6 +157,13 @@ pub enum Operation {
     RecordOutput {
         result_id: usize,
         register_name: String,
+    },
+
+    /// Synchronous runtime request. The response slot belongs to the host
+    /// protocol, not to a physical measurement or a native future.
+    RuntimeRequest {
+        request: RuntimeRequest,
+        result_id: Option<usize>,
     },
 
     /// Classical control flow marker

@@ -9,8 +9,9 @@ from dataclasses import replace
 import numpy as np
 import pytest
 from pecos.guppy_gen.gadget_render import render_gadget_function
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import SurfacePatch, hook_injection
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep, TickCircuitRenderer
+from pecos.qec.surface.circuit_builder import QubitAllocation, TickCircuitRenderer
 from pecos.qec.surface.injection import injection_correction_supports
 
 from qec.surface.test_state_injection import _codespace, _equivalent, _mask, _physical_steps
@@ -22,7 +23,7 @@ def _branches(patch, hook, fault=()):
     if fault:
         index = next(i for i, s in enumerate(steps) if s.op_type in {OpType.T, OpType.TDG})
         q = steps[index].qubits[0]
-        steps[index + 1 : index + 1] = [SurfaceCircuitStep(op, [q]) for op in fault]
+        steps[index + 1 : index + 1] = [CircuitStep(op, [q]) for op in fault]
     vector = np.zeros(1 << patch.geometry.num_qubits, dtype=complex)
     vector[0] = 1
     vector, _ = _physical_steps(vector, steps)

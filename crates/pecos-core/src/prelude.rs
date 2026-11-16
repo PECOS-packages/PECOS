@@ -11,7 +11,8 @@
 // the License.
 
 pub use crate::{
-    Angle64, Bit, BitInt, BitUInt, Bits, Set, Signal, TimeScale, TimeUnits, VecSet, bitvec,
+    Angle64, Bit, BitInt, BitUInt, Bits, NonFiniteAngleError, Set, Signal, TimeScale, TimeUnits,
+    VecSet, bitvec,
     errors::PecosError,
     expression::{ExprValue, eval_binary_op, eval_unary_op},
     gate_type::GateType,
@@ -19,7 +20,9 @@ pub use crate::{
     pauli::{Pauli, PauliOperator},
     phase::quarter_phase::QuarterPhase,
     qubit_id::QubitId,
+    radians,
     rng::{RngManageable, rng_manageable::derive_seed},
+    turns,
 };
 
 // Re-export PauliString from its submodule

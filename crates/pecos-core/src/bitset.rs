@@ -139,23 +139,16 @@ impl BitSet {
         (self.words[word_idx] & mask) != 0
     }
 
-    /// Toggle an index without bounds checking.
+    /// Toggle an index without the growth check of [`toggle`](Self::toggle).
     ///
-    /// # Safety
-    /// The caller must ensure the `BitSet` was created with sufficient capacity
-    /// via `with_capacity(max_index)` where `max_index > index`.
+    /// The set must already cover `index`, for example after
+    /// `with_capacity(max_index)` with `index < max_index`.
     ///
-    /// This is an optimization for hot paths like CX gate implementation where
-    /// we know all `BitSets` are pre-sized to `num_qubits`.
+    /// # Panics
+    /// Panics if `index` is beyond the allocated words.
     #[inline]
     pub fn toggle_unchecked(&mut self, index: usize) {
-        let word_idx = index / 64;
-        let bit_idx = index % 64;
-        // SAFETY: Caller guarantees capacity is sufficient
-        // Use get_unchecked_mut for maximum performance
-        unsafe {
-            *self.words.get_unchecked_mut(word_idx) ^= 1u64 << bit_idx;
-        }
+        self.words[index / 64] ^= 1u64 << (index % 64);
     }
 
     /// Remove an index from the set.
@@ -584,6 +577,13 @@ impl crate::index_set::IndexSet for BitSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn toggle_unchecked_beyond_allocation_panics() {
+        let mut set = BitSet::with_capacity(64);
+        set.toggle_unchecked(64);
+    }
 
     #[test]
     fn test_empty() {

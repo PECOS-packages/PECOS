@@ -417,12 +417,7 @@ mod tests {
 
     #[test]
     fn test_gate_label_parameterized() {
-        let label = gate_label(
-            GateType::RZ,
-            &[pecos_core::Angle64::from_radians(
-                std::f64::consts::FRAC_PI_2,
-            )],
-        );
+        let label = gate_label(GateType::RZ, &[pecos_core::Angle64::QUARTER_TURN]);
         assert!(label.starts_with("RZ("));
     }
 

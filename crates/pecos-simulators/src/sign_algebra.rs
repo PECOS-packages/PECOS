@@ -187,7 +187,7 @@ impl SignAlgebra for PhaseSign {
 /// Instead of collapsing to concrete +1/-1 values, this tracks which measurements
 /// contribute to the sign via XOR (symmetric difference) of measurement indices.
 ///
-/// An empty set corresponds to +1 (identity). A set {m1, m2, ...} means the sign
+/// Empty measurement and hidden sets correspond to +1 (identity). A set {m1, m2, ...} means the sign
 /// is the XOR of the outcomes of measurements m1, m2, etc.
 ///
 /// This is useful for:
@@ -197,9 +197,12 @@ impl SignAlgebra for PhaseSign {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SymbolicSign {
     /// Set of measurement indices whose outcomes XOR together to give this sign.
-    /// Empty set = +1 (deterministic 0 outcome).
+    /// When both sets are empty, the sign is +1 (deterministic 0 outcome).
     /// Uses `BitSet` for O(words) XOR operations instead of O(n+m) with `BTreeSet`.
     pub measurements: BitSet,
+    /// Hidden random sources (resets, unrecorded measurements) that no recorded
+    /// measurement has observed yet.
+    pub hidden: BitSet,
 }
 
 impl SymbolicSign {
@@ -207,7 +210,10 @@ impl SymbolicSign {
     #[inline]
     #[must_use]
     pub fn new(measurements: BitSet) -> Self {
-        Self { measurements }
+        Self {
+            measurements,
+            hidden: BitSet::new(),
+        }
     }
 
     /// Create a new symbolic sign from a `BTreeSet` (for compatibility).
@@ -216,6 +222,7 @@ impl SymbolicSign {
     pub fn from_btree_set(measurements: &std::collections::BTreeSet<usize>) -> Self {
         Self {
             measurements: BitSet::from_btree_set(measurements),
+            hidden: BitSet::new(),
         }
     }
 
@@ -225,6 +232,7 @@ impl SymbolicSign {
     pub fn empty() -> Self {
         Self {
             measurements: BitSet::new(),
+            hidden: BitSet::new(),
         }
     }
 
@@ -234,6 +242,7 @@ impl SymbolicSign {
     pub fn single(measurement_index: usize) -> Self {
         Self {
             measurements: BitSet::single(measurement_index),
+            hidden: BitSet::new(),
         }
     }
 }
@@ -252,6 +261,7 @@ impl SignAlgebra for SymbolicSign {
         // BitSet provides O(words) XOR instead of O(n+m) for BTreeSet
         Self {
             measurements: &self.measurements ^ &other.measurements,
+            hidden: &self.hidden ^ &other.hidden,
         }
     }
 
@@ -259,6 +269,7 @@ impl SignAlgebra for SymbolicSign {
     fn multiply_assign(&mut self, other: &Self) {
         // In-place symmetric difference using BitSet's ^= operator
         self.measurements ^= &other.measurements;
+        self.hidden ^= &other.hidden;
     }
 
     #[inline]
@@ -268,6 +279,12 @@ impl SignAlgebra for SymbolicSign {
         Self::single(measurement_index)
     }
 
+    /// The recorded measurements the outcome depends on.
+    ///
+    /// Hidden sources are not part of a record outcome: the simulators re-root
+    /// a hidden source onto the first recorded measurement that observes it, so
+    /// a reported result never holds one. A sign that still holds hidden
+    /// sources describes a random value that this outcome type cannot express.
     #[inline]
     fn to_outcome(&self) -> BitSet {
         self.measurements.clone()
@@ -290,6 +307,21 @@ impl SignAlgebra for SymbolicSign {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_signs_xor_independently_of_records() {
+        let mut left = SymbolicSign::single(0);
+        left.hidden = BitSet::single(1);
+        let mut right = SymbolicSign::single(1);
+        right.hidden = BitSet::single(1);
+        right.hidden.insert(2);
+        let product = left.multiply(&right);
+        assert_eq!(product.measurements, BitSet::from_iter([0, 1]));
+        assert_eq!(product.hidden, BitSet::single(2));
+        left.multiply_assign(&right);
+        assert_eq!(left, product);
+        assert_ne!(left, SymbolicSign::new(left.measurements.clone()));
+    }
 
     #[test]
     fn test_phase_sign_multiply() {

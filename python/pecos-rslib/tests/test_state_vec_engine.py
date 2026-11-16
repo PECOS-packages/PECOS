@@ -13,11 +13,21 @@
 
 """Tests for the StateVecEngine Python bindings."""
 
+import pytest
+
 from pecos_rslib import ByteMessage, StateVecEngine
 
 
 def test_simulator_creation() -> None:
     StateVecEngine(2)
+
+
+def test_undersized_engine_rejects_qubit() -> None:
+    engine = StateVecEngine(1)
+    builder = ByteMessage.quantum_operations_builder()
+    builder.z([2])
+    with pytest.raises(RuntimeError, match="qubit 2.*1 qubits"):
+        engine.process(builder.build())
 
 
 def test_bell_state_correlations() -> None:

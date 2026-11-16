@@ -10,11 +10,13 @@ import hashlib
 import json
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+from copy import copy
 from dataclasses import dataclass, field
 from numbers import Integral
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from pecos._traced_circuit import measurement_ids_in_execution_order
+from pecos._value_provenance import known_provenance_traces
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -118,12 +120,27 @@ def _coerce_parity_terms(
             refs.append(term)
     return _coerce_refs(tuple(refs)), constant
 
+@dataclass(frozen=True, slots=True)
+class InferredOutput:
+    """An element of a tag's flattened per-shot output to infer as a parity."""
+
+    tag: str
+    element: int = 0
+
+    def __post_init__(self) -> None:
+        """Validate the selector before executing a program."""
+        if not isinstance(self.tag, str) or not self.tag:
+            raise ValueError("inferred output tag must be a non-empty string")
+        if isinstance(self.element, bool) or not isinstance(self.element, int) or self.element < 0:
+            raise ValueError("inferred output element must be a non-negative integer")
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class Detector:
     """A detector parity over canonical measurement references."""
 
     refs: tuple[MeasurementRef, ...]
+    inferred_output: InferredOutput | None
     id: int | None
     coords: tuple[float, ...] | None
     metadata: Mapping[str, Any] | None
@@ -148,21 +165,43 @@ class Detector:
         refs_tuple, constant = _coerce_parity_terms(tuple(refs), constant)
         object.__setattr__(self, "constant", constant)
         object.__setattr__(self, "refs", refs_tuple)
+        object.__setattr__(self, "inferred_output", None)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "coords", tuple(float(value) for value in coords) if coords is not None else None)
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)
 
     def __xor__(self, value: bool | int) -> Detector:
         """Return the same detector definition with an explicit XOR constant."""
-        return Detector(
-            *self.refs,
-            id=self.id,
-            coords=self.coords,
-            metadata=self.metadata,
-            constant=self.constant ^ _xor_constant(value),
-        )
+        result = copy(self)
+        object.__setattr__(result, "constant", self.constant ^ _xor_constant(value))
+        return result
 
     __rxor__ = __xor__
+
+    @classmethod
+    def inferred(
+        cls,
+        tag: str,
+        *,
+        element: int = 0,
+        id: int | None = None,
+        coords: Sequence[float] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Self:
+        """Infer this definition from one flattened output element.
+
+        The builder supplies default inference settings when none are given.
+        Unselected outputs are not fitted or required.
+        """
+        selector = InferredOutput(tag, element)
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "constant", False)
+        object.__setattr__(instance, "refs", ())
+        object.__setattr__(instance, "inferred_output", selector)
+        object.__setattr__(instance, "id", id)
+        object.__setattr__(instance, "coords", tuple(float(value) for value in coords) if coords is not None else None)
+        object.__setattr__(instance, "metadata", dict(metadata) if metadata is not None else None)
+        return instance
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -170,6 +209,7 @@ class Observable:
     """A logical-observable parity over canonical measurement references."""
 
     refs: tuple[MeasurementRef, ...]
+    inferred_output: InferredOutput | None
     id: int | None
     metadata: Mapping[str, Any] | None
     constant: bool
@@ -192,14 +232,40 @@ class Observable:
         refs_tuple, constant = _coerce_parity_terms(tuple(refs), constant)
         object.__setattr__(self, "constant", constant)
         object.__setattr__(self, "refs", refs_tuple)
+        object.__setattr__(self, "inferred_output", None)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)
 
     def __xor__(self, value: bool | int) -> Observable:
         """Return the same observable definition with an explicit XOR constant."""
-        return Observable(*self.refs, id=self.id, metadata=self.metadata, constant=self.constant ^ _xor_constant(value))
+        result = copy(self)
+        object.__setattr__(result, "constant", self.constant ^ _xor_constant(value))
+        return result
 
     __rxor__ = __xor__
+
+    @classmethod
+    def inferred(
+        cls,
+        tag: str,
+        *,
+        element: int = 0,
+        id: int | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Self:
+        """Infer this definition from one flattened output element.
+
+        The builder supplies default inference settings when none are given.
+        Unselected outputs are not fitted or required.
+        """
+        selector = InferredOutput(tag, element)
+        instance = object.__new__(cls)
+        object.__setattr__(instance, "constant", False)
+        object.__setattr__(instance, "refs", ())
+        object.__setattr__(instance, "inferred_output", selector)
+        object.__setattr__(instance, "id", id)
+        object.__setattr__(instance, "metadata", dict(metadata) if metadata is not None else None)
+        return instance
 
 
 def surface_memory_dem_spec(
@@ -288,6 +354,7 @@ class _ResolvedSchema:
     detectors_json: str
     observables_json: str
     detector_meas_ids: tuple[tuple[int, ...], ...]
+    detector_ids: tuple[int, ...]
     observable_meas_ids: tuple[tuple[int, tuple[int, ...]], ...]
     ledger: tuple[MeasurementLedgerEntry, ...]
     result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...]
@@ -327,6 +394,8 @@ class GuppyDemBuild:
         )
         object.__setattr__(self, "_parity_constants", constants)
 
+    definition_origins: tuple[Mapping[str, Any], ...] = ()
+
     @property
     def audit(self) -> dict[str, Any]:
         """Return trace and measurement-identity audit metadata."""
@@ -335,6 +404,7 @@ class GuppyDemBuild:
             "schema_fingerprint": self.schema_fingerprint,
             "soundness_scope": "empirical_static_schedule" if self.inference is not None else "static_schedule_only",
             "inference": None if self.inference is None else self.inference.audit,
+            "definition_origins": [dict(origin) for origin in self.definition_origins],
             "named_result_binding": self.named_result_binding,
             "measurement_count": len(runtime_order),
             "runtime_measurement_order": runtime_order,
@@ -441,7 +511,7 @@ def _index_result_traces(
     calls: dict[str, dict[int, tuple[int | None, ...]]] = defaultdict(dict)
     next_occurrence: dict[str, int] = defaultdict(int)
     refs_by_id: dict[int, list[ResultRef]] = defaultdict(list)
-    for trace in traces:
+    for trace in known_provenance_traces(traces):
         tag = trace.get("name")
         if not isinstance(tag, str):
             continue
@@ -559,7 +629,16 @@ def parity_constants(metadata: str | None, kind: str) -> dict[int, int]:
 
 def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     entry = dict(metadata or {})
-    reserved = {"id", "records", "meas_ids", "result_tags", "parity_constant"}.intersection(entry)
+    reserved = {
+        "id",
+        "records",
+        "meas_ids",
+        "result_tags",
+        "coords",
+        "parity_constant",
+        "inferred_from_result_tag",
+        "result_element",
+    }.intersection(entry)
     if reserved:
         raise ValueError(f"detector/observable metadata uses reserved keys: {sorted(reserved)}")
     try:
@@ -578,30 +657,45 @@ def _resolve_dem_specs(
     *,
     circuit: Any,
     result_traces: Sequence[Mapping[str, Any]],
+    inferred_supports: Mapping[InferredOutput, Sequence[int]] | None = None,
 ) -> _ResolvedSchema:
     runtime_order = _measurement_ids_in_runtime_order(circuit)
     num_measurements = len(runtime_order)
     runtime_ids = set(runtime_order)
     result_calls, refs_by_id = _index_result_traces(result_traces)
 
-    resolved_detectors: list[tuple[int, dict[str, Any], tuple[int, ...]]] = []
-    for position, detector in enumerate(detectors):
-        detector_id = position if detector.id is None else detector.id
-        if isinstance(detector_id, bool) or not isinstance(detector_id, int) or detector_id < 0:
-            raise ValueError(f"detector id must be a non-negative integer, got {detector_id!r}")
-        meas_ids = _xor_normalize(
-            [
+    def support(spec: Detector | Observable, context: str) -> tuple[int, ...]:
+        if spec.inferred_output is not None:
+            if inferred_supports is None or spec.inferred_output not in inferred_supports:
+                raise ValueError(f"{context} requires inferred output {spec.inferred_output!r}")
+            ids = inferred_supports[spec.inferred_output]
+            if not set(ids) <= runtime_ids:
+                raise ValueError(f"{context} contains unknown inferred measurement IDs")
+        else:
+            ids = [
                 _resolve_ref(
                     ref,
                     num_measurements=num_measurements,
                     runtime_meas_ids=runtime_ids,
                     result_calls=result_calls,
                 )
-                for ref in detector.refs
-            ],
-            context=f"detector {detector_id}",
-        )
-        entry = _metadata_entry(detector.metadata)
+                for ref in spec.refs
+            ]
+        return _xor_normalize(ids, context=context)
+
+    def entry_metadata(spec: Detector | Observable) -> dict[str, Any]:
+        entry = _metadata_entry(spec.metadata)
+        if spec.inferred_output is not None:
+            entry.update(inferred_from_result_tag=spec.inferred_output.tag, result_element=spec.inferred_output.element)
+        return entry
+
+    resolved_detectors: list[tuple[int, dict[str, Any], tuple[int, ...]]] = []
+    for position, detector in enumerate(detectors):
+        detector_id = position if detector.id is None else detector.id
+        if isinstance(detector_id, bool) or not isinstance(detector_id, int) or detector_id < 0:
+            raise ValueError(f"detector id must be a non-negative integer, got {detector_id!r}")
+        meas_ids = support(detector, f"detector {detector_id}")
+        entry = entry_metadata(detector)
         entry.update({"id": detector_id, "meas_ids": list(meas_ids)})
         if detector.constant:
             entry["parity_constant"] = 1
@@ -619,22 +713,11 @@ def _resolve_dem_specs(
         observable_id = position if observable.id is None else observable.id
         if isinstance(observable_id, bool) or not isinstance(observable_id, int) or observable_id < 0:
             raise ValueError(f"observable id must be a non-negative integer, got {observable_id!r}")
-        meas_ids = _xor_normalize(
-            [
-                _resolve_ref(
-                    ref,
-                    num_measurements=num_measurements,
-                    runtime_meas_ids=runtime_ids,
-                    result_calls=result_calls,
-                )
-                for ref in observable.refs
-            ],
-            context=f"observable {observable_id}",
-        )
+        meas_ids = support(observable, f"observable {observable_id}")
         # Resolving measurement identities says nothing about the noiseless
         # quantum parity or its determinism. Preserve a caller-supplied reference
         # (including surface_memory_dem_spec's), and leave unknown values absent.
-        entry = _metadata_entry(observable.metadata)
+        entry = entry_metadata(observable)
         entry.update({"id": observable_id, "meas_ids": list(meas_ids)})
         if observable.constant:
             entry["parity_constant"] = 1
@@ -683,6 +766,7 @@ def _resolve_dem_specs(
         detectors_json=json.dumps(detector_entries, separators=(",", ":")),
         observables_json=json.dumps(observable_entries, separators=(",", ":")),
         detector_meas_ids=tuple(item[2] for item in resolved_detectors),
+        detector_ids=tuple(item[0] for item in resolved_detectors),
         observable_meas_ids=tuple((item[0], item[2]) for item in resolved_observables),
         ledger=ledger,
         result_ids_by_tag=result_ids_by_tag,
@@ -696,7 +780,7 @@ def _resolved_schema_from_validated_json(
     *,
     circuit: Any,
     result_traces: Sequence[Mapping[str, Any]],
-    allow_array_bindings: bool = False,
+    raw_array_tag: str | None = None,
 ) -> _ResolvedSchema:
     """Build audit data from metadata already validated by the Rust DEM builder."""
     runtime_order = _measurement_ids_in_runtime_order(circuit)
@@ -722,7 +806,7 @@ def _resolved_schema_from_validated_json(
         if calls
         and sorted(calls) == list(range(len(calls)))
         and (
-            allow_array_bindings
+            tag == raw_array_tag
             or all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
         )
         and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
@@ -751,6 +835,7 @@ def _resolved_schema_from_validated_json(
         detectors_json=detectors_json,
         observables_json=observables_json,
         detector_meas_ids=tuple(meas_ids for _, meas_ids in resolved_detectors),
+        detector_ids=tuple(identity for identity, _ in resolved_detectors),
         observable_meas_ids=tuple(resolved_observables),
         ledger=ledger,
         result_ids_by_tag=result_ids_by_tag,

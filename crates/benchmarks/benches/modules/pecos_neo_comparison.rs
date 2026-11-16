@@ -81,7 +81,10 @@ fn bench_noise_application<M: Measurement>(c: &mut Criterion<M>) {
                 b.iter(|| {
                     let noise = ComposableNoiseModel::new()
                         .add_plugin(&CorePlugin)
-                        .add_channel(SingleQubitChannel::depolarizing(0.001));
+                        .add_channel(
+                            SingleQubitChannel::depolarizing(0.001)
+                                .expect("benchmark uses fixed valid noise probabilities"),
+                        );
                     let mut runner = CircuitRunner::<SparseStab>::new()
                         .with_noise(noise)
                         .with_seed(42);
@@ -104,7 +107,10 @@ fn bench_noise_application<M: Measurement>(c: &mut Criterion<M>) {
                 let commands = builder.build();
 
                 b.iter(|| {
-                    let noise = NeoNoiseModelBuilder::new().with_p1(0.001).build();
+                    let noise = NeoNoiseModelBuilder::new()
+                        .with_p1(0.001)
+                        .build()
+                        .expect("benchmark uses fixed valid noise probabilities");
                     let mut runner = CircuitRunner::<SparseStab>::new()
                         .with_noise(noise)
                         .with_seed(42);
@@ -163,8 +169,14 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             let noise = ComposableNoiseModel::new()
                 .add_plugin(&CorePlugin)
-                .add_channel(SingleQubitChannel::depolarizing(0.001))
-                .add_channel(TwoQubitChannel::depolarizing(0.001));
+                .add_channel(
+                    SingleQubitChannel::depolarizing(0.001)
+                        .expect("benchmark uses fixed valid noise probabilities"),
+                )
+                .add_channel(
+                    TwoQubitChannel::depolarizing(0.001)
+                        .expect("benchmark uses fixed valid noise probabilities"),
+                );
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(noise)
                 .with_seed(42);
@@ -190,10 +202,22 @@ fn bench_shot_execution<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             let noise = ComposableNoiseModel::new()
                 .add_plugin(&CorePlugin)
-                .add_channel(PreparationChannel::new(0.001))
-                .add_channel(SingleQubitChannel::depolarizing(0.001))
-                .add_channel(TwoQubitChannel::depolarizing(0.01))
-                .add_channel(MeasurementChannel::symmetric(0.005));
+                .add_channel(
+                    PreparationChannel::new(0.001)
+                        .expect("benchmark uses fixed valid noise probabilities"),
+                )
+                .add_channel(
+                    SingleQubitChannel::depolarizing(0.001)
+                        .expect("benchmark uses fixed valid noise probabilities"),
+                )
+                .add_channel(
+                    TwoQubitChannel::depolarizing(0.01)
+                        .expect("benchmark uses fixed valid noise probabilities"),
+                )
+                .add_channel(
+                    MeasurementChannel::symmetric(0.005)
+                        .expect("benchmark uses fixed valid noise probabilities"),
+                );
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(noise)
                 .with_seed(42);
@@ -350,7 +374,8 @@ fn bench_monte_carlo_comparison<M: Measurement>(c: &mut Criterion<M>) {
                     let noise = NeoNoiseModelBuilder::new()
                         .with_p1(0.01)
                         .with_p2(0.01)
-                        .build();
+                        .build()
+                        .expect("benchmark uses fixed valid noise probabilities");
                     (CircuitRunner::new().with_noise(noise), SparseStab::new(2))
                 },
                 |outcomes| {

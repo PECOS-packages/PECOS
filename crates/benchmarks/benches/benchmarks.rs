@@ -40,6 +40,7 @@ mod modules {
     #[cfg(feature = "cppsparsestab")]
     pub mod sparse_stab_vs_cpp;
     pub mod sparse_stab_w_vs_y;
+    pub mod sparse_stab_workloads;
     pub mod sparse_state_vec;
     #[cfg(feature = "stab-tn")]
     pub mod stab_mps_vs_stab_vec;
@@ -62,8 +63,8 @@ use modules::{
     allocation_overhead, code_distance, cpu_stabilizer_comparison, dem_builder, dem_sampler,
     dod_statevec, fault_catalog, measurement_sampling, native_statevec_comparison, noise_models,
     pauli_ops, pecos_neo_comparison, quizx_eval, rng, set_ops, sparse_stab_w_vs_y,
-    sparse_state_vec, stab_vec, stabilizer_sims, state_vec_sims, surface_code, tick_circuit_layout,
-    trig,
+    sparse_stab_workloads, sparse_state_vec, stab_vec, stabilizer_sims, state_vec_sims,
+    surface_code, tick_circuit_layout, trig,
 };
 
 fn all_benchmarks(c: &mut Criterion) {
@@ -92,6 +93,7 @@ fn all_benchmarks(c: &mut Criterion) {
     #[cfg(feature = "cppsparsestab")]
     sparse_stab_vs_cpp::benchmarks(c);
     sparse_stab_w_vs_y::benchmarks(c);
+    sparse_stab_workloads::benchmarks(c);
     surface_code::benchmarks(c);
     tick_circuit_layout::benchmarks(c);
     #[cfg(feature = "stab-tn")]

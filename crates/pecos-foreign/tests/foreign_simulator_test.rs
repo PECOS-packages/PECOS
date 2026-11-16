@@ -191,7 +191,7 @@ fn test_foreign_simulator_no_rotations() {
 fn test_foreign_simulator_rotation_panic() {
     let mut sim = make_toy_sim(1);
     // Should panic because rx is None
-    sim.rx(std::f64::consts::FRAC_PI_2.into(), &[QubitId(0)]);
+    sim.rx(pecos_core::Angle64::QUARTER_TURN, &[QubitId(0)]);
 }
 
 #[test]

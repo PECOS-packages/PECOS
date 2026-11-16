@@ -380,8 +380,8 @@ entry:
         assert_eq!(
             gate.operation,
             crate::ops::Operation::Quantum(crate::ops::QuantumOp::RXYXY2Q(
-                pecos_core::Angle64::from_radians(-0.73),
-                pecos_core::Angle64::from_radians(0.41)
+                pecos_core::radians!(-0.73),
+                pecos_core::radians!(0.41)
             ))
         );
     }

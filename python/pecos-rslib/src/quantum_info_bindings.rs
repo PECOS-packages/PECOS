@@ -212,7 +212,11 @@ impl PyPauliChannel {
     }
 
     #[staticmethod]
-    fn from_probabilities(num_qubits: usize, probabilities: &Bound<'_, PyAny>) -> PyResult<Self> {
+    fn from_probabilities(
+        num_qubits: &Bound<'_, PyAny>,
+        probabilities: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustPauliChannel::try_new(
                 num_qubits,
@@ -267,7 +271,8 @@ pub struct PyPtm {
 #[pymethods]
 impl PyPtm {
     #[new]
-    fn new(num_qubits: usize, matrix: Vec<Vec<f64>>) -> PyResult<Self> {
+    fn new(num_qubits: &Bound<'_, PyAny>, matrix: Vec<Vec<f64>>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustPtm::try_new(num_qubits, real_matrix_from_rows(matrix)?)
                 .map_err(py_value_err)?,
@@ -275,7 +280,8 @@ impl PyPtm {
     }
 
     #[staticmethod]
-    fn identity(num_qubits: usize) -> PyResult<Self> {
+    fn identity(num_qubits: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustPtm::identity(num_qubits).map_err(py_value_err)?,
         })
@@ -289,8 +295,11 @@ impl PyPtm {
         real_matrix_to_rows(self.inner.matrix())
     }
 
-    fn entry(&self, output: usize, input: usize) -> f64 {
-        self.inner.entry(output, input)
+    fn entry(&self, output: &Bound<'_, PyAny>, input: &Bound<'_, PyAny>) -> PyResult<f64> {
+        let output = crate::pauli_bindings::extract_usize_index(output, "output")?;
+        let input = crate::pauli_bindings::extract_usize_index(input, "input")?;
+        self.inner.matrix().get((output, input)).copied().ok_or_else(||
+            pyo3::exceptions::PyIndexError::new_err(format!("PTM index ({output}, {input}) is outside {} rows and {} columns; choose indices within those dimensions", self.inner.matrix().nrows(), self.inner.matrix().ncols())))
     }
 
     fn to_choi(&self) -> PyResult<PyChoiMatrix> {
@@ -330,7 +339,8 @@ pub struct PyKrausOps {
 #[pymethods]
 impl PyKrausOps {
     #[new]
-    fn new(num_qubits: usize, operators: Vec<Vec<Vec<Complex64>>>) -> PyResult<Self> {
+    fn new(num_qubits: &Bound<'_, PyAny>, operators: Vec<Vec<Vec<Complex64>>>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         let operators = operators
             .into_iter()
             .map(complex_matrix_from_rows)
@@ -399,7 +409,8 @@ pub struct PyChoiMatrix {
 #[pymethods]
 impl PyChoiMatrix {
     #[new]
-    fn new(num_qubits: usize, matrix: Vec<Vec<Complex64>>) -> PyResult<Self> {
+    fn new(num_qubits: &Bound<'_, PyAny>, matrix: Vec<Vec<Complex64>>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustChoiMatrix::try_new(num_qubits, complex_matrix_from_rows(matrix)?)
                 .map_err(py_value_err)?,
@@ -408,9 +419,10 @@ impl PyChoiMatrix {
 
     #[staticmethod]
     fn from_matrix_unit_outputs(
-        num_qubits: usize,
+        num_qubits: &Bound<'_, PyAny>,
         outputs: Vec<Vec<Vec<Complex64>>>,
     ) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustChoiMatrix::from_matrix_unit_outputs(
                 num_qubits,
@@ -502,7 +514,8 @@ pub struct PyProcessTomographyDesign {
 #[pymethods]
 impl PyProcessTomographyDesign {
     #[staticmethod]
-    fn matrix_unit(num_qubits: usize) -> PyResult<Self> {
+    fn matrix_unit(num_qubits: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustProcessTomographyDesign::matrix_unit(num_qubits).map_err(py_value_err)?,
         })
@@ -520,11 +533,14 @@ impl PyProcessTomographyDesign {
         self.inner.num_inputs()
     }
 
-    fn input_index(&self, row: usize, col: usize) -> PyResult<usize> {
+    fn input_index(&self, row: &Bound<'_, PyAny>, col: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let row = crate::pauli_bindings::extract_usize_index(row, "row")?;
+        let col = crate::pauli_bindings::extract_usize_index(col, "col")?;
         self.inner.input_index(row, col).map_err(py_value_err)
     }
 
-    fn input_metadata(&self, index: usize) -> PyResult<(usize, usize, usize)> {
+    fn input_metadata(&self, index: &Bound<'_, PyAny>) -> PyResult<(usize, usize, usize)> {
+        let index = crate::pauli_bindings::extract_usize_index(index, "index")?;
         let input = self.inner.input_metadata(index).map_err(py_value_err)?;
         Ok((input.index, input.row, input.col))
     }
@@ -537,7 +553,8 @@ impl PyProcessTomographyDesign {
             .collect()
     }
 
-    fn input_operator(&self, index: usize) -> PyResult<Vec<Vec<Complex64>>> {
+    fn input_operator(&self, index: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<Complex64>>> {
+        let index = crate::pauli_bindings::extract_usize_index(index, "index")?;
         Ok(complex_matrix_to_rows(
             &self.inner.input_operator(index).map_err(py_value_err)?,
         ))
@@ -582,7 +599,8 @@ pub struct PySuperOp {
 #[pymethods]
 impl PySuperOp {
     #[new]
-    fn new(num_qubits: usize, matrix: Vec<Vec<Complex64>>) -> PyResult<Self> {
+    fn new(num_qubits: &Bound<'_, PyAny>, matrix: Vec<Vec<Complex64>>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustSuperOp::try_new(num_qubits, complex_matrix_from_rows(matrix)?)
                 .map_err(py_value_err)?,
@@ -640,7 +658,8 @@ pub struct PyChiMatrix {
 #[pymethods]
 impl PyChiMatrix {
     #[new]
-    fn new(num_qubits: usize, matrix: Vec<Vec<Complex64>>) -> PyResult<Self> {
+    fn new(num_qubits: &Bound<'_, PyAny>, matrix: Vec<Vec<Complex64>>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustChiMatrix::try_new(num_qubits, complex_matrix_from_rows(matrix)?)
                 .map_err(py_value_err)?,
@@ -680,7 +699,8 @@ pub struct PyStinespring {
 #[pymethods]
 impl PyStinespring {
     #[new]
-    fn new(num_qubits: usize, isometry: Vec<Vec<Complex64>>) -> PyResult<Self> {
+    fn new(num_qubits: &Bound<'_, PyAny>, isometry: Vec<Vec<Complex64>>) -> PyResult<Self> {
+        let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
         Ok(Self {
             inner: RustStinespring::try_new(num_qubits, complex_matrix_from_rows(isometry)?)
                 .map_err(py_value_err)?,
@@ -759,16 +779,36 @@ fn shannon_entropy(probabilities: Vec<f64>, base: f64) -> PyResult<f64> {
 }
 
 #[pyfunction]
-fn negativity(rho: Vec<Vec<Complex64>>, dims: Vec<usize>, subsystem: usize) -> PyResult<f64> {
+fn negativity(
+    rho: Vec<Vec<Complex64>>,
+    dims: Vec<Bound<'_, PyAny>>,
+    subsystem: &Bound<'_, PyAny>,
+) -> PyResult<f64> {
+    let subsystem = crate::pauli_bindings::extract_usize_index(subsystem, "subsystem")?;
+    let dims = dims
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            crate::pauli_bindings::extract_usize_index(value, format_args!("dims[{i}]"))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
     rust_negativity(&complex_matrix_from_rows(rho)?, &dims, subsystem).map_err(py_value_err)
 }
 
 #[pyfunction]
 fn logarithmic_negativity(
     rho: Vec<Vec<Complex64>>,
-    dims: Vec<usize>,
-    subsystem: usize,
+    dims: Vec<Bound<'_, PyAny>>,
+    subsystem: &Bound<'_, PyAny>,
 ) -> PyResult<f64> {
+    let subsystem = crate::pauli_bindings::extract_usize_index(subsystem, "subsystem")?;
+    let dims = dims
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            crate::pauli_bindings::extract_usize_index(value, format_args!("dims[{i}]"))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
     rust_logarithmic_negativity(&complex_matrix_from_rows(rho)?, &dims, subsystem)
         .map_err(py_value_err)
 }
@@ -776,9 +816,23 @@ fn logarithmic_negativity(
 #[pyfunction]
 fn schmidt_decomposition(
     state: Vec<Complex64>,
-    dims: Vec<usize>,
-    left_subsystems: Vec<usize>,
+    dims: Vec<Bound<'_, PyAny>>,
+    left_subsystems: Vec<Bound<'_, PyAny>>,
 ) -> PyResult<Vec<PySchmidtTerm>> {
+    let dims = dims
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            crate::pauli_bindings::extract_usize_index(value, format_args!("dims[{i}]"))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let left_subsystems = left_subsystems
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            crate::pauli_bindings::extract_usize_index(value, format_args!("left_subsystems[{i}]"))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
     pecos_quantum::schmidt_decomposition(&DVector::from_vec(state), &dims, &left_subsystems)
         .map_err(py_value_err)
 }
@@ -786,9 +840,26 @@ fn schmidt_decomposition(
 #[pyfunction]
 fn partial_trace_subsystems(
     rho: Vec<Vec<Complex64>>,
-    dims: Vec<usize>,
-    traced_subsystems: Vec<usize>,
+    dims: Vec<Bound<'_, PyAny>>,
+    traced_subsystems: Vec<Bound<'_, PyAny>>,
 ) -> PyResult<Vec<Vec<Complex64>>> {
+    let dims = dims
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            crate::pauli_bindings::extract_usize_index(value, format_args!("dims[{i}]"))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let traced_subsystems = traced_subsystems
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            crate::pauli_bindings::extract_usize_index(
+                value,
+                format_args!("traced_subsystems[{i}]"),
+            )
+        })
+        .collect::<PyResult<Vec<_>>>()?;
     Ok(complex_matrix_to_rows(
         &rust_partial_trace_subsystems(&complex_matrix_from_rows(rho)?, &dims, &traced_subsystems)
             .map_err(py_value_err)?,
@@ -798,9 +869,17 @@ fn partial_trace_subsystems(
 #[pyfunction]
 fn partial_trace_qubits(
     rho: Vec<Vec<Complex64>>,
-    num_qubits: usize,
-    traced_qubits: Vec<usize>,
+    num_qubits: &Bound<'_, PyAny>,
+    traced_qubits: Vec<Bound<'_, PyAny>>,
 ) -> PyResult<Vec<Vec<Complex64>>> {
+    let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
+    let traced_qubits = traced_qubits
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            crate::pauli_bindings::extract_usize_index(value, format_args!("traced_qubits[{i}]"))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
     Ok(complex_matrix_to_rows(
         &rust_partial_trace_qubits(&complex_matrix_from_rows(rho)?, num_qubits, &traced_qubits)
             .map_err(py_value_err)?,
@@ -843,14 +922,19 @@ fn pauli_channel_diamond_distance(left: &PyPauliChannel, right: &PyPauliChannel)
 }
 
 #[pyfunction]
-fn matrix_unit_basis(num_qubits: usize) -> PyResult<Vec<Vec<Vec<Complex64>>>> {
+fn matrix_unit_basis(num_qubits: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<Vec<Complex64>>>> {
+    let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
     Ok(complex_matrices_to_rows(
         &pecos_quantum::matrix_unit_basis(num_qubits).map_err(py_value_err)?,
     ))
 }
 
 #[pyfunction]
-fn random_density_matrix(num_qubits: usize, seed: u64) -> PyResult<Vec<Vec<Complex64>>> {
+fn random_density_matrix(
+    num_qubits: &Bound<'_, PyAny>,
+    seed: u64,
+) -> PyResult<Vec<Vec<Complex64>>> {
+    let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
     let mut rng = PecosRng::seed_from_u64(seed);
     Ok(complex_matrix_to_rows(
         &rust_random_density_matrix(&mut rng, num_qubits).map_err(py_value_err)?,
@@ -858,7 +942,13 @@ fn random_density_matrix(num_qubits: usize, seed: u64) -> PyResult<Vec<Vec<Compl
 }
 
 #[pyfunction]
-fn random_quantum_channel(num_qubits: usize, num_kraus: usize, seed: u64) -> PyResult<PyKrausOps> {
+fn random_quantum_channel(
+    num_qubits: &Bound<'_, PyAny>,
+    num_kraus: &Bound<'_, PyAny>,
+    seed: u64,
+) -> PyResult<PyKrausOps> {
+    let num_qubits = crate::pauli_bindings::extract_usize_index(num_qubits, "num_qubits")?;
+    let num_kraus = crate::pauli_bindings::extract_usize_index(num_kraus, "num_kraus")?;
     let mut rng = PecosRng::seed_from_u64(seed);
     Ok(PyKrausOps {
         inner: rust_random_quantum_channel(&mut rng, num_qubits, num_kraus)

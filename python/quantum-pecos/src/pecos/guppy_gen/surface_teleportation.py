@@ -5,8 +5,10 @@
 
 The feed-forward uses a physical fold-S round, not a Pauli-frame annotation.
 Noisy execution requires decoded measurement outcomes and a sufficiently good
-resource; the convenience factory uses raw parities and is a noiseless
-reference experiment, not a fault-tolerant magic-state factory.
+resource. By default the factory uses raw parities and is a noiseless
+reference experiment, not a fault-tolerant magic-state factory;
+``forced_decision`` fixes the first correction so that
+``TeleportationDecisionModel.run_decoded`` can execute decoded decisions.
 """
 
 from pecos.guppy_gen._module_loader import load_cached_guppy_source
@@ -47,7 +49,7 @@ def _prepare_input(indent: str) -> list[str]:
     return lines
 
 
-def _teleportation_body(indent: str, dagger: str) -> list[str]:
+def _pre_decision_rounds(indent: str) -> list[str]:
     return [
         f"{indent}for _ in range(comptime(rounds_before)):",
         f"{indent}    syn_data = syndrome_extraction_data(data)",
@@ -56,7 +58,6 @@ def _teleportation_body(indent: str, dagger: str) -> list[str]:
         f'{indent}    output("data_synz", syn_data.synz)',
         f'{indent}    output("resource_synx", syn_resource.synx)',
         f'{indent}    output("resource_synz", syn_resource.synz)',
-        f"{indent}apply_t_teleportation(data, resource, comptime({dagger}))",
     ]
 
 
@@ -217,7 +218,8 @@ def _render_surface_t_teleportation_module(
             "",
             "",
             "def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,",
-            '                     input_state: str = "X", readout_basis: str = "X", dagger: bool = False):',
+            '                     input_state: str = "X", readout_basis: str = "X", dagger: bool = False,',
+            "                     forced_decision: bool | None = None):",
             '    """Raw resource + corrected logical T/TDG. Syndrome rounds are recorded, not decoded."""',
             "    if (type(rounds_before) is not int or type(rounds_after) is not int",
             "            or min(rounds_before, rounds_after) < 0):",
@@ -230,6 +232,8 @@ def _render_surface_t_teleportation_module(
             '        raise ValueError("readout_basis must be X, Y, or Z")',
             "    if type(dagger) is not bool:",
             '        raise ValueError("dagger must be a boolean")',
+            "    if forced_decision is not None and type(forced_decision) is not bool:",
+            '        raise ValueError("forced_decision must be None or a boolean")',
             "    def experiment() -> None:",
         ],
     )
@@ -240,10 +244,15 @@ def _render_surface_t_teleportation_module(
             "            resource = prepare_injected_tdg()",
             "        else:",
             "            resource = prepare_injected_t()",
-            *_teleportation_body("        ", "dagger"),
+            *_pre_decision_rounds("        "),
+            "        if comptime(forced_decision is None):",
+            "            apply_t_teleportation(data, resource, comptime(dagger))",
+            "        else:",
+            "            consume_t_resource(data, resource)",
+            "            correct_t_teleportation(data, comptime(forced_decision is True), comptime(dagger))",
             *_readout_body("        "),
             "    return guppy(variant_scoped(",
-            "        experiment, rounds_before, rounds_after, input_state, readout_basis, dagger))",
+            "        experiment, rounds_before, rounds_after, input_state, readout_basis, dagger, forced_decision))",
             "",
         ],
     )
@@ -263,6 +272,7 @@ def make_surface_t_teleportation(
     input_state: str = "X",
     readout_basis: str = "X",
     dagger: bool = False,
+    forced_decision: bool | None = None,
     resource_preparation: str = "raw",
     verification_rounds: int | None = None,
 ) -> object:
@@ -272,6 +282,10 @@ def make_surface_t_teleportation(
     are ``patch.geometry.num_data + patch.geometry.num_qubits``. No trusted
     DEM certificate is attached: non-Clifford adaptive execution cannot be
     represented by the existing static Clifford detector-model pipeline.
+
+    ``forced_decision`` overrides the first correction while preserving the
+    resource readout. None uses raw parity; bools support external decoding
+    with ``TeleportationDecisionModel.run_decoded``.
 
     Set ``resource_preparation="hook"`` for a heralded hook resource with
     ``verification_rounds`` extra checks (None uses the hook renderer default). Rejected attempts emit
@@ -284,6 +298,9 @@ def make_surface_t_teleportation(
     if resource_preparation == "hook":
         if type(dagger) is not bool:
             msg = "dagger must be a boolean"
+            raise ValueError(msg)
+        if forced_decision is not None:
+            msg = "forced_decision is not supported with resource_preparation=hook"
             raise ValueError(msg)
         module = (
             load_surface_hook_injection_module(patch)
@@ -311,6 +328,7 @@ def make_surface_t_teleportation(
         input_state=input_state,
         readout_basis=readout_basis,
         dagger=dagger,
+        forced_decision=forced_decision,
     )
 
 
@@ -449,7 +467,8 @@ def render_surface_hook_injection_module(patch: SurfacePatch, verification_round
     lines.extend(_prepare_input("                "))
     lines.extend(
         [
-            *_teleportation_body("                ", 'state == "TDG"'),
+            *_pre_decision_rounds("                "),
+            '                apply_t_teleportation(data, resource, comptime(state == "TDG"))',
             '                output("teleportation_performed", True)',
             "            else:",
             "                data = resource",

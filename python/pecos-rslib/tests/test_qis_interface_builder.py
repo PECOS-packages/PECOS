@@ -166,9 +166,10 @@ class TestQisInterfaceBuilder:
         """
         qis_program = Qis.from_string(simple_qis)
 
-        # No .interface() call - should give helpful error, not silent fallback
+        # Program loading is deferred; missing configuration must fail at build.
+        builder = qis_engine().selene_runtime("selene_simple_runtime").program(qis_program)
         with pytest.raises(RuntimeError) as exc_info:
-            qis_engine().program(qis_program)
+            builder.to_sim().qubits(1).run(1)
 
         error_msg = str(exc_info.value)
         # Error message should guide the user on how to fix it

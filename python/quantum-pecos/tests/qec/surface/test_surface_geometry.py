@@ -407,6 +407,10 @@ def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
     # physical detector coordinates and independent sources across that relabeling.
     assert _coordinate_normalized_sources(composed) == _coordinate_normalized_sources(reference)
     assert _coordinate_normalized_sources(composed) == _coordinate_normalized_sources(one_shot)
+    sectors = reference.detector_fault_sectors()
+    assert {sector for _, sector in sectors} >= {"X", "Z"}
+    assert composed.detector_fault_sectors() == sectors
+    assert one_shot.detector_fault_sectors() == sectors
 
 
 def test_cached_surface_slices_reconstruct_a_longer_memory_experiment():
@@ -533,6 +537,9 @@ def test_cached_surface_slices_reconstruct_a_longer_memory_experiment():
     reference, _, _ = build_model(5)
     assert composed.to_string() == reference.to_string()
     assert _coordinate_normalized_sources(composed) == _coordinate_normalized_sources(reference)
+    sectors = reference.detector_fault_sectors()
+    assert {sector for _, sector in sectors} >= {"X", "Z"}
+    assert composed.detector_fault_sectors() == sectors
 
     # Two copies of the same destination cancel. This deliberately projects
     # every local logical column while retaining the declared output schema.

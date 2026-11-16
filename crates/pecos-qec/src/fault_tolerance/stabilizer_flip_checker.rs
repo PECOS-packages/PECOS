@@ -44,7 +44,7 @@
 //! let checker = StabilizerFlipChecker::new(&code);
 //!
 //! // Check if a specific error is detectable
-//! let x_error = PauliString::from_decomposed(QuarterPhase::PlusOne, [0], [], []);
+//! let x_error = PauliString::from_decomposed(QuarterPhase::PlusOne, [0], [], []).unwrap();
 //! let result = checker.classify_error(&x_error);
 //! assert!(matches!(result, ErrorClass::DetectableLogical { .. }));
 //! ```
@@ -645,6 +645,7 @@ fn build_pauli_string(positions: &[usize], paulis: &[u8]) -> PauliString {
     }
 
     PauliString::from_decomposed(QuarterPhase::PlusOne, xs, ys, zs)
+        .expect("error enumeration chooses distinct positions and partitions them by Pauli")
 }
 
 #[cfg(test)]
@@ -666,12 +667,12 @@ mod tests {
 
     /// Helper to create X-only `PauliString`
     fn pauli_x(qubits: &[usize]) -> PauliString {
-        PauliString::from_decomposed(QuarterPhase::PlusOne, qubits.iter().copied(), [], [])
+        PauliString::from_decomposed(QuarterPhase::PlusOne, qubits.iter().copied(), [], []).unwrap()
     }
 
     /// Helper to create Z-only `PauliString`
     fn pauli_z(qubits: &[usize]) -> PauliString {
-        PauliString::from_decomposed(QuarterPhase::PlusOne, [], [], qubits.iter().copied())
+        PauliString::from_decomposed(QuarterPhase::PlusOne, [], [], qubits.iter().copied()).unwrap()
     }
 
     #[test]
@@ -1032,7 +1033,7 @@ mod tests {
         let checker = StabilizerFlipChecker::new(&code);
 
         // Y = iXZ, so Y on qubit 0 has both X and Z components
-        let y0 = PauliString::from_decomposed(QuarterPhase::PlusOne, [], [0], []);
+        let y0 = PauliString::from_decomposed(QuarterPhase::PlusOne, [], [0], []).unwrap();
         let flips = checker.compute_flips(&y0);
 
         // Y0 anti-commutes with Z0Z1 (due to X component)

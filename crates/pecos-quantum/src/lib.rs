@@ -70,6 +70,7 @@ mod circuit_inspection;
 mod circuit_inspector;
 mod dag_circuit;
 pub mod diamond_norm;
+mod fault_sector;
 pub mod measures;
 pub mod pass;
 pub mod pauli_group;
@@ -85,13 +86,17 @@ pub use circuit_display::DiagramRangeError;
 pub use circuit_inspection::{CircuitInspection, InspectionOperation, InspectionSource};
 pub use dag_circuit::{
     AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagGateError, DagTraversalIndex,
-    MeasRef, MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
+    DagWireError, MeasRef, MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
+};
+pub use fault_sector::{
+    MeasurementClass, parse_fault_sector, parse_measurement_classes, resolve_detector_fault_sector,
+    validate_measurement_classes_length,
 };
 pub use pecos_core::circuit_diagram::{AngleUnit, DiagramRenderer, DiagramStyle};
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
     Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,
-    TickMeasureHandle, TickPrepHandle,
+    TickMeasResolveError, TickMeasureHandle, TickPrepHandle,
 };
 
 // Re-export commonly used types from dependencies

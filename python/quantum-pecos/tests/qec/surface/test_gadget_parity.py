@@ -13,12 +13,11 @@ import pytest
 from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
 from pecos.guppy_gen.protocol_render import render_surface_protocol_module
 from pecos.guppy_gen.surface import generate_guppy_source
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     GuppyRenderer,
-    OpType,
     QubitAllocation,
-    SurfaceCircuitStep,
     TickCircuitRenderer,
     build_surface_code_circuit,
     generate_tick_circuit_from_patch,
@@ -186,9 +185,17 @@ def test_standalone_allocation(geometry: str, basis: str) -> None:
     assert len(first_annotations) == len(second_annotations)
     for left, right in zip(first_annotations, second_annotations, strict=True):
         assert {k: v for k, v in left.items() if k != "pauli"} == {k: v for k, v in right.items() if k != "pauli"}
-        assert left["pauli"].get_phase() == right["pauli"].get_phase()
-        assert [(axis, q + 100) for axis, q in left["pauli"].get_paulis()] == right["pauli"].get_paulis()
-        assert [q + 100 for q in left["pauli"].qubits()] == right["pauli"].qubits()
+        if left["kind"] == "tracked_pauli":
+            assert left["pauli"].get_phase() == right["pauli"].get_phase()
+            assert [(axis, q + 100) for axis, q in left["pauli"].get_paulis()] == right["pauli"].get_paulis()
+            assert [q + 100 for q in left["pauli"].qubits()] == right["pauli"].qubits()
+        else:
+            assert "pauli" not in left
+            assert "pauli" not in right
+            left_measured = first.measured_paulis(left["measurement_ids"])
+            right_measured = second.measured_paulis(right["measurement_ids"])
+            shifted_measured = [(axis, q + 100) for axis, q in left_measured]
+            assert shifted_measured == right_measured
     assert first.num_ticks() == second.num_ticks()
     keys = (*META_KEYS, "ancilla_budget")
     assert {k: first.get_meta(k) for k in keys} == {k: second.get_meta(k) for k in keys}
@@ -319,9 +326,9 @@ def test_measure_out_rejects_physical_steps_after_data_measurement() -> None:
         gadget,
         steps=(
             *gadget.steps,
-            SurfaceCircuitStep(OpType.ALLOC, [ancilla], "ax0"),
-            SurfaceCircuitStep(OpType.H, [ancilla], "ax0"),
-            SurfaceCircuitStep(OpType.MEASURE, [ancilla], "sx0"),
+            CircuitStep(OpType.ALLOC, [ancilla], "ax0"),
+            CircuitStep(OpType.H, [ancilla], "ax0"),
+            CircuitStep(OpType.MEASURE, [ancilla], "sx0"),
         ),
     )
     with pytest.raises(ValueError, match=gadget.name):
@@ -376,10 +383,10 @@ def test_two_register_ancilla_names() -> None:
             for i, ancilla in enumerate(ancillas):
                 steps.extend(
                     [
-                        SurfaceCircuitStep(OpType.ALLOC, [ancilla]),
-                        SurfaceCircuitStep(OpType.H, [ancilla]),
-                        SurfaceCircuitStep(OpType.CX, [ancilla, allocation.data_qubits[i]]),
-                        SurfaceCircuitStep(OpType.MEASURE, [ancilla], f"{scope}_s{family}{i}"),
+                        CircuitStep(OpType.ALLOC, [ancilla]),
+                        CircuitStep(OpType.H, [ancilla]),
+                        CircuitStep(OpType.CX, [ancilla, allocation.data_qubits[i]]),
+                        CircuitStep(OpType.MEASURE, [ancilla], f"{scope}_s{family}{i}"),
                     ],
                 )
     lines = render_gadget_function(replace(gadget, steps=tuple(steps)))
@@ -401,7 +408,7 @@ def test_unsupported_gadget_operation() -> None:
     patch = SurfacePatch.create(distance=3)
     allocation = default_allocation(patch)
     gadget = logical_pauli_gadget(patch, allocation, pauli="X")
-    gadget = replace(gadget, steps=(SurfaceCircuitStep(OpType.F, [allocation.data_qubits[0]]),))
+    gadget = replace(gadget, steps=(CircuitStep(OpType.F, [allocation.data_qubits[0]]),))
     with pytest.raises(ValueError, match="Unsupported gadget operation: F"):
         render_gadget_function(gadget)
 
@@ -410,7 +417,7 @@ def test_data_allocation_requires_prep() -> None:
     patch = SurfacePatch.create(distance=3)
     allocation = default_allocation(patch)
     gadget = logical_pauli_gadget(patch, allocation, pauli="X")
-    gadget = replace(gadget, steps=tuple(SurfaceCircuitStep(OpType.ALLOC, [q]) for q in allocation.data_qubits))
+    gadget = replace(gadget, steps=tuple(CircuitStep(OpType.ALLOC, [q]) for q in allocation.data_qubits))
     with pytest.raises(ValueError, match="Data allocation requires a preparation gadget"):
         render_gadget_function(gadget)
 
@@ -420,7 +427,7 @@ def test_data_allocation_requires_prep() -> None:
 def test_incomplete_data_run(operation, qubits) -> None:
     patch = SurfacePatch.create(distance=3)
     gadget = measure_out_gadget(patch, default_allocation(patch), basis="Z")
-    gadget = replace(gadget, steps=tuple(SurfaceCircuitStep(operation, [q]) for q in qubits))
+    gadget = replace(gadget, steps=tuple(CircuitStep(operation, [q]) for q in qubits))
     with pytest.raises(ValueError, match=f"{operation.name} must cover all data in register order"):
         render_gadget_function(gadget)
 

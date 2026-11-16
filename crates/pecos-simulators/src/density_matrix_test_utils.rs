@@ -78,7 +78,8 @@ pub fn seeded_oracle_circuit() -> Vec<OracleGate> {
         .map(|kind| {
             let q = QubitId(rng.random_range(0..3));
             let other = QubitId((q.index() + rng.random_range(1..3)) % 3);
-            let angle = Angle64::from_radians(rng.random_range(-2.5..2.5));
+            let angle = Angle64::try_from_radians(rng.random_range(-2.5..2.5))
+                .expect("the oracle RNG samples the finite range -2.5..2.5");
             match kind {
                 0 => OracleGate::H(q),
                 1 => OracleGate::Sz(q),

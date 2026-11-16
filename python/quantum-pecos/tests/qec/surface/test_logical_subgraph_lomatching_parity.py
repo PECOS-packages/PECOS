@@ -99,7 +99,7 @@ def test_parity_memory_z():
     b = LogicalCircuitBuilder()
     b.add_patch(SurfacePatch.create(distance=3), "A")
     b.add_memory("A", 3, "Z")
-    dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    dem_str = str(b.build_dem(p1=0.001, p2=0.001, p_meas=0.001))
     _assert_parity(dem_str, b.stab_coords())
 
 
@@ -113,5 +113,5 @@ def test_parity_transversal_cx():
     b.add_memory(["C", "T"], 3, "Z")
     b.add_transversal_cx("C", "T")
     b.add_memory(["C", "T"], 3, "Z")
-    dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    dem_str = str(b.build_dem(p1=0.001, p2=0.001, p_meas=0.001))
     _assert_parity(dem_str, b.stab_coords())

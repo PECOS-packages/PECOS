@@ -10,7 +10,7 @@ use num_complex::Complex64;
 use pecos_core::gate_type::{
     GateType, NAMED_SINGLE_QUBIT_GATES, NAMED_TWO_QUBIT_ROOT_GATES, TwoQubitGateMatrix,
 };
-use pecos_core::{Angle64, Clifford, QubitId};
+use pecos_core::{Clifford, QubitId};
 use pecos_simulators::state_vector_test_utils::StateVectorSimulator;
 use pecos_simulators::{
     ArbitraryRotationGateable, CHForm, CliffordGateable, SparseStateVecAoS, SparseStateVecSoA,
@@ -249,8 +249,8 @@ where
     for gate in NAMED_SINGLE_QUBIT_GATES {
         let mut sim = S::with_seed(1, 42);
         let qubit = [QubitId(0)];
-        sim.ry(Angle64::from_radians(0.731), &qubit)
-            .rz(Angle64::from_radians(-0.417), &qubit);
+        sim.ry(pecos_core::radians!(0.731), &qubit)
+            .rz(pecos_core::radians!(-0.417), &qubit);
         let input = [sim.get_amplitude(0), sim.get_amplitude(1)];
         apply_named_gate(&mut sim, gate, &qubit);
         let actual = [sim.get_amplitude(0), sim.get_amplitude(1)];
@@ -272,8 +272,8 @@ where
     for &gate in Clifford::all_1q() {
         let mut sim = S::with_seed(1, 42);
         let qubit = [QubitId(0)];
-        sim.ry(Angle64::from_radians(0.731), &qubit)
-            .rz(Angle64::from_radians(-0.417), &qubit);
+        sim.ry(pecos_core::radians!(0.731), &qubit)
+            .rz(pecos_core::radians!(-0.417), &qubit);
         let input = [sim.get_amplitude(0), sim.get_amplitude(1)];
         apply_clifford_gate(&mut sim, gate, &qubit);
         let actual = [sim.get_amplitude(0), sim.get_amplitude(1)];
@@ -283,10 +283,10 @@ where
 }
 
 fn prepare_three_qubit_state<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
-    sim.ry(Angle64::from_radians(0.731), &[QubitId(0)])
-        .rz(Angle64::from_radians(-0.417), &[QubitId(0)])
-        .rx(Angle64::from_radians(-0.293), &[QubitId(1)])
-        .ry(Angle64::from_radians(0.619), &[QubitId(2)])
+    sim.ry(pecos_core::radians!(0.731), &[QubitId(0)])
+        .rz(pecos_core::radians!(-0.417), &[QubitId(0)])
+        .rx(pecos_core::radians!(-0.293), &[QubitId(1)])
+        .ry(pecos_core::radians!(0.619), &[QubitId(2)])
         .cx(&[(QubitId(0), QubitId(1))])
         .cz(&[(QubitId(1), QubitId(2))]);
 }
@@ -298,13 +298,13 @@ fn state_vector<S: StateVectorSimulator>(sim: &mut S) -> Vec<Complex64> {
 }
 
 fn prepare_six_qubit_state<S: StateVectorSimulator + ArbitraryRotationGateable>(sim: &mut S) {
-    sim.ry(Angle64::from_radians(0.731), &[QubitId(0)])
-        .rz(Angle64::from_radians(-0.417), &[QubitId(0)])
-        .rx(Angle64::from_radians(-0.293), &[QubitId(1)])
-        .ry(Angle64::from_radians(0.619), &[QubitId(2)])
-        .rz(Angle64::from_radians(0.383), &[QubitId(3)])
-        .rx(Angle64::from_radians(-0.227), &[QubitId(4)])
-        .ry(Angle64::from_radians(0.511), &[QubitId(5)])
+    sim.ry(pecos_core::radians!(0.731), &[QubitId(0)])
+        .rz(pecos_core::radians!(-0.417), &[QubitId(0)])
+        .rx(pecos_core::radians!(-0.293), &[QubitId(1)])
+        .ry(pecos_core::radians!(0.619), &[QubitId(2)])
+        .rz(pecos_core::radians!(0.383), &[QubitId(3)])
+        .rx(pecos_core::radians!(-0.227), &[QubitId(4)])
+        .ry(pecos_core::radians!(0.511), &[QubitId(5)])
         .cx(&[
             (QubitId(0), QubitId(2)),
             (QubitId(1), QubitId(4)),

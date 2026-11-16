@@ -25,7 +25,7 @@ def test_generated_batch_round_trip_preserves_shots_and_provenance(tmp_path) -> 
     assert loaded.dem == dem
     assert loaded.metadata_json == metadata
     assert loaded.generator.startswith("pecos-rslib ")
-    assert loaded.format_version == 1
+    assert loaded.format_version == 2
     assert [loaded.get_syndrome(i) for i in range(loaded.num_shots)] == [
         batch.get_syndrome(i) for i in range(batch.num_shots)
     ]

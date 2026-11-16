@@ -102,7 +102,7 @@ class TestQASMEquivalence:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
 
         # AST path first (before direct generator mutates prog)
@@ -275,7 +275,7 @@ class TestConditionalEquivalence:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c[0] == 1).Then(
                 qb.X(q[0]),
             ),
@@ -450,7 +450,7 @@ class TestNestedControlFlowEquivalence:
             c := CReg("c", 1),
             Repeat(cond=2).block(
                 qb.H(q[0]),
-                qb.Measure(q[0]) > c[0],
+                qb.MeasureZ(q[0]) > c[0],
                 If(c[0] == 1).Then(
                     qb.X(q[0]),
                 ),
@@ -502,7 +502,7 @@ class TestNestedControlFlowEquivalence:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
             If(c[0] == 1)
             .Then(
                 qb.X(q[0]),
@@ -515,13 +515,14 @@ class TestNestedControlFlowEquivalence:
         ast = slr_to_ast(prog)
         ast_qasm = generate(ast, "qasm")
 
-        gen = QASMGenerator(skip_headers=True, _internal=True)
-        gen.generate_block(prog)
-        direct_qasm = "\n".join(gen.output)
+        # The else-branch runs under the negated comparison
+        assert "if(c[0] == 1) x q[0];" in ast_qasm
+        assert "if(c[0] != 1) z q[0];" in ast_qasm
 
-        # Both should have X and Z gates
-        assert "x" in direct_qasm.lower() or "z" in direct_qasm.lower()
-        assert "x" in ast_qasm.lower() or "z" in ast_qasm.lower()
+        # The deprecated generator rejects else blocks instead of dropping them
+        gen = QASMGenerator(skip_headers=True, _internal=True)
+        with pytest.raises(NotImplementedError, match="else block"):
+            gen.generate_block(prog)
 
 
 class TestTGateEquivalence:
@@ -693,7 +694,7 @@ class TestComplexCircuitEquivalence:
             c := CReg("c", 1),
             Repeat(cond=3).block(
                 qb.H(q[0]),
-                qb.Measure(q[0]) > c[0],
+                qb.MeasureZ(q[0]) > c[0],
             ),
         )
 

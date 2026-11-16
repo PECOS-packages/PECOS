@@ -3,27 +3,36 @@
 //! This module defines the message formats, headers, and constants
 //! used in the byte protocol.
 
-use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
 
 // Magic bytes to identify PECOS message batches - "PECS"
 pub const BATCH_MAGIC: u32 = 0x50_45_43_53;
-// Current protocol version
-pub const PROTOCOL_VERSION: u8 = 1;
+// Version 8 widens ordinary gate qubit counts to u32, retaining version 5's
+// u64 angle fractions. Versions 6/7 encode scheduled batches/events; version 2
+// is the runtime envelope.
+// Legacy versions 1 (ordinary) and 3/4 (scheduled) used lossy f64 radians.
+pub const PROTOCOL_VERSION: u8 = 8;
+/// Scheduled frame transport with exact angle fractions.
+pub const SCHEDULED_FRAME_VERSION: u8 = 6;
+/// Scheduled event transport with exact angle fractions.
+pub const SCHEDULED_EVENT_VERSION: u8 = 7;
 
-bitflags! {
-    /// Flags that can be set on individual messages
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct MessageFlags: u8 {
-        const NONE          = 0b0000_0000;
-        const RESERVED_0    = 0b0000_0001; // Reserved for future use
-        const RESERVED_1    = 0b0000_0010; // Reserved for future use
-        const RESERVED_2    = 0b0000_0100; // Reserved for future use
-        const RESERVED_3    = 0b0000_1000; // Reserved for future use
-        const RESERVED_4    = 0b0001_0000; // Reserved for future use
-        const RESERVED_5    = 0b0010_0000; // Reserved for future use
-        const RESERVED_6    = 0b0100_0000; // Reserved for future use
-        const RESERVED_7    = 0b1000_0000; // Reserved for future use
+/// Flags that can be set on individual messages.
+///
+/// No flag is defined yet: all eight bits of the header's flag byte are
+/// reserved for future use, and [`MessageHeader::get_flags`] returns them as
+/// carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageFlags(u8);
+
+impl MessageFlags {
+    /// No flags set.
+    pub const NONE: Self = Self(0);
+
+    /// The flag byte as written to the message header.
+    #[must_use]
+    pub const fn bits(self) -> u8 {
+        self.0
     }
 }
 
@@ -111,7 +120,7 @@ impl MessageHeader {
     /// Get the message flags from a raw header
     #[must_use]
     pub fn get_flags(&self) -> MessageFlags {
-        MessageFlags::from_bits_truncate(self.flags)
+        MessageFlags(self.flags)
     }
 }
 
@@ -120,12 +129,14 @@ impl MessageHeader {
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 pub struct GateHeader {
     pub gate_type: u8,  // Gate type (using GateType enum values)
-    pub num_qubits: u8, // Number of qubits
     pub has_params: u8, // Whether gate has parameters (1=yes, 0=no)
-    pub reserved: u8,   // Reserved for future use (padding for alignment)
+    pub reserved: u16,  // Reserved for future use
+    pub num_qubits: u32, // Number of qubits
                         // Followed by:
                         // - qubit_indices: [u32; num_qubits]
-                        // - parameters: depends on gate type (if has_params=1)
+                        // - angles: little-endian u64 Angle64 fractions (angle_arity words)
+                        // - non-angle parameters: little-endian f64 words
+                        // Custom treats every parameter word as an angle.
 }
 
 // MeasurementHeader removed - measurements now use regular gate structure

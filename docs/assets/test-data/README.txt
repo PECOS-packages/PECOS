@@ -8,23 +8,24 @@ When documentation code examples need external files, place them here. The doc t
 
 ## Example Files
 
-- `repetition_code.hugr` - A compiled repetition code circuit (TODO: generate)
+- `repetition_code.hugr` - A compiled repetition code circuit
 
 ## Generating HUGR Files
 
 HUGR files can be generated from Guppy programs:
 
 ```python
-from guppylang import GuppyModule
-from guppylang.std.quantum import qubit, cx, measure
+from guppylang import guppy
+from pathlib import Path
+from guppylang.std.quantum import qubit, discard
 
 @guppy
 def my_circuit() -> None:
     q = qubit()
-    # ... circuit logic ...
+    discard(q)
 
 # Export to HUGR
-my_circuit.compile().save("my_circuit.hugr")
+Path("my_circuit.hugr").write_bytes(my_circuit.compile().to_bytes())
 ```
 
 ## Note

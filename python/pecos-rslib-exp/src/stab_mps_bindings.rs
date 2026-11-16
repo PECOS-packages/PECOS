@@ -156,7 +156,8 @@ fn stabilizer_state_from_generators(
             };
             paulis.push((pauli, QubitId(q)));
         }
-        let row = PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis);
+        let row = PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         if row.is_identity() {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "stabilizer generator {generator_index} must not be identity"

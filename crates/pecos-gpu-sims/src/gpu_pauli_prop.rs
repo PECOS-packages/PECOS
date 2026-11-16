@@ -112,6 +112,10 @@ struct Params {
 }
 
 impl GpuPauliProp {
+    fn check_qubit(&self, index: usize) {
+        crate::qubit_validation::check_qubit(index, self.num_qubits, "GpuPauliProp");
+    }
+
     /// Create a new GPU Pauli propagator.
     ///
     /// # Arguments
@@ -133,6 +137,12 @@ impl GpuPauliProp {
     /// Returns an error if no GPU adapter is found or device creation fails.
     #[allow(clippy::cast_possible_truncation)] // GPU params: qubit/shot counts fit in u32
     pub fn with_seed(num_qubits: usize, num_shots: u32, seed: u64) -> Result<Self, String> {
+        if num_qubits == 0 || u32::try_from(num_qubits).is_err() {
+            return Err(format!(
+                "GpuPauliProp: register size {num_qubits} is unsupported; construct the simulator with 1..={} qubits",
+                u32::MAX
+            ));
+        }
         let ctx = gpu_context().map_err(|e| e.to_string())?;
         let device = ctx.device;
         let queue = ctx.queue;
@@ -349,24 +359,42 @@ impl GpuPauliProp {
     // =========================================================================
 
     /// Apply Hadamard gate. Transforms: X <-> Z, Y -> -Y
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn h(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         for &q in qubits {
             self.queue_gate(GATE_H, q as u32, 0);
         }
     }
 
     /// Apply SZ (S) gate. Transforms: X -> Y, Y -> -X, Z -> Z
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn sz(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         for &q in qubits {
             self.queue_gate(GATE_SZ, q as u32, 0);
         }
     }
 
     /// Apply SZ-dagger gate. Transforms: X -> -Y, Y -> X, Z -> Z
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn szdg(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         for &q in qubits {
             self.queue_gate(GATE_SZDG, q as u32, 0);
         }
@@ -375,24 +403,42 @@ impl GpuPauliProp {
     /// Apply Pauli X gate. For Pauli-fault tracking this is a no-op on the bit
     /// pattern (X P X = +/- P). To inject an X fault instead, call
     /// [`Self::inject_x_fault`].
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn x(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         for &q in qubits {
             self.queue_gate(GATE_X, q as u32, 0);
         }
     }
 
     /// Apply Pauli Y gate. No-op on fault bits (Y P Y = +/- P).
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn y(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         for &q in qubits {
             self.queue_gate(GATE_Y, q as u32, 0);
         }
     }
 
     /// Apply Pauli Z gate. No-op on fault bits (Z P Z = +/- P).
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn z(&mut self, qubits: &[usize]) {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         for &q in qubits {
             self.queue_gate(GATE_Z, q as u32, 0);
         }
@@ -400,8 +446,15 @@ impl GpuPauliProp {
 
     /// Apply CX (CNOT) gate.
     /// Transforms: `ctrl_X` -> `tgt_X`, `tgt_Z` -> `ctrl_Z`
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn cx(&mut self, pairs: &[(usize, usize)]) {
+        for &(a, b) in pairs {
+            self.check_qubit(a);
+            self.check_qubit(b);
+        }
         for &(control, target) in pairs {
             self.queue_gate(GATE_CX, control as u32, target as u32);
         }
@@ -409,16 +462,30 @@ impl GpuPauliProp {
 
     /// Apply CZ gate.
     /// Transforms: `ctrl_X` -> `tgt_Z`, `tgt_X` -> `ctrl_Z`
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn cz(&mut self, pairs: &[(usize, usize)]) {
+        for &(a, b) in pairs {
+            self.check_qubit(a);
+            self.check_qubit(b);
+        }
         for &(a, b) in pairs {
             self.queue_gate(GATE_CZ, a as u32, b as u32);
         }
     }
 
     /// Apply SWAP gate.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn swap(&mut self, pairs: &[(usize, usize)]) {
+        for &(a, b) in pairs {
+            self.check_qubit(a);
+            self.check_qubit(b);
+        }
         for &(a, b) in pairs {
             self.queue_gate(GATE_SWAP, a as u32, b as u32);
         }
@@ -429,20 +496,32 @@ impl GpuPauliProp {
     // =========================================================================
 
     /// Inject X fault on a qubit for all shots.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn inject_x_fault(&mut self, qubit: usize) {
+        self.check_qubit(qubit);
         self.queue_gate(FAULT_X, qubit as u32, 0);
     }
 
     /// Inject Z fault on a qubit for all shots.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn inject_z_fault(&mut self, qubit: usize) {
+        self.check_qubit(qubit);
         self.queue_gate(FAULT_Z, qubit as u32, 0);
     }
 
     /// Inject Y fault on a qubit for all shots.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32
     pub fn inject_y_fault(&mut self, qubit: usize) {
+        self.check_qubit(qubit);
         self.queue_gate(FAULT_Y, qubit as u32, 0);
     }
 
@@ -454,8 +533,12 @@ impl GpuPauliProp {
     /// # Arguments
     /// * `qubit` - The qubit to potentially apply fault to
     /// * `probability` - Error probability (0.0 to 1.0)
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32; f32 threshold is intentional
     pub fn inject_depol1(&mut self, qubit: usize, probability: f32) {
+        self.check_qubit(qubit);
         // Upload fresh random bits
         self.upload_random_bits();
 
@@ -470,8 +553,13 @@ impl GpuPauliProp {
     ///
     /// With probability p, applies a random two-qubit Pauli (one of 15 non-II)
     /// independently per shot.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     #[allow(clippy::cast_possible_truncation)] // qubit index fits in u32; f32 threshold is intentional
     pub fn inject_depol2(&mut self, qubit_a: usize, qubit_b: usize, probability: f32) {
+        self.check_qubit(qubit_a);
+        self.check_qubit(qubit_b);
         // Upload fresh random bits
         self.upload_random_bits();
 
@@ -582,7 +670,13 @@ impl GpuPauliProp {
     ///
     /// Returns a vector of bools, one per shot, indicating if the measurement
     /// outcome would be flipped (true = X or Y fault present = flip).
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn measure_z_flips(&mut self, qubits: &[usize]) -> Vec<Vec<bool>> {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         self.sync();
 
         // Read X faults from GPU
@@ -604,7 +698,13 @@ impl GpuPauliProp {
     }
 
     /// Check which shots would have their X measurement flipped due to Z faults.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn measure_x_flips(&mut self, qubits: &[usize]) -> Vec<Vec<bool>> {
+        for &q in qubits {
+            self.check_qubit(q);
+        }
         self.sync();
 
         let z_faults = self.read_fault_table(&self.z_faults_buffer);
@@ -660,7 +760,16 @@ impl GpuPauliProp {
     ///
     /// # Returns
     /// A vector of bools, one per shot, true if the tracked Pauli string flips.
+    ///
+    /// # Panics
+    /// Panics if any qubit is outside this simulator's register.
     pub fn check_anticommutation(&mut self, x_qubits: &[usize], z_qubits: &[usize]) -> Vec<bool> {
+        for &q in x_qubits {
+            self.check_qubit(q);
+        }
+        for &q in z_qubits {
+            self.check_qubit(q);
+        }
         self.sync();
 
         let x_faults = self.read_fault_table(&self.x_faults_buffer);

@@ -1,7 +1,10 @@
 //! Tests for `BeliefFind` decoder
 
 use ndarray::{Array1, arr1, arr2};
-use pecos_ldpc_decoders::{BeliefFindDecoder, BpMethod, BpSchedule, SparseMatrix, UfMethod};
+use pecos_ldpc_decoders::{
+    BeliefFindDecoder, BpMethod, BpOsdDecoder, BpSchedule, InputVectorType, OsdMethod,
+    SparseMatrix, UfMethod,
+};
 
 /// Create a repetition code parity check matrix
 fn repetition_code(n: usize) -> SparseMatrix {
@@ -294,5 +297,77 @@ mod belief_find_tests {
             "Simple fallback test passed with decoding: {:?}",
             result.decoding
         );
+    }
+
+    /// The Union Find fallback must prefer the bits BP believes are in error.
+    ///
+    /// On a 6-cycle the syndrome has two explanations: bits {0, 1, 2}, which are
+    /// likely, and bits {3, 4, 5}, which are not. After one BP iteration only the
+    /// ends of the likely path are flipped, which leaves the syndrome unsatisfied,
+    /// so the decoder has to take the fallback.
+    #[test]
+    fn test_belief_find_fallback_prefers_likely_bits() {
+        let dense = arr2(&[
+            [1, 0, 0, 0, 0, 1],
+            [1, 1, 0, 0, 0, 0],
+            [0, 1, 1, 0, 0, 0],
+            [0, 0, 1, 1, 0, 0],
+            [0, 0, 0, 1, 1, 0],
+            [0, 0, 0, 0, 1, 1],
+        ]);
+        let pcm = SparseMatrix::from_dense(&dense.view());
+        let channel = [0.3, 0.3, 0.3, 0.01, 0.01, 0.01];
+        let syndrome = arr1(&[1, 0, 0, 1, 0, 0]);
+        let max_iter = 1;
+        let scaling = 1.0;
+
+        // The fallback only runs when BP fails, so show that BP fails here.
+        let mut bp_only = BpOsdDecoder::new(
+            &pcm,
+            None,
+            Some(&channel),
+            max_iter,
+            BpMethod::ProductSum,
+            BpSchedule::Parallel,
+            scaling,
+            OsdMethod::Off,
+            0,
+            InputVectorType::Syndrome,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(!bp_only.decode(&syndrome.view()).unwrap().converged);
+
+        // With one bit per step, growth order decides the result on both methods.
+        // With all bits per step, only Inversion's column order depends on weights.
+        for (method, bits_per_step) in [
+            (UfMethod::Inversion, 0),
+            (UfMethod::Inversion, 1),
+            (UfMethod::Peeling, 1),
+        ] {
+            let mut decoder = BeliefFindDecoder::new(
+                &pcm,
+                None,
+                Some(&channel),
+                max_iter,
+                BpMethod::ProductSum,
+                scaling,
+                BpSchedule::Parallel,
+                None,
+                None,
+                None,
+                method,
+                bits_per_step,
+            )
+            .unwrap();
+            let result = decoder.decode(&syndrome.view()).unwrap();
+            assert_eq!(
+                result.decoding,
+                arr1(&[1, 1, 1, 0, 0, 0]),
+                "{method:?}, bits_per_step {bits_per_step}"
+            );
+        }
     }
 }

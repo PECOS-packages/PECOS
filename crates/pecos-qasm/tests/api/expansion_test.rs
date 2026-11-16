@@ -1,4 +1,4 @@
-use pecos_core::prelude::{Angle64, GateType};
+use pecos_core::prelude::GateType;
 use pecos_qasm::Operation;
 use pecos_qasm::parser::QASMParser;
 
@@ -81,7 +81,7 @@ fn expanded_qasm_keeps_rotation_angles_and_re_parses() {
     };
     assert_eq!(gate.gate_type, GateType::RZ);
     assert_eq!(gate.angles.len(), 1);
-    assert_eq!(gate.angles[0], Angle64::from_radians(0.5));
+    assert_eq!(gate.angles[0], pecos_core::radians!(0.5));
 }
 
 #[test]
@@ -113,5 +113,5 @@ fn expanded_conditional_qasm_keeps_registers_and_angles() {
         panic!("expected a native gate body, got {operation:?}");
     };
     assert_eq!(gate.gate_type, GateType::RZ);
-    assert_eq!(gate.angles[0], Angle64::from_radians(0.5));
+    assert_eq!(gate.angles[0], pecos_core::radians!(0.5));
 }

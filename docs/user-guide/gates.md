@@ -100,8 +100,9 @@ PECOS supports two categories of quantum gates:
 
 `CRX`, `CRY`, `CRZ`, `CPhase`, and `CU1` may be accepted by source-format and
 simulator APIs, but they are boundary spellings rather than stored PECOS gates.
-The HUGR, QIS, PHIR, SLR native-codegen, circuit-builder, and direct-simulator
-ingresses lower them to native Clifford, `RZ`, `RZZ`, and `U` operations.
+The HUGR, QIS, PHIR module, SLR native-codegen, circuit-builder, and
+direct-simulator ingresses lower them to native Clifford, `RZ`, `RZZ`, and `U`
+operations. PHIR-JSON rejects `CPhase`; lower it before emitting PHIR JSON.
 Consequently a lowered `CRZ` is one two-qubit `RZZ` noise location followed by
 one single-qubit `RZ` location in consecutive ticks. Gate counts and traces
 describe those executed native operations.
@@ -776,9 +777,9 @@ fn main() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     // CODE
 }
 ```
@@ -808,7 +809,7 @@ Non-Clifford gates include arbitrary rotation gates that cannot be efficiently s
     let mut sim = StateVec::new(5);
     let q = QubitId(0);
     let (q0, q1) = (QubitId(0), QubitId(1));
-    let theta = Angle64::from_radians(PI / 4.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
     ```
 
 ### Single-Qubit Rotations

@@ -6,11 +6,48 @@
 //! The actual FFI implementation (with `#[no_mangle]` functions) is in `pecos-qis-ffi`.
 
 mod named_results;
+mod observed_reads;
 mod operations;
+pub mod provenance;
+pub use observed_reads::{
+    MAX_RUNTIME_READ_NAME_BYTES, MAX_RUNTIME_READ_TOTAL_NAME_BYTES, MAX_RUNTIME_READS,
+    RuntimeObservedRead, validate_observed_reads,
+};
 
 pub use named_results::{NamedResult, ProgramError};
 
-pub use operations::{LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, TraceMetadata};
+pub use operations::{
+    LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, RuntimeRequest, SeleneRequest,
+    TraceMetadata, ValueProvenance,
+};
+
+/// Version of the ownership-transferring Rust data interface between the host
+/// and dynamically loaded QIS FFI library. Bump when shared types or exported
+/// function contracts change incompatibly; both artifacts must be rebuilt.
+pub const QIS_FFI_ABI_VERSION: u64 = 8;
+
+/// Maximum copied detector bytes in one embedded decoder request.
+pub const MAX_RUNTIME_DETECTORS: usize = 1 << 20;
+
+/// Maximum copied versioned decoder context, independent of detector count.
+pub const MAX_RUNTIME_DECODE_CONTEXT: usize = 1 << 16;
+
+/// Reserved dynamic bridge token for the one synchronous runtime request in
+/// flight. Stored separately from measurement slots; never exposed as a future.
+/// `u64::MAX` remains the bridge's no-request/completion sentinel.
+pub const RUNTIME_REQUEST_RESULT_ID: usize = usize::MAX - 1;
+
+/// Internal feedback lane for runtime-emitted measurements with no source producer.
+/// Occurrences are queued in emission order; this token is never a program result.
+pub const RUNTIME_OWNED_MEASUREMENT_ID: usize = usize::MAX;
+
+/// Presentation aliases for a shot's unique measurement occurrence IDs.
+/// QIR slots select their latest occurrence; native futures never occupy QIR slots.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MeasurementLayout {
+    pub qir_slots: std::collections::BTreeMap<usize, usize>,
+    pub native_sources: std::collections::BTreeSet<usize>,
+}
 
 /// Conservative build identity for the Rust types exchanged with the QIS cdylib.
 ///

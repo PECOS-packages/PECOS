@@ -27,15 +27,16 @@ use pecos_simulators::SparseStab;
 use rand::RngExt;
 use std::collections::HashMap;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Custom Noise Channel Examples ===\n");
 
     example_amplitude_damping();
     example_gate_specific_noise();
-    example_correlated_noise();
+    example_correlated_noise()?;
     example_context_aware_noise();
-    example_builtin_gate_dependent();
-    example_builtin_correlated();
+    example_builtin_gate_dependent()?;
+    example_builtin_correlated()?;
+    Ok(())
 }
 
 // --- Example 1: Amplitude Damping Channel ---
@@ -321,11 +322,17 @@ struct CorrelatedNoiseChannel {
 }
 
 impl CorrelatedNoiseChannel {
-    fn new(base_rate: f64, correlation: f64) -> Self {
-        Self {
-            base_rate,
-            correlation: correlation.clamp(0.0, 1.0),
-        }
+    fn new(
+        base_rate: f64,
+        correlation: f64,
+    ) -> pecos_neo::noise::validation::ValidationResult<Self> {
+        Ok(Self {
+            base_rate: pecos_neo::noise::validation::validate_probability(base_rate, "base_rate")?,
+            correlation: pecos_neo::noise::validation::validate_probability(
+                correlation,
+                "correlation",
+            )?,
+        })
     }
 }
 
@@ -388,7 +395,7 @@ impl NoiseChannel for CorrelatedNoiseChannel {
     }
 }
 
-fn example_correlated_noise() {
+fn example_correlated_noise() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Correlated Noise ---");
 
     let shots = 2000;
@@ -396,7 +403,7 @@ fn example_correlated_noise() {
     for correlation in [0.0, 0.5, 0.9] {
         let noise = ComposableNoiseModel::new()
             .add_plugin(&CorePlugin)
-            .add_channel(CorrelatedNoiseChannel::new(0.1, correlation));
+            .add_channel(CorrelatedNoiseChannel::new(0.1, correlation)?);
 
         // Bell state circuit
         let commands = CommandBuilder::new()
@@ -438,6 +445,7 @@ fn example_correlated_noise() {
     }
     println!("  (Higher correlation → more correlated errors → less anti-correlation)");
     println!();
+    Ok(())
 }
 
 // --- Example 4: Context-Aware Noise ---
@@ -554,7 +562,7 @@ fn example_context_aware_noise() {
 // --- Example 5: Built-in GateDependentChannel ---
 
 /// Demonstrate the built-in `GateDependentChannel` for gate-specific error rates.
-fn example_builtin_gate_dependent() {
+fn example_builtin_gate_dependent() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::{GateDependentChannel, GateNoiseConfig};
 
     println!("--- Built-in GateDependentChannel ---");
@@ -563,13 +571,13 @@ fn example_builtin_gate_dependent() {
 
     // Create a gate-dependent channel with different error rates per gate
     let gate_noise = GateDependentChannel::new()
-        .with_gate_error(GateType::H, 0.20) // 20% error on H gates
-        .with_gate_error(GateType::SZ, 0.02) // 2% error on SZ gates
+        .with_gate_error(GateType::H, 0.20)? // 20% error on H gates
+        .with_gate_error(GateType::SZ, 0.02)? // 2% error on SZ gates
         .with_gate(
             GateType::CX,
-            GateNoiseConfig::new(0.10).with_pauli_weights(PauliWeights::z_biased(0.8)),
+            GateNoiseConfig::new(0.10)?.with_pauli_weights(PauliWeights::z_biased(0.8)?)?,
         ) // 10% Z-biased error on CX
-        .with_default(0.05); // 5% default for unlisted gates
+        .with_default(0.05)?; // 5% default for unlisted gates
 
     // Test H gate (high error rate)
     let h_commands = CommandBuilder::new()
@@ -634,12 +642,13 @@ fn example_builtin_gate_dependent() {
     );
     println!("  (Built-in channel provides same functionality with cleaner API)");
     println!();
+    Ok(())
 }
 
 // --- Example 6: Built-in CorrelatedNoiseChannel ---
 
 /// Demonstrate the built-in `CorrelatedNoiseChannel` for spatially correlated errors.
-fn example_builtin_correlated() {
+fn example_builtin_correlated() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_neo::noise::CorrelatedNoiseChannel;
 
     println!("--- Built-in CorrelatedNoiseChannel ---");
@@ -649,7 +658,7 @@ fn example_builtin_correlated() {
     for correlation in [0.0, 0.5, 0.9] {
         let noise = ComposableNoiseModel::new()
             .add_plugin(&CorePlugin)
-            .add_channel(CorrelatedNoiseChannel::new(0.1, correlation));
+            .add_channel(CorrelatedNoiseChannel::new(0.1, correlation)?);
 
         // Bell state circuit
         let commands = CommandBuilder::new()
@@ -692,4 +701,5 @@ fn example_builtin_correlated() {
     println!("  (Higher correlation -> more correlated errors -> less anti-correlation)");
     println!("  (Built-in CorrelatedNoiseChannel provides easy spatial correlation)");
     println!();
+    Ok(())
 }

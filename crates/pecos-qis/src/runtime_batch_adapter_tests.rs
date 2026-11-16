@@ -1,5 +1,6 @@
 //! Synthetic event protocol tests; no runtime-specific private schemas.
 use super::*;
+use crate::runtime_batch_adapter::MAX_ADAPTER_OPERATIONS;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Phase;
@@ -180,7 +181,7 @@ fn adapter_output_is_checked_before_lowering() {
             qubit_id: 0,
             theta: f64::NAN,
         }],
-        vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; MAX_OPERATIONS + 1],
+        vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; MAX_ADAPTER_OPERATIONS + 1],
     ] {
         assert!(source.validate_output(&bad).is_err());
     }
@@ -209,4 +210,112 @@ fn draining_captured_events_cannot_certify_the_trace() {
     assert!(!runtime.runtime_events_complete());
     runtime.reset().unwrap();
     assert!(runtime.runtime_events_complete());
+}
+
+#[test]
+fn adapter_keeps_shot_identity_after_native_end() {
+    struct Identity(Arc<std::sync::Mutex<Vec<u64>>>);
+    impl RuntimeBatchAdapter for Identity {
+        fn normalize(&mut self, batch: &RuntimeBatch) -> Result<Vec<RuntimeScheduledOp>> {
+            self.0.lock().unwrap().push(batch.shot_id);
+            Phase.normalize(batch)
+        }
+    }
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let records = seen.clone();
+    let mut runtime = runtime();
+    runtime.set_batch_adapter_factory(move || Ok(Box::new(Identity(records.clone()))));
+    runtime.shot_start(19, None).unwrap();
+    runtime.convert_runtime_batch(batch(0)).unwrap();
+    // The native end hook clears these before delivering its final batches.
+    runtime.active_shot = None;
+    runtime.pending_shot_start = None;
+    runtime.convert_runtime_batch(batch(100)).unwrap();
+    runtime.reset().unwrap();
+    runtime.shot_start(20, None).unwrap();
+    runtime.convert_runtime_batch(batch(0)).unwrap();
+    assert_eq!(*seen.lock().unwrap(), [19, 19, 20]);
+}
+
+#[test]
+fn repeated_timed_targets_require_adapter_normalization() {
+    for reset_first in [false, true] {
+        for normalized in [false, true] {
+            let mut runtime = SeleneRuntime::new("synthetic.so");
+            runtime.set_num_qubits(1);
+            if normalized {
+                runtime.set_batch_adapter_factory(|| Ok(Box::new(Phase)));
+            }
+            let first = if reset_first {
+                RuntimeScheduledOp::Reset { qubit_id: 0 }
+            } else {
+                RuntimeScheduledOp::Rxy {
+                    qubit_id: 0,
+                    theta: 0.5,
+                    phi: 0.0,
+                }
+            };
+            let result = runtime.convert_runtime_batch(RuntimeOperationBatch {
+                start_time_nanos: 100,
+                duration_nanos: 20,
+                operations: vec![
+                    first,
+                    RuntimeScheduledOp::Rz {
+                        qubit_id: 0,
+                        theta: 0.5,
+                    },
+                ],
+                ..Default::default()
+            });
+            if normalized {
+                let ops = result.unwrap();
+                assert_eq!(
+                    ops.iter()
+                        .filter(|op| matches!(op, QuantumOp::Idle(..)))
+                        .count(),
+                    usize::from(!reset_first)
+                );
+                assert_eq!(runtime.last_gate_time_end_nanos[0], 120);
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("starts before its previous operation ended")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn normalized_batches_still_reject_cross_batch_overlap() {
+    let mut runtime = runtime();
+    runtime.convert_runtime_batch(batch(100)).unwrap();
+    let error = runtime.convert_runtime_batch(batch(110)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("starts before its previous operation ended")
+    );
+}
+
+#[test]
+fn decoder_batch_capture_retains_normalized_order_without_opaque_payloads() {
+    let mut runtime = runtime();
+    runtime.enable_decoder_batch_capture().unwrap();
+    runtime.convert_runtime_batch(batch(100)).unwrap();
+    let captured = runtime.take_decoder_batches().unwrap();
+    let first = &captured.batches[0];
+    assert!(first.normalization_applied);
+    assert_eq!((first.start_time_nanos, first.duration_nanos), (100, 20));
+    assert_eq!(
+        first.operations,
+        [
+            QuantumOp::Idle(100e-9, 0),
+            QuantumOp::RZ(std::f64::consts::PI, 0),
+            QuantumOp::RXY(0.5, 0.0, 0),
+        ]
+    );
+    assert!(!serde_json::to_string(&captured).unwrap().contains("7301"));
 }

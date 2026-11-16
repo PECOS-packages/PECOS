@@ -58,8 +58,8 @@ pub(crate) fn gate_cases() -> Vec<Gate> {
         gates.push(Gate::u(Angle64::ZERO, Angle64::ZERO, angle, &[0]));
     }
     gates.push(Gate::rxy1q(
-        Angle64::from_turns(0.25 + 1e-12),
-        Angle64::from_turns(0.5 - 1e-12),
+        pecos_core::turns!(0.25 + 1e-12),
+        pecos_core::turns!(0.5 - 1e-12),
         &[0],
     ));
     gates
@@ -166,7 +166,7 @@ pub(crate) fn reference_distribution(gates: &[Gate]) -> Vec<f64> {
                 | GateType::MZ
                 | GateType::MPZ
                 | GateType::MeasureFree
-                | GateType::MeasureLeaked
+                | GateType::MeasureZLeaked
         );
         let prepared = matches!(
             gate.gate_type,

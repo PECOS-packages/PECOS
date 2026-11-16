@@ -64,6 +64,7 @@
 //! ```
 
 pub mod bivariate_bicycle;
+pub mod bivariate_tricycle;
 pub mod bounded_enumeration_distance;
 pub mod code_distance;
 pub mod coloration;
@@ -87,6 +88,7 @@ pub mod surface;
 pub use bivariate_bicycle::{
     BbMemoryBasis, BbMonomial, BivariateBicycleCode, BivariateBicycleError, bb_memory_circuit,
 };
+pub use bivariate_tricycle::{BivariateTricycleCode, BivariateTricycleError};
 pub use bounded_enumeration_distance::{
     BoundedEnumerationBackendError, BoundedEnumerationDistance, CpuLevelEnumerationBackend,
     LevelEnumerationBackend, LevelEnumerationInput, LevelEnumerationMinimum,
@@ -98,7 +100,8 @@ pub use bounded_enumeration_distance::{
 };
 pub use coloration::{ColorationMemoryError, coloration_memory_circuit};
 pub use dem_build::{
-    DemBuild, DemBuildBuilder, DemBuildError, DemBuildInput, DemProgram, DemProgramRequest,
+    DemAnnotationOrigin, DemBuild, DemBuildBuilder, DemBuildError, DemBuildInput, DemDefinition,
+    DemDefinitionOrigin, DemDefinitionSource, DemOutputSelector, DemProgram, DemProgramRequest,
 };
 pub use dem_inference::{
     DemInferenceData, DemInferenceError, DemInferenceReport, DemInferenceSettings,
@@ -159,3 +162,10 @@ pub use stabilizer_code_spec::{
     StabilizerCodeSpec, StabilizerCodeSpecBuilder, StabilizerCodeSpecError,
 };
 pub use surface::{SurfaceCode, SurfaceCodeBuilder};
+
+#[cfg(feature = "selene")]
+mod dem_selene;
+#[cfg(feature = "selene")]
+pub use dem_selene::{SeleneDemEvidence, SeleneDemProgram};
+#[cfg(feature = "hugr")]
+mod dem_hugr;

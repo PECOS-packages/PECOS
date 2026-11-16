@@ -1,6 +1,7 @@
 //! Python bridge for runtime-owned event interpretation on the ordinary QIS path.
 use crate::scheduled_adapter::CallbackScope;
 use pecos_qis::runtime::{Result, RuntimeError};
+use pecos_qis::runtime_batch_adapter::MAX_ADAPTER_OPERATIONS;
 use pecos_qis::scheduled::RuntimeScheduledOp;
 use pecos_qis::{RuntimeBatch, RuntimeBatchAdapter, SeleneRuntime};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -24,7 +25,7 @@ impl RuntimeBatchAdapter for PythonBatchAdapter {
             let snapshot = json.call_method1("loads", (input,))?;
             let result = self.object.call_method1(py, "normalize", (snapshot,))?;
             let output = result.bind(py).cast::<PyList>()?;
-            if output.len() > 4096 {
+            if output.len() > MAX_ADAPTER_OPERATIONS {
                 return Err(PyValueError::new_err(
                     "runtime batch adapter expansion limit",
                 ));

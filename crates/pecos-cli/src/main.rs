@@ -69,6 +69,17 @@ enum Commands {
     Examples(ExamplesArgs),
 
     // === Dev Tool Commands (always available) ===
+    /// Prepare Cargo-reported QIS runtime libraries and print their directory
+    QisRuntime {
+        #[arg(long, value_enum, default_value = "dev")]
+        profile: cli::BuildProfile,
+        /// Include the runtime descriptor fixture for Rust tests
+        #[arg(long)]
+        tests: bool,
+        /// Cargo output directory (also honours `CARGO_TARGET_DIR`)
+        #[arg(long)]
+        target_dir: Option<std::path::PathBuf>,
+    },
     /// Rust/Cargo commands (CUDA-aware)
     #[command(visible_alias = "rs")]
     Rust {
@@ -382,6 +393,10 @@ impl std::str::FromStr for SimulatorType {
 #[cfg(feature = "runtime")]
 #[derive(Args, Clone)]
 struct RunArgs {
+    /// Fixed simulator capacity (required for every QIS program)
+    #[arg(long)]
+    qubits: Option<usize>,
+
     /// Path to the quantum program (LLVM IR, PHIR-JSON, or QASM)
     program: String,
 
@@ -532,6 +547,13 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
     let program_type = detect_program_type(&program_path)?;
     debug!("Detected program type: {program_type:?}");
 
+    if program_type == ProgramType::QIS && args.qubits.is_none() {
+        return Err(PecosError::Input(format!(
+            "QIS program {:?} has no configured qubit capacity; pass --qubits N to bound runtime allocation",
+            args.program
+        )));
+    }
+
     // Set up the engine builder
     let classical_engine_builder = setup_cli_engine_builder(&program_path, args.jit)?;
 
@@ -540,19 +562,10 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
         .classical(classical_engine_builder)
         .workers(args.workers);
 
-    // For QIS programs, we need to detect the number of qubits from the quantum circuit
-    // We'll do this by temporarily building the engine to inspect it
-    let num_qubits = if program_type == ProgramType::QIS {
-        // Build a test simulation to detect qubits from the quantum circuit itself
-        // Use a minimal test run to let the simulation auto-detect the required qubits
-        debug!("Auto-detecting qubit count for QIS program...");
-
-        // For QIS programs, we'll set a reasonable default and let the quantum engine
-        // auto-expand as needed. The bell circuit uses qubits 0 and 1, so we need at least 2.
-        Some(2) // Known requirement for bell.ll
-    } else {
-        None
-    };
+    let num_qubits = args.qubits;
+    if let Some(qubits) = num_qubits {
+        builder = builder.qubits(qubits);
+    }
 
     if let Some(seed) = args.seed {
         builder = builder.seed(seed);
@@ -711,6 +724,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Examples(args) => handle_examples(args)?,
 
         // Dev tool commands (always available)
+        Commands::QisRuntime {
+            profile,
+            tests,
+            target_dir,
+        } => {
+            let mut context = cli::build_context::BuildContext::new(*profile, None);
+            if let Some(target_dir) = target_dir {
+                context.target_dir(target_dir);
+            }
+            println!(
+                "{}",
+                cli::qis_runtime_cmd::prepare(&context, *tests)?
+                    .directory
+                    .display()
+            );
+        }
         Commands::Rust { command } => cli::rust_cmd::run(command)?,
         Commands::Python { command } => cli::python_cmd::run(command)?,
         Commands::Cuda { command } => cli::cuda_cmd::run(command.clone())?,

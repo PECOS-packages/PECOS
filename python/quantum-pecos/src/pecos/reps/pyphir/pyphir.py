@@ -17,10 +17,22 @@ circuit compilation, execution, and representation in the PECOS framework.
 
 from __future__ import annotations
 
+import json
+import math
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from pecos_rslib import validate_phir_qop
+
 import pecos as pc
-from pecos._phir_declarations import validate_declaration_names
+from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
+from pecos._phir_exports import (
+    all_operations,
+    collect_exports,
+    collect_result_types,
+    decode_export,
+    flatten_measure_args,
+)
+from pecos._phir_normalization import canonicalize_measurement_qops
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op
@@ -45,6 +57,7 @@ unsigned_data_types = {
     "u16": pc.dtypes.u16,
     "u32": pc.dtypes.u32,
     "u64": pc.dtypes.u64,
+    "bool": pc.dtypes.bool_,
 }
 
 
@@ -81,6 +94,7 @@ class PyPHIR:
         self.qvar_meta = {}
         self.num_qubits = 0
         self.foreign_func_calls = set()
+        self._static_declarations = False
 
     @classmethod
     def handle_op(cls, o: dict | str | int, p: PyPHIR) -> TypeOp | str | list | int:
@@ -146,7 +160,23 @@ class PyPHIR:
                     metadata = {} if o.get("metadata") is None else o["metadata"]
 
                     if o.get("angles"):
-                        angles = tuple(angle * (pc.f64.pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0])
+                        unit = o["angles"][1]
+                        if not isinstance(unit, str):
+                            msg = f"Angle unit must be a string, got {unit!r}; use rad, pi, or deg"
+                            raise TypeError(msg)
+                        scales = {"rad": 1, "pi": pc.f64.pi, "deg": pc.f64.pi / 180}
+                        if unit not in scales:
+                            msg = f"Unknown angle unit {unit!r}; use rad, pi, or deg"
+                            raise ValueError(msg)
+                        angles = tuple(angle * scales[unit] for angle in o["angles"][0])
+                        for angle in angles:
+                            if not math.isfinite(angle):
+                                value = "NaN" if math.isnan(angle) else str(angle)
+                                msg = (
+                                    f"angle must be finite, got {value} radians; "
+                                    "check the computation or input that produced it"
+                                )
+                                raise ValueError(msg)
                     else:
                         angles = None
 
@@ -157,7 +187,15 @@ class PyPHIR:
                         else:
                             metadata["angles"] = angles
 
+                    validate_phir_qop(
+                        o["qop"],
+                        json.dumps(o.get("args", [])),
+                        angles,
+                        [(name, register.size) for name, register in p.qvar_meta.items()],
+                    )
                     args = cls.get_qargs(o, p)
+                    if o["qop"] == "Measure":
+                        args = flatten_measure_args(args)
 
                     # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
                     if o.get("returns"):
@@ -214,6 +252,12 @@ class PyPHIR:
                         msg = f"Meta instruction '{name}' not implemented/supported."
                         raise NotImplementedError(msg)
 
+                elif o.get("data") == "cvar_export":
+                    variables, to = decode_export(o)
+                    instr = d.ExportVar(variables, to, o.get("metadata"))
+                elif p._static_declarations and o.get("data") in {"cvar_define", "qvar_define"}:
+                    # Declarations in exporting programs are registered at load time.
+                    instr = None
                 elif "//" in o:
                     # Do not include comments
                     instr = None
@@ -225,6 +269,40 @@ class PyPHIR:
                 raise Exception(msg)
 
         return instr
+
+    def _selection_nodes(self) -> list[dict]:
+        """Describe static outputs, including directly supplied PyPHIR."""
+        nodes = [
+            {"data": "cvar_define", "variable": meta.variable, "data_type": meta.data_type, "size": meta.size}
+            for meta in self.cvar_meta
+        ]
+        nodes.extend({"data": "qvar_define", "variable": name} for name in self.qvar_meta)
+
+        def visit(operations: list) -> None:
+            for instr in operations:
+                if isinstance(instr, d.ExportVar):
+                    node = {"data": "cvar_export", "variables": instr.variables}
+                    if instr.to is not None:
+                        node["to"] = instr.to
+                    nodes.append(node)
+                elif isinstance(instr, op.COp) and instr.name == "Result":
+                    nodes.append({"cop": "Result", "args": instr.args, "returns": instr.returns or []})
+                elif isinstance(instr, blk.IfBlock):
+                    visit(instr.true_branch)
+                    visit(instr.false_branch or [])
+                elif isinstance(instr, blk.SeqBlock | blk.QParallelBlock):
+                    visit(instr.ops)
+
+        visit(self.ops)
+        return nodes
+
+    def export_selection(self) -> dict[str, str] | None:
+        """Validate program-wide exports."""
+        return collect_exports(self._selection_nodes())
+
+    def result_types(self) -> dict[str, tuple[str, int]]:
+        """Resolve storage for every Result destination."""
+        return collect_result_types(self._selection_nodes())
 
     @staticmethod
     def get_qargs(o: dict[str, Any], p: PyPHIR) -> list[int] | list[tuple[int]]:
@@ -259,6 +337,7 @@ class PyPHIR:
         name_resolver: Callable[[QOp], str] | None = None,
     ) -> PyPHIR:
         """Takes a PHIR dictionary and converts it into a PyPHIR object."""
+        phir = canonicalize_measurement_qops(phir)
         p = PyPHIR(
             metadata=dict(
                 phir.get("metadata", {}),
@@ -266,17 +345,21 @@ class PyPHIR:
             name_resolver=name_resolver,
         )
 
+        validate_classical_inputs(phir)
         validate_declaration_names(phir["ops"])
 
         next_qvar_int = 0
 
-        for o in phir["ops"]:
+        exports = collect_exports(phir["ops"])
+        p._static_declarations = exports is not None
+        declarations = all_operations(phir["ops"]) if exports is not None else phir["ops"]
+        for o in declarations:
             if "data" in o:
                 name = o["data"]
 
                 if name == "cvar_define":
                     data_type = o["data_type"]
-                    type_width = int(data_type[1:])
+                    type_width = 1 if data_type == "bool" else int(data_type[1:])
                     if "size" in o:
                         size = o["size"]
                     elif data_type in signed_data_types:
@@ -326,9 +409,17 @@ class PyPHIR:
 
                     p.qvar_meta[data.variable] = data
                     p.num_qubits += data.size
-            else:
+
+            elif exports is None:
                 instr = cls.handle_op(o, p)
                 if instr:
                     p.ops.append(instr)
+
+        if exports is not None:
+            for o in phir["ops"]:
+                if o.get("data") not in {"cvar_define", "qvar_define"}:
+                    instr = cls.handle_op(o, p)
+                    if instr:
+                        p.ops.append(instr)
 
         return p

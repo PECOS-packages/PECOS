@@ -242,7 +242,11 @@ fn should_include_gpu_sims(gpu_probe: &GpuProbeResult) -> bool {
     matches!(gpu_probe, GpuProbeResult::Available)
 }
 
-fn maybe_print_gpu_probe_status(gpu_probe: &GpuProbeResult, include_gpu_sims: bool) {
+fn maybe_print_gpu_probe_status(
+    gpu_probe: &GpuProbeResult,
+    include_gpu_sims: bool,
+    unavailable_action: &str,
+) {
     if include_gpu_sims {
         if matches!(gpu_probe, GpuProbeResult::Available) {
             println!("GPU probe succeeded - including pecos-gpu-sims");
@@ -250,10 +254,10 @@ fn maybe_print_gpu_probe_status(gpu_probe: &GpuProbeResult, include_gpu_sims: bo
     } else {
         match gpu_probe {
             GpuProbeResult::Unavailable => {
-                println!("GPU not detected - excluding pecos-gpu-sims");
+                println!("GPU not detected - {unavailable_action}");
             }
             GpuProbeResult::ProbeFailed(details) => {
-                println!("GPU probe failed - excluding pecos-gpu-sims:\n{details}");
+                println!("GPU probe failed - {unavailable_action}:\n{details}");
             }
             GpuProbeResult::Available => {}
         }
@@ -274,32 +278,8 @@ fn is_tool_available(tool: &str) -> bool {
 /// `SDKROOT`, etc.) so build scripts that need external tools find the
 /// PECOS-managed installs without further plumbing.
 fn run_cargo_command(args: &[&str]) -> bool {
-    run_cargo_command_with_rustflags(args, None)
-}
-
-/// Like `run_cargo_command` but lets the caller override `RUSTFLAGS`. Used by
-/// `run_test` to inject `-C target-cpu=native` for the native profile.
-fn run_cargo_command_with_rustflags(args: &[&str], rustflags: Option<&str>) -> bool {
-    let mut cmd = Command::new("cargo");
-    let mut locked_args = Vec::with_capacity(args.len() + 1);
-    if let Some((subcommand, rest)) = args.split_first() {
-        locked_args.push(*subcommand);
-        if matches!(*subcommand, "build" | "check" | "clippy" | "run" | "test")
-            && !args
-                .iter()
-                .any(|arg| matches!(*arg, "--locked" | "--frozen" | "--offline"))
-        {
-            locked_args.push("--locked");
-        }
-        locked_args.extend(rest.iter().copied());
-    }
-    cmd.args(&locked_args);
-    for (key, value) in super::env_cmd::collect_env() {
-        cmd.env(key, value);
-    }
-    if let Some(rf) = rustflags {
-        cmd.env("RUSTFLAGS", rf);
-    }
+    let context = super::build_context::BuildContext::new(super::BuildProfile::Dev, None);
+    let mut cmd = context.cargo(args);
     matches!(cmd.status(), Ok(s) if s.success())
 }
 
@@ -309,7 +289,7 @@ fn run_check(include_ffi: bool) -> Result<()> {
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
-    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
+    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims, "excluding pecos-gpu-sims");
 
     println!("Checking workspace packages...");
     let mut args: Vec<&str> = vec![
@@ -376,7 +356,7 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
-    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
+    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims, "excluding pecos-gpu-sims");
 
     let fix_args: Vec<&str> = if fix {
         vec!["--fix", "--allow-staged", "--allow-dirty"]
@@ -460,34 +440,22 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
 
-    maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
+    maybe_print_gpu_probe_status(
+        &gpu_probe,
+        include_gpu_sims,
+        "running the GPU-free pecos-gpu-sims tests",
+    );
 
-    // Map our profile to the cargo flags that select the corresponding profile.
-    // Native goes through `--profile native` (not `--release`) so artifacts land
-    // in target/native/ and the C++ build.rs files (pecos-pymatching et al.)
-    // can detect "native" via OUT_DIR and add -march=native to their builds.
-    let profile_args: &[&str] = match profile {
-        super::BuildProfile::Dev | super::BuildProfile::Debug => &[],
-        super::BuildProfile::Release => &["--release"],
-        super::BuildProfile::Native => &["--profile", "native"],
+    reject_static_llvm_workspace_test()?;
+    let context = super::build_context::BuildContext::new(profile, None);
+    let runtime_dir = super::qis_runtime_cmd::prepare(&context, true)?.directory;
+    let profile_args = profile.cargo_args();
+    let run = |args: &[&str]| -> bool {
+        let mut cmd = context.cargo(args);
+        cmd.env("PECOS_QIS_FFI_PATH", &runtime_dir);
+        cmd.env("PECOS_SELENE_DIR", &runtime_dir);
+        matches!(cmd.status(), Ok(status) if status.success())
     };
-
-    // For native, append -C target-cpu=native to RUSTFLAGS. profile.native.rustflags
-    // in Cargo.toml is still gated on nightly so we inject per-process here, matching
-    // what `pecos python build --profile native` and the Justfile recipes do.
-    let inherited_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
-    let computed_rustflags: Option<String> = if matches!(profile, super::BuildProfile::Native) {
-        let mut rf = inherited_rustflags;
-        if !rf.is_empty() {
-            rf.push(' ');
-        }
-        rf.push_str("-C target-cpu=native");
-        Some(rf)
-    } else {
-        None
-    };
-    let rustflags = computed_rustflags.as_deref();
-    let run = |args: &[&str]| -> bool { run_cargo_command_with_rustflags(args, rustflags) };
 
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
@@ -509,11 +477,12 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         "--exclude",
         "pecos-decoders",
         "--exclude",
-        "pecos-gpu-sims", // Always exclude from workspace test, test separately if GPU available
+        "pecos-zx", // Test separately with --all-features so the stabilizer module runs
+        "--exclude",
+        "pecos-gpu-sims", // Test separately: full suite with a GPU, gpu_free subset otherwise
     ]);
 
     args.extend(profile_args);
-    reject_static_llvm_workspace_test()?;
 
     if !run(&args) {
         return Err(Error::Config("cargo test (workspace) failed".to_string()));
@@ -546,6 +515,27 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         ));
     }
 
+    // The trellis scalar-reference oracles compile into the library only with
+    // runtime-checks, so this run applies them to the Frontier integration
+    // tests and the bitwise snapshots as well as the trellis unit tests.
+    println!("Testing Frontier with trellis runtime checks...");
+    let mut frontier_args: Vec<&str> = vec![
+        "test",
+        "-p",
+        "pecos-trellis",
+        "-p",
+        "pecos-frontier",
+        "-p",
+        "pecos-frontier-wasm",
+        "--features=pecos-trellis/runtime-checks",
+    ];
+    frontier_args.extend(profile_args);
+    if !run(&frontier_args) {
+        return Err(Error::Config(
+            "cargo test (Frontier with trellis runtime-checks) failed".to_string(),
+        ));
+    }
+
     // Test cuQuantum if SDK is available (requires both CUDA and cuQuantum)
     if probe_cuquantum_availability() {
         println!("cuQuantum runtime available - testing pecos-cuquantum");
@@ -562,13 +552,15 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
 
     if include_gpu_sims {
         println!("Including pecos-gpu-sims in Rust tests");
-        let mut args = vec!["test", "-p", "pecos-gpu-sims"];
-        args.extend(profile_args);
-        if !run(&args) {
-            return Err(Error::Config(
-                "cargo test (pecos-gpu-sims) failed".to_string(),
-            ));
-        }
+    } else {
+        println!("Testing the GPU-free pecos-gpu-sims subset");
+    }
+    let mut args = gpu_test_args(include_gpu_sims);
+    args.extend(profile_args);
+    if !run(&args) {
+        return Err(Error::Config(
+            "cargo test (pecos-gpu-sims) failed".to_string(),
+        ));
     }
 
     println!("Testing pecos-decoders...");
@@ -578,6 +570,13 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         return Err(Error::Config(
             "cargo test (pecos-decoders) failed".to_string(),
         ));
+    }
+
+    println!("Testing pecos-zx...");
+    let mut args = vec!["test", "-p", "pecos-zx", "--all-features"];
+    args.extend(profile_args);
+    if !run(&args) {
+        return Err(Error::Config("cargo test (pecos-zx) failed".to_string()));
     }
 
     if include_ffi {
@@ -600,9 +599,28 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     Ok(())
 }
 
+// Keep hardware tests unchanged when the probe succeeds. The `gpu_free` marker
+// selects only tests that neither request an adapter nor create GPU resources.
+fn gpu_test_args(include_gpu_sims: bool) -> Vec<&'static str> {
+    let mut args = vec!["test", "-p", "pecos-gpu-sims"];
+    if !include_gpu_sims {
+        args.extend(["--lib", "gpu_free"]);
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gpu_probe_selects_full_or_gpu_free_suite() {
+        assert_eq!(super::gpu_test_args(true), ["test", "-p", "pecos-gpu-sims"]);
+        assert_eq!(
+            super::gpu_test_args(false),
+            ["test", "-p", "pecos-gpu-sims", "--lib", "gpu_free"]
+        );
+    }
 
     #[test]
     fn llvm_link_mode_parses_llvm_config_output() {

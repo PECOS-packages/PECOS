@@ -120,6 +120,21 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
     writeln!(output, "  Total Size: {} bytes", header.total_size).unwrap();
     output.push('\n');
 
+    if header.version != super::protocol::PROTOCOL_VERSION {
+        if header.version == 5 {
+            output.push_str("Unsupported batch version 5: version 5 batches used a one-byte qubit count; rebuild them with the current encoder (changing only the version byte is incorrect).\n");
+            return output;
+        }
+        writeln!(
+            output,
+            "Unsupported batch version {}; rebuild with version {} (u64 angle fractions).",
+            header.version,
+            super::protocol::PROTOCOL_VERSION
+        )
+        .expect("writing to a String is infallible");
+        return output;
+    }
+
     // Parse each message
     let mut offset = size_of::<BatchHeader>();
     for i in 0..header.msg_count {
@@ -150,11 +165,13 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
 
         // Parse payload based on message type
         if msg_header.payload_size > 0 {
-            let payload_end = offset + msg_header.payload_size as usize;
-            if payload_end > data.len() {
+            let Some(payload_end) = offset
+                .checked_add(msg_header.payload_size as usize)
+                .filter(|&end| end <= data.len())
+            else {
                 writeln!(output, "ERROR: Data too small for message {i} payload").unwrap();
                 break;
-            }
+            };
 
             let payload = &data[offset..payload_end];
 
@@ -190,74 +207,49 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
 
                         // Dump qubit indices
                         let qubits_offset = size_of::<GateHeader>();
-                        let mut qubits = Vec::new();
-
-                        for i in 0..gate_header.num_qubits as usize {
-                            let offset = qubits_offset + i * size_of::<u32>();
-                            if offset + size_of::<u32>() <= payload.len() {
-                                let qubit = u32::from_le_bytes([
-                                    payload[offset],
-                                    payload[offset + 1],
-                                    payload[offset + 2],
-                                    payload[offset + 3],
-                                ]);
-                                qubits.push(qubit);
-                            }
-                        }
-
+                        let Some(params_offset) = (gate_header.num_qubits as usize)
+                            .checked_mul(size_of::<u32>())
+                            .and_then(|size| qubits_offset.checked_add(size))
+                            .filter(|&end| end <= payload.len())
+                        else {
+                            writeln!(output, "ERROR: Gate declares {} qubits but its payload has only {} bytes; provide all qubit indices before parameter words", gate_header.num_qubits, payload.len()).expect("writing to a String is infallible");
+                            return output;
+                        };
+                        let qubits: Vec<_> = payload[qubits_offset..params_offset]
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .copied()
+                            .map(u32::from_le_bytes)
+                            .collect();
                         writeln!(output, "    Qubit Indices: {qubits:?}").unwrap();
 
                         // Dump parameters if present
-                        if gate_header.has_params != 0 {
-                            let params_offset =
-                                qubits_offset + gate_header.num_qubits as usize * size_of::<u32>();
-
-                            match gate_header.gate_type {
-                                32
-                                    // RZ
-                                    if params_offset + size_of::<f64>() <= payload.len() => {
-                                        let theta = f64::from_le_bytes([
-                                            payload[params_offset],
-                                            payload[params_offset + 1],
-                                            payload[params_offset + 2],
-                                            payload[params_offset + 3],
-                                            payload[params_offset + 4],
-                                            payload[params_offset + 5],
-                                            payload[params_offset + 6],
-                                            payload[params_offset + 7],
-                                        ]);
-
-                                        writeln!(output, "    Theta: {theta}").unwrap();
-                                    }
-                                36
-                                    // RXY1Q
-                                    if params_offset + 2 * size_of::<f64>() <= payload.len() => {
-                                        let phi = f64::from_le_bytes([
-                                            payload[params_offset],
-                                            payload[params_offset + 1],
-                                            payload[params_offset + 2],
-                                            payload[params_offset + 3],
-                                            payload[params_offset + 4],
-                                            payload[params_offset + 5],
-                                            payload[params_offset + 6],
-                                            payload[params_offset + 7],
-                                        ]);
-
-                                        let theta = f64::from_le_bytes([
-                                            payload[params_offset + 8],
-                                            payload[params_offset + 9],
-                                            payload[params_offset + 10],
-                                            payload[params_offset + 11],
-                                            payload[params_offset + 12],
-                                            payload[params_offset + 13],
-                                            payload[params_offset + 14],
-                                            payload[params_offset + 15],
-                                        ]);
-
-                                        writeln!(output, "    Phi: {phi}").unwrap();
-                                        writeln!(output, "    Theta: {theta}").unwrap();
-                                    }
-                                _ => {}
+                        if gate_header.has_params != 0
+                            && let Ok(kind) =
+                                pecos_core::gate_type::GateType::try_from(gate_header.gate_type)
+                        {
+                            let count = (payload.len() - params_offset) / 8;
+                            let angle_count = if kind == pecos_core::gate_type::GateType::Custom {
+                                count
+                            } else {
+                                kind.angle_arity()
+                            };
+                            for (i, &word) in payload[params_offset..]
+                                .as_chunks::<8>()
+                                .0
+                                .iter()
+                                .enumerate()
+                            {
+                                if i < angle_count {
+                                    let fraction = u64::from_le_bytes(word);
+                                    writeln!(output, "    Angle {i}: fraction {fraction}")
+                                        .expect("writing to a String is infallible");
+                                } else {
+                                    let param = f64::from_le_bytes(word);
+                                    writeln!(output, "    Parameter {i}: {param}")
+                                        .expect("writing to a String is infallible");
+                                }
                             }
                         }
                     }
@@ -320,7 +312,22 @@ mod tests {
     use super::*;
     use crate::Gate;
     use crate::byte_message::ByteMessage;
-    use pecos_core::Angle64;
+
+    #[test]
+    fn raw_dump_reports_truncated_qubits_before_parameter_words() {
+        let mut bytes = ByteMessage::builder()
+            .rz(pecos_core::Angle64::new(1), &[0])
+            .build()
+            .into_bytes();
+        let count_offset = size_of::<BatchHeader>()
+            + size_of::<MessageHeader>()
+            + std::mem::offset_of!(GateHeader, num_qubits);
+        bytes[count_offset..count_offset + size_of::<u32>()]
+            .copy_from_slice(&300_u32.to_le_bytes());
+        let dump = dump_batch_raw(&bytes);
+        assert!(dump.contains("declares 300 qubits"));
+        assert!(dump.contains("provide all qubit indices"));
+    }
 
     #[test]
     fn strict_debug_reader_errors() {
@@ -399,7 +406,7 @@ mod tests {
     #[test]
     fn test_dump_batch() {
         // Create a ByteMessage with different gate types
-        let commands = vec![Gate::h(&[0]), Gate::rz(Angle64::from_radians(0.5), &[1])];
+        let commands = vec![Gate::h(&[0]), Gate::rz(pecos_core::radians!(0.5), &[1])];
 
         // Create a ByteMessage using the builder
         let message = ByteMessage::builder().add_gate_commands(&commands).build();
@@ -413,6 +420,6 @@ mod tests {
         assert!(dump.contains("Type: Gate"));
         assert!(dump.contains("Type: H"));
         assert!(dump.contains("Type: RZ"));
-        assert!(dump.contains("Theta: 0.5"));
+        assert!(dump.contains("Angle 0: fraction 1467945251641000670"));
     }
 }

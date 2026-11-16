@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 fn batches() -> Vec<TimedBatch> {
     let rotation = |sign| {
         Gate::rxy1q(
-            Angle64::from_radians(sign * std::f64::consts::FRAC_PI_2),
+            Angle64::try_from_radians(sign * std::f64::consts::FRAC_PI_2).unwrap(),
             Angle64::ZERO,
             &[0],
         )
@@ -33,8 +33,10 @@ fn batches() -> Vec<TimedBatch> {
 }
 fn scheduled(seed: u64) -> QuantumSystem {
     let profile = ScheduledIdleZ::new(1, 0.2, 0.3, 0.4).unwrap();
-    let mut system =
-        QuantumSystem::new(profile.into_noise_model(), Box::new(StateVecEngine::new(1)));
+    let mut system = QuantumSystem::new(
+        profile.into_noise_model().unwrap(),
+        Box::new(StateVecEngine::new(1)),
+    );
     system.set_seed(seed);
     system
         .begin_shot(ShotContext {
@@ -139,7 +141,8 @@ fn omission_uses_normalized_gates_and_keeps_source_timing_admission() {
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.2, 0.3, 0.4).unwrap(), move |_| {
                 Ok(Box::new(Replace(replacement.clone())))
             })
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         actual.set_seed(42);

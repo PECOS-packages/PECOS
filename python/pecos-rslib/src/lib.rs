@@ -48,6 +48,7 @@ mod dtypes;
 mod engine_bindings;
 mod engine_builders;
 mod engines_module;
+mod errors;
 mod experimental_bindings;
 mod fault_tolerance_bindings;
 mod gate_registry_bindings;
@@ -68,6 +69,7 @@ mod py_foreign_simulator;
 mod quantum_info_bindings;
 mod qudit_bindings;
 mod runtime_batch_adapter;
+mod runtime_decoder;
 mod scheduled_adapter;
 mod shot_results_bindings;
 mod sim;
@@ -164,7 +166,7 @@ fn setup_cuda_library_path() {
             .ok()
             .and_then(|p| p.parent().map(|d| d.join(cuda_backend_name))),
         // 2. ~/.pecos/lib/
-        dirs::home_dir().map(|h| h.join(".pecos").join("lib").join(cuda_backend_name)),
+        std::env::home_dir().map(|h| h.join(".pecos").join("lib").join(cuda_backend_name)),
         // 3. Cargo target directory (for development)
         Some(std::path::PathBuf::from("target/release").join(cuda_backend_name)),
     ];
@@ -184,6 +186,12 @@ fn setup_cuda_library_path() {
     log::debug!("QuEST CUDA backend not found in standard locations");
 }
 
+/// Register package-relative native libraries without changing process environment variables.
+#[pyfunction(name = "_set_qis_library_dir")]
+fn set_qis_library_dir(path: std::path::PathBuf) -> PyResult<()> {
+    pecos_qis::set_bundled_library_dir(path).map_err(pyo3::exceptions::PyRuntimeError::new_err)
+}
+
 /// A Python module implemented in Rust.
 /// Users should import from `pecos` (quantum-pecos) which re-exports these types
 /// with additional Python-native enhancements.
@@ -197,10 +205,32 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Set up QuEST CUDA backend path for runtime loading (before any QuEST usage)
     setup_cuda_library_path();
 
+    m.add_function(wrap_pyfunction!(set_qis_library_dir, m)?)?;
+
     m.add_class::<PyStabVec>()?;
     m.add_class::<PySparseStab>()?;
     m.add_class::<PyStabilizer>()?;
     m.add_class::<phir_json_bridge::PhirJsonEngine>()?;
+    m.add_function(wrap_pyfunction!(
+        phir_classical_interpreter::validate_phir_qop,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        phir_classical_interpreter::validate_phir_classical_inputs,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        phir_classical_interpreter::validate_phir_result_reference,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        phir_classical_interpreter::validate_phir_classical_declaration,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        phir_classical_interpreter::validate_phir_result_counts,
+        m
+    )?)?;
     m.add_class::<phir_classical_interpreter::PyPhirClassicalInterpreter>()?;
     m.add_function(pyo3::wrap_pyfunction!(
         phir_classical_interpreter::run_phir_sim,
@@ -494,3 +524,5 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
+
+mod python_worker_context;

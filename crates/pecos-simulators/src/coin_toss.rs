@@ -260,7 +260,8 @@ where
     fn sz(&mut self, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn cx(&mut self, _pairs: &[(QubitId, QubitId)]) -> &mut Self {
+    fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         self
     }
 
@@ -287,7 +288,8 @@ where
     fn rz(&mut self, _theta: Angle64, _qubits: &[QubitId]) -> &mut Self {
         self
     }
-    fn rzz(&mut self, _theta: Angle64, _pairs: &[(QubitId, QubitId)]) -> &mut Self {
+    fn rzz(&mut self, _theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         self
     }
 }
@@ -384,10 +386,10 @@ mod tests {
         let mut sim = CoinToss::new(2);
 
         // All rotation gates should succeed and return self for chaining
-        sim.rx(Angle64::from_radians(1.5), &[QubitId(0)])
-            .ry(Angle64::from_radians(0.5), &[QubitId(1)])
-            .rz(Angle64::from_radians(2.1), &[QubitId(0)])
-            .rzz(Angle64::from_radians(0.8), &[(QubitId(0), QubitId(1))]);
+        sim.rx(pecos_core::radians!(1.5), &[QubitId(0)])
+            .ry(pecos_core::radians!(0.5), &[QubitId(1)])
+            .rz(pecos_core::radians!(2.1), &[QubitId(0)])
+            .rzz(pecos_core::radians!(0.8), &[(QubitId(0), QubitId(1))]);
         // If we get here without panic, rotation gates work as expected
     }
 

@@ -10,9 +10,9 @@ use pecos_neo::tool::{sim_neo, importance_sampling};
 
 let results = sim_neo(circuit).auto()
     .sampling(importance_sampling(10000)
-        .with_p1(0.001)      // Single-qubit error rate
-        .with_p2(0.01)       // Two-qubit error rate
-        .with_boost(10.0))   // Sample 10x more errors
+        .with_p1(0.001)?      // Single-qubit error rate
+        .with_p2(0.01)?       // Two-qubit error rate
+        .with_boost(10.0)?)   // Sample 10x more errors
     .seed(42)
     .run();
 ```
@@ -22,8 +22,8 @@ For uniform rates across all gate types:
 ```rust
 sim_neo(circuit).auto()
     .sampling(importance_sampling(10000)
-        .with_uniform_error(0.001)
-        .with_boost(10.0))
+        .with_uniform_error(0.001)?
+        .with_boost(10.0)?)
     .run();
 ```
 
@@ -33,8 +33,8 @@ results are identical for any worker count:
 ```rust
 sim_neo(circuit).auto()
     .sampling(importance_sampling(10000)
-        .with_uniform_error(0.001)
-        .with_boost(10.0)
+        .with_uniform_error(0.001)?
+        .with_boost(10.0)?
         .workers(8))
     .run();
 ```

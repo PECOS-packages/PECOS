@@ -11,7 +11,7 @@ from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 if TYPE_CHECKING:
-    from pecos.protocols import GuppyCallable
+    from guppylang.defs import GuppyFunctionDefinition
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -32,7 +32,7 @@ class GuppyPipelineTest:
 
     def test_function_on_both_pipelines(
         self,
-        func: "GuppyCallable",
+        func: "GuppyFunctionDefinition",
         shots: int = 10,
         seed: int = 42,
         **kwargs: object,

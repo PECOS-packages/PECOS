@@ -26,7 +26,7 @@
 //!   5. Many-round simulation with mid-circuit resets.
 //!   6. Interpreting the results.
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
 use std::time::Instant;
@@ -176,7 +176,7 @@ fn main() {
     println!("Step 6: ion-trap memory noise scenario");
     let num_rounds_ion = 50;
     let steps_per_round = 20;
-    let theta = Angle64::from_radians(0.005);
+    let theta = pecos_core::radians!(0.005);
 
     let mut stn = StabMps::builder(n)
         .seed(77)

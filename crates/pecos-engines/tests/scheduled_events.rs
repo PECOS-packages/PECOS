@@ -15,8 +15,8 @@ fn err() -> PecosError {
 }
 fn rotation(theta: f64) -> Gate {
     Gate::rxy1q(
-        Angle64::from_radians(theta),
-        Angle64::from_radians(0.0),
+        Angle64::try_from_radians(theta).unwrap(),
+        Angle64::ZERO,
         &[0],
     )
 }
@@ -37,7 +37,7 @@ fn batch(index: u64, operations: Vec<ScheduledEventOp>) -> ScheduledEventBatch {
             ScheduledEventOp::Gate(g)
                 if matches!(
                     g.gate_type,
-                    pecos_engines::GateType::MZ | pecos_engines::GateType::MeasureLeaked
+                    pecos_engines::GateType::MZ | pecos_engines::GateType::MeasureZLeaked
                 ) =>
             {
                 Some(ScheduledResult {
@@ -103,7 +103,8 @@ fn system() -> QuantumSystem {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     )
 }
@@ -204,7 +205,8 @@ fn unsupported_late_event_rejects_before_translation_and_poison_is_latched() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
             Ok(Box::new(Counting(c.clone())))
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -237,7 +239,8 @@ fn malformed_wire_rejects_before_factory_and_never_reaches_legacy_consumers() {
             c.fetch_add(1, Ordering::Relaxed);
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -256,23 +259,22 @@ fn malformed_wire_rejects_before_factory_and_never_reaches_legacy_consumers() {
         Box::new(StateVecEngine::new(1)),
     );
     assert!(old.process(good.clone()).is_err());
-    let mut v3 = QuantumSystem::new(
+    let mut v6 = QuantumSystem::new(
         ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
             .unwrap()
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
-    begin(&mut v3);
-    assert!(v3.process(good).is_err());
-    let mut too_large = batch(
+    begin(&mut v6);
+    assert!(v6.process(good).is_err());
+    let too_large = batch(
         0,
         vec![ScheduledEventOp::Custom {
             tag: 42,
             payload: vec![0; MAX_BATCH_PAYLOAD + 1],
         }],
     );
-    assert!(encode_event_batches(&[too_large.clone()]).is_err());
-    too_large.operations = vec![event(0); MAX_BATCH_OPERATIONS + 1];
     assert!(encode_event_batches(&[too_large]).is_err());
 }
 #[test]
@@ -284,7 +286,8 @@ fn source_capacity_and_identity_reject_before_callbacks() {
             c.fetch_add(1, Ordering::Relaxed);
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -298,12 +301,13 @@ fn metadata_insertion_preserves_seeded_idle_behavior_and_empty_batch_lifecycles(
     for (linear, sine, coherent) in [(0.3, 0.0, 0.0), (0.0, 0.7, 0.0), (0.0, 0.0, 0.4)] {
         let profile = ScheduledIdleZ::new(1, linear, sine, coherent).unwrap();
         let mut old = QuantumSystem::new(
-            profile.clone().into_noise_model(),
+            profile.clone().into_noise_model().unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         let mut new = QuantumSystem::new(
             ScheduledEventIdleZ::new(profile, |_| Ok(Box::<Synthetic>::default()))
-                .into_noise_model(),
+                .into_noise_model()
+                .unwrap(),
             Box::new(StateVecEngine::new(1)),
         );
         let batches = vec![
@@ -359,7 +363,8 @@ fn callback_panic_cannot_be_recovered_without_whole_host_reset() {
             );
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -390,7 +395,8 @@ fn dropped_measurements_poison_before_quantum_execution() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::new(DropMeasurements))
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -405,7 +411,8 @@ fn event_position_relative_to_measurements_is_preserved() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::<Synthetic>::default())
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(2)),
     );
     begin(&mut q);
@@ -441,7 +448,8 @@ fn caught_output_rejection_stays_latched() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
             Ok(Box::new(Swallow))
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     begin(&mut q);
@@ -463,7 +471,8 @@ fn factory_sessions_receive_distinct_worker_context_and_never_share_state() {
                 Ok(Box::<Synthetic>::default())
             },
         )
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     let mut first = template.clone();
@@ -530,7 +539,8 @@ fn removed_gates_still_reserve_source_timing_across_inputs() {
         ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
             Ok(Box::new(DropRz(seen.clone())))
         })
-        .into_noise_model(),
+        .into_noise_model()
+        .unwrap(),
         Box::new(StateVecEngine::new(1)),
     );
     let mut first = batch(0, vec![gate(Gate::rz(Angle64::ZERO, &[0]))]);
@@ -624,12 +634,13 @@ fn changed_measurement_target_or_kind_rejects_and_poisons() {
             out.push(self.0.clone())
         }
     }
-    for replacement in [Gate::mz(&[1]), Gate::measure_leaked(&[0])] {
+    for replacement in [Gate::mz(&[1]), Gate::measure_z_leaked(&[0])] {
         let mut q = QuantumSystem::new(
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), move |_| {
                 Ok(Box::new(Rewrite(replacement.clone())))
             })
-            .into_noise_model(),
+            .into_noise_model()
+            .unwrap(),
             Box::new(StateVecEngine::new(2)),
         );
         begin(&mut q);
@@ -650,7 +661,7 @@ fn changed_measurement_target_or_kind_rejects_and_poisons() {
 }
 
 #[test]
-fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preserved() {
+fn output_above_old_operation_bound_preserves_measurements() {
     struct Expand(usize);
     impl ScheduledBatchAdapter for Expand {
         fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
@@ -673,29 +684,19 @@ fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preser
             Ok(())
         }
     }
-    for count in [MAX_BATCH_OPERATIONS, MAX_BATCH_OPERATIONS + 1] {
-        let mut q = QuantumSystem::new(
-            ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
-                Ok(Box::new(Expand(count)))
-            })
-            .into_noise_model(),
-            Box::new(StateVecEngine::new(1)),
-        );
-        begin(&mut q);
-        let result =
-            q.process(encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap());
-        if count == MAX_BATCH_OPERATIONS {
-            assert_eq!(result.unwrap().outcomes().unwrap(), vec![0]);
-        } else {
-            assert!(
-                result
-                    .err()
-                    .expect("expected rejection")
-                    .to_string()
-                    .contains("event expansion limit")
-            );
-        }
-    }
+    // One record above the former 4096-record limit.
+    let count = 4097;
+    let mut q = QuantumSystem::new(
+        ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
+            Ok(Box::new(Expand(count)))
+        })
+        .into_noise_model()
+        .unwrap(),
+        Box::new(StateVecEngine::new(1)),
+    );
+    begin(&mut q);
+    let result = q.process(encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap());
+    assert_eq!(result.unwrap().outcomes().unwrap(), vec![0]);
 }
 
 #[test]
@@ -761,24 +762,25 @@ fn wire_counts_and_event_positions_reject_before_record_allocation() {
     patch(
         bytes,
         16,
-        (56 + MAX_BATCH_OPERATIONS * 40 + 1) as u64,
-        "gate count limit",
+        bytes.len() as u64,
+        "truncated scheduled event transport",
     );
     patch(
         bytes,
         events,
-        (MAX_BATCH_OPERATIONS + 1) as u64,
-        "operation count limit",
+        ((bytes.len() - events - 8) / 24 + 1) as u64,
+        "exceeds remaining transport bytes",
     );
+    patch(bytes, events, u64::MAX, "exceeds remaining transport bytes");
     patch(bytes, events + 8 + 25, 3, "invalid event position");
     patch(bytes, events + 8 + 25, 0, "invalid event position");
     patch(bytes, bytes.len() - 32, 4, "measurement count limit");
-    let max_ops = batch(0, vec![event(0); MAX_BATCH_OPERATIONS]);
+    let many_ops = batch(0, vec![event(0); 4097]);
     assert_eq!(
-        decode_event_batches(&encode_event_batches(&[max_ops]).unwrap()).unwrap()[0]
+        decode_event_batches(&encode_event_batches(&[many_ops]).unwrap()).unwrap()[0]
             .operations
             .len(),
-        MAX_BATCH_OPERATIONS
+        4097
     );
     let max_payload = batch(
         0,
@@ -818,4 +820,19 @@ fn repeated_program_id_round_trips_and_reaches_event_adapter() {
         decode_event_batches(&ByteMessage::new(&bytes)).unwrap()[0].measurements,
         b.measurements
     );
+}
+
+#[test]
+fn event_angles_keep_every_fraction_bit() {
+    let a = pecos_core::radians!(-0.73);
+    let original = batch(0, vec![gate(Gate::rxyxy2q(a, Angle64::new(1), &[(0, 1)]))]);
+    let message = encode_event_batches(std::slice::from_ref(&original)).unwrap();
+    let decoded = decode_event_batches(&message).unwrap();
+    let ScheduledEventOp::Gate(decoded_gate) = &decoded[0].operations[0] else {
+        panic!("expected gate")
+    };
+    assert_eq!(**decoded_gate, Gate::rxyxy2q(a, Angle64::new(1), &[(0, 1)]));
+    let mut old = message.as_bytes().to_vec();
+    old[4] = 4;
+    assert!(decode_event_batches(&ByteMessage::new(&old)).is_err());
 }

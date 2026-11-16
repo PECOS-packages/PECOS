@@ -93,6 +93,11 @@ impl<B: SeleneSimBehavior> SeleneAdapter<B> {
     }
 
     fn check_pair(&self, q1: u64, q2: u64, op: &str) -> Result<()> {
+        if q1 == q2 {
+            return Err(anyhow!(
+                "{op} requires distinct qubits; repeated qubit {q1}"
+            ));
+        }
         if q1 >= self.num_qubits || q2 >= self.num_qubits {
             return Err(anyhow!(
                 "{op}(qubit1={q1}, qubit2={q2}) is out of bounds. \
@@ -178,9 +183,6 @@ impl<B: SeleneSimBehavior> SimulatorInterface for SeleneAdapter<B> {
                     phi,
                 } => {
                     self.check_pair(qubit_id_1, qubit_id_2, "RXYXY2Q")?;
-                    if qubit_id_1 == qubit_id_2 {
-                        return Err(anyhow!("RXYXY2Q requires two distinct qubits"));
-                    }
                     self.behavior.apply_rxyxy2q(
                         QubitId(to_usize(qubit_id_1)),
                         QubitId(to_usize(qubit_id_2)),

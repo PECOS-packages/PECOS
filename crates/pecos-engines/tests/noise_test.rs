@@ -181,7 +181,7 @@ fn test_rotation_gate_with_different_angles() {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.h(&[0]);
-        builder.rz(Angle64::from_radians(angle), &[0]);
+        builder.rz(Angle64::try_from_radians(angle).unwrap(), &[0]);
         builder.h(&[0]);
         builder.mz(&[0]);
         let circ = builder.build();
@@ -467,7 +467,7 @@ fn test_rzz_angle_dependent_error_model() {
         builder.h(&[1]);
 
         // Apply RZZ with the specified angle
-        builder.rzz(Angle64::from_radians(angle), &[(0, 1)]);
+        builder.rzz(Angle64::try_from_radians(angle).unwrap(), &[(0, 1)]);
 
         // Apply H gates again to convert phase to population
         builder.h(&[0]);
@@ -576,7 +576,7 @@ fn test_software_gates_not_affected_by_noise() {
     // Circuit 1: |0⟩ → RZ(π) → |0⟩ (no change in population)
     let mut builder1 = ByteMessageBuilder::new();
     let _ = builder1.for_quantum_operations();
-    builder1.rz(Angle64::from_radians(PI), &[0]);
+    builder1.rz(Angle64::HALF_TURN, &[0]);
     builder1.mz(&[0]);
     let circ_rz = builder1.build();
 
@@ -584,7 +584,7 @@ fn test_software_gates_not_affected_by_noise() {
     let mut builder2 = ByteMessageBuilder::new();
     let _ = builder2.for_quantum_operations();
     builder2.h(&[0]);
-    builder2.rz(Angle64::from_radians(PI), &[0]);
+    builder2.rz(Angle64::HALF_TURN, &[0]);
     builder2.h(&[0]);
     builder2.mz(&[0]);
     let circ_hardware = builder2.build();

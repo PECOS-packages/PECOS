@@ -15,6 +15,7 @@
 use crate::noise::plugin::{NoiseModelConfig, NoisePlugin};
 use crate::noise::single_qubit::SingleQubitChannel;
 use crate::noise::two_qubit::TwoQubitChannel;
+use crate::noise::validation::ValidationResult;
 
 /// Plugin that adds depolarizing noise to gates.
 ///
@@ -27,43 +28,49 @@ use crate::noise::two_qubit::TwoQubitChannel;
 /// use pecos_neo::noise::plugins::DepolarizingPlugin;
 ///
 /// // 1% single-qubit errors, 2% two-qubit errors
-/// let plugin = DepolarizingPlugin::new(0.01, 0.02);
+/// let plugin = DepolarizingPlugin::new(0.01, 0.02)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct DepolarizingPlugin {
-    /// Single-qubit gate error probability.
-    pub p1: f64,
-    /// Two-qubit gate error probability.
-    pub p2: f64,
+    single_qubit: SingleQubitChannel,
+    two_qubit: TwoQubitChannel,
 }
 
 impl DepolarizingPlugin {
-    /// Create a depolarizing noise plugin.
-    #[must_use]
-    pub fn new(p1: f64, p2: f64) -> Self {
-        Self { p1, p2 }
+    /// Create depolarizing noise for both gate arities.
+    ///
+    /// # Errors
+    /// Rejects probabilities outside [0, 1] or NaN.
+    pub fn new(p1: f64, p2: f64) -> ValidationResult<Self> {
+        Ok(Self {
+            single_qubit: SingleQubitChannel::depolarizing(p1)?,
+            two_qubit: TwoQubitChannel::depolarizing(p2)?,
+        })
     }
-
-    /// Create with only single-qubit noise.
-    #[must_use]
-    pub fn single_qubit_only(p1: f64) -> Self {
-        Self { p1, p2: 0.0 }
+    /// Create single-qubit depolarizing noise.
+    ///
+    /// # Errors
+    /// Rejects probabilities outside [0, 1] or NaN.
+    pub fn single_qubit_only(p1: f64) -> ValidationResult<Self> {
+        Self::new(p1, 0.0)
     }
-
-    /// Create with only two-qubit noise.
-    #[must_use]
-    pub fn two_qubit_only(p2: f64) -> Self {
-        Self { p1: 0.0, p2 }
+    /// Create two-qubit depolarizing noise.
+    ///
+    /// # Errors
+    /// Rejects probabilities outside [0, 1] or NaN.
+    pub fn two_qubit_only(p2: f64) -> ValidationResult<Self> {
+        Self::new(0.0, p2)
     }
 }
 
 impl NoisePlugin for DepolarizingPlugin {
     fn build(&self, config: &mut NoiseModelConfig) {
-        if self.p1 > 0.0 {
-            config.add_channel(SingleQubitChannel::depolarizing(self.p1));
+        if self.single_qubit.error_probability() > 0.0 {
+            config.add_channel(self.single_qubit.clone());
         }
-        if self.p2 > 0.0 {
-            config.add_channel(TwoQubitChannel::depolarizing(self.p2));
+        if self.two_qubit.error_probability() > 0.0 {
+            config.add_channel(self.two_qubit.clone());
         }
     }
 
@@ -78,7 +85,7 @@ mod tests {
 
     #[test]
     fn test_depolarizing_plugin() {
-        let plugin = DepolarizingPlugin::new(0.01, 0.02);
+        let plugin = DepolarizingPlugin::new(0.01, 0.02).unwrap();
         let mut config = NoiseModelConfig::new();
         plugin.build(&mut config);
 
@@ -87,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_single_qubit_only() {
-        let plugin = DepolarizingPlugin::single_qubit_only(0.01);
+        let plugin = DepolarizingPlugin::single_qubit_only(0.01).unwrap();
         let mut config = NoiseModelConfig::new();
         plugin.build(&mut config);
 
@@ -96,7 +103,7 @@ mod tests {
 
     #[test]
     fn test_zero_probabilities() {
-        let plugin = DepolarizingPlugin::new(0.0, 0.0);
+        let plugin = DepolarizingPlugin::new(0.0, 0.0).unwrap();
         let mut config = NoiseModelConfig::new();
         plugin.build(&mut config);
 

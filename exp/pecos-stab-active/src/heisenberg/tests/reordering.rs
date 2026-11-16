@@ -129,7 +129,7 @@ fn conditional_trace(program: &HeisenbergProgram) -> Vec<(usize, f64, Measuremen
 #[test]
 fn correlated_measurements_swap_changes_conditionals() {
     let mut circuit = TickCircuit::new();
-    circuit.tick().ry(Angle64::from_radians(0.73), &[0]);
+    circuit.tick().ry(pecos_core::radians!(0.73), &[0]);
     circuit.tick().cx(&[(0, 1)]);
     circuit.tick().mz(&[0, 1]);
     let program = HeisenbergProgram::compile(&circuit).unwrap();
@@ -193,7 +193,7 @@ fn absent_symbol_names_the_symbol() {
 fn known_stochastic_distributions() {
     use pecos_core::{ChannelExpr, Pauli, PauliString, UnitaryRep};
     let mut circuit = TickCircuit::new();
-    circuit.tick().rx(Angle64::from_radians(0.61), &[0]);
+    circuit.tick().rx(pecos_core::radians!(0.61), &[0]);
     circuit.tick().mz(&[0]);
     let program = HeisenbergProgram::compile(&circuit).unwrap();
     let p = (0.61_f64 / 2.0).sin().powi(2);
@@ -276,7 +276,7 @@ fn exhaustive_reset_then_active_orders() {
     let mut circuit = TickCircuit::new();
     circuit.tick().x(&[0]);
     circuit.tick().pz(&[0]);
-    circuit.tick().rx(Angle64::from_radians(0.43), &[1]);
+    circuit.tick().rx(pecos_core::radians!(0.43), &[1]);
     circuit.tick().cx(&[(0, 1)]);
     circuit.tick().mz(&[1]);
     let program = HeisenbergProgram::compile(&circuit).unwrap();
@@ -363,8 +363,8 @@ fn deterministic_branches_and_wide_register() {
         &Distribution::from([(vec![true], 1.0)]),
     );
     let mut circuit = TickCircuit::new();
-    circuit.tick().rx(Angle64::from_radians(0.31), &[0]);
-    circuit.tick().rx(Angle64::from_radians(-0.31), &[0]);
+    circuit.tick().rx(pecos_core::radians!(0.31), &[0]);
+    circuit.tick().rx(pecos_core::radians!(-0.31), &[0]);
     circuit.tick().mz(&[0]);
     let program = HeisenbergProgram::compile(&circuit).unwrap();
     assert_eq!(conditional_trace(&program)[0].2, MeasurementCase::Active);
@@ -457,7 +457,7 @@ pub(super) fn random_circuit(rng: &mut PecosRng) -> TickCircuit {
             let angles = if kind.angle_arity() == 0 {
                 vec![]
             } else {
-                vec![Angle64::from_radians(6.0 * rng.next_f64() - 3.0)]
+                vec![Angle64::try_from_radians(6.0 * rng.next_f64() - 3.0).unwrap()]
             };
             make_gate(kind, qs, &angles)
         };

@@ -54,16 +54,15 @@ pub struct PyMast {
 
 impl PyMast {
     fn check_qubit(&self, q: isize, method: &str) -> PyResult<usize> {
+        let num_qubits = self.inner.num_qubits();
         let Ok(q) = usize::try_from(q) else {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
-                "{method}: qubit {q} out of bounds (num_qubits={})",
-                self.inner.num_qubits()
+                "{method}: qubit {q} out of bounds (num_qubits={num_qubits}); use an index in 0..{num_qubits}"
             )));
         };
-        if q >= self.inner.num_qubits() {
+        if q >= num_qubits {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
-                "{method}: qubit {q} out of bounds (num_qubits={})",
-                self.inner.num_qubits()
+                "{method}: qubit {q} out of bounds (num_qubits={num_qubits}); use an index in 0..{num_qubits}"
             )));
         }
         Ok(q)

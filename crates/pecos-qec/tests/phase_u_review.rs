@@ -125,7 +125,7 @@ fn phase_u_fault_catalog_carries_action_and_provenance() {
 fn neo_ones(noise: &PerGateTypeNoise, theta: Angle64, noiseless_set: bool) -> usize {
     use pecos_neo::prelude::*;
     use pecos_simulators::{QuantumSimulator, StateVec};
-    let mut model = ComposableNoiseModel::new().add_channel(noise.to_neo_channel());
+    let mut model = ComposableNoiseModel::new().add_channel(noise.to_neo_channel().unwrap());
     if noiseless_set {
         model = model.with_noiseless_gate(pecos_neo::command::GateType::RZ);
     }

@@ -11,14 +11,13 @@ from pathlib import Path
 import pytest
 import stim
 from pecos.guppy_gen.gadget_render import render_gadget_function
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import SurfacePatch, gadgets
 from pecos.qec.surface.circuit_builder import (
     DagCircuitRenderer,
     GuppyRenderer,
-    OpType,
     QubitAllocation,
     StimRenderer,
-    SurfaceCircuitStep,
     TickCircuitRenderer,
     _analyze_szz_forward_flow,
     _lower_szz_forward_flow_ops,
@@ -99,8 +98,8 @@ def _coordinates(
     return coords
 
 
-def _groups(gadget: gadgets.Gadget) -> list[list[SurfaceCircuitStep]]:
-    groups: list[list[SurfaceCircuitStep]] = [[]]
+def _groups(gadget: gadgets.Gadget) -> list[list[CircuitStep]]:
+    groups: list[list[CircuitStep]] = [[]]
     for step in gadget.steps:
         if step.op_type == OpType.TICK:
             groups.append([])
@@ -425,7 +424,7 @@ def test_dag_rejects_unsupported_operation() -> None:
     patch = SurfacePatch.create(distance=3)
     with pytest.raises(ValueError, match=r"^Unsupported DagCircuit operation: F$"):
         DagCircuitRenderer().render(
-            [SurfaceCircuitStep(OpType.F, [0])],
+            [CircuitStep(OpType.F, [0])],
             gadgets.default_allocation(patch),
             patch,
             0,
@@ -466,13 +465,13 @@ def test_fold_detector_annotation_rejected(renderer: type, basis: str) -> None:
 def test_szz_forward_flow_rejects_cz() -> None:
     """A native CZ cannot be counted as an SZZ interaction by the pulse analysis."""
     with pytest.raises(ValueError, match="SZZ forward-flow analysis only supports SZZ/SZZdg two-qubit gates"):
-        _analyze_szz_forward_flow([SurfaceCircuitStep(OpType.CZ, [0, 1])])
+        _analyze_szz_forward_flow([CircuitStep(OpType.CZ, [0, 1])])
 
 
 def test_szz_lowering_rejects_cz() -> None:
     """SZZ lowering must not silently pass native CZ through its pulse model."""
     with pytest.raises(ValueError, match="SZZ forward-flow lowering only supports SZZ/SZZdg two-qubit gates"):
-        _lower_szz_forward_flow_ops([SurfaceCircuitStep(OpType.CZ, [0, 1])])
+        _lower_szz_forward_flow_ops([CircuitStep(OpType.CZ, [0, 1])])
 
 
 @pytest.mark.parametrize("malformation", ["fractional_x", "fractional_y", "duplicate_centre", "missing_partner"])

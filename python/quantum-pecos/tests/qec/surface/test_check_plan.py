@@ -526,9 +526,9 @@ def test_plain_szz_memory_cache_key_includes_counted_rounds() -> None:
 
 
 def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> None:
+    from pecos.qec.circuit_steps import OpType
     from pecos.qec.surface import SurfacePatch
     from pecos.qec.surface.circuit_builder import (
-        OpType,
         build_surface_code_circuit,
         generate_guppy_from_patch,
         generate_tick_circuit_from_patch,
@@ -600,12 +600,9 @@ def test_round_order_szz_check_plan_changes_host_order_not_metadata(
     expected_hosts: list[str],
 ) -> None:
     from pecos.guppy_gen.surface import generate_guppy_source
+    from pecos.qec.circuit_steps import OpType
     from pecos.qec.surface import SurfacePatch
-    from pecos.qec.surface.circuit_builder import (
-        OpType,
-        build_surface_code_circuit,
-        generate_tick_circuit_from_patch,
-    )
+    from pecos.qec.surface.circuit_builder import build_surface_code_circuit, generate_tick_circuit_from_patch
 
     patch = SurfacePatch.create(distance=3)
     baseline_plan = "szz_balanced_data_v1"

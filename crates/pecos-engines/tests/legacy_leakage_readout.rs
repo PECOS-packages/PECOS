@@ -18,13 +18,13 @@ fn legacy_readouts_keep_leakage_before_later_reset_or_leak() {
             let mut system = QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(1)));
             let mut input = ByteMessage::quantum_operations_builder();
             if ternary {
-                input.measure_leakages(&[0]);
+                input.measure_z_leaked(&[0]);
             } else {
                 input.mz(&[0]);
             }
             input.pz(&[0]);
             if ternary {
-                input.measure_leakages(&[0]);
+                input.measure_z_leaked(&[0]);
             } else {
                 input.mz(&[0]);
             }
@@ -54,7 +54,7 @@ fn mpz_reads_leakage_then_clears_it_even_when_noiseless() {
         let mut system = QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(1)));
         let input = ByteMessage::quantum_operations_builder()
             .mpz(&[0])
-            .measure_leakages(&[0])
+            .measure_z_leaked(&[0])
             .x(&[0])
             .mz(&[0])
             .build();
@@ -88,7 +88,7 @@ fn crosstalk_transitions_precede_later_readout_and_reset() {
                 let mut system =
                     QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(2)));
                 let mut input = ByteMessage::quantum_operations_builder();
-                input.pz(&[0, 1]).measure_leakages(&[0]);
+                input.pz(&[0, 1]).measure_z_leaked(&[0]);
                 if local {
                     input.meas_crosstalk_local_payload(&[0]);
                 } else {
@@ -97,7 +97,7 @@ fn crosstalk_transitions_precede_later_readout_and_reset() {
                 if reset {
                     input.pz(&[0]);
                 }
-                input.measure_leakages(&[0]);
+                input.measure_z_leaked(&[0]);
                 let want = if reset {
                     0
                 } else if leak {
@@ -111,7 +111,7 @@ fn crosstalk_transitions_precede_later_readout_and_reset() {
                     "local={local}, leak={leak}, reset={reset}"
                 );
                 let next = ByteMessage::quantum_operations_builder()
-                    .measure_leakages(&[0])
+                    .measure_z_leaked(&[0])
                     .build();
                 assert_eq!(
                     system.process(next).unwrap().outcomes().unwrap(),
@@ -165,9 +165,9 @@ fn preparation_crosstalk_results_do_not_shift_user_readouts() {
     model.mark_as_leaked(0);
     let mut system = QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(2)));
     let input = ByteMessage::quantum_operations_builder()
-        .measure_leakages(&[0])
+        .measure_z_leaked(&[0])
         .pz(&[0])
-        .measure_leakages(&[0])
+        .measure_z_leaked(&[0])
         .build();
     assert_eq!(
         system.process(input).unwrap().outcomes().unwrap(),

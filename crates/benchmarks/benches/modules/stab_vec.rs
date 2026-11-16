@@ -96,7 +96,16 @@ fn bench_rz_term_growth<M: Measurement>(c: &mut Criterion<M>) {
                     let mut sim = StabVec::new_with_seed(num_qubits, 42);
                     sim.h(&[QubitId(0)]).h(&[QubitId(1)]);
                     for i in 0..nrz {
-                        let theta = Angle64::from_radians(0.3 + 0.1 * i as f64);
+                        let theta = [
+                            pecos_core::radians!(0.3 + 0.1 * 0.0),
+                            pecos_core::radians!(0.3 + 0.1 * 1.0),
+                            pecos_core::radians!(0.3 + 0.1 * 2.0),
+                            pecos_core::radians!(0.3 + 0.1 * 3.0),
+                            pecos_core::radians!(0.3 + 0.1 * 4.0),
+                            pecos_core::radians!(0.3 + 0.1 * 5.0),
+                            pecos_core::radians!(0.3 + 0.1 * 6.0),
+                            pecos_core::radians!(0.3 + 0.1 * 7.0),
+                        ][i];
                         sim.rz(theta, &[QubitId(i % num_qubits)]);
                     }
                     black_box(sim.num_terms());
@@ -124,7 +133,7 @@ fn bench_state_vector<M: Measurement>(c: &mut Criterion<M>) {
                 if nq > 1 {
                     sim.cx(&[(QubitId(0), QubitId(1))]);
                 }
-                sim.rz(Angle64::from_radians(0.5), &[QubitId(0)]);
+                sim.rz(pecos_core::radians!(0.5), &[QubitId(0)]);
                 b.iter(|| {
                     black_box(sim.state_vector());
                 });
@@ -146,7 +155,16 @@ fn bench_state_vector<M: Measurement>(c: &mut Criterion<M>) {
                 }
                 for i in 0..nrz {
                     sim.rz(
-                        Angle64::from_radians(0.3 + 0.1 * i as f64),
+                        [
+                            pecos_core::radians!(0.3 + 0.1 * 0.0),
+                            pecos_core::radians!(0.3 + 0.1 * 1.0),
+                            pecos_core::radians!(0.3 + 0.1 * 2.0),
+                            pecos_core::radians!(0.3 + 0.1 * 3.0),
+                            pecos_core::radians!(0.3 + 0.1 * 4.0),
+                            pecos_core::radians!(0.3 + 0.1 * 5.0),
+                            pecos_core::radians!(0.3 + 0.1 * 6.0),
+                            pecos_core::radians!(0.3 + 0.1 * 7.0),
+                        ][i],
                         &[QubitId(i % nq)],
                     );
                 }
@@ -178,7 +196,16 @@ fn bench_measurement<M: Measurement>(c: &mut Criterion<M>) {
                     }
                     for i in 0..nrz {
                         sim.rz(
-                            Angle64::from_radians(0.3 + 0.1 * i as f64),
+                            [
+                                pecos_core::radians!(0.3 + 0.1 * 0.0),
+                                pecos_core::radians!(0.3 + 0.1 * 1.0),
+                                pecos_core::radians!(0.3 + 0.1 * 2.0),
+                                pecos_core::radians!(0.3 + 0.1 * 3.0),
+                                pecos_core::radians!(0.3 + 0.1 * 4.0),
+                                pecos_core::radians!(0.3 + 0.1 * 5.0),
+                                pecos_core::radians!(0.3 + 0.1 * 6.0),
+                                pecos_core::radians!(0.3 + 0.1 * 7.0),
+                            ][i],
                             &[QubitId(i % 4)],
                         );
                     }
@@ -260,8 +287,8 @@ fn bench_measurement_only<M: Measurement>(c: &mut Criterion<M>) {
                 if nq > 1 {
                     template.cx(&[(QubitId(0), QubitId(1))]);
                 }
-                template.rz(Angle64::from_radians(0.5), &[QubitId(0)]);
-                template.rz(Angle64::from_radians(0.8), &[QubitId(nq.min(2) - 1)]);
+                template.rz(pecos_core::radians!(0.5), &[QubitId(0)]);
+                template.rz(pecos_core::radians!(0.8), &[QubitId(nq.min(2) - 1)]);
 
                 b.iter(|| {
                     let mut sim = template.clone();
@@ -316,8 +343,8 @@ fn bench_measurement_scaling<M: Measurement>(c: &mut Criterion<M>) {
                     if nq > 1 {
                         sim.cx(&[(QubitId(0), QubitId(1))]);
                     }
-                    sim.rz(Angle64::from_radians(0.5), &[QubitId(0)]);
-                    sim.rz(Angle64::from_radians(0.8), &[QubitId(nq.min(2) - 1)]);
+                    sim.rz(pecos_core::radians!(0.5), &[QubitId(0)]);
+                    sim.rz(pecos_core::radians!(0.8), &[QubitId(nq.min(2) - 1)]);
                     let result = sim.mz(&[QubitId(0)]);
                     black_box(result);
                 });
@@ -334,12 +361,12 @@ fn bench_realistic_circuit<M: Measurement>(c: &mut Criterion<M>) {
     group.sample_size(10);
 
     let num_qubits = 20;
-    let theta = Angle64::from_radians(0.3);
+    let theta = pecos_core::radians!(0.3);
 
     // Benchmark: Clifford cost at various term counts
     for &num_rz in &[2, 4, 6] {
         let terms = 1 << num_rz;
-        let theta = Angle64::from_radians(0.3);
+        let theta = pecos_core::radians!(0.3);
         group.bench_with_input(
             BenchmarkId::new("20_H_gates", format!("{terms}_terms")),
             &num_rz,
@@ -424,7 +451,7 @@ fn bench_rz_commutation_opportunity<M: Measurement>(c: &mut Criterion<M>) {
     group.sample_size(10);
 
     let nq = 20;
-    let theta = Angle64::from_radians(0.3);
+    let theta = pecos_core::radians!(0.3);
 
     // Pattern: RZ(q) - S(q) - RZ(q). S commutes with RZ, so these could fuse.
     group.bench_function("rz_S_rz_same_qubit", |b| {
@@ -458,7 +485,7 @@ fn bench_rz_commutation_opportunity<M: Measurement>(c: &mut Criterion<M>) {
 
     // Ideal: manually fused (what we'd get with perfect commutation)
     group.bench_function("rz_fused_ideal", |b| {
-        let fused = Angle64::from_radians(0.6);
+        let fused = pecos_core::radians!(0.6);
         b.iter(|| {
             let mut sim = StabVec::new_with_seed(nq, 42);
             for q in 0..nq {
@@ -481,7 +508,7 @@ fn bench_t_gate_patterns<M: Measurement>(c: &mut Criterion<M>) {
 
     let nq = 20;
     // RZ(pi/4) is projectively equivalent to T.
-    let t_angle = Angle64::from_radians(std::f64::consts::FRAC_PI_4);
+    let t_angle = Angle64::from_turn_ratio(1, 8);
 
     // Pattern: T gates on same qubit fuse (T*T = S = Clifford)
     group.bench_function("4T_same_qubit_fuses_to_Z", |b| {
@@ -540,7 +567,7 @@ fn bench_rz_fusion_opportunity<M: Measurement>(c: &mut Criterion<M>) {
     group.sample_size(10);
 
     let nq = 20;
-    let theta = Angle64::from_radians(0.3);
+    let theta = pecos_core::radians!(0.3);
 
     // Without fusion: 4 separate RZ gates on same qubit = 16 terms
     group.bench_function("4_separate_rz_same_qubit", |b| {
@@ -560,7 +587,7 @@ fn bench_rz_fusion_opportunity<M: Measurement>(c: &mut Criterion<M>) {
 
     // With manual fusion: 1 RZ gate with 4*theta = 2 terms
     group.bench_function("1_fused_rz_same_qubit", |b| {
-        let fused_theta = Angle64::from_radians(0.3 * 4.0);
+        let fused_theta = pecos_core::radians!(0.3 * 4.0);
         b.iter(|| {
             let mut sim = StabVec::new_with_seed(nq, 42);
             for q in 0..nq {
@@ -584,7 +611,7 @@ fn bench_small_angle_rz<M: Measurement>(c: &mut Criterion<M>) {
 
     // 10 small-angle RZ gates (5 degrees each)
     group.bench_function("10_rz_5deg_different_qubits", |b| {
-        let theta = Angle64::from_radians(5.0f64.to_radians());
+        let theta = pecos_core::radians!(5.0f64.to_radians());
         b.iter(|| {
             let mut sim = StabVec::new_with_seed(nq, 42);
             for q in 0..nq {
@@ -600,7 +627,7 @@ fn bench_small_angle_rz<M: Measurement>(c: &mut Criterion<M>) {
 
     // Same but with 1 degree rotations (even more prunable)
     group.bench_function("10_rz_1deg_different_qubits", |b| {
-        let theta = Angle64::from_radians(1.0f64.to_radians());
+        let theta = pecos_core::radians!(1.0f64.to_radians());
         b.iter(|| {
             let mut sim = StabVec::new_with_seed(nq, 42);
             for q in 0..nq {
@@ -630,7 +657,7 @@ fn bench_end_to_end<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::new(format!("{terms}_terms"), format!("{nq}q")),
             &num_rz,
             |b, &nrz| {
-                let theta = Angle64::from_radians(0.3);
+                let theta = pecos_core::radians!(0.3);
                 b.iter(|| {
                     let mut sim = StabVec::new_with_seed(nq, 42);
                     // Initial Clifford layer

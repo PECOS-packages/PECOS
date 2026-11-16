@@ -151,7 +151,7 @@ pub fn detect_output_qubits(circuit: &TickCircuit) -> Vec<usize> {
                 // Check if this is a measurement gate
                 if matches!(
                     gate.gate_type,
-                    GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ
+                    GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree | GateType::MPZ
                 ) {
                     measured_qubits.insert(q);
                 }
@@ -203,7 +203,7 @@ impl CircuitIO {
                     if matches!(
                         gate.gate_type,
                         GateType::MZ
-                            | GateType::MeasureLeaked
+                            | GateType::MeasureZLeaked
                             | GateType::MeasureFree
                             | GateType::MPZ
                     ) {
@@ -292,7 +292,7 @@ pub(crate) fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Ga
         // phantom -- and would disagree with the gate's own `mz; pz` lowering,
         // whose explicit PZ clears. Its mid-circuit flips are invisible to
         // end-reads, exactly as the lowering's always were.
-        GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
+        GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked => {
             let x_basis = gate.gate_type == GateType::MX;
             for q in &gate.qubits {
                 let qubit = q.index();

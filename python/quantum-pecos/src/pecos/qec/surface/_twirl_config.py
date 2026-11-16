@@ -62,10 +62,7 @@ class TwirlConfig:
         result_encoding: How the per-shot mask is recorded in the
             runtime result bundle. `"bool_array_v1"` packs the
             `2 * num_data` bool bits per round into one tagged array per
-            twirl site (the only supported encoding -- the earlier
-            shared-tag scalar-bool variant is unimplementable because
-            `ShotVec.to_dict()` collapses repeated same-tag calls to the
-            last value).
+            twirl site (the only supported encoding).
         frame_output: Runtime Guppy measurement-frame convention.
             `"raw"` preserves the landed behavior: measurement tags are
             emitted in the physical/twirled frame and callers can

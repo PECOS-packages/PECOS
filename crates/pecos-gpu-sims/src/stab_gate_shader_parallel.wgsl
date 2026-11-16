@@ -2,14 +2,17 @@
 //
 // Processes a batch of INDEPENDENT gates in parallel.
 // Each thread handles one (gate_idx, word_idx) pair.
-// Gates in the batch must not share any qubits.
+// Gates in the batch must not share any qubits. The host partitioner also
+// permits at most one S/SDG gate per batch: their sign_i read/update sequence
+// is not atomic. Every other gate only toggles sign_minus or leaves signs alone.
 //
 // This dramatically increases parallelism:
 // - Original: gen_words threads (56 at d=21)
 // - Parallel: num_gates * gen_words threads (e.g., 100 gates * 56 = 5,600 threads)
 //
 // The sign update is tricky because it's per-word, not per-gate.
-// We use atomic XOR for sign updates since XOR is commutative.
+// Toggle-only updates use atomic XOR. S/SDG require the host partitioner's
+// shared-phase exclusion in addition to atomic access.
 
 @group(0) @binding(0) var<storage, read_write> stab_x: array<u32>;
 @group(0) @binding(1) var<storage, read_write> stab_z: array<u32>;
@@ -32,8 +35,15 @@ struct PersistentParams {
 
 @group(0) @binding(5) var<uniform> params: PersistentParams;
 
-// Gate queue: [0] = num_gates, [1..] = packed gates
+// Gate queue: [0] is reserved; partition_range selects packed gates in [1..].
 @group(0) @binding(6) var<storage, read> gate_queue: array<u32>;
+
+// A single aligned parameter buffer supplies every partition via dynamic offsets.
+struct PartitionRange {
+    start: u32,
+    count: u32,
+}
+@group(1) @binding(0) var<uniform> partition_range: PartitionRange;
 
 const GATE_H: u32 = 0u;
 const GATE_S: u32 = 1u;
@@ -62,7 +72,7 @@ fn process_gates_parallel(
     @builtin(local_invocation_index) local_idx: u32
 ) {
     if (local_idx == 0u) {
-        shared_num_gates = gate_queue[0];
+        shared_num_gates = partition_range.count;
     }
     workgroupBarrier();
 
@@ -82,7 +92,7 @@ fn process_gates_parallel(
     let gate_idx = thread_id / params.gen_words;
     let word_idx = thread_id % params.gen_words;
 
-    let gate = decode_gate(gate_queue[gate_idx + 1u]);
+    let gate = decode_gate(gate_queue[partition_range.start + gate_idx]);
     let gate_type = gate.x;
     let tgt_qubit = gate.y;
     let ctrl_qubit = gate.z;
@@ -133,8 +143,8 @@ fn process_gates_parallel(
             destab_z[row_offset] = orig_destab_z ^ orig_destab_x;
             // SDG sign update: Sdg multiplies phase by -i when X=1
             // Flip sign_minus when sign_i was 0 (i.e., use ~had_i)
-            // This is problematic for parallel execution - sign_i may be updated by other gates
-            // For now, read the atomic value (may have race conditions with other SDG gates)
+            // The host permits only one S/SDG in this batch, so no other gate
+            // can change sign_i between this load and the XOR below.
             let had_i = atomicLoad(&sign_i[word_idx]);
             let sign_minus_update = orig_stab_x & ~had_i;
             if (sign_minus_update != 0u) {

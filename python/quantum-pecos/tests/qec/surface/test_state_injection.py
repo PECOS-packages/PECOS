@@ -9,14 +9,9 @@ from dataclasses import replace
 import numpy as np
 import pytest
 from pecos.guppy_gen.gadget_render import render_gadget_function
+from pecos.qec.circuit_steps import OpType
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-from pecos.qec.surface.circuit_builder import (
-    DagCircuitRenderer,
-    GuppyRenderer,
-    OpType,
-    StimRenderer,
-    TickCircuitRenderer,
-)
+from pecos.qec.surface.circuit_builder import DagCircuitRenderer, GuppyRenderer, StimRenderer, TickCircuitRenderer
 from pecos.qec.surface.gadgets import default_allocation, fold_sz_round_gadget
 from pecos.qec.surface.injection import injection_correction_supports, state_injection
 

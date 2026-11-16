@@ -27,14 +27,15 @@ use pecos_quantum::{DagCircuit, TickCircuit};
 use pecos_simulators::SparseStab;
 use std::collections::HashMap;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Circuit Integration Examples ===\n");
 
     example_tick_circuit_execution();
     example_dag_circuit_execution();
-    example_tick_with_noise();
+    example_tick_with_noise()?;
     example_round_trip();
-    example_qec_style_circuit();
+    example_qec_style_circuit()?;
+    Ok(())
 }
 
 /// Execute a `TickCircuit` directly
@@ -123,7 +124,7 @@ fn example_dag_circuit_execution() {
 }
 
 /// Execute `TickCircuit` with noise
-fn example_tick_with_noise() {
+fn example_tick_with_noise() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- TickCircuit with Noise ---");
 
     let mut circuit = TickCircuit::new();
@@ -137,8 +138,8 @@ fn example_tick_with_noise() {
     // Add depolarizing noise
     let noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(SingleQubitChannel::depolarizing(0.01))
-        .add_channel(TwoQubitChannel::depolarizing(0.02));
+        .add_channel(SingleQubitChannel::depolarizing(0.01)?)
+        .add_channel(TwoQubitChannel::depolarizing(0.02)?);
 
     let mut state = SparseStab::new(2);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -170,6 +171,7 @@ fn example_tick_with_noise() {
         f64::from(anti_correlated) / 10.0
     );
     println!();
+    Ok(())
 }
 
 /// Demonstrate round-trip conversion
@@ -238,7 +240,7 @@ fn example_round_trip() {
 }
 
 /// QEC-style circuit using `TickCircuit`'s parallel structure
-fn example_qec_style_circuit() {
+fn example_qec_style_circuit() -> Result<(), Box<dyn std::error::Error>> {
     println!("--- QEC-Style Syndrome Extraction ---");
 
     // Build a simple repetition code syndrome extraction round
@@ -276,9 +278,9 @@ fn example_qec_style_circuit() {
     // Run with noise
     let noise = ComposableNoiseModel::new()
         .add_plugin(&CorePlugin)
-        .add_channel(SingleQubitChannel::depolarizing(0.005))
-        .add_channel(TwoQubitChannel::depolarizing(0.01))
-        .add_channel(MeasurementChannel::symmetric(0.005));
+        .add_channel(SingleQubitChannel::depolarizing(0.005)?)
+        .add_channel(TwoQubitChannel::depolarizing(0.01)?)
+        .add_channel(MeasurementChannel::symmetric(0.005)?);
 
     let mut state = SparseStab::new(5);
     let mut runner = CircuitRunner::<SparseStab>::new()
@@ -308,4 +310,5 @@ fn example_qec_style_circuit() {
     }
     println!("  (00 = no detected errors, others indicate errors)");
     println!();
+    Ok(())
 }

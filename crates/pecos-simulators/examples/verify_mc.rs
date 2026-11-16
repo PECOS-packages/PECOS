@@ -1,11 +1,11 @@
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec, StateVec};
 
 /// Verify MC sampling gives similar statistics to exact state vector.
 fn main() {
     let nq = 8;
     let nrz = 6;
-    let theta = Angle64::from_radians(0.3);
+    let theta = pecos_core::radians!(0.3);
     let num_shots = 10000;
 
     // Build reference state vector

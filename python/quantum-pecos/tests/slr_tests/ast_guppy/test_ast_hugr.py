@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from pecos.slr import CReg, For, LoopVar, Main, QReg, Repeat, Return, SlrConverter, While, rad
+from pecos.slr import CReg, For, LoopVar, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 
 def test_hugr_compiles_via_ast_guppy_path() -> None:
@@ -15,7 +15,7 @@ def test_hugr_compiles_via_ast_guppy_path() -> None:
         c := CReg("c", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -30,7 +30,7 @@ def test_hugr_rejects_while_before_parallel_optimizer_erases_it() -> None:
         c := CReg("c", 1),
         While(c[0] == 0).Do(
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
         ),
         Return(c),
     )
@@ -64,6 +64,15 @@ def test_hugr_rejects_symbolic_loopvar_indexing_cleanly() -> None:
 
     with pytest.raises(GuppyCodegenError, match="symbolic LoopVar indexing"):
         SlrConverter(prog).hugr()
+
+
+@pytest.mark.parametrize("target", ["guppy", "hugr"])
+def test_parallel_symbolic_measurement_rejected_cleanly(target: str) -> None:
+    i = LoopVar("i")
+    q, c = QReg("q", 2), CReg("c", 2)
+    program = Main(q, c, For(i, 0, 2).Do(Parallel(qb.H(q[i]), MeasureZ(q[i]) > c[i])))
+    with pytest.raises(GuppyCodegenError, match="does not support symbolic LoopVar indexing"):
+        getattr(SlrConverter(program), target)()
 
 
 def test_angle_first_misuse_fails_loud_at_call() -> None:
@@ -114,37 +123,29 @@ def test_angle_first_misuse_fails_loud_at_call() -> None:
 
 
 def test_codegen_arity_guard_rejects_malformed_param_gate() -> None:
-    # Even if a malformed
-    # parameterized GateOp reaches a codegen from a non-SLR path
-    # (the SLR `__call__` guard above blocks the user-facing route),
-    # QIR and QASM must FAIL LOUD on too-few-targets rather than
-    # silently emitting no operation (the pre-fold behavior: the
-    # single-qubit emit loop iterated zero targets; the two-qubit
-    # path was gated on `len(targets) >= 2`; the QIR decomposition
-    # path raised a raw IndexError).
+    # Multi-qubit arity is enforced by GateOp itself, including non-SLR
+    # producers. Single-qubit parameterized gates retain their codegen guard.
     from pecos.slr.ast.codegen.qasm import AstToQasm
     from pecos.slr.ast.codegen.qir import AstToQir
     from pecos.slr.ast.nodes import GateKind, GateOp, LiteralExpr, SlotRef
 
     one = (SlotRef(allocator="q", index=0),)
-    malformed = [
-        ("RX", GateOp(gate=GateKind.RX, targets=(), params=(LiteralExpr(value=0.5),))),
-        ("RZZ", GateOp(gate=GateKind.RZZ, targets=one, params=(LiteralExpr(value=0.5),))),
-        ("CRX", GateOp(gate=GateKind.CRX, targets=one, params=(LiteralExpr(value=0.5),))),
-        ("CRZ", GateOp(gate=GateKind.CRZ, targets=one, params=(LiteralExpr(value=0.5),))),
-    ]
-    for name, node in malformed:
-        with pytest.raises(NotImplementedError, match=f"QIR codegen: parameterized gate {name!r}"):
-            AstToQir()._process_gate(node)  # noqa: SLF001
-        with pytest.raises(NotImplementedError, match=f"QASM codegen: parameterized gate {name!r}"):
-            AstToQasm().visit_gate(node)
+    for kind in (GateKind.RZZ, GateKind.CRX, GateKind.CRZ):
+        with pytest.raises(ValueError, match=rf"{kind.name} expects 2 qubit\(s\), got 1"):
+            GateOp(gate=kind, targets=one, params=(LiteralExpr(value=0.5),))
+
+    node = GateOp(gate=GateKind.RX, targets=(), params=(LiteralExpr(value=0.5),))
+    with pytest.raises(NotImplementedError, match="QIR codegen: parameterized gate 'RX'"):
+        AstToQir()._process_gate(node)  # noqa: SLF001
+    with pytest.raises(NotImplementedError, match="QASM codegen: parameterized gate 'RX'"):
+        AstToQasm().visit_gate(node)
 
 
 def test_hugr_accepts_inline_measure_creg_result() -> None:
     final = CReg("final", 2)
     prog = Main(
         q := QReg("q", 2),
-        Measure(q) > final,
+        MeasureZ(q) > final,
         Return(final),
     )
 
@@ -169,7 +170,7 @@ def test_hugr_returns_no_arg_entrypoint_runnable_via_hugr_adapter() -> None:
         c := CReg("c", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -215,7 +216,7 @@ def test_hugr_inline_measure_creg_round_trips_through_selene() -> None:
         q := QReg("qi", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        Measure(q) > final,
+        MeasureZ(q) > final,
         Return(final),
     )
 
@@ -243,7 +244,7 @@ def test_hugr_inline_measure_creg_inside_nested_repeat() -> None:
         q := QReg("q", 1),
         Repeat(2).block(
             qb.X(q[0]),
-            Measure(q[0]) > flag[0],
+            MeasureZ(q[0]) > flag[0],
             qb.PZ(q[0]),
         ),
         Return(flag),
@@ -270,7 +271,7 @@ def test_hugr_explicit_return_of_declared_creg() -> None:
         q := QReg("q", 1),
         c := CReg("c", 1),
         qb.PZ(q[0]),
-        Measure(q[0]) > c[0],
+        MeasureZ(q[0]) > c[0],
         Return(c),
     )
 

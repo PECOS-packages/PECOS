@@ -12,6 +12,7 @@ import pytest
 import stim
 from pecos.qec import MissingObservableReferenceError, empirical_correlation_table, fit_dem_from_simulation
 from pecos.qec._replay import _replay_tick_circuit
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import (
     LogicalCircuitBuilder,
     SurfacePatch,
@@ -21,13 +22,7 @@ from pecos.qec.surface import (
     get_observable_descriptors_from_tick_circuit,
 )
 from pecos.qec.surface._twirl_config import TwirlConfig
-from pecos.qec.surface.circuit_builder import (
-    OpType,
-    SurfaceCircuitStep,
-    TickCircuitRenderer,
-    build_surface_code_circuit,
-    tick_circuit_to_stim,
-)
+from pecos.qec.surface.circuit_builder import TickCircuitRenderer, build_surface_code_circuit, tick_circuit_to_stim
 from pecos.qec.surface.logical_circuit import LogicalGateType
 from pecos.testing import simulate_tick_circuit
 from pecos_rslib.quantum import TickCircuit
@@ -232,7 +227,7 @@ def test_memory_renderer_computes_reference_from_gates():
     patch = SurfacePatch.create(3)
     steps, allocation = build_surface_code_circuit(patch, 1, "Z")
     final = next(i for i, step in enumerate(steps) if step.label == "final[0]")
-    steps.insert(final, SurfaceCircuitStep(OpType.X, [allocation.data_qubits[0]]))
+    steps.insert(final, CircuitStep(OpType.X, [allocation.data_qubits[0]]))
     tc = TickCircuitRenderer().render(steps, allocation, patch, 1, "Z")
     assert json.loads(tc.get_meta("observables"))[0]["reference"] == 1
     circuit = stim.Circuit(tick_circuit_to_stim(tc))
@@ -456,7 +451,7 @@ def test_reader_round_trip_reference(producer, reference):
         steps, allocation = build_surface_code_circuit(patch, 1, "Z")
         if reference:
             final = next(i for i, step in enumerate(steps) if step.label == "final[0]")
-            steps.insert(final, SurfaceCircuitStep(OpType.X, [allocation.data_qubits[0]]))
+            steps.insert(final, CircuitStep(OpType.X, [allocation.data_qubits[0]]))
         tc = TickCircuitRenderer().render(steps, allocation, patch, 1, "Z")
     metadata = json.loads(tc.get_meta("observables"))
     resolved = tc.circuit_definitions()["observables"]

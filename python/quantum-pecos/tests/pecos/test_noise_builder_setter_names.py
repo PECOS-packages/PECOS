@@ -264,7 +264,7 @@ def test_coherent_idle_rx_reaches_runtime_deterministically() -> None:
 
 def test_linear_idle_family_rejects_unnormalized_model() -> None:
     """The linear family reuses the normalized weighted-sampler contract."""
-    with pytest.raises(BaseException, match=r"total weight 2.*deviates from 1.0"):
+    with pytest.raises(ValueError, match=r"total weight 2.*deviates from 1.0"):
         general_noise().with_p_idle_linear(0.01, {"X": 1.0, "Z": 1.0})
 
 
@@ -283,7 +283,7 @@ def test_sine_idle_multipliers_are_not_normalized() -> None:
 @pytest.mark.parametrize("model", [{"L": 1.0}, {"A": 1.0}])
 def test_coherent_idle_family_rejects_non_rotation_keys(model: dict[str, float]) -> None:
     """Leakage and unknown generators are rejected instead of being treated as rotations."""
-    with pytest.raises(BaseException, match=r"invalid key.*expected RX, RY, or RZ"):
+    with pytest.raises(ValueError, match=r"invalid key.*expected RX, RY, or RZ"):
         general_noise().with_p_idle_coherent(0.02, model)
 
 
@@ -311,3 +311,10 @@ def test_with_p_meas_actually_configures_measurement_noise() -> None:
 
     measurements = results["outcome"]
     assert all(m == 1 for m in measurements), "p_meas=1.0 should flip every |0> measurement"
+
+
+def test_build_rejects_overflowing_after_two_qubit_coherent_idle() -> None:
+    """Fixed idle duration products are rejected before quantum execution."""
+    noise = general_noise().with_p_idle_coherent(1e300, {"RZ": 1.0}).with_idle_after_2q(1e10)
+    with pytest.raises(ValueError, match=r"idle_after_2q.*inf.*reduce"):
+        _run_after_2q_noise(noise, 1)

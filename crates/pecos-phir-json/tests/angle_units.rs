@@ -64,3 +64,30 @@ mod tests {
         Ok(())
     }
 }
+
+#[test]
+fn overflowing_angle_units_are_rejected() {
+    use pecos_phir_json::v0_1::ast::PHIRProgram;
+    // A finite 1e308 overflows only when the pi-to-radians conversion multiplies it.
+    let json = r#"{"format":"PHIR/JSON","version":"0.1.0","ops":[{"qop":"RZ","angles":[[1e308],"pi"],"args":[["q",0]]}]}"#;
+    let error = serde_json::from_str::<PHIRProgram>(json).unwrap_err();
+    assert!(error.to_string().contains("inf"), "{error}");
+}
+
+#[test]
+fn nonfinite_in_memory_angles_are_validation_errors() {
+    use pecos_core::errors::PecosError;
+    use pecos_engines::ByteMessage;
+    use pecos_phir_json::v0_1::operations::OperationProcessor;
+    for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let mut builder = ByteMessage::quantum_operations_builder();
+        let error = OperationProcessor::new()
+            .add_quantum_operation_to_builder(&mut builder, "RZ", &[0], &[angle])
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PecosError::ValidationInvalidGateParameters(_)
+        ));
+        assert!(error.to_string().contains(&angle.to_string()));
+    }
+}

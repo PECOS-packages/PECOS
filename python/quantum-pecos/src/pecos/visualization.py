@@ -106,7 +106,7 @@ def circuit_diagram(
         show_measurement_ids: Label measurements with stored identities (e.g.
             ``MZ[m7]``). Missing result identities show ``m?``. IDs are not
             outcomes or emission ordinals, and rendering never assigns them.
-            ``MeasureLeaked`` can return 0, 1, or 2 (leaked) at runtime; these
+            ``MeasureZLeaked`` can return 0, 1, or 2 (leaked) at runtime; these
             labels identify measurements, not their returned values.
 
     Returns:
@@ -118,7 +118,7 @@ def circuit_diagram(
         dependency layers. Traces use the validated runtime-lowered stream,
         replayed into ASAP-compacted ticks, and represent only one execution
         path. None of these axes represents physical time. Rendering does not
-        attach detector metadata. Visualization retains ``MeasureLeaked`` as
+        attach detector metadata. Visualization retains ``MeasureZLeaked`` as
         ``MZ_L`` with its result IDs. Labels describe operations and identities;
         individual measurement outcome values are not shown.
 

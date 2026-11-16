@@ -1,15 +1,17 @@
 //! ABI and recovery checks against the dynamically loaded runtime only.
 
 use super::*;
+use crate::selene_test_ir;
 use crate::test_env::ENV_MUTEX;
 
 // Explicit public ABI surface: adding or removing an entry requires review.
-const SELENE_EXPORTS: [&str; 42] = [
+const SELENE_EXPORTS: [&str; 45] = [
     "selene_qalloc",
     "selene_qfree",
     "selene_rxy",
     "selene_rz",
     "selene_rzz",
+    "selene_rpp",
     "selene_qubit_reset",
     "selene_qubit_measure",
     "selene_qubit_lazy_measure",
@@ -33,6 +35,7 @@ const SELENE_EXPORTS: [&str; 42] = [
     "selene_get_current_shot",
     "selene_local_barrier",
     "selene_global_barrier",
+    "selene_simulate_delay",
     "selene_shot_count",
     "selene_on_shot_start",
     "selene_on_shot_end",
@@ -45,6 +48,7 @@ const SELENE_EXPORTS: [&str; 42] = [
     "selene_random_u32_bounded",
     "selene_random_f64",
     "selene_custom_runtime_call",
+    "pecos_qis_ffi_abi_version",
     "pecos_call_qmain_with_setjmp",
     "pecos_call_void_main_with_setjmp",
 ];
@@ -217,10 +221,18 @@ fn generated_program_selene_binds_to_selected_ffi() {
     let _env_lock = ENV_MUTEX.lock().expect("environment lock");
     let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
     let mut interface = QisHeliosInterface::new();
-    let import = if cfg!(windows) { "dllimport" } else { "" };
+    let declaration = selene_test_ir::declaration("selene_qalloc", "ptr").replacen(
+        "declare",
+        if cfg!(windows) {
+            "declare dllimport"
+        } else {
+            "declare"
+        },
+        1,
+    );
     interface.program = format!(
         r"
-        declare {import} {{ i32, i64 }} @selene_qalloc(ptr)
+        {declaration}
         define i64 @qmain(i64 %arg) {{
             %address = ptrtoint ptr @selene_qalloc to i64
             ret i64 %address
@@ -306,6 +318,9 @@ unsafe extern "C-unwind" fn adapter_entry() {
             2 => {
                 (adapters.panic)(instance, message, 1001);
             }
+            6 => {
+                (adapters.panic)(instance, message, 1000);
+            }
             3 => {
                 (adapters.invalid)(instance, u64::MAX, 0.2, 0.3);
             }
@@ -328,7 +343,8 @@ unsafe extern "C-unwind" fn adapter_qentry(_arg: u64) -> u64 {
 
 fn run_adapter_transfers() {
     let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
-    let context = QisHeliosInterface::create_execution_context(ffi.inner()).expect("context");
+    let context =
+        Arc::new(QisHeliosInterface::create_execution_context(ffi.inner()).expect("context"));
     unsafe {
         let register: Symbol<RegisterExecutionContextFn> = ffi
             .get(b"pecos_register_execution_context\0")
@@ -373,6 +389,7 @@ fn run_adapter_transfers() {
                 (0, None),
                 (1, Some("Exit")),
                 (2, Some("Panic")),
+                (6, Some("Panic")),
                 (3, Some("-1")),
                 (4, Some("random_seed")),
             ] {
@@ -399,12 +416,21 @@ fn run_adapter_transfers() {
                 } else {
                     assert!(error.is_null());
                 }
+                let handle = HeliosSyncHandle {
+                    execution_context: Arc::clone(&context),
+                };
+                match mode {
+                    0 => assert_eq!(handle.get_program_exit().unwrap(), None),
+                    1 => assert_eq!(handle.get_program_exit().unwrap().unwrap().code, 3),
+                    _ => assert!(handle.get_program_exit().is_err()),
+                }
                 TRANSFER_MODE.set(5);
                 REACHED.set(false);
                 assert_eq!(invoke(is_void), 0);
                 assert!(REACHED.get());
                 assert_eq!(freed(), before + 2);
                 assert!(get_error().is_null());
+                assert_eq!(handle.get_program_exit().unwrap(), None);
                 assert!(std::ptr::fn_addr_eq(
                     get_handler().expect("restored handler"),
                     previous_handler as Handler
@@ -439,4 +465,42 @@ fn rust_adapter_transfers_are_thread_local() {
             });
         }
     });
+}
+
+#[cfg(unix)]
+#[test]
+fn incompatible_ffi_libraries_fail_before_any_rust_data_is_accessed() {
+    let mismatch = format!(
+        "ABI version 0, expected {}",
+        pecos_qis_ffi_types::QIS_FFI_ABI_VERSION
+    );
+    for (body, expected) in [
+        ("int unrelated(void) { return 0; }", "missing ABI version"),
+        (
+            "unsigned long long pecos_qis_ffi_abi_version(void) { return 0; }",
+            mismatch.as_str(),
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("incompatible.c");
+        let library = dir.path().join("incompatible.so");
+        std::fs::write(&source, body).unwrap();
+        let output = Command::new("cc")
+            .args(["-shared", "-fPIC"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let lib = unsafe { Library::new(&library).unwrap() };
+        let error = QisHeliosInterface::validate_qis_ffi_abi(&lib).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
+    let current = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+    QisHeliosInterface::validate_qis_ffi_abi(current.inner()).unwrap();
 }

@@ -21,10 +21,10 @@ Both produce a `ComposableNoiseModel` that integrates with `CircuitRunner`.
 use pecos_neo::noise::composite::CompositeNoiseModelBuilder;
 
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001)           // Single-qubit gate error rate
-    .with_p2(0.01)            // Two-qubit gate error rate
-    .with_p_meas(0.02, 0.03)  // Measurement error (0→1, 1→0)
-    .build();
+    .with_p1(0.001).unwrap()           // Single-qubit gate error rate
+    .with_p2(0.01).unwrap()            // Two-qubit gate error rate
+    .with_p_meas(0.02, 0.03).unwrap()  // Measurement error (0→1, 1→0)
+    .build().unwrap();
 ```
 
 ### All Parameters
@@ -34,19 +34,19 @@ let noise = CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Base error probability
-    .with_p1(0.001)
+    .with_p1(0.001)?
 
     // Of errors, what fraction are emission (vs Pauli)
-    .with_p1_emission_ratio(0.1)
+    .with_p1_emission_ratio(0.1)?
 
     // Seepage probability (leaked qubit returns to computational space)
-    .with_p1_seepage(0.05)
+    .with_p1_seepage(0.05)?
 
     // Custom Pauli weights (default: uniform X, Y, Z)
-    .with_p1_pauli_weights(PauliWeights::new(0.25, 0.25, 0.50))  // More Z errors
+    .with_p1_pauli_weights(PauliWeights::new(0.25, 0.25, 0.50))?  // More Z errors
 
     // Custom emission model
-    .with_p1_emission_model(SingleQubitEmissionWeights { ... })
+    .with_p1_emission_model(SingleQubitEmissionWeights { ... })?
 ```
 
 #### Two-Qubit Gates
@@ -54,23 +54,23 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Base error probability
-    .with_p2(0.01)
+    .with_p2(0.01)?
 
     // Emission vs Pauli ratio
-    .with_p2_emission_ratio(0.1)
+    .with_p2_emission_ratio(0.1)?
 
     // Seepage for leaked qubits
-    .with_p2_seepage(0.05)
+    .with_p2_seepage(0.05)?
 
     // Angle-dependent scaling (for RZZ, etc.)
     .with_p2_angle_scaling(AngleScaling::Quadratic)
 
     // Apply configured idle noise for one time unit after each two-qubit gate
-    .with_p_idle_linear(0.001)
-    .with_idle_after_2q(1.0)
+    .with_p_idle_linear(0.001)?
+    .with_idle_after_2q(1.0)?
 
     // Custom two-qubit Pauli model
-    .with_p2_pauli_model(TwoQubitPauliWeights { ... })
+    .with_p2_pauli_model(TwoQubitPauliWeights { ... })?
 ```
 
 #### Preparation
@@ -78,13 +78,13 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Preparation error rate
-    .with_p_prep(0.001)
+    .with_p_prep(0.001).unwrap()
 
     // Of prep errors, fraction that leak (vs bit flip)
-    .with_p_prep_leak_ratio(0.1)
+    .with_p_prep_leak_ratio(0.1).unwrap()
 
     // Crosstalk during preparation
-    .with_p_prep_crosstalk(0.0001)
+    .with_p_prep_crosstalk(0.0001).unwrap()
 ```
 
 #### Measurement
@@ -92,10 +92,10 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Asymmetric measurement error
-    .with_p_meas(0.02, 0.03)  // P(report 1 | true 0), P(report 0 | true 1)
+    .with_p_meas(0.02, 0.03).unwrap()  // P(report 1 | true 0), P(report 0 | true 1)
 
     // Symmetric measurement error
-    .with_p_meas_symmetric(0.02)
+    .with_p_meas_symmetric(0.02).unwrap()
 ```
 
 #### Leakage
@@ -104,9 +104,9 @@ CompositeNoiseModelBuilder::new()
 CompositeNoiseModelBuilder::new()
     // Leakage and seepage rates
     .with_leakage(
-        0.001,  // Probability of leaking per gate
-        0.1,    // Probability of seeping back per gate
-    )
+        0.001,  // Emission ratio within gate faults
+        0.1,    // Conditional seepage probability after a gate emission fault
+    ).unwrap()
 ```
 
 #### Idle/Decoherence
@@ -114,7 +114,7 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // T1/T2 style decoherence
-    .with_idle_t1_t2(50e-6, 30e-6)  // T1, T2 in seconds
+    .with_idle_t1_t2(50e-6, 30e-6).unwrap()  // T1, T2 in seconds
 
     // Set time scale for idle calculations
     .with_time_scale(TimeScale::Nanoseconds)
@@ -125,10 +125,10 @@ CompositeNoiseModelBuilder::new()
 ```rust
 CompositeNoiseModelBuilder::new()
     // Measurement-induced crosstalk
-    .with_measurement_crosstalk(
+    .with_p_meas_crosstalk(
         0.001,  // Global probability (affects all other qubits)
         0.01,   // Local probability (affects nearby qubits)
-    )
+    ).unwrap()
 
     // Custom neighbor function
     .with_crosstalk_neighbors(|q1, q2| distance(q1, q2) < 3)
@@ -159,9 +159,9 @@ let circuit = CommandBuilder::new()
 
 // Build noise model
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001)
-    .with_p2(0.01)
-    .build();
+    .with_p1(0.001)?
+    .with_p2(0.01)?
+    .build()?;
 
 // Run with noise
 let mut state = SparseStab::new(2);
@@ -170,8 +170,8 @@ let mut runner = CircuitRunner::<SparseStab>::new()
     .with_seed(42);
 
 let outcomes = runner.apply_circuit(&mut state, &circuit)?;
-println!("Qubit 0: {}", outcomes.get_bit(QubitId(0)).unwrap());
-println!("Qubit 1: {}", outcomes.get_bit(QubitId(1)).unwrap());
+println!("Qubit 0: {}", outcomes.get_bit(QubitId(0))?);
+println!("Qubit 1: {}", outcomes.get_bit(QubitId(1))?);
 ```
 
 ## Custom Noise with Primitives
@@ -185,7 +185,7 @@ use pecos_neo::noise::composite::{CompositeChannel, CompositeEventFilter};
 // Custom single-qubit noise: skip leaked qubits, then apply depolarizing
 let sq_primitive = seq(vec![
     skip_if_leaked(),
-    prob(0.001, depolarize()),
+    prob(0.001, depolarize()).unwrap(),
 ]);
 
 // Create channel
@@ -203,10 +203,11 @@ let model = ComposableNoiseModel::new()
 
 ```rust
 // Probability gate
-prob(0.01, action)
+prob(0.01, action).unwrap()
 
 // Dynamic probability based on gate
-prob_fn(|gate| gate.angle().map(|a| a.to_radians().abs()).unwrap_or(0.0), action)
+let p = Probability::new(0.01)?;
+prob_fn(move |_gate| p, action)
 
 // Conditional
 when(leaked(), then_action, else_action)
@@ -246,13 +247,14 @@ nothing()
 
 // Pauli errors
 pauli()                    // Uniform X, Y, Z
-pauli_weighted(0.3, 0.3, 0.4)  // Custom weights
+pauli_weighted(0.3, 0.3, 0.4)?  // Custom weights
 depolarize()               // Same as uniform pauli
 dephase()                  // Z error only
 
 // Leakage
 leak()                     // Mark qubit as leaked
-seep(0.1)                  // With prob 0.1, unleak and apply random Pauli
+prob(0.1, seep())?          // With prob 0.1, unleak and apply uniform I/X/Y/Z
+unleak()                   // Clear the flag only; keep the simulator state
 
 // Gate injection
 inject(GateCommand::x(qubit))
@@ -273,13 +275,73 @@ When noise is applied, it produces a `NoiseResponse` that the runner processes:
 |----------|--------|
 | `NoiseResponse::None` | No effect |
 | `NoiseResponse::InjectGates(gates)` | Insert gates after current operation |
-| `NoiseResponse::SkipGate` | Don't execute the triggering gate |
+| `NoiseResponse::SkipGate(qubits)` | Suppress operand groups containing a listed qubit; list all operands to skip the whole command |
 | `NoiseResponse::FlipOutcomes(qubits)` | Toggle measurement outcomes for qubits |
 | `NoiseResponse::ForceOutcomes(pairs)` | Set outcomes to specific values |
 | `NoiseResponse::MarkLeaked(qubits)` | Mark qubits as leaked in context |
 | `NoiseResponse::Multiple(responses)` | Combine multiple responses |
 
+After-gate `qubits` contains executed operand groups only. `leaked_suppressed`
+contains complete groups skipped while leaked, in original order within each
+slice. The partition is fixed immediately after before-gate dispatch. A later
+unleak never promotes a suppressed group to executed, and a later leak never
+restores a dropped group. A qubit that seeps in the same before-gate emit that
+skipped it is healthy at this decision, so its group is dropped.
+
+A command with only leaked-suppressed groups still emits, with empty `qubits`.
+An all-dropped, originally non-empty command emits no after-gate event. Empty
+operands retain their event. Queue after-gate handlers receive the same split;
+adapted execution does not invoke user gate handlers.
+
+Gate-error channels use `qubits`. Seepage channels explicitly read suppressed
+groups. `LeakageChannel` applies partner noise there only when explicitly enabled
+with `with_partner_pauli_probability(p)` (default 0). On noisy operations, idle-after-two-qubit
+noise acts on healthy members of executed and suppressed groups; crosstalk uses
+both as sources and exclusions. Dropped groups get neither effect, but can be
+crosstalk targets. `gated_qubits()` returns both slices without allocating when
+there are no suppressed groups.
+
+`group_size` on before/after events is a `NonZeroUsize`. Queue commands use
+the gate type arity; adapted commands use the registered arity. A positive
+arity that divides non-empty operands is used directly; otherwise the size
+is the whole operand count, or one for empty operands.
+`NoiseContext::set_current_gate` also takes a `NonZeroUsize`.
+Composite filters classify by this size, including custom gates represented as
+`GateType::I`. Primitives see only their own group for partner/leakage conditions.
+On noisy operations, suppressed groups run primitives only on currently leaked members.
+
+Single- and two-qubit seepage has marginal rate `p * r * s`: gate error `p`
+(angle-scaled for two-qubit gates), raw emission ratio `r`, and conditional
+seepage `s`. Leakage scale
+does not enter. Two-qubit channels share the `p` and `r` draws per pair, then draw
+`s` for each currently leaked member in operand order. Composite builders sample
+per qubit, so their both-leaked joint rate differs. Seeded results change.
+
+Handler leakage marks are applied with observers before combining the handler
+response with noise-model responses. Observer responses are combined, but marks
+inside observer responses are not applied recursively. Without a noise model,
+a handler mark returns `ExecutionError::HandlerLeakageWithoutNoise`.
+
 ## Noise Context
+
+`NoiseModelBuilder`, `GeneralNoiseModelBuilder` and `CompositeNoiseModelBuilder`
+register `CorePlugin` automatically. Its `AfterPreparation` handler marks qubits
+active and clears previous leakage before preparation noise runs, so a new leak
+from that same preparation remains. Its `AfterMeasurement` handler marks qubits
+inactive without clearing leakage. Thus crosstalk targets other prepared,
+unmeasured, non-leaked qubits, and custom `active()` conditions follow this
+lifecycle. A bare `ComposableNoiseModel` needs `.add_plugin(&CorePlugin)` for
+these preparation and measurement state updates.
+
+`SingleQubitChannel` and `TwoQubitChannel` discard a seeping qubit's state by
+sampling I, X, Y or Z uniformly and independently for each seeping qubit. Identity
+injects no gate. This fully depolarizing channel also discards correlations with
+other qubits. The draw happens only after seep selection, for both executed and
+leaked-suppressed groups; it does not change the seepage rate. No reset gate is
+injected.
+Composite `seep()` retains its configurable Pauli weights. `unleak()` and
+`NoiseResponse::MarkUnleaked` clear only the leakage flag and preserve the
+simulator state; use `seep()` for the physical channel.
 
 The `NoiseContext` tracks simulation state for noise decisions:
 
@@ -307,8 +369,8 @@ For low error rates with many qubits, the system uses geometric sampling to skip
 
 ```rust
 // Automatic for channels with probability < 0.01 and > 100 qubits
-let channel = CompositeChannel::new("fast_depol", prob(0.001, depolarize()))
-    .with_probability(0.001)  // Enables geometric sampling
+let channel = CompositeChannel::new("fast_depol", prob(0.001, depolarize()).unwrap())
+    .with_probability(0.001).unwrap()  // Enables geometric sampling
     .with_filter(CompositeEventFilter::SingleQubitGate);
 ```
 
@@ -344,34 +406,34 @@ for warning in warnings {
 
 ```rust
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.0001)
-    .with_p2(0.001)
-    .with_p1_emission_ratio(0.1)
-    .with_p2_emission_ratio(0.1)
-    .with_leakage(0.0001, 0.1)
-    .with_p_meas(0.001, 0.01)
-    .build();
+    .with_p1(0.0001).unwrap()
+    .with_p2(0.001).unwrap()
+    .with_p1_emission_ratio(0.1).unwrap()
+    .with_p2_emission_ratio(0.1).unwrap()
+    .with_leakage(0.0001, 0.1).unwrap()
+    .with_p_meas(0.001, 0.01).unwrap()
+    .build().unwrap();
 ```
 
 ### Superconducting Style
 
 ```rust
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(0.001)
-    .with_p2(0.01)
-    .with_idle_t1_t2(50e-6, 30e-6)
+    .with_p1(0.001).unwrap()
+    .with_p2(0.01).unwrap()
+    .with_idle_t1_t2(50e-6, 30e-6).unwrap()
     .with_time_scale(TimeScale::Nanoseconds)
-    .with_p_meas_symmetric(0.02)
-    .build();
+    .with_p_meas_symmetric(0.02).unwrap()
+    .build().unwrap();
 ```
 
 ### Pure Depolarizing (Testing)
 
 ```rust
 let noise = CompositeNoiseModelBuilder::new()
-    .with_p1(p)
-    .with_p2(p)
-    .build();
+    .with_p1(p).unwrap()
+    .with_p2(p).unwrap()
+    .build().unwrap();
 ```
 
 ## ComposableNoiseModel (Direct Composition)
@@ -386,11 +448,11 @@ use pecos_neo::noise::plugins::CorePlugin;
 
 let noise = ComposableNoiseModel::new()
     .add_plugin(CorePlugin)  // State tracking
-    .add_channel(SingleQubitChannel::depolarizing(0.001))
-    .add_channel(TwoQubitChannel::depolarizing(0.01)
-        .with_angle_scaling(AngleScaling::linear()))
-    .add_channel(MeasurementChannel::asymmetric(0.02, 0.03))
-    .add_channel(IdleChannel::linear(0.0001)
+    .add_channel(SingleQubitChannel::depolarizing(0.001)?)
+    .add_channel(TwoQubitChannel::depolarizing(0.01)?
+        .with_angle_scaling(AngleScaling::linear())?)
+    .add_channel(MeasurementChannel::asymmetric(0.02, 0.03)?)
+    .add_channel(IdleChannel::linear(0.0001)?
         .with_linear_depolarizing());
 ```
 
@@ -405,11 +467,11 @@ use pecos_neo::noise::*;
 let noise = GeneralNoiseModelBuilder::new()
     .with_p1(0.001)
     .with_p2(0.01)
-    .build()
+    .build()?
     // Add custom channels
     .add_channel(CrosstalkChannel::new()
-        .with_global_rate(0.001)
-        .with_transitions(CrosstalkTransitions::symmetric_with_leakage()));
+        .with_global_rate(0.001)?
+        .with_transitions(CrosstalkTransitions::symmetric_with_leakage())?);
 ```
 
 ### Custom Channels
@@ -466,7 +528,7 @@ let commands = CommandBuilder::new()
     .build();
 
 let noise = ComposableNoiseModel::new()
-    .add_channel(IdleChannel::linear(0.001)  // 0.1% error per time unit
+    .add_channel(IdleChannel::linear(0.001).unwrap()  // 0.1% error per time unit
         .with_linear_depolarizing());        // X/Y/Z with equal probability
 ```
 
@@ -482,7 +544,7 @@ use pecos_core::TimeScale;
 // Define: 1 TimeUnit = 1 nanosecond, then use physical times
 let noise = ComposableNoiseModel::new()
     .with_time_scale(TimeScale::NANOSECONDS)
-    .with_idle_t1_t2(50e-6, 30e-6);  // T1=50us, T2=30us in seconds
+    .with_idle_t1_t2(50e-6, 30e-6).unwrap();  // T1=50us, T2=30us in seconds
 ```
 
 Available time scales: `NANOSECONDS`, `MICROSECONDS`, `MILLISECONDS`, `SECONDS`,
@@ -506,7 +568,7 @@ use pecos_neo::noise::plugins::*;
 let noise = ComposableNoiseModel::new()
     .add_plugin(CorePlugin)                           // State tracking
     .add_plugin(LeakagePlugin::new())                 // Leakage handling
-    .add_plugin(DepolarizingPlugin::new(0.01, 0.02)); // Simple depolarizing
+    .add_plugin(DepolarizingPlugin::new(0.01, 0.02)?); // Simple depolarizing
 ```
 
 ## Key Types Reference
@@ -520,10 +582,10 @@ Control error distributions:
 PauliWeights::uniform()  // 1/3 X, 1/3 Y, 1/3 Z
 
 // Z-biased (dephasing)
-PauliWeights::z_biased(0.9)  // 90% Z, 5% X, 5% Y
+PauliWeights::z_biased(0.9)?  // 90% Z, 5% X, 5% Y
 
 // Custom
-PauliWeights::custom(0.1, 0.2, 0.7)  // 10% X, 20% Y, 70% Z
+PauliWeights::custom(0.1, 0.2, 0.7)?  // 10% X, 20% Y, 70% Z
 ```
 
 ### Emission Weights
@@ -583,5 +645,30 @@ CrosstalkTransitions::symmetric_with_leakage()
 CrosstalkTransitions::custom(
     from_0_stay, from_0_flip, from_0_leak,
     from_1_stay, from_1_flip, from_1_leak,
-)
+)?
 ```
+
+### Noiseless operations and leakage
+
+All three noise builders always register leakage suppression, even with zero
+fault rates or custom leakage sources. Gates on leaked operands never run,
+including noiseless gates. Partner Pauli noise defaults to zero; opt in on
+`LeakageChannel` with `with_partner_pauli_probability(p)`. Each complete pair
+with exactly one leaked member receives a probability draw, then a uniform
+X/Y/Z on the healthy partner if it succeeds. This covers executed and
+leaked-suppressed groups. Noiseless operations produce neither draws nor faults.
+
+`with_noiseless_gate` and `with_noiseless_gates` suppress faults from the declared
+operation: injected gates, readout flips, leakage, seepage, crosstalk and
+idle-after-two-qubit noise. This includes composite primitives on suppressed
+groups. A scheduled `IdleTime` still produces its configured noise. Preparation
+still clears prior leakage, and lifecycle tracking still runs. A fault primitive
+placed on a `BeforeGate` composite is not silenced: that event decides suppression.
+Custom non-composite fault channels must check the noiseless setting themselves.
+
+`AfterPreparation`, `BeforeMeasurement` and `AfterMeasurement` carry the actual
+`gate_type`, distinguishing PZ from QAlloc and MZ from MeasureLeaked.
+On `CircuitRunner`'s command queue, leaked MZ reads 1 and leaked MeasureLeaked
+reports leaked, including when noiseless. `LeakageChannel` never changes an
+older measurement record. `execute_measure` and `ImportanceSamplingRunner`
+retain their separate measurement behavior without a leakage check.

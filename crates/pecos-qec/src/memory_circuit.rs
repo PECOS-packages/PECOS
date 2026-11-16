@@ -15,6 +15,7 @@
 use pecos_quantum::{AnnotationKind, Attribute, F2Matrix, TickCircuit, TickMeasRef};
 
 use crate::ParityCheckMatrix;
+use crate::fault_tolerance::circuit_definitions::tick_circuit_emission;
 
 /// Memory-experiment preparation and final-measurement basis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +106,14 @@ pub(crate) fn finish_css_memory_circuit(
             .map_err(|error| error.to_string())?;
     }
 
+    let classes = css_memory_measurement_classes_json(
+        circuit,
+        x_measurements,
+        z_measurements,
+        &final_data,
+        basis,
+    );
+    circuit.set_meta("measurement_classes", Attribute::String(classes));
     let (detectors_json, observables_json, num_detectors, num_observables) =
         css_memory_annotation_metadata_json(circuit);
     circuit.set_meta(
@@ -185,6 +194,43 @@ fn annotate_detector(
         .map_err(|error| error.to_string())
 }
 
+fn css_memory_measurement_classes_json(
+    circuit: &TickCircuit,
+    x_measurements: &[Vec<TickMeasRef>],
+    z_measurements: &[Vec<TickMeasRef>],
+    final_data: &[TickMeasRef],
+    basis: MemoryBasis,
+) -> String {
+    let mut classes = std::collections::BTreeMap::new();
+    for (rounds, family) in [(x_measurements, "X"), (z_measurements, "Z")] {
+        for (round, measurements) in rounds.iter().enumerate() {
+            for measurement in measurements {
+                classes.insert(
+                    measurement.meas_id,
+                    serde_json::json!({"block": "memory", "family": family, "round": round}),
+                );
+            }
+        }
+    }
+    let final_family = match basis {
+        MemoryBasis::X => "X",
+        MemoryBasis::Z => "Z",
+    };
+    for measurement in final_data {
+        classes.insert(
+            measurement.meas_id,
+            serde_json::json!({
+                "block": "memory", "family": final_family, "round": x_measurements.len(),
+            }),
+        );
+    }
+    let entries: Vec<_> = tick_circuit_emission(circuit)
+        .into_iter()
+        .map(|id| id.and_then(|id| classes.get(&id)))
+        .collect();
+    serde_json::to_string(&entries).expect("classes are JSON-serializable")
+}
+
 fn css_memory_annotation_metadata_json(circuit: &TickCircuit) -> (String, String, usize, usize) {
     let mut detectors = Vec::new();
     let mut observables = Vec::new();
@@ -216,7 +262,7 @@ fn css_memory_annotation_metadata_json(circuit: &TickCircuit) -> (String, String
                     "reference": 0,
                 }));
             }
-            AnnotationKind::TrackedPauli => {}
+            AnnotationKind::TrackedPauli { .. } => {}
         }
     }
     let num_detectors = detectors.len();
@@ -261,5 +307,28 @@ fn parity_matrix_from_rows(rows: Vec<Vec<u8>>, width: usize) -> ParityCheckMatri
     } else {
         ParityCheckMatrix::from_dense(rows)
             .expect("a rectangular logical-operator matrix was generated")
+    }
+}
+
+#[cfg(test)]
+mod fault_sector_tests {
+    use super::*;
+
+    #[test]
+    fn css_detector_requires_every_measurement_to_have_the_same_family() {
+        let mut circuit = TickCircuit::new();
+        let x = circuit.tick().mx(&[0, 1]);
+        let z = circuit.tick().mz(&[2]);
+        let unknown = circuit.tick().mz(&[3]);
+        for measurements in [vec![x[0], x[1]], vec![x[0], z[0]], vec![x[0], unknown[0]]] {
+            circuit.detector(&measurements).unwrap();
+        }
+        let classes =
+            css_memory_measurement_classes_json(&circuit, &[x], &[z], &[], MemoryBasis::X);
+        circuit.set_meta("measurement_classes", Attribute::String(classes));
+        let dem = crate::DemBuilder::from_tick_circuit(&circuit, 0.0, 0.0, 0.0, 0.0).unwrap();
+        assert_eq!(dem.detectors[0].fault_sector.as_deref(), Some("X"));
+        assert_eq!(dem.detectors[1].fault_sector, None);
+        assert_eq!(dem.detectors[2].fault_sector, None);
     }
 }

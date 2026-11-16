@@ -293,7 +293,7 @@ fn main() {
     println!("{:-<70}", "");
     println!("{:<30} {:>12} {:>12}", "config", "time (s)", "max bond");
     println!("{:-<70}", "");
-    let small_angle = Angle64::from_radians(0.01);
+    let small_angle = pecos_core::radians!(0.01);
     for (name, merge) in [("merge_rz=off", false), ("merge_rz=on (default)", true)] {
         let (t, b) = ion_trap_memory_scenario(6, 10, 50, small_angle, merge, 42);
         println!("{name:<30} {t:>12.4} {b:>12}");

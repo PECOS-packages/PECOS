@@ -48,8 +48,8 @@ enum Op {
 fn apply(sim: &mut impl ArbitraryRotationGateable, op: Op, q: usize, r: usize, theta: Angle64) {
     let qs = &[QubitId(q)];
     let pairs = &[(QubitId(q), QubitId(r))];
-    let phi = Angle64::from_radians(0.23);
-    let lambda = Angle64::from_radians(-0.41);
+    let phi = pecos_core::radians!(0.23);
+    let lambda = pecos_core::radians!(-0.41);
     match op {
         Op::H => sim.h(qs),
         Op::S => sim.sz(qs),
@@ -136,8 +136,8 @@ fn rotation_case(op: Op, kind: PauliKind, both: bool) {
         let (mut on, mut off) = pair(n, merge, 946);
         for sim in [&mut on, &mut off] {
             sim.h(&qubits);
-            apply(sim, Op::Ry, 0, 1, Angle64::from_radians(0.17));
-            apply(sim, op, 0, 1, Angle64::from_radians(0.3));
+            apply(sim, Op::Ry, 0, 1, pecos_core::radians!(0.17));
+            apply(sim, op, 0, 1, pecos_core::radians!(0.3));
         }
         inject(&mut on, kind, 0);
         pauli(&mut off, kind, 0);
@@ -146,7 +146,7 @@ fn rotation_case(op: Op, kind: PauliKind, both: bool) {
             pauli(&mut off, kind, 1);
         }
         for sim in [&mut on, &mut off] {
-            apply(sim, op, 0, 1, Angle64::from_radians(0.7));
+            apply(sim, op, 0, 1, pecos_core::radians!(0.7));
             sim.h(&qubits);
         }
         let (a, b) = states(&on, &off);
@@ -159,12 +159,12 @@ fn rz_reproducer() {
     let (mut on, mut off) = pair(1, false, 946);
     for sim in [&mut on, &mut off] {
         sim.h(&[QubitId(0)])
-            .rz(Angle64::from_radians(0.3), &[QubitId(0)]);
+            .rz(pecos_core::radians!(0.3), &[QubitId(0)]);
     }
     on.inject_x_in_frame(QubitId(0));
     off.x(&[QubitId(0)]);
     for sim in [&mut on, &mut off] {
-        sim.rz(Angle64::from_radians(0.7), &[QubitId(0)])
+        sim.rz(pecos_core::radians!(0.7), &[QubitId(0)])
             .h(&[QubitId(0)]);
     }
     let (a, b) = states(&on, &off);
@@ -194,14 +194,14 @@ fn pending_rz_injection_and_physical_x() {
     let (mut on, mut off) = pair(1, true, 946);
     for sim in [&mut on, &mut off] {
         sim.h(&[QubitId(0)])
-            .rz(Angle64::from_radians(0.3), &[QubitId(0)]);
+            .rz(pecos_core::radians!(0.3), &[QubitId(0)]);
     }
     on.inject_x_in_frame(QubitId(0));
     off.x(&[QubitId(0)]);
     for sim in [&mut on, &mut off] {
-        sim.rz(Angle64::from_radians(0.7), &[QubitId(0)]);
+        sim.rz(pecos_core::radians!(0.7), &[QubitId(0)]);
         sim.x(&[QubitId(0)]);
-        sim.rz(Angle64::from_radians(0.19), &[QubitId(0)]);
+        sim.rz(pecos_core::radians!(0.19), &[QubitId(0)]);
     }
     let (a, b) = states(&on, &off);
     assert_projective(&a, &b, "pending RZ with injected and physical X");
@@ -230,13 +230,13 @@ fn all_rotation_entries_and_clifford_angles() {
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
             Angle64::THREE_QUARTERS_TURN,
-            Angle64::from_radians(0.43),
+            pecos_core::radians!(0.43),
         ] {
             for merge in [false, true] {
                 let (mut on, mut off) = pair(2, merge, 946);
                 for sim in [&mut on, &mut off] {
                     sim.h(&[QubitId(0), QubitId(1)])
-                        .rz(Angle64::from_radians(0.31), &[QubitId(0)]);
+                        .rz(pecos_core::radians!(0.31), &[QubitId(0)]);
                 }
                 on.inject_x_in_frame(QubitId(0));
                 off.x(&[QubitId(0)]);
@@ -286,7 +286,8 @@ fn randomized_rotations_and_measurement_probabilities() {
                     0 => Angle64::QUARTER_TURN,
                     1 => Angle64::HALF_TURN,
                     2 => Angle64::THREE_QUARTERS_TURN,
-                    _ => Angle64::from_radians((rng.next_u64() % 6001) as f64 / 1000.0 - 3.0),
+                    _ => Angle64::try_from_radians((rng.next_u64() % 6001) as f64 / 1000.0 - 3.0)
+                        .unwrap(),
                 };
                 apply(&mut on, op, q, r, theta);
                 apply(&mut off, op, q, r, theta);
@@ -378,7 +379,7 @@ fn noise_channels_before_rotations() {
         for round in 0..8 {
             let q = QubitId(round % 2);
             for sim in [&mut on, &mut off] {
-                sim.h(&[q]).rz(Angle64::from_radians(0.31), &[q]);
+                sim.h(&[q]).rz(pecos_core::radians!(0.31), &[q]);
             }
             match channel {
                 0 => assert_eq!(on.apply_bit_flip(q, 1.0), off.apply_bit_flip(q, 1.0)),
@@ -389,8 +390,8 @@ fn noise_channels_before_rotations() {
                 ),
             }
             for sim in [&mut on, &mut off] {
-                sim.rz(Angle64::from_radians(0.71), &[q]);
-                sim.rzz(Angle64::from_radians(0.19), &[(QubitId(0), QubitId(1))]);
+                sim.rz(pecos_core::radians!(0.71), &[q]);
+                sim.rzz(pecos_core::radians!(0.19), &[(QubitId(0), QubitId(1))]);
             }
         }
         let (a, b) = states(&on, &off);
@@ -404,10 +405,10 @@ fn pending_rz_y_and_u() {
         Angle64::ZERO,
         Angle64::QUARTER_TURN,
         Angle64::HALF_TURN,
-        Angle64::from_radians(0.19),
+        pecos_core::radians!(0.19),
     ] {
         let (mut on, mut off) = pair(1, true, 946);
-        let first = Angle64::from_radians(0.3);
+        let first = pecos_core::radians!(0.3);
         for sim in [&mut on, &mut off] {
             sim.h(&[QubitId(0)]).rz(first, &[QubitId(0)]);
         }
@@ -535,10 +536,10 @@ fn frame_flush_without_tracking_still_flushes_pending_rotations() {
     let mut sim = StabMps::builder(1).merge_rz(true).build();
     let mut dense = DenseStateVec::new(1);
     sim.h(&[QubitId(0)])
-        .rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        .rz(pecos_core::radians!(0.37), &[QubitId(0)]);
     dense
         .h(&[QubitId(0)])
-        .rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        .rz(pecos_core::radians!(0.37), &[QubitId(0)]);
     assert!(!sim.is_state_exact());
     assert_dense(&mut sim, &mut dense, "flush without frame");
     assert!(!sim.pauli_frame_tracking());

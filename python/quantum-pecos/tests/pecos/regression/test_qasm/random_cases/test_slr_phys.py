@@ -30,7 +30,7 @@ def test_bell() -> None:
         m := CReg("m", 2),
         p.H(q[0]),
         p.CX(q[0], q[1]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
 
@@ -55,7 +55,7 @@ def test_bell_qir() -> None:
         m := CReg("m", 2),
         p.H(q[0]),
         p.CX(q[0], q[1]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
 
@@ -70,7 +70,7 @@ def test_bell_qreg_qir() -> None:
         m := CReg("m", 2),
         p.H(q),
         p.CX(q[0], q[1]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
 
@@ -89,8 +89,8 @@ def test_if_bell() -> None:
                 p.PZ(q1),
                 p.H(q0),
                 p.CX(q0, q1),
-                p.Measure(q0) > m0,
-                p.Measure(q1) > m1,
+                p.MeasureZ(q0) > m0,
+                p.MeasureZ(q1) > m1,
             )
 
     prog = Main(
@@ -184,7 +184,7 @@ def test_control_flow_qir() -> None:
         p.CX(q[0], q[1]),
         Barrier(q[1], q[0]),
         p.RX(rad(0.3), q[0]),
-        p.Measure(q) > m,
+        p.MeasureZ(q) > m,
         Return(m),
     )
     qir = SlrConverter(prog).qir()

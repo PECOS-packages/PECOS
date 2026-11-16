@@ -59,7 +59,10 @@ mod tests {
         shot_data.insert("output".to_string(), Data::U32(2));
         shot_data.insert("result".to_string(), Data::U32(2));
 
-        let shot = Shot { data: shot_data };
+        let shot = Shot {
+            data: shot_data,
+            ..Default::default()
+        };
 
         // Create manual results for verification
         let results = ShotVec { shots: vec![shot] };

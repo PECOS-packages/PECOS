@@ -3,15 +3,6 @@
 import pytest
 from guppylang.std.builtins import array
 from guppylang.std.builtins import result as record_result
-from pecos import get_guppy_backends
-
-
-def test_infrastructure() -> None:
-    """Test if all components are available."""
-    backends = get_guppy_backends()
-    assert isinstance(backends, dict)
-    assert "guppy_available" in backends
-    assert "rust_backend" in backends
 
 
 def test_simple_classical_function_definition() -> None:

@@ -16,7 +16,6 @@ default = []
 
 [dependencies]
 # Directory management
-dirs.workspace = true
 
 # Downloading. reqwest uses rustls with no built-in provider; we install the
 # ring crypto provider at runtime (see download.rs) to avoid aws-lc-sys, whose

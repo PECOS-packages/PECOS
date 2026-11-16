@@ -56,7 +56,7 @@
 //! let mut rng = PecosRng::seed_from_u64(42);
 //!
 //! // Create a sampler for p=1e-4 error rate
-//! let sampler = GeometricSampler::new(1e-4);
+//! let sampler = GeometricSampler::new(1e-4).unwrap();
 //!
 //! // Find affected qubits in range [0, 1_000_000)
 //! let affected = sampler.sample_range(0, 1_000_000, &mut rng);
@@ -67,6 +67,7 @@
 //! }
 //! ```
 
+use crate::noise::validation::{ValidationResult, validate_probability};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use pecos_random::rng_ext::RngProbabilityExt;
@@ -103,16 +104,12 @@ impl GeometricSampler {
     /// Create a new geometric sampler for the given probability.
     ///
     /// # Arguments
-    /// * `probability` - Event probability in range (0.0, 1.0)
+    /// * `probability` - Event probability in range [0.0, 1.0]
     ///
-    /// # Panics
-    /// Panics if probability is not in (0.0, 1.0).
-    #[must_use]
-    pub fn new(probability: f64) -> Self {
-        assert!(
-            probability > 0.0 && probability < 1.0,
-            "Probability must be in (0, 1), got {probability}"
-        );
+    /// # Errors
+    /// Returns an error if probability is not in [0.0, 1.0].
+    pub fn new(probability: f64) -> ValidationResult<Self> {
+        validate_probability(probability, "probability")?;
 
         #[allow(
             clippy::cast_sign_loss,
@@ -121,20 +118,23 @@ impl GeometricSampler {
         )]
         // probability in (0,1) maps to [0, u64::MAX]
         let threshold_u64 = (probability * (u64::MAX as f64)) as u64;
-        Self {
+        Ok(Self {
             probability,
-            log_1_minus_p: (1.0 - probability).ln(),
+            log_1_minus_p: (-probability).ln_1p(),
             threshold_u64,
-        }
+        })
     }
 
     /// Create a sampler that handles edge cases (p=0 or p=1).
-    #[must_use]
-    pub fn new_checked(probability: f64) -> Option<Self> {
+    ///
+    /// # Errors
+    /// Returns an error if probability is not finite and within [0, 1].
+    pub fn new_checked(probability: f64) -> ValidationResult<Option<Self>> {
+        validate_probability(probability, "probability")?;
         if probability <= 0.0 || probability >= 1.0 {
-            None
+            Ok(None)
         } else {
-            Some(Self::new(probability))
+            Ok(Some(Self::new(probability)?))
         }
     }
 
@@ -155,7 +155,16 @@ impl GeometricSampler {
     /// Returns the index of the next event, or None if it exceeds `end`.
     #[inline]
     pub fn next_event(&self, start: usize, end: usize, rng: &mut PecosRng) -> Option<usize> {
-        let u: f64 = rng.random();
+        if self.probability == 0.0 || start >= end {
+            return None;
+        }
+        if self.probability >= 1.0 {
+            return Some(start);
+        }
+        self.event_from_uniform(start, end, rng.random())
+    }
+
+    fn event_from_uniform(&self, start: usize, end: usize, u: f64) -> Option<usize> {
         let skip = if u > 0.0 {
             // ln(u) < 0, log_1_minus_p < 0, so ratio is non-negative
             #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
@@ -163,10 +172,10 @@ impl GeometricSampler {
                 (u.ln() / self.log_1_minus_p).floor() as usize
             }
         } else {
-            0
+            return None;
         };
 
-        let pos = start + skip;
+        let pos = start.checked_add(skip)?;
         if pos < end { Some(pos) } else { None }
     }
 
@@ -175,33 +184,12 @@ impl GeometricSampler {
     /// Returns a vector of indices where events occurred.
     #[inline]
     pub fn sample_range(&self, start: usize, end: usize, rng: &mut PecosRng) -> Vec<usize> {
-        // Pre-allocate based on expected events (2x to avoid reallocation)
-        #[allow(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss
-        )]
-        let expected = (((end - start) as f64) * self.probability * 2.0) as usize;
-        let mut result = Vec::with_capacity(expected.max(16));
+        let mut result = Vec::new();
 
         let mut idx = start;
-        while idx < end {
-            let u: f64 = rng.random();
-            let skip = if u > 0.0 {
-                // ln(u) < 0, log_1_minus_p < 0, so ratio is non-negative
-                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-                {
-                    (u.ln() / self.log_1_minus_p).floor() as usize
-                }
-            } else {
-                0
-            };
-
-            idx += skip;
-            if idx < end {
-                result.push(idx);
-                idx += 1;
-            }
+        while let Some(pos) = self.next_event(idx, end, rng) {
+            result.push(pos);
+            idx = pos + 1;
         }
 
         result
@@ -228,7 +216,7 @@ impl GeometricSampler {
     /// Check if a single event occurs (for occasional single checks).
     #[inline]
     pub fn check_single(&self, rng: &mut PecosRng) -> bool {
-        rng.next_u64() < self.threshold_u64
+        self.probability >= 1.0 || rng.next_u64() < self.threshold_u64
     }
 }
 
@@ -241,60 +229,74 @@ impl GeometricSampler {
 /// This is the recommended function for batch probability filtering.
 /// For probabilities < 0.01, uses geometric sampling (O(n*p)).
 /// For higher probabilities, falls back to linear scanning.
+///
+/// # Errors
+/// Returns an error if probability is not finite and within [0, 1].
 pub fn filter_by_probability(
     qubits: &[QubitId],
     probability: f64,
     rng: &mut PecosRng,
-) -> Vec<QubitId> {
+) -> ValidationResult<Vec<QubitId>> {
+    validate_probability(probability, "probability")?;
     if probability <= 0.0 {
-        return vec![];
+        return Ok(vec![]);
     }
     if probability >= 1.0 {
-        return qubits.to_vec();
+        return Ok(qubits.to_vec());
     }
 
     // Use geometric for low probabilities with sufficient count
     if probability < 0.01 && qubits.len() > 100 {
-        let sampler = GeometricSampler::new(probability);
-        sampler.sample_from_slice(qubits, rng)
+        let sampler = GeometricSampler::new(probability)?;
+        Ok(sampler.sample_from_slice(qubits, rng))
     } else {
         // Linear fallback
-        qubits
+        Ok(qubits
             .iter()
             .filter(|_| rng.random::<f64>() < probability)
             .copied()
-            .collect()
+            .collect())
     }
 }
 
 /// Filter a range of qubit IDs by probability.
 ///
 /// More efficient than `filter_by_probability` when you just need a contiguous range.
+///
+/// # Errors
+/// Returns an error if probability is not finite and within [0, 1].
+/// Also rejects a range whose end precedes its start.
 pub fn filter_range_by_probability(
     start: usize,
     end: usize,
     probability: f64,
     rng: &mut PecosRng,
-) -> Vec<QubitId> {
+) -> ValidationResult<Vec<QubitId>> {
+    validate_probability(probability, "probability")?;
+    let count = end.checked_sub(start).ok_or_else(|| {
+        crate::noise::validation::ValidationError::new(
+            "range",
+            format!("end {end} precedes start {start}; use end >= start"),
+        )
+    })?;
+
     if probability <= 0.0 {
-        return vec![];
+        return Ok(vec![]);
     }
     if probability >= 1.0 {
-        return (start..end).map(QubitId).collect();
+        return Ok((start..end).map(QubitId).collect());
     }
-
-    let count = end - start;
 
     // Use geometric for low probabilities with sufficient count
     if probability < 0.01 && count > 100 {
-        let sampler = GeometricSampler::new(probability);
-        sampler.sample_qubits(start, end, rng)
+        let sampler = GeometricSampler::new(probability)?;
+        Ok(sampler.sample_qubits(start, end, rng))
     } else {
         // Linear fallback
-        (start..end)
+        Ok((start..end)
             .filter(|_| rng.random::<f64>() < probability)
             .map(QubitId)
-            .collect()
+            .collect())
     }
 }
 
@@ -306,19 +308,34 @@ pub fn filter_range_by_probability(
 #[derive(Debug, Clone, Copy)]
 pub struct ProbabilityThreshold {
     /// The u64 threshold value.
-    pub threshold: u64,
+    threshold: u64,
     /// The original probability.
-    pub probability: f64,
+    probability: f64,
 }
 
 impl ProbabilityThreshold {
-    /// Create a new probability threshold.
+    /// Return the precomputed threshold.
     #[must_use]
-    pub fn new(probability: f64, rng: &PecosRng) -> Self {
-        Self {
+    pub fn threshold(&self) -> u64 {
+        self.threshold
+    }
+
+    /// Return the validated probability.
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+
+    /// Create a new probability threshold.
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(probability: f64, rng: &PecosRng) -> ValidationResult<Self> {
+        validate_probability(probability, "probability")?;
+        Ok(Self {
             threshold: rng.probability_threshold(probability),
             probability,
-        }
+        })
     }
 }
 
@@ -385,8 +402,10 @@ pub fn sample_noise_2q_batch(
 // ============================================================================
 
 /// Create a geometric sampler for the given probability.
-#[must_use]
-pub fn geometric(probability: f64) -> GeometricSampler {
+///
+/// # Errors
+/// Returns an error if probability is not finite and within [0, 1].
+pub fn geometric(probability: f64) -> ValidationResult<GeometricSampler> {
     GeometricSampler::new(probability)
 }
 
@@ -399,8 +418,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn zero_uniform_draw_has_no_geometric_event() {
+        let sampler = GeometricSampler::new(0.5).unwrap();
+        assert_eq!(sampler.event_from_uniform(0, 10, 0.0), None);
+        assert_eq!(sampler.event_from_uniform(5, 10, 0.5), Some(6));
+    }
+
+    #[test]
+    fn geometric_sampler_handles_boundaries_and_tiny_probabilities() {
+        let mut rng = PecosRng::seed_from_u64(42);
+        assert_eq!(
+            GeometricSampler::new(0.0)
+                .unwrap()
+                .sample_range(3, 10, &mut rng),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            GeometricSampler::new(1.0)
+                .unwrap()
+                .sample_range(3, 10, &mut rng),
+            (3..10).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            GeometricSampler::new(1e-300)
+                .unwrap()
+                .next_event(3, 10, &mut rng),
+            None
+        );
+        assert_eq!(
+            GeometricSampler::new(1e-300)
+                .unwrap()
+                .sample_range(3, 10, &mut rng),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
     fn test_geometric_sampler_basic() {
-        let sampler = GeometricSampler::new(0.1);
+        let sampler = GeometricSampler::new(0.1).unwrap();
         let mut rng = PecosRng::seed_from_u64(42);
 
         let results = sampler.sample_range(0, 1000, &mut rng);
@@ -420,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_geometric_sampler_low_probability() {
-        let sampler = GeometricSampler::new(1e-4);
+        let sampler = GeometricSampler::new(1e-4).unwrap();
         let mut rng = PecosRng::seed_from_u64(42);
 
         let results = sampler.sample_range(0, 100_000, &mut rng);
@@ -435,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_geometric_sampler_very_low_probability() {
-        let sampler = GeometricSampler::new(1e-5);
+        let sampler = GeometricSampler::new(1e-5).unwrap();
         let mut rng = PecosRng::seed_from_u64(42);
 
         let results = sampler.sample_range(0, 1_000_000, &mut rng);
@@ -453,7 +508,7 @@ mod tests {
         let qubits: Vec<_> = (0..1000).map(QubitId).collect();
         let mut rng = PecosRng::seed_from_u64(42);
 
-        let result = filter_by_probability(&qubits, 0.0, &mut rng);
+        let result = filter_by_probability(&qubits, 0.0, &mut rng).unwrap();
         assert_eq!(result, []);
     }
 
@@ -462,7 +517,7 @@ mod tests {
         let qubits: Vec<_> = (0..1000).map(QubitId).collect();
         let mut rng = PecosRng::seed_from_u64(42);
 
-        let result = filter_by_probability(&qubits, 1.0, &mut rng);
+        let result = filter_by_probability(&qubits, 1.0, &mut rng).unwrap();
         assert_eq!(result.len(), 1000);
     }
 
@@ -470,7 +525,7 @@ mod tests {
     fn test_filter_range_by_probability() {
         let mut rng = PecosRng::seed_from_u64(42);
 
-        let result = filter_range_by_probability(0, 10000, 0.1, &mut rng);
+        let result = filter_range_by_probability(0, 10000, 0.1, &mut rng).unwrap();
 
         // Should be roughly 10%
         assert!(
@@ -483,7 +538,7 @@ mod tests {
     #[test]
     fn test_probability_threshold() {
         let rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.001, &rng);
+        let threshold = ProbabilityThreshold::new(0.001, &rng).unwrap();
 
         assert!((threshold.probability - 0.001).abs() < 1e-10);
         assert!(threshold.threshold > 0);
@@ -492,7 +547,7 @@ mod tests {
     #[test]
     fn test_filter_by_probability_fast() {
         let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.01, &rng);
+        let threshold = ProbabilityThreshold::new(0.01, &rng).unwrap();
 
         let result = filter_by_probability_fast(10000, &threshold, &mut rng);
 
@@ -507,7 +562,7 @@ mod tests {
     #[test]
     fn test_sample_noise_1q_batch() {
         let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.01, &rng);
+        let threshold = ProbabilityThreshold::new(0.01, &rng).unwrap();
 
         let result = sample_noise_1q_batch(10000, &threshold, &mut rng);
 
@@ -520,7 +575,7 @@ mod tests {
     #[test]
     fn test_sample_noise_2q_batch() {
         let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = ProbabilityThreshold::new(0.01, &rng);
+        let threshold = ProbabilityThreshold::new(0.01, &rng).unwrap();
 
         let result = sample_noise_2q_batch(10000, &threshold, &mut rng);
 
@@ -533,7 +588,7 @@ mod tests {
     #[test]
     fn test_geometric_statistical_consistency() {
         // Run multiple times and verify statistical properties
-        let sampler = GeometricSampler::new(0.01);
+        let sampler = GeometricSampler::new(0.01).unwrap();
         let mut total_events = 0;
 
         for seed in 0..100 {

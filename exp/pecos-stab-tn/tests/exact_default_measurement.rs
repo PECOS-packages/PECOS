@@ -108,7 +108,7 @@ fn honest_family(num_qubits: usize, phase: usize) -> Vec<Gate> {
         let angle = if layer % 2 == 0 {
             Angle64::QUARTER_TURN / 2_u64
         } else {
-            Angle64::from_radians(0.37 + 0.11 * layer as f64)
+            Angle64::try_from_radians(0.37 + 0.11 * layer as f64).unwrap()
         };
         gates.extend([
             Gate::Rz(target, angle),
@@ -124,7 +124,7 @@ fn honest_family(num_qubits: usize, phase: usize) -> Vec<Gate> {
 
 fn continuation_family(num_qubits: usize) -> Vec<Gate> {
     vec![
-        Gate::Rz(0, Angle64::from_radians(0.731)),
+        Gate::Rz(0, pecos_core::radians!(0.731)),
         Gate::Sz(1 % num_qubits),
         Gate::Cz(0, 1 % num_qubits),
         Gate::X(2 % num_qubits),
@@ -882,7 +882,7 @@ fn state_fidelity(first: &[Complex64], second: &[Complex64]) -> f64 {
 fn assert_trivial_product_repeat_outcome_is_valid(mode: MeasurementMode) {
     let preparation = [
         Gate::H(0),
-        Gate::Rz(0, Angle64::from_radians(0.9)),
+        Gate::Rz(0, pecos_core::radians!(0.9)),
         Gate::H(0),
     ];
     let mut simulator = build_stn_with_mode_and_merge(1, 0, mode, false);
@@ -950,15 +950,15 @@ fn lazy_trivial_stored_mps_materializes_pending_frame_before_tableau_read() {
 
     let preparation = [
         Gate::H(1),
-        Gate::Rz(1, Angle64::from_radians(0.808)),
-        Gate::Rz(1, Angle64::from_radians(1.033)),
+        Gate::Rz(1, pecos_core::radians!(0.808)),
+        Gate::Rz(1, pecos_core::radians!(1.033)),
     ];
     replay_gates(&mut simulator, &preparation);
     replay_gates(&mut dense, &preparation);
     measure_and_check(&mut simulator, &mut dense, true, 0);
 
     let first_continuation = [
-        Gate::Rz(1, Angle64::from_radians(0.430)),
+        Gate::Rz(1, pecos_core::radians!(0.430)),
         Gate::H(1),
         Gate::X(1),
     ];
@@ -966,7 +966,7 @@ fn lazy_trivial_stored_mps_materializes_pending_frame_before_tableau_read() {
     replay_gates(&mut dense, &first_continuation);
     measure_and_check(&mut simulator, &mut dense, false, 1);
 
-    let second_continuation = [Gate::Rz(1, Angle64::from_radians(0.837)), Gate::Sz(1)];
+    let second_continuation = [Gate::Rz(1, pecos_core::radians!(0.837)), Gate::Sz(1)];
     replay_gates(&mut simulator, &second_continuation);
     replay_gates(&mut dense, &second_continuation);
     measure_and_check(&mut simulator, &mut dense, false, 2);
@@ -1020,7 +1020,7 @@ fn lazy_measure_clifford_rz_conditional_state_fidelity() {
         let cliffords = lazy_frame_clifford_family(seed, NUM_QUBITS);
         let measured = 0;
         let rotated = 1;
-        let angle = Angle64::from_radians(0.65 + 0.01 * seed as f64);
+        let angle = Angle64::try_from_radians(0.65 + 0.01 * seed as f64).unwrap();
 
         let mut simulator =
             build_stn_with_mode(NUM_QUBITS, 0x5550_0000 + seed, MeasurementMode::Lazy);
@@ -1069,7 +1069,7 @@ fn lazy_measure_clifford_rz_conditional_state_fidelity() {
 fn lazy_single_measurement_preserves_pre_measurement_rz_branch_phase() {
     let preparation = [
         Gate::H(0),
-        Gate::Rz(0, Angle64::from_radians(0.41)),
+        Gate::Rz(0, pecos_core::radians!(0.41)),
         Gate::Cx(3, 2),
         Gate::X(3),
         Gate::Cx(2, 0),
@@ -1117,7 +1117,7 @@ fn lazy_randomized_4000_conditional_state_hunt() {
             Gate::H(rotated),
             Gate::Rz(
                 rotated,
-                Angle64::from_radians(0.11 + (next() % 700) as f64 / 1_000.0),
+                Angle64::try_from_radians(0.11 + (next() % 700) as f64 / 1_000.0).unwrap(),
             ),
         ];
         for _ in 0..12 {
@@ -1223,9 +1223,10 @@ fn lazy_interleaved_multi_measurement_adversarial_family() {
                         let qubit = next(&mut word) as usize % num_qubits;
                         Gate::Rz(
                             qubit,
-                            Angle64::from_radians(
+                            Angle64::try_from_radians(
                                 0.09 + (next(&mut word) % 1_100) as f64 / 1_000.0,
-                            ),
+                            )
+                            .unwrap(),
                         )
                     } else {
                         random_clifford(&mut word, num_qubits)
@@ -1273,9 +1274,10 @@ fn lazy_interleaved_multi_measurement_adversarial_family() {
                         let rotated = next(&mut word) as usize % num_qubits;
                         let rotation = Gate::Rz(
                             rotated,
-                            Angle64::from_radians(
+                            Angle64::try_from_radians(
                                 -0.83 + (next(&mut word) % 1_700) as f64 / 1_000.0,
-                            ),
+                            )
+                            .unwrap(),
                         );
                         replay_gates(&mut simulator, &[rotation]);
                         replay_gates(&mut dense, &[rotation]);
@@ -1310,7 +1312,7 @@ fn lazy_frame_rz_does_not_consume_stored_disentangling_proof() {
         Gate::Cx(0, 1),
     ];
     let cliffords = lazy_frame_clifford_family(FRAME_SEED, 4);
-    let angle = Angle64::from_radians(0.71);
+    let angle = pecos_core::radians!(0.71);
     let mut simulator = build_stn_with_mode(4, 0x5555, MeasurementMode::Lazy);
     let mut dense = DenseStateVec::new(4);
     replay_gates(&mut simulator, &preparation);

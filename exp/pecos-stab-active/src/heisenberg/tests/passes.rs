@@ -213,7 +213,7 @@ struct Fixture {
 
 fn fixtures() -> Vec<Fixture> {
     let a = Angle64::QUARTER_TURN / 2u64;
-    let generic = Angle64::from_radians(0.37);
+    let generic = pecos_core::radians!(0.37);
     let x = rotation(0, X, a);
     let z = rotation(0, Z, generic);
     let mx = measurement(0, X, 0);
@@ -494,9 +494,9 @@ fn exact_fixtures() {
 }
 
 fn noisy_reset() -> HeisenbergProgram {
-    let a = Angle64::from_radians(0.37);
+    let a = pecos_core::radians!(0.37);
     let mut circuit = TickCircuit::new();
-    circuit.tick().ry(Angle64::from_radians(0.61), &[1]);
+    circuit.tick().ry(pecos_core::radians!(0.61), &[1]);
     circuit
         .tick()
         .channel(channel::PauliChannel(0.07, 0.11, 0.13, 0));
@@ -504,7 +504,7 @@ fn noisy_reset() -> HeisenbergProgram {
     circuit.tick().rx(Angle64::HALF_TURN - a, &[0]);
     circuit.tick().cx(&[(0, 1)]);
     circuit.tick().pz(&[1]);
-    circuit.tick().rz(Angle64::from_radians(0.43), &[1]);
+    circuit.tick().rz(pecos_core::radians!(0.43), &[1]);
     let refs = circuit.tick().mz(&[0, 1]);
     circuit.detector(&refs).unwrap();
     circuit.observable(&refs[..1]).unwrap();
@@ -560,7 +560,7 @@ pub(super) fn random_circuit(rng: &mut PecosRng) -> TickCircuit {
     for _ in 0..3 {
         let mut q = index(rng, 3);
         let mut axis = axes[index(rng, axes.len())];
-        let mut generic = Angle64::from_radians(0.2 + rng.next_f64());
+        let mut generic = Angle64::try_from_radians(0.2 + rng.next_f64()).unwrap();
         append(&mut circuit, make_gate(axis, &[q], &[generic]));
         for _ in 0..4 {
             if index(rng, 4) == 0 {
@@ -575,7 +575,7 @@ pub(super) fn random_circuit(rng: &mut PecosRng) -> TickCircuit {
                 4..=5 => Angle64::HALF_TURN - generic,
                 6..=7 => -generic,
                 _ => {
-                    generic = Angle64::from_radians(0.2 + rng.next_f64());
+                    generic = Angle64::try_from_radians(0.2 + rng.next_f64()).unwrap();
                     generic
                 }
             };

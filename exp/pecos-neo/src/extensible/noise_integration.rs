@@ -6,17 +6,19 @@
 //! - Integration helpers for the existing noise system
 
 use super::{GateCategory, GateId, GateSpec, gates};
+use crate::noise::validation::validate_distribution;
+use crate::noise::validation::{ValidationResult, validate_probability};
 
 /// Noise configuration for a specific gate.
 #[derive(Clone, Debug)]
 pub struct GateNoiseParams {
     /// Error probability per qubit.
-    pub error_probability: f64,
+    pub(crate) error_probability: f64,
     /// Optional gate duration (for idle noise calculations).
-    pub duration_ns: Option<f64>,
+    pub(crate) duration_ns: Option<f64>,
     /// Pauli weights for depolarizing noise [px, py, pz].
     /// If None, uniform depolarizing is used.
-    pub pauli_weights: Option<[f64; 3]>,
+    pub(crate) pauli_weights: Option<[f64; 3]>,
 }
 
 impl Default for GateNoiseParams {
@@ -30,27 +32,64 @@ impl Default for GateNoiseParams {
 }
 
 impl GateNoiseParams {
-    /// Create noise parameters with a given error probability.
+    /// Return the configured `error_probability`.
     #[must_use]
-    pub fn with_error(error_probability: f64) -> Self {
-        Self {
+    pub fn error_probability(&self) -> f64 {
+        self.error_probability
+    }
+
+    /// Return the configured `duration_ns`.
+    #[must_use]
+    pub fn duration_ns(&self) -> Option<f64> {
+        self.duration_ns
+    }
+
+    /// Return the configured `pauli_weights`.
+    #[must_use]
+    pub fn pauli_weights(&self) -> Option<[f64; 3]> {
+        self.pauli_weights
+    }
+
+    /// Create noise parameters with a given error probability.
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_error(error_probability: f64) -> ValidationResult<Self> {
+        validate_probability(error_probability, "error_probability")?;
+        Ok(Self {
             error_probability,
             ..Default::default()
-        }
+        })
     }
 
     /// Set the gate duration.
-    #[must_use]
-    pub fn with_duration(mut self, duration_ns: f64) -> Self {
-        self.duration_ns = Some(duration_ns);
-        self
+    ///
+    /// # Errors
+    /// Returns an error if the duration is outside the finite `TimeUnits` domain.
+    pub fn with_duration(
+        mut self,
+        duration_ns: f64,
+    ) -> crate::noise::validation::ValidationResult<Self> {
+        self.duration_ns = Some(crate::noise::validation::validate_duration(
+            duration_ns,
+            "duration_ns",
+        )?);
+        Ok(self)
     }
 
     /// Set custom Pauli weights.
-    #[must_use]
-    pub fn with_pauli_weights(mut self, px: f64, py: f64, pz: f64) -> Self {
+    ///
+    /// # Errors
+    /// Rejects invalid Pauli weights or a sum other than one.
+    pub fn with_pauli_weights(
+        mut self,
+        px: f64,
+        py: f64,
+        pz: f64,
+    ) -> crate::noise::validation::ValidationResult<Self> {
+        validate_distribution(&[px, py, pz], "pauli_weights")?;
         self.pauli_weights = Some([px, py, pz]);
-        self
+        Ok(self)
     }
 
     /// Check if this is noiseless.
@@ -105,18 +144,26 @@ impl GateIdNoiseConfig {
     }
 
     /// Set the global default error probability.
-    #[must_use]
-    pub fn with_global_default(mut self, error_probability: f64) -> Self {
-        self.global_default = Some(GateNoiseParams::with_error(error_probability));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_global_default(mut self, error_probability: f64) -> ValidationResult<Self> {
+        self.global_default = Some(GateNoiseParams::with_error(error_probability)?);
+        Ok(self)
     }
 
     /// Set the default for a gate category.
-    #[must_use]
-    pub fn with_category_default(mut self, category: GateCategory, error_probability: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_category_default(
+        mut self,
+        category: GateCategory,
+        error_probability: f64,
+    ) -> ValidationResult<Self> {
         self.category_defaults[category_to_index(category)] =
-            Some(GateNoiseParams::with_error(error_probability));
-        self
+            Some(GateNoiseParams::with_error(error_probability)?);
+        Ok(self)
     }
 
     /// Set noise parameters for a specific gate.
@@ -129,8 +176,12 @@ impl GateIdNoiseConfig {
     }
 
     /// Set error probability for a specific gate.
-    pub fn set_gate_error(&mut self, gate: GateId, error_probability: f64) {
-        self.set_gate(gate, GateNoiseParams::with_error(error_probability));
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn set_gate_error(&mut self, gate: GateId, error_probability: f64) -> ValidationResult<()> {
+        self.set_gate(gate, GateNoiseParams::with_error(error_probability)?);
+        Ok(())
     }
 
     /// Get noise parameters for a gate.
@@ -171,8 +222,12 @@ impl GateIdNoiseConfig {
     }
 
     /// Set typical error rates for single and two-qubit gates.
-    #[must_use]
-    pub fn with_typical_rates(mut self, p1: f64, p2: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_typical_rates(mut self, p1: f64, p2: f64) -> ValidationResult<Self> {
+        validate_probability(p1, "p1")?;
+        validate_probability(p2, "p2")?;
         // Single-qubit gates
         for &gate in &[
             gates::I,
@@ -192,15 +247,35 @@ impl GateIdNoiseConfig {
             gates::RY,
             gates::RZ,
         ] {
-            self.set_gate_error(gate, p1);
+            self.set_gate_error(gate, p1)?;
         }
 
         // Two-qubit gates
         for &gate in &[gates::CX, gates::CY, gates::CZ, gates::SWAP, gates::ISWAP] {
-            self.set_gate_error(gate, p2);
+            self.set_gate_error(gate, p2)?;
         }
 
-        self
+        Ok(self)
+    }
+}
+
+/// Validated fraction of high-level noise in a blended decomposition strategy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HighLevelWeight(f64);
+
+impl HighLevelWeight {
+    /// Validate a high-level noise fraction.
+    ///
+    /// # Errors
+    /// Rejects non-finite values and values outside [0, 1].
+    pub fn new(weight: f64) -> ValidationResult<Self> {
+        Ok(Self(validate_probability(weight, "high_level_weight")?))
+    }
+
+    /// Read the validated fraction.
+    #[must_use]
+    pub fn get(self) -> f64 {
+        self.0
     }
 }
 
@@ -208,6 +283,12 @@ impl GateIdNoiseConfig {
 ///
 /// When a high-level gate (like SWAP) is decomposed into native gates (CX, CX, CX),
 /// this controls how noise is applied.
+///
+/// A raw weight cannot bypass validation through the public variant:
+/// ```compile_fail,E0308
+/// use pecos_neo::extensible::DecompositionNoiseStrategy;
+/// let invalid = DecompositionNoiseStrategy::Blended { high_level_weight: f64::NAN };
+/// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub enum DecompositionNoiseStrategy {
     /// Apply noise to each gate in the decomposition.
@@ -228,7 +309,7 @@ pub enum DecompositionNoiseStrategy {
     /// Applies `(1 - weight) * sum(per_gate_errors) + weight * high_level_error`.
     Blended {
         /// Weight for high-level error (0.0 = per-gate only, 1.0 = high-level only).
-        high_level_weight: f64,
+        high_level_weight: HighLevelWeight,
     },
 }
 
@@ -243,7 +324,7 @@ impl PartialEq for DecompositionNoiseStrategy {
                 Self::Blended {
                     high_level_weight: w2,
                 },
-            ) => (w1 - w2).abs() < f64::EPSILON,
+            ) => (w1.get() - w2.get()).abs() < f64::EPSILON,
             _ => false,
         }
     }
@@ -251,11 +332,13 @@ impl PartialEq for DecompositionNoiseStrategy {
 
 impl DecompositionNoiseStrategy {
     /// Create a blended strategy.
-    #[must_use]
-    pub fn blended(high_level_weight: f64) -> Self {
-        Self::Blended {
-            high_level_weight: high_level_weight.clamp(0.0, 1.0),
-        }
+    ///
+    /// # Errors
+    /// Returns an error if a probability or fraction is outside [0, 1] or NaN.
+    pub fn blended(high_level_weight: f64) -> ValidationResult<Self> {
+        Ok(Self::Blended {
+            high_level_weight: HighLevelWeight::new(high_level_weight)?,
+        })
     }
 
     /// Calculate effective error probability for a decomposed gate.
@@ -274,6 +357,7 @@ impl DecompositionNoiseStrategy {
             }
             Self::HighLevel => high_level_error,
             Self::Blended { high_level_weight } => {
+                let high_level_weight = high_level_weight.get();
                 let per_gate_error: f64 = {
                     let success_prob: f64 = decomposed_errors.iter().map(|&p| 1.0 - p).product();
                     1.0 - success_prob
@@ -299,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_gate_noise_params_with_error() {
-        let params = GateNoiseParams::with_error(0.01);
+        let params = GateNoiseParams::with_error(0.01).unwrap();
         assert!(!params.is_noiseless());
         assert_eq!(params.error_probability, 0.01);
     }
@@ -307,8 +391,11 @@ mod tests {
     #[test]
     fn test_gate_noise_params_builder() {
         let params = GateNoiseParams::with_error(0.01)
+            .unwrap()
             .with_duration(100.0)
-            .with_pauli_weights(0.5, 0.3, 0.2);
+            .unwrap()
+            .with_pauli_weights(0.5, 0.3, 0.2)
+            .unwrap();
 
         assert_eq!(params.error_probability, 0.01);
         assert_eq!(params.duration_ns, Some(100.0));
@@ -324,7 +411,7 @@ mod tests {
     #[test]
     fn test_gate_id_noise_config_per_gate() {
         let mut config = GateIdNoiseConfig::new();
-        config.set_gate_error(gates::H, 0.001);
+        config.set_gate_error(gates::H, 0.001).unwrap();
 
         let params = config.get(gates::H, None).unwrap();
         assert_eq!(params.error_probability, 0.001);
@@ -335,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_gate_id_noise_config_global_default() {
-        let config = GateIdNoiseConfig::new().with_global_default(0.01);
+        let config = GateIdNoiseConfig::new().with_global_default(0.01).unwrap();
 
         // All gates should use global default
         let params = config.get(gates::H, None).unwrap();
@@ -349,7 +436,9 @@ mod tests {
     fn test_gate_id_noise_config_category_default() {
         let config = GateIdNoiseConfig::new()
             .with_category_default(GateCategory::SingleQubitUnitary, 0.001)
-            .with_category_default(GateCategory::TwoQubitUnitary, 0.01);
+            .unwrap()
+            .with_category_default(GateCategory::TwoQubitUnitary, 0.01)
+            .unwrap();
 
         // Need GateSpec to use category lookup
         let single_qubit_spec = GateSpec::new("H")
@@ -371,10 +460,12 @@ mod tests {
     fn test_gate_id_noise_config_priority() {
         let mut config = GateIdNoiseConfig::new()
             .with_global_default(0.1)
-            .with_category_default(GateCategory::SingleQubitUnitary, 0.01);
+            .unwrap()
+            .with_category_default(GateCategory::SingleQubitUnitary, 0.01)
+            .unwrap();
 
         // Per-gate should override category and global
-        config.set_gate_error(gates::H, 0.001);
+        config.set_gate_error(gates::H, 0.001).unwrap();
 
         let single_qubit_spec = GateSpec::new("H")
             .with_quantum_arity(1)
@@ -395,7 +486,9 @@ mod tests {
 
     #[test]
     fn test_gate_id_noise_config_typical_rates() {
-        let config = GateIdNoiseConfig::new().with_typical_rates(0.001, 0.01);
+        let config = GateIdNoiseConfig::new()
+            .with_typical_rates(0.001, 0.01)
+            .unwrap();
 
         assert_eq!(config.get_error_probability(gates::H, None), 0.001);
         assert_eq!(config.get_error_probability(gates::X, None), 0.001);
@@ -424,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_decomposition_noise_strategy_blended() {
-        let strategy = DecompositionNoiseStrategy::blended(0.5);
+        let strategy = DecompositionNoiseStrategy::blended(0.5).unwrap();
 
         // 50% blend of per-gate (~0.0297) and high-level (0.03)
         let per_gate = 1.0 - 0.99_f64.powi(3);
@@ -436,11 +529,11 @@ mod tests {
     #[test]
     fn test_decomposition_noise_strategy_blended_weights() {
         // weight 0 = per-gate only
-        let strategy0 = DecompositionNoiseStrategy::blended(0.0);
+        let strategy0 = DecompositionNoiseStrategy::blended(0.0).unwrap();
         let per_gate = strategy0.effective_error(0.03, &[0.01, 0.01, 0.01]);
 
         // weight 1 = high-level only
-        let strategy1 = DecompositionNoiseStrategy::blended(1.0);
+        let strategy1 = DecompositionNoiseStrategy::blended(1.0).unwrap();
         let high_level = strategy1.effective_error(0.03, &[0.01, 0.01, 0.01]);
 
         assert!((per_gate - 0.029_701).abs() < 0.0001);
@@ -449,7 +542,7 @@ mod tests {
 
     #[test]
     fn test_noiseless_gate() {
-        let mut config = GateIdNoiseConfig::new().with_global_default(0.01);
+        let mut config = GateIdNoiseConfig::new().with_global_default(0.01).unwrap();
         config.set_noiseless(gates::I);
 
         // I should be noiseless
@@ -470,8 +563,8 @@ mod tests {
             DecompositionNoiseStrategy::HighLevel
         );
         assert_eq!(
-            DecompositionNoiseStrategy::blended(0.5),
-            DecompositionNoiseStrategy::blended(0.5)
+            DecompositionNoiseStrategy::blended(0.5).unwrap(),
+            DecompositionNoiseStrategy::blended(0.5).unwrap()
         );
         assert_ne!(
             DecompositionNoiseStrategy::PerGate,

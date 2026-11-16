@@ -40,6 +40,8 @@ pub enum Operation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum QuantumOp {
     // Single-qubit gates
+    /// Identity gate
+    I,
     /// Hadamard gate
     H,
     /// Pauli-X gate
@@ -60,6 +62,15 @@ pub enum QuantumOp {
     SX,
     /// Adjoint square-root-of-X gate
     SXdg,
+
+    /// Phase-exact square root of Y
+    SY,
+    /// Adjoint phase-exact square root of Y
+    SYdg,
+    /// Phase-exact face gate (X -> Y -> Z -> X)
+    F,
+    /// Adjoint face gate
+    Fdg,
 
     // Parameterized single-qubit rotations
     /// X-axis rotation
@@ -99,8 +110,14 @@ pub enum QuantumOp {
     SZZdg,
     /// Controlled phase
     CPhase(Angle64),
+    /// XX rotation
+    RXX(Angle64),
+    /// YY rotation
+    RYY(Angle64),
     /// ZZ rotation
     RZZ(Angle64),
+    /// Commuting XX, YY and ZZ rotations, in that order
+    RXXRYYRZZ(Angle64, Angle64, Angle64),
     /// Two-qubit XY-plane rotation (theta, phi).
     RXYXY2Q(Angle64, Angle64),
 
@@ -157,6 +174,10 @@ pub enum ClassicalOp {
     Div,
     /// Modulo operation
     Mod,
+    /// Unsigned integer division
+    UDiv,
+    /// Unsigned remainder
+    UMod,
     /// Negation
     Neg,
 
@@ -194,6 +215,9 @@ pub enum ClassicalOp {
     /// Right shift
     Shr(u32),
 
+    /// Logical right shift
+    LShr(u32),
+
     // Comparisons
     /// Equality
     Eq,
@@ -208,6 +232,15 @@ pub enum ClassicalOp {
     /// Greater than or equal
     Ge,
 
+    /// Unsigned less than
+    ULt,
+    /// Unsigned less than or equal
+    ULe,
+    /// Unsigned greater than
+    UGt,
+    /// Unsigned greater than or equal
+    UGe,
+
     // Type conversions
     /// Integer to float
     IntToFloat,
@@ -221,6 +254,12 @@ pub enum ClassicalOp {
     // Constants
     /// Integer constant
     ConstInt(i64),
+    /// Recursive zero of the declared result type.
+    AggregateZero,
+    /// Replace a field at a constant index path.
+    InsertValue(Vec<usize>),
+    /// Read a field at a constant index path.
+    ExtractValue(Vec<usize>),
     /// Float constant
     ConstFloat(f64),
     /// Boolean constant
@@ -531,6 +570,7 @@ impl QuantumOp {
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
+            QuantumOp::I => "i",
             QuantumOp::H => "h",
             QuantumOp::X => "x",
             QuantumOp::Y => "y",
@@ -541,6 +581,10 @@ impl QuantumOp {
             QuantumOp::Tdg => "tdg",
             QuantumOp::SX => "sx",
             QuantumOp::SXdg => "sxdg",
+            QuantumOp::SY => "sy",
+            QuantumOp::SYdg => "sydg",
+            QuantumOp::F => "f",
+            QuantumOp::Fdg => "fdg",
             QuantumOp::RX(_) => "rx",
             QuantumOp::RY(_) => "ry",
             QuantumOp::RZ(_) => "rz",
@@ -558,7 +602,10 @@ impl QuantumOp {
             QuantumOp::SZZ => "szz",
             QuantumOp::SZZdg => "szzdg",
             QuantumOp::CPhase(_) => "cp",
+            QuantumOp::RXX(_) => "rxx",
+            QuantumOp::RYY(_) => "ryy",
             QuantumOp::RZZ(_) => "rzz",
+            QuantumOp::RXXRYYRZZ(..) => "rxxryyrzz",
             QuantumOp::RXYXY2Q(_, _) => "rxyxy2q",
             QuantumOp::MCX(_) => "mcx",
             QuantumOp::MCZ(_) => "mcz",
@@ -582,7 +629,8 @@ impl QuantumOp {
     pub fn operand_count(&self) -> Option<usize> {
         match self {
             // Single-qubit gates
-            QuantumOp::H
+            QuantumOp::I
+            | QuantumOp::H
             | QuantumOp::X
             | QuantumOp::Y
             | QuantumOp::Z
@@ -592,6 +640,10 @@ impl QuantumOp {
             | QuantumOp::Tdg
             | QuantumOp::SX
             | QuantumOp::SXdg
+            | QuantumOp::SY
+            | QuantumOp::SYdg
+            | QuantumOp::F
+            | QuantumOp::Fdg
             | QuantumOp::RX(_)
             | QuantumOp::RY(_)
             | QuantumOp::RZ(_)
@@ -600,7 +652,11 @@ impl QuantumOp {
             | QuantumOp::MeasurePauli(_)
             | QuantumOp::Reset
             | QuantumOp::Dealloc
-            | QuantumOp::U3(_, _, _) => Some(1),
+            | QuantumOp::U3(_, _, _)
+            | QuantumOp::InitZero
+            | QuantumOp::InitOne
+            | QuantumOp::InitPlus
+            | QuantumOp::InitMinus => Some(1),
 
             // Two-qubit gates
             QuantumOp::CX
@@ -615,22 +671,18 @@ impl QuantumOp {
             | QuantumOp::SZZ
             | QuantumOp::SZZdg
             | QuantumOp::CPhase(_)
+            | QuantumOp::RXX(_)
+            | QuantumOp::RYY(_)
             | QuantumOp::RZZ(_)
+            | QuantumOp::RXXRYYRZZ(..)
             | QuantumOp::RXYXY2Q(_, _) => Some(2),
             QuantumOp::Toffoli | QuantumOp::Fredkin => Some(3),
 
             // Multi-qubit gates (variable)
             QuantumOp::MCX(n) | QuantumOp::MCZ(n) => Some(*n + 1),
 
-            // No operands
-            QuantumOp::Alloc
-            | QuantumOp::InitZero
-            | QuantumOp::InitOne
-            | QuantumOp::InitPlus
-            | QuantumOp::InitMinus => Some(0),
-
             // Variable operands
-            QuantumOp::InitState(_) | QuantumOp::MeasureExpectation(_) => None,
+            QuantumOp::Alloc | QuantumOp::InitState(_) | QuantumOp::MeasureExpectation(_) => None,
         }
     }
 
@@ -663,6 +715,13 @@ impl ClassicalOp {
             ClassicalOp::Mul => "mul",
             ClassicalOp::Div => "div",
             ClassicalOp::Mod => "mod",
+            ClassicalOp::UDiv => "udiv",
+            ClassicalOp::UMod => "umod",
+            ClassicalOp::ULt => "ult",
+            ClassicalOp::ULe => "ule",
+            ClassicalOp::UGt => "ugt",
+            ClassicalOp::UGe => "uge",
+            ClassicalOp::LShr(_) => "lshr",
             ClassicalOp::Neg => "neg",
             ClassicalOp::FAdd => "fadd",
             ClassicalOp::FSub => "fsub",
@@ -691,6 +750,9 @@ impl ClassicalOp {
             ClassicalOp::Bitcast => "bitcast",
             ClassicalOp::Select => "select",
             ClassicalOp::ConstInt(_) => "const_int",
+            ClassicalOp::AggregateZero => "aggregate_zero",
+            ClassicalOp::InsertValue(_) => "insertvalue",
+            ClassicalOp::ExtractValue(_) => "extractvalue",
             ClassicalOp::ConstFloat(_) => "const_float",
             ClassicalOp::ConstBool(_) => "const_bool",
             ClassicalOp::ConstString(_) => "const_string",
@@ -706,6 +768,12 @@ impl ClassicalOp {
             ClassicalOp::Add
             | ClassicalOp::Sub
             | ClassicalOp::Mul
+            | ClassicalOp::UDiv
+            | ClassicalOp::UMod
+            | ClassicalOp::ULt
+            | ClassicalOp::ULe
+            | ClassicalOp::UGt
+            | ClassicalOp::UGe
             | ClassicalOp::Div
             | ClassicalOp::Mod
             | ClassicalOp::FAdd
@@ -721,7 +789,8 @@ impl ClassicalOp {
             | ClassicalOp::Lt
             | ClassicalOp::Le
             | ClassicalOp::Gt
-            | ClassicalOp::Ge => Some(2),
+            | ClassicalOp::Ge
+            | ClassicalOp::InsertValue(_) => Some(2),
 
             // Unary operations
             // Unary operations
@@ -736,11 +805,14 @@ impl ClassicalOp {
             | ClassicalOp::FloatToInt
             | ClassicalOp::Bitcast
             | ClassicalOp::Shl(_)
+            | ClassicalOp::LShr(_)
             | ClassicalOp::Shr(_)
-            | ClassicalOp::Assign => Some(1),
+            | ClassicalOp::Assign
+            | ClassicalOp::ExtractValue(_) => Some(1),
 
             // Constants (no operands)
-            ClassicalOp::ConstInt(_)
+            ClassicalOp::AggregateZero
+            | ClassicalOp::ConstInt(_)
             | ClassicalOp::ConstFloat(_)
             | ClassicalOp::ConstBool(_)
             | ClassicalOp::ConstString(_) => Some(0),

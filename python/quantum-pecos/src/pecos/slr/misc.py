@@ -10,17 +10,14 @@
 # specific language governing permissions and limitations under the License.
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from pecos.slr.block import Block
 from pecos.slr.fund import Statement
-from pecos.slr.vars import Bit, CReg, SymbolicBit
+from pecos.slr.vars import IDENTIFIER_PATTERN, Bit, CReg, SymbolicBit
 
 if TYPE_CHECKING:
     from pecos.slr.vars import Elem, QReg, Qubit, Reg
-
-_TAG_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class Barrier(Statement):
@@ -143,7 +140,7 @@ class Print(Statement):
             )
             raise TypeError(msg)
 
-        if not _TAG_RE.match(namespace):
+        if not IDENTIFIER_PATTERN.match(namespace):
             msg = (
                 f"Print namespace {namespace!r} must match [A-Za-z_][A-Za-z0-9_]* "
                 "(Python identifier rules). The dot is reserved as the namespace-tag separator."
@@ -152,7 +149,7 @@ class Print(Statement):
 
         if tag is None:
             tag = self._derive_tag(value)
-        if not _TAG_RE.match(tag):
+        if not IDENTIFIER_PATTERN.match(tag):
             msg = (
                 f"Print tag {tag!r} must match [A-Za-z_][A-Za-z0-9_]* "
                 "(Python identifier rules). The dot is reserved as the namespace-tag separator. "

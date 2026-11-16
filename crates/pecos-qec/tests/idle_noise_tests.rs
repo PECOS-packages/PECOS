@@ -15,11 +15,12 @@
 //! per-gate idle rates.
 
 use pecos_core::pauli::{X, Y, Z};
-use pecos_core::{QubitId, TimeUnits};
+use pecos_core::{Angle64, Gate, QubitId, TimeUnits};
 use pecos_qec::fault_tolerance::dem_builder::{
     DemBuilder, DemSamplerBuilder, DetectorErrorModel, FaultMechanism, IdleNoiseFamily, MemBuilder,
     NoiseConfig, PauliProbs, PerGateTypeNoise, SamplingEngine, combine_probabilities,
 };
+use pecos_qec::fault_tolerance::lookup_decoder::LookupDecoder;
 use pecos_qec::fault_tolerance::propagator::{
     DagFaultAnalyzer, DagFaultInfluenceMap, DagSpacetimeLocation, DetectorId, MeasurementId, Pauli,
 };
@@ -955,4 +956,228 @@ fn dem_builder_explicit_idle_noise_is_noisy() {
         dem.num_contributions() > 0,
         "explicit p_idle should produce idle-location DEM contributions",
     );
+}
+
+#[test]
+fn idle_noise_consumers_reject_missing_idle_gates() {
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.mz(&[0]);
+    let without_idle = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
+    let with_idle = DagFaultAnalyzer::new(&build_idle_then_measure(1))
+        .build_influence_map()
+        .unwrap();
+    let zero = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
+    let idle = zero.clone().set_idle(0.01);
+    let per_gate = PerGateTypeNoise::from_base_noise(zero.clone())
+        .with_1q_rates(GateType::Idle, [0.01, 0.0, 0.0]);
+
+    for (map, rejected) in [(&without_idle, true), (&with_idle, false)] {
+        let errors = [
+            DemSamplerBuilder::new(map)
+                .with_noise_config(idle.clone())
+                .build()
+                .err()
+                .map(|error| error.to_string()),
+            DemSamplerBuilder::new(map)
+                .with_noise_config(idle.clone())
+                .with_detectors(vec![vec![-1]], Vec::new())
+                .build()
+                .err()
+                .map(|error| error.to_string()),
+            DemSamplerBuilder::new(map)
+                .with_per_gate_noise(per_gate.clone())
+                .with_detectors(vec![vec![-1]], Vec::new())
+                .build()
+                .err()
+                .map(|error| error.to_string()),
+            MemBuilder::new(map)
+                .with_noise_config(idle.clone())
+                .build()
+                .err()
+                .map(|error| error.to_string()),
+            SamplingEngine::from_influence_map(map, &vec![0.0; map.locations.len()], &idle)
+                .err()
+                .map(|error| error.to_string()),
+            LookupDecoder::build(map, &idle, 1)
+                .err()
+                .map(|error| error.to_string()),
+        ];
+        for error in errors {
+            if rejected {
+                let error = error.expect("idle noise without idle gates must be rejected");
+                assert!(
+                    error.contains("idle-noise parameters have no idle gates"),
+                    "{error}"
+                );
+            } else {
+                assert_eq!(error, None);
+            }
+        }
+    }
+
+    // set_idle_rz currently installs no channel at theta = pi (a known gap,
+    // #1445); the recorded angle must still count as a request.
+    let error = DemSamplerBuilder::new(&without_idle)
+        .with_noise_config(zero.clone().set_idle_rz(std::f64::consts::PI))
+        .with_detectors(vec![vec![-1]], Vec::new())
+        .build()
+        .expect_err("an idle_rz request without idle gates must be rejected")
+        .to_string();
+    assert!(
+        error.contains("idle-noise parameters have no idle gates"),
+        "{error}"
+    );
+
+    // Zero idle noise stays a valid sweep endpoint on every builder.
+    let zero_idle = zero.set_idle(0.0);
+    assert!(
+        DemSamplerBuilder::new(&without_idle)
+            .with_noise_config(zero_idle.clone())
+            .build()
+            .is_ok()
+    );
+    assert!(
+        DemSamplerBuilder::new(&without_idle)
+            .with_noise_config(zero_idle.clone())
+            .with_detectors(vec![vec![-1]], Vec::new())
+            .build()
+            .is_ok()
+    );
+    assert!(
+        MemBuilder::new(&without_idle)
+            .with_noise_config(zero_idle)
+            .build()
+            .is_ok()
+    );
+}
+
+#[test]
+fn gate_rate_key_errors_take_precedence_over_missing_idles() {
+    // A mis-keyed rate names its fix; the idle check must not hide it.
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0, 1]);
+    dag.add_gate_auto_wire(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    dag.mz(&[0, 1]);
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
+    let mut noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle(0.01);
+    noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+
+    let errors = [
+        DemBuilder::new(&map)
+            .with_noise_config(noise.clone())
+            .try_build()
+            .err()
+            .map(|error| error.to_string()),
+        DemSamplerBuilder::new(&map)
+            .with_noise_config(noise.clone())
+            .build()
+            .err()
+            .map(|error| error.to_string()),
+        DemSamplerBuilder::new(&map)
+            .with_noise_config(noise.clone())
+            .with_detectors(vec![vec![-1]], Vec::new())
+            .build()
+            .err()
+            .map(|error| error.to_string()),
+        MemBuilder::new(&map)
+            .with_noise_config(noise.clone())
+            .build()
+            .err()
+            .map(|error| error.to_string()),
+        SamplingEngine::from_influence_map(&map, &vec![0.0; map.locations.len()], &noise)
+            .err()
+            .map(|error| error.to_string()),
+    ];
+    for error in errors {
+        let error = error.expect("a mis-keyed gate rate must be rejected");
+        assert!(error.contains("p2_gate_rates key SZZ"), "{error}");
+    }
+}
+
+#[test]
+fn scalar_idle_gate_rate_keys_are_rejected() {
+    // Idle gates take noise only from the idle model, so a scalar gate-rate key
+    // for Idle would be dropped on every circuit, with or without idles.
+    let map = DagFaultAnalyzer::new(&build_idle_then_measure(1))
+        .build_influence_map()
+        .unwrap();
+    let zero = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
+    let p1_key = zero.clone().set_p1_gate_rate(GateType::Idle, 0.01);
+    let mut p2_key = zero.clone();
+    p2_key.p2_gate_rates.insert(GateType::Idle, 0.01);
+
+    for (noise, table) in [(p1_key, "p1_gate_rates"), (p2_key, "p2_gate_rates")] {
+        let errors = [
+            DemBuilder::new(&map)
+                .with_noise_config(noise.clone())
+                .try_build()
+                .err()
+                .map(|error| error.to_string()),
+            DemBuilder::new(&map)
+                .with_per_gate_noise(PerGateTypeNoise::from_base_noise(noise.clone()))
+                .try_build()
+                .err()
+                .map(|error| error.to_string()),
+            DemSamplerBuilder::new(&map)
+                .with_noise_config(noise.clone())
+                .build()
+                .err()
+                .map(|error| error.to_string()),
+            DemSamplerBuilder::new(&map)
+                .with_noise_config(noise.clone())
+                .with_detectors(vec![vec![-1]], Vec::new())
+                .build()
+                .err()
+                .map(|error| error.to_string()),
+            MemBuilder::new(&map)
+                .with_noise_config(noise.clone())
+                .build()
+                .err()
+                .map(|error| error.to_string()),
+            LookupDecoder::build(&map, &noise, 1)
+                .err()
+                .map(|error| error.to_string()),
+        ];
+        for error in errors {
+            let error = error.expect("an Idle gate-rate key must be rejected");
+            assert!(
+                error.contains(&format!("{table} key Idle has no effect")),
+                "{error}"
+            );
+        }
+    }
+
+    // A zero-valued key changes nothing and stays accepted.
+    assert!(
+        DemBuilder::new(&map)
+            .with_noise_config(zero.set_p1_gate_rate(GateType::Idle, 0.0))
+            .try_build()
+            .is_ok()
+    );
+}
+
+#[test]
+fn missing_idle_error_names_the_request() {
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.mz(&[0]);
+    let map = DagFaultAnalyzer::new(&dag).build_influence_map().unwrap();
+    let zero = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
+    let per_gate = PerGateTypeNoise::from_base_noise(zero.clone())
+        .with_1q_rates_for_qubit(GateType::Idle, QubitId(3), [0.0, 0.0, 0.02])
+        .with_1q_rates_for_qubit(GateType::Idle, QubitId(1), [0.01, 0.0, 0.0]);
+    for (builder, expected) in [
+        (
+            DemBuilder::new(&map).with_noise_config(zero.set_idle(0.01)),
+            "(requested: p_idle = 0.01)",
+        ),
+        (
+            DemBuilder::new(&map).with_per_gate_noise(per_gate),
+            "(requested: rates_1q_per_qubit[(Idle, 1)] = [0.01, 0.0, 0.0], rates_1q_per_qubit[(Idle, 3)] = [0.0, 0.0, 0.02])",
+        ),
+    ] {
+        let error = builder.try_build().unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}");
+    }
 }

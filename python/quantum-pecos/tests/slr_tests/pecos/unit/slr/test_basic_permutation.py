@@ -73,10 +73,10 @@ def test_permutation_consistency_for_bits_in_qasm() -> None:
     assert "a[0] = 1;" in qasm1
 
     # Verify that the bit permutation is using the temporary bit approach, not XOR swap
-    assert "creg _bit_swap[1];" in qasm1
-    assert "_bit_swap[0] = a[0];" in qasm1
+    assert "creg bitswap[1];" in qasm1
+    assert "bitswap[0] = a[0];" in qasm1
     assert "a[0] = b[1];" in qasm1
-    assert "b[1] = _bit_swap[0];" in qasm1
+    assert "b[1] = bitswap[0];" in qasm1
     assert "a[0] = a[0] ^ b[1];" not in qasm1  # Make sure XOR swap is not used
 
 
@@ -106,10 +106,10 @@ def test_basic_permutation_qasm(basic_permutation_program: tuple) -> None:
     assert "a[0] = 1;" in qasm
 
     # Verify that the bit permutation is using the temporary bit approach, not XOR swap
-    assert "creg _bit_swap[1];" in qasm
-    assert "_bit_swap[0] = a[0];" in qasm
+    assert "creg bitswap[1];" in qasm
+    assert "bitswap[0] = a[0];" in qasm
     assert "a[0] = b[1];" in qasm
-    assert "b[1] = _bit_swap[0];" in qasm
+    assert "b[1] = bitswap[0];" in qasm
     assert "a[0] = a[0] ^ b[1];" not in qasm  # Make sure XOR swap is not used
 
     # Verify that running QASM generation twice produces consistent results
@@ -140,11 +140,11 @@ def test_same_register_permutation_qasm(
     assert "a[2] = 1;" in qasm
 
     # Verify that the bit permutation is using the temporary bit approach, not XOR swap
-    assert "creg _bit_swap[1];" in qasm
-    assert "_bit_swap[0] = a[0];" in qasm
+    assert "creg bitswap[1];" in qasm
+    assert "bitswap[0] = a[0];" in qasm
     assert "a[0] = a[2];" in qasm  # Part of the cycle
     assert "a[2] = a[1];" in qasm  # Part of the cycle
-    assert "a[1] = _bit_swap[0];" in qasm  # Completing the cycle
+    assert "a[1] = bitswap[0];" in qasm  # Completing the cycle
     assert "a[0] = a[0] ^ a[1];" not in qasm  # Make sure XOR swap is not used
 
 

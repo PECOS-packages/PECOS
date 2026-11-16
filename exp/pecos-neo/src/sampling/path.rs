@@ -429,9 +429,12 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
     ///
     /// # Panics
     ///
-    /// Panics if the circuit contains a gate the Clifford simulator cannot
-    /// execute.
+    /// Panics if the circuit is invalid or contains a gate the Clifford simulator
+    /// cannot execute.
     pub fn run_and_record(&mut self, commands: &CommandQueue) -> PathRecordedResult {
+        if let Err(error) = commands.validate_for_execution() {
+            panic!("PathExplorer cannot execute invalid circuit: {error}");
+        }
         self.simulator.reset();
         let mut outcomes = MeasurementOutcomes::new();
         let mut path = MeasurementPath::new();
@@ -454,13 +457,16 @@ impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
     ///
     /// # Panics
     ///
-    /// Panics if the circuit contains a gate the Clifford simulator cannot
-    /// execute.
+    /// Panics if the circuit is invalid or contains a gate the Clifford simulator
+    /// cannot execute.
     pub fn run_with_path(
         &mut self,
         commands: &CommandQueue,
         forced_path: &EnumeratedPath,
     ) -> PathRecordedResult {
+        if let Err(error) = commands.validate_for_execution() {
+            panic!("PathExplorer cannot execute invalid circuit: {error}");
+        }
         self.simulator.reset();
         let mut outcomes = MeasurementOutcomes::new();
         let mut path = MeasurementPath::new();
@@ -800,7 +806,7 @@ mod tests {
                 GateCommand::with_angles(
                     gate_type,
                     qubits,
-                    vec![pecos_core::Angle64::from_radians(0.3); angle_arity],
+                    vec![pecos_core::radians!(0.3); angle_arity],
                 ),
             ),
         ]

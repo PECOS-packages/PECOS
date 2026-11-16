@@ -104,7 +104,7 @@ fn cz_gate() {
 
 #[test]
 fn rz_on_zero() {
-    let theta = Angle64::from_radians(0.7);
+    let theta = pecos_core::radians!(0.7);
     assert_eq!(
         run(1, |b| {
             b.rz(theta, &[0]);
@@ -140,7 +140,7 @@ fn ry_pi_flips() {
 
 #[test]
 fn rzz_on_zero() {
-    let theta = Angle64::from_radians(0.5);
+    let theta = pecos_core::radians!(0.5);
     assert_eq!(
         run(2, |b| {
             b.rzz(theta, &[(0, 1)]);
@@ -153,7 +153,7 @@ fn rzz_on_zero() {
 #[test]
 fn t_gate_fusion_via_engine() {
     // 4T = Z (Clifford), Z|0> = |0>
-    let t = Angle64::from_radians(std::f64::consts::FRAC_PI_4);
+    let t = Angle64::from_turn_ratio(1, 8);
     assert_eq!(
         run(1, |b| {
             b.rz(t, &[0]);
@@ -186,7 +186,7 @@ fn h_rz_pi_h_is_x() {
 
 #[test]
 fn bell_with_rz_stays_correlated() {
-    let theta = Angle64::from_radians(0.6);
+    let theta = pecos_core::radians!(0.6);
     let o = run(2, |b| {
         b.h(&[0]);
         b.cx(&[(0, 1)]);
@@ -238,7 +238,7 @@ fn engine_reset() {
 
 #[test]
 fn deterministic_seed() {
-    let theta = Angle64::from_radians(0.5);
+    let theta = pecos_core::radians!(0.5);
     let make = |seed: u64| -> Vec<u32> {
         let mut engine = StabVecEngine::with_seed(2, seed);
         let mut b = ByteMessageBuilder::new();
@@ -279,12 +279,12 @@ fn build_circuit(b: &mut ByteMessageBuilder) {
     b.h(&[0, 1, 2]);
     b.cx(&[(0, 1)]);
     b.cx(&[(1, 2)]);
-    b.rz(Angle64::from_radians(0.5), &[0]);
-    b.rz(Angle64::from_radians(0.8), &[2]);
+    b.rz(pecos_core::radians!(0.5), &[0]);
+    b.rz(pecos_core::radians!(0.8), &[2]);
     b.h(&[1]);
-    b.ry(Angle64::from_radians(0.3), &[1]);
+    b.ry(pecos_core::radians!(0.3), &[1]);
     b.cz(&[(0, 2)]);
-    b.rx(Angle64::from_radians(0.6), &[0]);
+    b.rx(pecos_core::radians!(0.6), &[0]);
     b.mz(&[0, 1, 2]);
 }
 

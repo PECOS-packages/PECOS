@@ -168,8 +168,10 @@ impl PyStabilizerCode {
     ///
     /// Returns None if there are no logical qubits.
     /// Only suitable for small codes (k + rank <= 30).
-    fn distance(&self) -> Option<usize> {
-        self.inner.distance()
+    fn distance(&self) -> PyResult<Option<usize>> {
+        self.inner
+            .distance()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
 
     /// Compute the syndrome of an error against the generators.
@@ -184,12 +186,14 @@ impl PyStabilizerCode {
     ///
     /// Returns a list of PauliStrings that commute with all stabilizers
     /// but are not in the stabilizer group.
-    fn logical_operators(&self) -> Vec<PauliString> {
-        self.inner
+    fn logical_operators(&self) -> PyResult<Vec<PauliString>> {
+        Ok(self
+            .inner
             .logical_operators()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
             .into_iter()
             .map(PauliString::from_rust)
-            .collect()
+            .collect())
     }
 
     /// Get the underlying stabilizer group.

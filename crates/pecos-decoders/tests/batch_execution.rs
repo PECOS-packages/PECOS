@@ -11,9 +11,10 @@
 // the License.
 
 //! Backend-independent contracts for the public batch executor.
+use pecos_decoder_core::graphlike_projection::IrreduciblePolicy;
 use pecos_decoders::ObsMask;
 use pecos_decoders::batch::{
-    BatchDecodeError, DecodeOptions, DecoderFactory, ExecutionPath, SampleBatch,
+    BatchDecodeError, DecodeOptions, DecoderFactory, ExecutionPath, PreparedModel, SampleBatch,
 };
 use pecos_decoders::{DecodeModel, DecoderError, ExecutionTraits, ObservableDecoder};
 use std::rc::Rc;
@@ -37,6 +38,7 @@ enum Behavior {
 #[derive(Default)]
 struct Factory {
     native: bool,
+    preparation_failure: bool,
     behaviors: Vec<Behavior>,
     builds: AtomicUsize,
     calls: Arc<AtomicUsize>,
@@ -66,6 +68,17 @@ impl DecoderFactory for Factory {
     }
     fn native_batch_capable(&self) -> bool {
         self.native
+    }
+    fn decode_model(&self, dem: &str) -> Result<PreparedModel, Self::BuildError> {
+        if self.preparation_failure {
+            return Err(DecoderError::InvalidConfiguration(
+                "preparation failed".into(),
+            ));
+        }
+        Ok(PreparedModel {
+            model: DecodeModel::SingleDem(dem.into()),
+            projection: None,
+        })
     }
     fn build(&self, model: &DecodeModel) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
         assert_eq!(model, &DecodeModel::SingleDem("test DEM".into()));
@@ -506,21 +519,26 @@ fn diagnostic_decoder_is_also_preflighted() {
 
 #[test]
 fn builtin_factory_selects_embedded_hybrid_model() {
+    // compatibility: model selection preserves Hybrid full/decomposed roles.
     use pecos_decoders::DecoderSpec;
     use pecos_decoders::spec::{BeliefMatchingConfig, BeliefMatchingMode};
     assert_eq!(
-        DecoderSpec::AStar.decode_model("single"),
-        DecodeModel::SingleDem("single".into())
+        DecoderSpec::AStar(pecos_decoders::spec::AStarConfig::default())
+            .decode_model("error(0.1) D0 L0")
+            .unwrap()
+            .model,
+        DecodeModel::SingleDem("error(0.1) D0 L0".into())
     );
     let spec = DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+        irreducible: IrreduciblePolicy::default(),
         mode: BeliefMatchingMode::Hybrid,
-        embedded_full_dem: Some("full".into()),
+        embedded_full_dem: Some("error(0.1) D0 D1 D2 L0".into()),
     });
     assert_eq!(
-        spec.decode_model("decomposed"),
+        spec.decode_model("error(0.1) D0 D1 ^ D2 L0").unwrap().model,
         DecodeModel::HybridDem {
-            full: "full".into(),
-            decomposed: "decomposed".into()
+            full: "error(0.1) D0 D1 D2 L0".into(),
+            decomposed: "error(0.1) D0 D1 ^ D2 L0".into()
         }
     );
 }
@@ -703,5 +721,146 @@ fn batch_errors_preserve_source_chains() {
         BatchDecodeError::Runtime("runtime".into()),
     ] {
         assert!(error.source().is_none());
+    }
+}
+
+// contract: preparation errors surface as construction errors before any workers build.
+#[test]
+fn preparation_failure_precedes_all_worker_construction() {
+    for workers in [1, 3] {
+        let factory = Factory {
+            preparation_failure: true,
+            ..Factory::default()
+        };
+        let error = batch(16)
+            .decode_with(
+                "test DEM",
+                &factory,
+                &DecodeOptions::default().workers(workers),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, BatchDecodeError::Build(DecoderError::InvalidConfiguration(ref message)) if message == "preparation failed")
+        );
+        assert_eq!(factory.builds.load(Ordering::SeqCst), 0);
+        assert_eq!(factory.calls.load(Ordering::SeqCst), 0);
+    }
+}
+
+// contract: structured entry uses the factory, retaining sectors and one preparation report.
+#[test]
+fn structured_batch_preserves_sectors_and_execution() {
+    use pecos_decoder_core::window::StructuredDem;
+    use pecos_decoders::DecoderSpec;
+    let mut dem = StructuredDem::from_dem_str(
+        "error(0.01) D0 D1\nerror(0.01) D0 D2\nerror(0.01) D1 D3\nerror(0.01) D2 D3\nerror(0.01) D0 D1 D2 D3",
+    ).unwrap();
+    dem.detector_fault_sectors = ["X", "Z", "X", "Z"].map(|s| Some(s.into())).to_vec();
+    let default_prepared = Factory::default().decode_structured_model(&dem).unwrap();
+    assert_eq!(
+        default_prepared.model,
+        DecodeModel::StructuredDem(dem.clone())
+    );
+    assert_eq!(default_prepared.projection, None);
+    let batch = SampleBatch::from_row_major(
+        &[vec![0u8; 4], vec![0u8; 4]],
+        &[ObsMask::new(), ObsMask::new()],
+        0,
+    )
+    .unwrap();
+    let spec = DecoderSpec::parse("astar").unwrap();
+    let options = DecodeOptions::default().workers(1).predictions(true);
+    let result = batch.decode_structured_with(&dem, &spec, &options).unwrap();
+    let report = result.projection.unwrap();
+    assert_eq!(report.projected, 1);
+    assert_eq!(report.unlabelled_detectors, 0);
+    assert_eq!(report.distinct_sectors, 2);
+    assert_eq!(report.cross_sector_components, 2);
+    assert_eq!(result.num_errors, 0);
+    assert_eq!(result.execution_path, ExecutionPath::Sequential);
+}
+
+struct RecoveryFactory;
+struct RecoveryDecoder;
+impl DecoderFactory for RecoveryFactory {
+    type BuildError = DecoderError;
+    fn execution_traits(&self) -> ExecutionTraits {
+        ExecutionTraits::default()
+    }
+    fn native_batch_capable(&self) -> bool {
+        false
+    }
+    fn build(&self, _: &DecodeModel) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+        Ok(Box::new(RecoveryDecoder))
+    }
+}
+impl ObservableDecoder for RecoveryDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(2)
+    }
+    fn decode_obs(&mut self, _: &[u8]) -> Result<ObsMask, DecoderError> {
+        panic!("shared batch must preserve recovery outcomes")
+    }
+    fn decode_outcome(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::outcome::ObservableDecodeOutcome, DecoderError> {
+        let fallback = syndrome[0] != 0;
+        let mut mask = ObsMask::new();
+        mask.set(70);
+        Ok(pecos_decoder_core::outcome::ObservableDecodeOutcome {
+            prediction: (syndrome[1] == 0).then_some(mask),
+            fallback_used: fallback,
+            syndrome_consistent: fallback.then_some(true),
+            deltas_tried: vec![1.0, 2.0, 3.0],
+        })
+    }
+}
+#[test]
+fn shared_batch_scores_fallbacks_and_preserves_reported_holes() {
+    let mut truth = ObsMask::new();
+    truth.set(70);
+    for workers in [1, 4] {
+        for retain in [false, true] {
+            let rows = [vec![1, 0], vec![1, 0], vec![0, 1], vec![0, 0]]
+                .into_iter()
+                .cycle()
+                .take(260)
+                .collect::<Vec<_>>();
+            let truths = [truth.clone(), ObsMask::new(), ObsMask::new(), truth.clone()]
+                .into_iter()
+                .cycle()
+                .take(260)
+                .collect::<Vec<_>>();
+            let batch = SampleBatch::from_row_major(&rows, &truths, 71).unwrap();
+            let result = batch
+                .decode_with(
+                    "",
+                    &RecoveryFactory,
+                    &DecodeOptions::default()
+                        .workers(workers)
+                        .predictions(retain),
+                )
+                .unwrap();
+            assert_eq!(result.num_errors, 65);
+            assert_eq!(result.num_undecoded(), 65);
+            assert_eq!(result.num_fallback(), 130);
+            assert!(result.logical_error_rate().is_nan());
+            assert!(result.predictions.is_none());
+            assert_eq!(result.partial_predictions.is_some(), retain);
+            if let Some(predictions) = &result.partial_predictions {
+                for (i, prediction) in predictions.iter().enumerate() {
+                    assert_eq!(prediction, &((i % 4 != 2).then_some(truth.clone())));
+                }
+            }
+            assert_eq!(result.recovery.len(), rows.len());
+            for (i, recovery) in result.recovery.iter().enumerate() {
+                assert_eq!(recovery.shot_index, i);
+                assert_eq!(
+                    recovery.logical_error,
+                    if i % 4 == 2 { None } else { Some(i % 4 == 1) }
+                );
+            }
+        }
     }
 }

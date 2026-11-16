@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib_llvm import binding, ir
 
-from pecos.slr import Angle, Block, If, Repeat
+from pecos.slr import Angle, Block, For, If, Repeat, While
+from pecos.slr._qubit_args import gate_target_groups
 from pecos.slr.cops import (
     NEG,
     NOT,
@@ -389,8 +390,11 @@ class QIRGenerator(Generator):
 
         block (Block): the current SLR block to convert into a QIR block."""
 
-        if type(block).__name__ in ("If", "While", "For"):
-            reject_permute_in_region(block, "QIRGenerator", classical_runtime=isinstance(block, If))
+        if isinstance(block, For | While):
+            msg = f"QIRGenerator does not support {type(block).__name__}; use SlrConverter(...).qir()."
+            raise NotImplementedError(msg)
+        if isinstance(block, If):
+            reject_permute_in_region(block, "QIRGenerator", classical_runtime=True)
         self._current_block = block
         repeat_times = block.cond if isinstance(block, Repeat) else 1
 
@@ -727,7 +731,7 @@ class QIRGenerator(Generator):
         to transform into a QIR Gate"""
 
         match type(gate).__name__:
-            case "Measure":
+            case "MeasureZ":
                 creg_or_bit = gate.cout[0]
                 if isinstance(creg_or_bit, CReg):
                     ll_creg = self._creg_dict[creg_or_bit.sym][0]
@@ -760,6 +764,13 @@ class QIRGenerator(Generator):
 
         gate (QGate): a quantum gate to generate as QIR."""
 
+        for group in gate_target_groups(gate.qargs, gate.qsize, gate.sym):
+            application = gate.copy()
+            application.qargs = group
+            self._emit_qgate_call(application)
+
+    def _emit_qgate_call(self, gate: qgate_base.QGate) -> None:
+        """Emit one validated application, expanding any gate decomposition."""
         qgate_meta = QIRGateMetadata[gate.sym]
         # If theres a decomposition lambda, invoke that with the gate to generate
         # the decomposed gates needed in the circuit. The lambda defines any
@@ -771,35 +782,6 @@ class QIRGenerator(Generator):
             for decomposed_gate in decomposed_gates:
                 self._create_qgate_call(decomposed_gate)
             return
-
-        if isinstance(gate.qargs[0], QReg):
-            for qubit in gate.qargs[0].elems:
-                new_gate = gate.copy()
-                new_gate.qargs = [qubit]
-                self._create_qgate_call(new_gate)
-            return
-        if (
-            isinstance(gate.qargs, tuple)
-            and len(gate.qargs) != gate.qsize
-            and all(isinstance(q, Qubit) for q in gate.qargs)
-        ):
-            for qubit in gate.qargs:
-                new_gate = gate.copy()
-                new_gate.qargs = [qubit]
-                self._create_qgate_call(new_gate)
-            return
-        if isinstance(gate.qargs, tuple) and all(isinstance(e, tuple) for e in gate.qargs):
-            for pair in gate.qargs:
-                new_gate = gate.copy()
-                new_gate.qargs = pair
-                self._create_qgate_call(new_gate)
-            return
-        qargs = gate.qargs
-        if len(qargs) != gate.qsize:
-            msg = f"Gate {gate.sym} expects {gate.qsize} qubits, but {len(qargs)} were provided."
-            raise ValueError(
-                msg,
-            )
 
         if gate.sym not in self._gate_declaration_cache:
             declare_args = []
@@ -824,7 +806,7 @@ class QIRGenerator(Generator):
                 )
                 for param in gate.params
             ]
-        gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in qargs])
+        gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in gate.qargs])
 
         # Create the actual invocation on the builder using the args passed in
         gate_declaration.create_call(self._builder, gate_args, name="")
@@ -959,6 +941,16 @@ class QIRGenerator(Generator):
             and hasattr(elems_f, "__iter__")
         ):
             # Element-wise permutation
+            refs = [*elems_i, *elems_f]
+            if refs and not (
+                all(isinstance(getattr(ref, "reg", None), QReg) for ref in refs)
+                or all(isinstance(getattr(ref, "reg", None), CReg) for ref in refs)
+            ):
+                msg = (
+                    "QIRGenerator does not support Permute with mixed quantum/classical or unknown elements; "
+                    "use SlrConverter(...).qir(), whose AST backend applies a static relabel."
+                )
+                raise NotImplementedError(msg)
             if len(elems_i) != len(elems_f):
                 msg = f"Cannot permute different numbers of elements: {len(elems_i)} and {len(elems_f)}"
                 raise ValueError(msg)
@@ -1094,6 +1086,10 @@ class QIRGenerator(Generator):
                 # For classical bit permutations, we're physically moving the values,
                 # so we don't need to update the permutation map.
                 # The operations should still refer to the original bits.
+
+        else:
+            msg = "QIRGenerator does not support this Permute operand shape; use SlrConverter(...).qir()."
+            raise NotImplementedError(msg)
 
     def _compose_permutation_maps(self, new_perm_map):
         """Compose a new permutation map with the existing one.

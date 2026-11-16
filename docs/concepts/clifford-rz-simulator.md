@@ -152,11 +152,15 @@ The frame and pending RZ are flushed (applied to all terms) only when necessary:
 The Bravyi paper uses dense n x n binary matrices for F, G, M. This implementation
 uses sparse binary matrices with a dual row/column representation:
 
-- Each row and column stored as a `BitSet` (bit-vector with hardware popcount)
+- Each CH-form matrix row and column is stored as a `BitSet` (bit-vector)
 - Row XOR is O(weight) instead of O(n) -- significant when matrices are sparse
 - Dual representation provides O(1) column membership queries alongside fast row
   operations
 - Both access patterns are needed: gate updates walk rows, inner products walk columns
+
+The separate `SparseStab` tableau uses `AdaptiveIndexSet` for rows and columns,
+with dense words for compact spans and sparse indices otherwise. Its initial
+memory is O(n), and tableau memory scales with the nonzeros.
 
 ### Structural sharing (Arc + copy-on-write)
 

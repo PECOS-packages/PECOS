@@ -48,7 +48,12 @@ enum GateMix {
     CliffT,
 }
 
-fn fuzz_circuit(num_qubits: usize, num_gates: usize, seed: u64, mix: GateMix) -> StabMps {
+fn fuzz_circuit(
+    num_qubits: usize,
+    num_gates: usize,
+    seed: u64,
+    mix: GateMix,
+) -> Result<StabMps, Box<dyn std::error::Error>> {
     let mut stn = StabMps::with_seed(num_qubits, seed);
     // xorshift state 0 stays 0 forever — skip seed 0 by adding offset.
     let mut rng_state = seed.wrapping_add(1);
@@ -88,17 +93,17 @@ fn fuzz_circuit(num_qubits: usize, num_gates: usize, seed: u64, mix: GateMix) ->
             }
             6 => {
                 let ab = next_rng(&mut rng_state);
-                let a = Angle64::from_radians((ab % 1000) as f64 * 0.001 * TAU);
+                let a = Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * TAU)?;
                 stn.rz(a, &[QubitId(q0)]);
             }
             _ => {
                 let ab = next_rng(&mut rng_state);
-                let a = Angle64::from_radians((ab % 1000) as f64 * 0.001 * TAU);
+                let a = Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * TAU)?;
                 stn.rx(a, &[QubitId(q0)]);
             }
         }
     }
-    stn
+    Ok(stn)
 }
 
 /// Run scenario with optional auto-disentangle every N gates.
@@ -109,7 +114,7 @@ fn run_scenario_with_auto(
     n_seeds: u64,
     mix: GateMix,
     auto_disent_every: Option<usize>,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut max_bond_sum = 0u64;
     let mut gates_disent_total = 0u64;
     for seed in 0..n_seeds {
@@ -151,14 +156,14 @@ fn run_scenario_with_auto(
                 6 => {
                     let ab = next_rng(&mut rng_state);
                     stn.rz(
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * TAU),
+                        Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * TAU)?,
                         &[QubitId(q0)],
                     );
                 }
                 _ => {
                     let ab = next_rng(&mut rng_state);
                     stn.rx(
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * TAU),
+                        Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * TAU)?,
                         &[QubitId(q0)],
                     );
                 }
@@ -181,9 +186,16 @@ fn run_scenario_with_auto(
     println!(
         "{label:<28} n={n_qubits} gates={n_gates} auto_every={auto_disent_every:?} | avg_bond={avg_bond:.2} avg_disent_gates={avg_disent:.1}",
     );
+    Ok(())
 }
 
-fn run_scenario(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix: GateMix) {
+fn run_scenario(
+    label: &str,
+    n_qubits: usize,
+    n_gates: usize,
+    n_seeds: u64,
+    mix: GateMix,
+) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
     let mut total = 0u64;
     let mut single = 0u64;
@@ -196,7 +208,7 @@ fn run_scenario(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix:
     let mut ofd_wins = 0u64; // in_span gates heuristic sent through std path
 
     for seed in 0..n_seeds {
-        let stn = fuzz_circuit(n_qubits, n_gates, seed, mix);
+        let stn = fuzz_circuit(n_qubits, n_gates, seed, mix)?;
         theoretical_bond_sum += stn.gf2_matrix().theoretical_min_bond_dim() as u64;
         ofd_in_span += stn.stats.ofd_in_span;
         ofd_wins += stn.stats.ofd_in_span_std;
@@ -220,9 +232,9 @@ fn run_scenario(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix:
     let avg_theo = theoretical_bond_sum as f64 / n_seeds as f64;
     println!(
         "{label:<24} n={n_qubits} gates={n_gates} | total={total} \
-        heur: stab={:.0}% single={:.0}% disent={:.0}% std={:.0}% | \
-        OFD in_span={:.0}% | OFD wins (in_span but heur-std) ={ofd_wins}/{} ({:.0}%) | \
-        bond={avg_bond:.2}/{avg_theo:.2}",
+    heur: stab={:.0}% single={:.0}% disent={:.0}% std={:.0}% | \
+    OFD in_span={:.0}% | OFD wins (in_span but heur-std) ={ofd_wins}/{} ({:.0}%) | \
+    bond={avg_bond:.2}/{avg_theo:.2}",
         pct(stabilizer),
         pct(single),
         pct(disent),
@@ -236,10 +248,16 @@ fn run_scenario(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix:
         },
     );
     let _ = std::io::stdout().flush();
+    Ok(())
 }
 
-fn exercise_stability_circuit(num_qubits: usize, num_gates: usize, seed: u64, mix: GateMix) {
-    let mut stn = fuzz_circuit(num_qubits, num_gates, seed, mix);
+fn exercise_stability_circuit(
+    num_qubits: usize,
+    num_gates: usize,
+    seed: u64,
+    mix: GateMix,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stn = fuzz_circuit(num_qubits, num_gates, seed, mix)?;
     stn.flush();
 
     let state = stn.state_vector_up_to_phase();
@@ -259,9 +277,10 @@ fn exercise_stability_circuit(num_qubits: usize, num_gates: usize, seed: u64, mi
 
     let qubits = (0..num_qubits).map(QubitId).collect::<Vec<_>>();
     let _measurements = stn.mz(&qubits);
+    Ok(())
 }
 
-fn run_stability_census(eight_qubit_seed_count: u64) {
+fn run_stability_census(eight_qubit_seed_count: u64) -> Result<(), Box<dyn std::error::Error>> {
     let started = std::time::Instant::now();
     let mut circuits = 0_u64;
     let mut panics = 0_u64;
@@ -273,11 +292,15 @@ fn run_stability_census(eight_qubit_seed_count: u64) {
         for mix in [GateMix::CliffT, GateMix::Random] {
             for seed in 0..seed_count {
                 circuits += 1;
-                if catch_unwind(AssertUnwindSafe(|| {
-                    exercise_stability_circuit(num_qubits, num_gates, seed, mix);
-                }))
-                .is_err()
-                {
+                if match catch_unwind(AssertUnwindSafe(|| {
+                    exercise_stability_circuit(num_qubits, num_gates, seed, mix)
+                })) {
+                    Ok(result) => {
+                        result?;
+                        false
+                    }
+                    Err(_) => true,
+                } {
                     panics += 1;
                     eprintln!(
                         "PANIC n={num_qubits} gates={num_gates} seed={seed} mix={}",
@@ -295,23 +318,24 @@ fn run_stability_census(eight_qubit_seed_count: u64) {
         started.elapsed().as_secs_f64()
     );
     assert_eq!(panics, 0, "stability census observed panics");
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = std::env::args().collect::<Vec<_>>();
     if arguments
         .iter()
         .any(|argument| argument == "--stability-census-wide")
     {
-        run_stability_census(2_000);
-        return;
+        run_stability_census(2_000)?;
+        return Ok(());
     }
     if arguments
         .iter()
         .any(|argument| argument == "--stability-census")
     {
-        run_stability_census(200);
-        return;
+        run_stability_census(200)?;
+        return Ok(());
     }
     if let Some(index) = arguments
         .iter()
@@ -325,9 +349,9 @@ fn main() {
             "random" => GateMix::Random,
             value => panic!("unknown gate mix: {value}"),
         };
-        exercise_stability_circuit(num_qubits, num_gates, seed, mix);
+        exercise_stability_circuit(num_qubits, num_gates, seed, mix)?;
         println!("stability case passed: n={num_qubits} gates={num_gates} seed={seed}");
-        return;
+        return Ok(());
     }
     println!("Disent firing rate benchmark. Runs random fuzz circuits and reports");
     println!("what fraction of non-Clifford RZs take each code path.");
@@ -340,47 +364,47 @@ fn main() {
 
     // Random gate mix: Cliffords + rotations + T.
     println!("=== Random gate mix (H/S/X/CX/CZ/T/RZ/RX) ===");
-    run_scenario("2q shallow", 2, 10, 100, GateMix::Random);
-    run_scenario("2q medium", 2, 20, 100, GateMix::Random);
-    run_scenario("2q deep", 2, 50, 50, GateMix::Random);
-    run_scenario("3q shallow", 3, 10, 50, GateMix::Random);
-    run_scenario("3q medium", 3, 20, 30, GateMix::Random);
-    run_scenario("4q shallow", 4, 10, 30, GateMix::Random);
-    run_scenario("4q medium", 4, 20, 20, GateMix::Random);
+    run_scenario("2q shallow", 2, 10, 100, GateMix::Random)?;
+    run_scenario("2q medium", 2, 20, 100, GateMix::Random)?;
+    run_scenario("2q deep", 2, 50, 50, GateMix::Random)?;
+    run_scenario("3q shallow", 3, 10, 50, GateMix::Random)?;
+    run_scenario("3q medium", 3, 20, 30, GateMix::Random)?;
+    run_scenario("4q shallow", 4, 10, 30, GateMix::Random)?;
+    run_scenario("4q medium", 4, 20, 20, GateMix::Random)?;
 
     // T-heavy: research target for MAST / Clifford+T simulation.
     println!("\n=== Clifford + T only (H/S/X/CX/CZ/T) ===");
-    run_scenario("2q T 10g", 2, 10, 100, GateMix::CliffT);
-    run_scenario("2q T 30g", 2, 30, 50, GateMix::CliffT);
-    run_scenario("3q T 15g", 3, 15, 50, GateMix::CliffT);
-    run_scenario("3q T 30g", 3, 30, 30, GateMix::CliffT);
-    run_scenario("4q T 20g", 4, 20, 20, GateMix::CliffT);
-    run_scenario("5q T 20g", 5, 20, 10, GateMix::CliffT);
-    run_scenario("8q T 30g", 8, 30, 5, GateMix::CliffT);
-    run_scenario("10q T 40g", 10, 40, 3, GateMix::CliffT);
-    run_scenario("15q T 50g", 15, 50, 2, GateMix::CliffT);
+    run_scenario("2q T 10g", 2, 10, 100, GateMix::CliffT)?;
+    run_scenario("2q T 30g", 2, 30, 50, GateMix::CliffT)?;
+    run_scenario("3q T 15g", 3, 15, 50, GateMix::CliffT)?;
+    run_scenario("3q T 30g", 3, 30, 30, GateMix::CliffT)?;
+    run_scenario("4q T 20g", 4, 20, 20, GateMix::CliffT)?;
+    run_scenario("5q T 20g", 5, 20, 10, GateMix::CliffT)?;
+    run_scenario("8q T 30g", 8, 30, 5, GateMix::CliffT)?;
+    run_scenario("10q T 40g", 10, 40, 3, GateMix::CliffT)?;
+    run_scenario("15q T 50g", 15, 50, 2, GateMix::CliffT)?;
 
     // Test auto-heuristic-disentangle: compare to baseline on 2q deep (bond 2)
     // where std path fires heavily.
     // Pre-analysis with StabMpsCompile: same circuit, no MPS cost. Verifies
     // that the compile-only pass gives matching OFD predictions.
     println!("\n=== StabMpsCompile pre-analysis (no MPS cost) ===");
-    bench_compile("5q T 20g", 5, 20, 50, GateMix::CliffT);
-    bench_compile("10q T 30g", 10, 30, 20, GateMix::CliffT);
-    bench_compile("20q T 50g", 20, 50, 10, GateMix::CliffT);
-    bench_compile("50q T 100g", 50, 100, 5, GateMix::CliffT);
-    bench_compile("100q T 200g", 100, 200, 2, GateMix::CliffT);
+    bench_compile("5q T 20g", 5, 20, 50, GateMix::CliffT)?;
+    bench_compile("10q T 30g", 10, 30, 20, GateMix::CliffT)?;
+    bench_compile("20q T 50g", 20, 50, 10, GateMix::CliffT)?;
+    bench_compile("50q T 100g", 50, 100, 5, GateMix::CliffT)?;
+    bench_compile("100q T 200g", 100, 200, 2, GateMix::CliffT)?;
 
     println!("\n=== Auto heuristic disentangle (on 2q deep) ===");
-    run_scenario_with_auto("baseline (no auto)", 2, 50, 20, GateMix::Random, None);
-    run_scenario_with_auto("auto every 5 gates", 2, 50, 20, GateMix::Random, Some(5));
-    run_scenario_with_auto("auto every 10 gates", 2, 50, 20, GateMix::Random, Some(10));
-    run_scenario_with_auto("auto every 20 gates", 2, 50, 20, GateMix::Random, Some(20));
+    run_scenario_with_auto("baseline (no auto)", 2, 50, 20, GateMix::Random, None)?;
+    run_scenario_with_auto("auto every 5 gates", 2, 50, 20, GateMix::Random, Some(5))?;
+    run_scenario_with_auto("auto every 10 gates", 2, 50, 20, GateMix::Random, Some(10))?;
+    run_scenario_with_auto("auto every 20 gates", 2, 50, 20, GateMix::Random, Some(20))?;
 
     println!("\n=== Auto heuristic disentangle (on 3q T 30g) ===");
-    run_scenario_with_auto("baseline (no auto)", 3, 30, 20, GateMix::CliffT, None);
-    run_scenario_with_auto("auto every 5 gates", 3, 30, 20, GateMix::CliffT, Some(5));
-    run_scenario_with_auto("auto every 10 gates", 3, 30, 20, GateMix::CliffT, Some(10));
+    run_scenario_with_auto("baseline (no auto)", 3, 30, 20, GateMix::CliffT, None)?;
+    run_scenario_with_auto("auto every 5 gates", 3, 30, 20, GateMix::CliffT, Some(5))?;
+    run_scenario_with_auto("auto every 10 gates", 3, 30, 20, GateMix::CliffT, Some(10))?;
 
     // MAST: magic-state injection scheme. Targets 20-200 qubits with bond ~1.
     println!("\n=== MAST (Clifford+T, deferred ancilla projection) ===");
@@ -392,10 +416,17 @@ fn main() {
     run_mast_scenario("50q T 100", 50, 100, 1);
     run_mast_scenario("100q T 30", 100, 30, 2);
     run_mast_scenario("100q T 100", 100, 100, 1);
+    Ok(())
 }
 
 /// Benchmark `StabMpsCompile` on a fuzz circuit: reports timing and nullity.
-fn bench_compile(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix: GateMix) {
+fn bench_compile(
+    label: &str,
+    n_qubits: usize,
+    n_gates: usize,
+    n_seeds: u64,
+    mix: GateMix,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut total_nullity = 0usize;
     let mut total_absorbed = 0u64;
     let mut total_grown = 0u64;
@@ -438,14 +469,14 @@ fn bench_compile(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix
                 6 => {
                     let ab = next_rng(&mut rng_state);
                     c.rz(
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * TAU),
+                        Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * TAU)?,
                         &[QubitId(q0)],
                     );
                 }
                 _ => {
                     let ab = next_rng(&mut rng_state);
                     c.rx(
-                        Angle64::from_radians((ab % 1000) as f64 * 0.001 * TAU),
+                        Angle64::try_from_radians((ab % 1000) as f64 * 0.001 * TAU)?,
                         &[QubitId(q0)],
                     );
                 }
@@ -462,6 +493,7 @@ fn bench_compile(label: &str, n_qubits: usize, n_gates: usize, n_seeds: u64, mix
     println!(
         "{label:<20} n={n_qubits} g={n_gates} | absorbed={avg_absorbed:.1} grown={avg_grown:.1} nullity={avg_nullity:.1} bound=2^{avg_nullity:.1} | elapsed={elapsed_ms:.1}ms ({n_seeds} seeds)",
     );
+    Ok(())
 }
 
 fn run_mast_scenario(label: &str, n_data: usize, n_t: usize, n_seeds: u64) {

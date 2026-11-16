@@ -42,6 +42,8 @@ use crate::command::GateType;
 use crate::extensible::{GateCategory, GateDefinitions, GateId, GateSpec};
 use pecos_core::{Angle64, QubitId, TimeUnits};
 use smallvec::SmallVec;
+#[cfg(feature = "composite-noise")]
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Simple bit vector implementation using u64 words.
@@ -161,7 +163,7 @@ pub struct GateInfo {
     pub gate_type: GateType,
     /// Angle parameters (if any).
     pub angles: SmallVec<[Angle64; 2]>,
-    /// Number of qubits involved.
+    /// Operand-group size, rather than the number of operands in a batch.
     pub num_qubits: usize,
 }
 
@@ -213,6 +215,23 @@ impl IdleInfo {
     }
 }
 
+/// Per-event context saved while a nested composite channel processes its own event.
+///
+/// `current_outcome` stays out: nested channels see the enclosing measurement outcome.
+#[cfg(feature = "composite-noise")]
+#[derive(Debug)]
+pub(crate) struct EnclosingEvent {
+    gate: Option<GateInfo>,
+    gate_suppressed: bool,
+    idle: Option<IdleInfo>,
+    qubit_index: usize,
+    sampled_correlation: Option<usize>,
+    gate_qubits: SmallVec<[QubitId; 2]>,
+    group_leader: Option<usize>,
+    sequence_skips: BTreeMap<(usize, usize), SmallVec<[QubitId; 4]>>,
+    fired_flags: [bool; 4],
+}
+
 /// Shared mutable state for noise channels.
 ///
 /// This context is passed to each noise channel when processing events,
@@ -249,6 +268,8 @@ pub struct NoiseContext {
     /// Current gate information for dynamic noise parameters.
     /// Set temporarily during gate noise processing.
     current_gate: Option<GateInfo>,
+    /// Whether the current operand group was suppressed at the skip decision.
+    current_gate_suppressed: bool,
     /// Current idle information for time-dependent noise parameters.
     /// Set temporarily during idle noise processing.
     current_idle: Option<IdleInfo>,
@@ -261,6 +282,12 @@ pub struct NoiseContext {
     sampled_correlation: Option<usize>,
     /// The qubits involved in the current gate.
     current_gate_qubits: SmallVec<[QubitId; 2]>,
+    /// Stable eligible leader of the selected composite operand group.
+    #[cfg(feature = "composite-noise")]
+    group_leader: Option<usize>,
+    /// Skip targets already reported at each sequence site and step in this group/stage.
+    #[cfg(feature = "composite-noise")]
+    sequence_skips: BTreeMap<(usize, usize), SmallVec<[QubitId; 4]>>,
     /// Per-qubit "fired" flags for two-stage processing.
     /// Index corresponds to qubit position in gate (0, 1, ...).
     fired_flags: [bool; 4],
@@ -300,10 +327,15 @@ impl NoiseContext {
             noiseless_gates: BTreeSet::new(),
             current_outcome: None,
             current_gate: None,
+            current_gate_suppressed: false,
             current_idle: None,
             current_qubit_index: 0,
             sampled_correlation: None,
             current_gate_qubits: SmallVec::new(),
+            #[cfg(feature = "composite-noise")]
+            group_leader: None,
+            #[cfg(feature = "composite-noise")]
+            sequence_skips: BTreeMap::new(),
             fired_flags: [false; 4],
             gate_definitions: None,
         }
@@ -388,17 +420,37 @@ impl NoiseContext {
     ///
     /// This is used by the composite noise system to pass gate information
     /// to primitives that need dynamic parameters (e.g., angle-dependent error rates).
-    pub fn set_current_gate(&mut self, gate_type: GateType, angles: &[Angle64], num_qubits: usize) {
+    /// `group_size` is the operand-group size, not the batch's operand count.
+    pub fn set_current_gate(
+        &mut self,
+        gate_type: GateType,
+        angles: &[Angle64],
+        group_size: std::num::NonZeroUsize,
+    ) {
+        self.current_gate_suppressed = false;
         self.current_gate = Some(GateInfo::new(
             gate_type,
             angles.iter().copied().collect(),
-            num_qubits,
+            group_size.get(),
         ));
     }
 
-    /// Clear the current gate information.
+    /// Clear the current gate information and its operand/correlation context.
     pub fn clear_current_gate(&mut self) {
         self.current_gate = None;
+        self.current_gate_suppressed = false;
+        self.clear_correlation();
+    }
+
+    /// Whether the current operand group was suppressed at the skip decision.
+    #[must_use]
+    pub fn is_current_gate_suppressed(&self) -> bool {
+        self.current_gate_suppressed
+    }
+
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn set_current_gate_suppressed(&mut self, suppressed: bool) {
+        self.current_gate_suppressed = suppressed;
     }
 
     /// Get the current gate information.
@@ -407,6 +459,36 @@ impl NoiseContext {
     #[must_use]
     pub fn current_gate(&self) -> Option<&GateInfo> {
         self.current_gate.as_ref()
+    }
+
+    /// Take the enclosing event's state so a composite channel can process its own event.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn enter_event(&mut self) -> EnclosingEvent {
+        EnclosingEvent {
+            gate: self.current_gate.take(),
+            gate_suppressed: std::mem::take(&mut self.current_gate_suppressed),
+            idle: self.current_idle.take(),
+            qubit_index: std::mem::take(&mut self.current_qubit_index),
+            sampled_correlation: self.sampled_correlation.take(),
+            gate_qubits: std::mem::take(&mut self.current_gate_qubits),
+            group_leader: self.group_leader.take(),
+            sequence_skips: std::mem::take(&mut self.sequence_skips),
+            fired_flags: std::mem::take(&mut self.fired_flags),
+        }
+    }
+
+    /// Discard the finished event's state and restore the enclosing event.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn exit_event(&mut self, enclosing: EnclosingEvent) {
+        self.current_gate = enclosing.gate;
+        self.current_gate_suppressed = enclosing.gate_suppressed;
+        self.current_idle = enclosing.idle;
+        self.current_qubit_index = enclosing.qubit_index;
+        self.sampled_correlation = enclosing.sampled_correlation;
+        self.current_gate_qubits = enclosing.gate_qubits;
+        self.group_leader = enclosing.group_leader;
+        self.sequence_skips = enclosing.sequence_skips;
+        self.fired_flags = enclosing.fired_flags;
     }
 
     // --- Idle Context Tracking ---
@@ -440,8 +522,75 @@ impl NoiseContext {
     /// allowing actions to know which qubit they're processing and access
     /// the other qubits involved.
     pub fn set_current_qubit_index(&mut self, index: usize, gate_qubits: &[QubitId]) {
+        self.select_operand_group(index, gate_qubits);
+    }
+
+    /// Select a member and install its operands, returning whether the group changed.
+    pub(crate) fn select_operand_group(&mut self, index: usize, gate_qubits: &[QubitId]) -> bool {
+        let changed = self.current_gate_qubits.as_slice() != gate_qubits;
+        if changed {
+            #[cfg(feature = "composite-noise")]
+            self.sequence_skips.clear();
+            if self.current_gate.is_some() {
+                self.sampled_correlation = None;
+                self.clear_fired_flags();
+            }
+            self.current_gate_qubits = gate_qubits.iter().copied().collect();
+        }
         self.current_qubit_index = index;
-        self.current_gate_qubits = gate_qubits.iter().copied().collect();
+        changed
+    }
+
+    /// Expose the actual storage mode to operand-buffer regression tests.
+    #[cfg(all(test, feature = "composite-noise"))]
+    pub(crate) fn current_gate_qubits_spilled(&self) -> bool {
+        self.current_gate_qubits.spilled()
+    }
+
+    /// Select a member without copying the optionally installed operands.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn set_current_member_index(&mut self, index: usize) {
+        self.current_qubit_index = index;
+    }
+
+    /// Set the leader when a composite selects an operand group.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn set_group_leader(&mut self, leader: Option<usize>) {
+        self.group_leader = leader;
+        self.sequence_skips.clear();
+    }
+
+    /// Insert nonempty skip targets for a sequence step; empty input leaves records intact.
+    ///
+    /// This method only inserts records. They are cleared with the group, stage or
+    /// event, and saved/restored across nested events.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn record_sequence_skips(
+        &mut self,
+        site: usize,
+        step: usize,
+        mut qubits: SmallVec<[QubitId; 4]>,
+    ) {
+        if !qubits.is_empty() {
+            qubits.sort_unstable();
+            qubits.dedup();
+            self.sequence_skips.insert((site, step), qubits);
+        }
+    }
+
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn sequence_skipped(&self, site: usize, step: usize, qubit: QubitId) -> bool {
+        !self.sequence_skips.is_empty()
+            && self
+                .sequence_skips
+                .get(&(site, step))
+                .is_some_and(|qubits| qubits.binary_search(&qubit).is_ok())
+    }
+
+    /// Get the selected group's stable leader, or `None` for standalone actions.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn group_leader(&self) -> Option<usize> {
+        self.group_leader
     }
 
     /// Get the current qubit index within a multi-qubit gate.
@@ -451,6 +600,14 @@ impl NoiseContext {
     }
 
     /// Get the qubits involved in the current gate.
+    ///
+    /// `other_qubit()` and partner conditions depend on these installed operands.
+    /// Geometric single-pass non-gate channels install them before sampling only
+    /// if their primitive declares `reads_operands`; otherwise this slice is empty.
+    #[cfg_attr(
+        feature = "composite-noise",
+        doc = "See [`Primitive::reads_operands`](crate::noise::composite::Primitive::reads_operands)."
+    )]
     #[must_use]
     pub fn current_gate_qubits(&self) -> &[QubitId] {
         &self.current_gate_qubits
@@ -487,6 +644,8 @@ impl NoiseContext {
         self.current_qubit_index = 0;
         self.sampled_correlation = None;
         self.current_gate_qubits.clear();
+        #[cfg(feature = "composite-noise")]
+        self.set_group_leader(None);
         self.fired_flags = [false; 4];
     }
 
@@ -677,6 +836,9 @@ impl NoiseContext {
         self.noiseless_gates.contains(&gate_type)
     }
 
+    /// Check whether an operation suppresses faults, not lifecycle or suppression.
+    /// Preparation and measurement events use their own scheduled gate type;
+    /// reset, scheduled idle and other events return false.
     /// Check the scheduled and inherited noise types of a gate event.
     /// In particular, phase-shaped U operations inherit the RZ exemption.
     #[must_use]
@@ -700,6 +862,11 @@ impl NoiseContext {
                             .noise_gate_type()
                             .is_some_and(|gate| self.is_noiseless(gate)))
             }
+            super::NoiseEvent::AfterPreparation { gate_type, .. }
+            | super::NoiseEvent::BeforeMeasurement { gate_type, .. }
+            | super::NoiseEvent::AfterMeasurement { gate_type, .. } => {
+                self.is_noiseless(*gate_type)
+            }
             _ => false,
         }
     }
@@ -722,9 +889,8 @@ impl NoiseContext {
         self.active_count = 0;
         self.leaked_count = 0;
         self.current_outcome = None;
-        self.current_gate = None;
+        self.clear_current_gate();
         self.current_idle = None;
-        self.fired_flags = [false; 4];
         // Note: noiseless_gates and gate_definitions are configuration, not per-shot state
     }
 

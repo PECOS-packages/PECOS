@@ -3,6 +3,11 @@
 
 //! Validated `TickCircuit` execution with sampled Pauli-mixture noise.
 //!
+//! Supported gates are I, Idle, `TrackedPauliMeta`, X/Y/Z, SZ/SZdg, T/Tdg,
+//! CX/CZ, CS/CSdg, CCZ, PZ/PX, MZ/MX/MPZ, and Pauli-mixture channels.
+//! RZ/RZZ require exact multiples of pi/4; SZZ/SZZdg are also supported.
+//! Pauli-product X measurements are expressed as CX ladders around MX.
+//!
 //! Records follow execution order, independent of stable measurement-ID allocation.
 //! Detector and observable values are raw XOR parities, without reference normalization.
 //! Noise uses the caller's RNG; measurements use the simulator's independent RNG.
@@ -65,7 +70,7 @@ pub struct ShotResult {
 /// A shot could not execute on the supplied simulator.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
-    /// The simulator must have exactly the compiled circuit's qubit count.
+    /// The simulator does not satisfy the entry point's qubit-count contract.
     QubitCount {
         /// Compiled qubit count.
         expected: usize,
@@ -166,6 +171,29 @@ impl Program {
             });
         }
         sim.reset();
+        self.run_segment(sim, rng)
+    }
+
+    /// Execute without resetting, returning only this segment's records and parities.
+    ///
+    /// The simulator may have more qubits than this program: a suffix can leave
+    /// ancillas from an earlier segment untouched while operating on its data.
+    /// Both RNG streams and the incoming quantum state are preserved.
+    ///
+    /// # Errors
+    /// Rejects an undersized simulator before any state or RNG mutation.
+    /// An incompatible X measurement retains the executed prefix, as in `run_shot`.
+    pub fn run_segment(
+        &self,
+        sim: &mut PhasePoly,
+        rng: &mut PecosRng,
+    ) -> Result<ShotResult, RunError> {
+        if sim.num_qubits() < self.num_qubits {
+            return Err(RunError::QubitCount {
+                expected: self.num_qubits,
+                actual: sim.num_qubits(),
+            });
+        }
         let mut records = Vec::with_capacity(self.num_records);
         for instruction in &self.instructions {
             instruction.execute(sim, rng, &mut records)?;
@@ -269,6 +297,20 @@ impl Instruction {
                         } else {
                             sim.cz(&[(pair[0], pair[1])]);
                         }
+                    }
+                }
+                GateType::CS | GateType::CSdg => {
+                    for pair in qs.as_chunks::<2>().0 {
+                        if *kind == GateType::CS {
+                            sim.cs(&[(pair[0], pair[1])]);
+                        } else {
+                            sim.csdg(&[(pair[0], pair[1])]);
+                        }
+                    }
+                }
+                GateType::CCZ => {
+                    for triple in qs.as_chunks::<3>().0 {
+                        sim.ccz(&[(triple[0], triple[1], triple[2])]);
                     }
                 }
                 GateType::PZ => {

@@ -13,6 +13,9 @@ struct Fixture {
     state: ClassicalState,
     delivered: Arc<std::sync::Mutex<Vec<(usize, u32)>>>,
     batches: VecDeque<Vec<ScheduledBatch>>,
+    end_tail: Vec<ScheduledBatch>,
+    released_tail: Vec<ScheduledBatch>,
+    end_count: Arc<std::sync::atomic::AtomicUsize>,
     fail_feedback: bool,
     panic_feedback: bool,
     fail_reset: Arc<AtomicBool>,
@@ -69,6 +72,19 @@ impl QisRuntime for Fixture {
         _: &[Operation],
     ) -> RuntimeResult<Vec<ScheduledBatch>> {
         Ok(self.batches.pop_front().unwrap_or_default())
+    }
+    fn shot_end(&mut self) -> RuntimeResult<Shot> {
+        self.end_count.fetch_add(1, Ordering::SeqCst);
+        self.released_tail = std::mem::take(&mut self.end_tail);
+        Ok(Shot {
+            measurements: self.state.measurements.clone(),
+            registers: self.state.registers.clone(),
+            ..Default::default()
+        })
+    }
+    fn finish_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
+        self.shot_end()?;
+        Ok(std::mem::take(&mut self.released_tail))
     }
     fn drain_pending_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
         Ok(self.batches.pop_front().unwrap_or_default())
@@ -469,7 +485,7 @@ fn leakage_aware_metadata_selects_the_encoded_measurement_command() {
         let AdmittedSchedule { commands, .. } = executor.admit(&[b]).unwrap();
         let gates = commands.quantum_ops().unwrap();
         assert_eq!(gates.len(), 1);
-        assert_eq!(gates[0].gate_type, GateType::MeasureLeaked);
+        assert_eq!(gates[0].gate_type, GateType::MeasureZLeaked);
     }
     let executor = fixture_executor(Fixture::default());
     let mut b = batch(0, vec![]);
@@ -538,7 +554,7 @@ fn clean_shots_reuse_runtime_but_reset_quantum_state() {
     measurement(&mut second, 41);
     second.runtime_shot_id = 8;
     let f = Fixture {
-        batches: VecDeque::from([vec![first], vec![], vec![second], vec![]]),
+        batches: VecDeque::from([vec![first], vec![], vec![], vec![second], vec![], vec![]]),
         ..Default::default()
     };
     let resets = f.reset_count.clone();
@@ -994,4 +1010,102 @@ fn terminal_measurements_and_later_tail_are_all_executed() {
     assert_eq!(output.batches.len(), 2);
     assert_eq!(output.measurements, BTreeMap::from([(71, 1), (72, 0)]));
     assert_eq!(shot.measurements, BTreeMap::from([(71, true), (72, false)]));
+}
+
+#[test]
+fn end_hook_tail_executes_and_is_appended_to_terminal_output() {
+    for idle in [false, true] {
+        let drained = batch(0, vec![pulse()]);
+        let tail = batch(1, vec![pulse()]);
+        let fixture = Fixture {
+            batches: VecDeque::from([vec![drained.clone()]]),
+            end_tail: vec![tail.clone()],
+            // Gate-only execution must not send even empty feedback after end.
+            fail_feedback: true,
+            ..Default::default()
+        };
+        let ends = Arc::clone(&fixture.end_count);
+        let mut executor = if idle {
+            ScheduledExecutor::with_idle_z(Box::new(fixture), 2, IdleZNoise::default()).unwrap()
+        } else {
+            ScheduledExecutor::new(Box::new(fixture), 2).unwrap()
+        };
+        executor.start_shot(context(3), 7, 123).unwrap();
+        let state = executor.runtime.get_classical_state_mut();
+        state.measurements.insert(71, true);
+        state.registers.insert("answer".into(), vec![true, false]);
+        let (output, shot) = executor.finish_shot().unwrap();
+        assert_eq!(output.batches, [drained, tail]);
+        assert_eq!(output.context, context(3));
+        assert!(output.measurements.is_empty());
+        assert_eq!(shot.measurements, BTreeMap::from([(71, true)]));
+        assert_eq!(
+            shot.registers,
+            BTreeMap::from([("answer".into(), vec![true, false])])
+        );
+        assert_eq!(ends.load(Ordering::SeqCst), 1);
+        let values = executor
+            .quantum
+            .quantum_engine_mut()
+            .process(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+            .unwrap();
+        assert_eq!(values.outcomes().unwrap(), [0]);
+        assert!(!executor.poisoned);
+    }
+}
+
+#[test]
+fn end_hook_measurement_rejects_entire_tail_and_poisons_owner() {
+    for idle in [false, true] {
+        for kind in 0..4 {
+            let mut measured = batch(1, vec![]);
+            measurement(&mut measured, 71);
+            match kind {
+                0 => (),
+                1 => measured.measurements.clear(),
+                2 => {
+                    measured.operations[0] = RuntimeScheduledOp::MeasureLeaked {
+                        qubit_id: 0,
+                        result_id: 901,
+                    }
+                }
+                _ => measured.operations.clear(),
+            }
+            let fixture = Fixture {
+                end_tail: vec![batch(0, vec![pulse()]), measured],
+                ..Default::default()
+            };
+            let ends = Arc::clone(&fixture.end_count);
+            let mut executor = if idle {
+                ScheduledExecutor::with_idle_z(Box::new(fixture), 2, IdleZNoise::default()).unwrap()
+            } else {
+                ScheduledExecutor::new(Box::new(fixture), 2).unwrap()
+            };
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            executor.quantum = QuantumSystem::new(
+                dyn_clone::clone_box(executor.quantum.noise_model()),
+                Box::new(CountQuantum {
+                    inner: StateVecEngine::new(2),
+                    calls: Arc::clone(&calls),
+                }),
+            );
+            executor.start_shot(context(3), 7, 123).unwrap();
+            assert!(
+                executor
+                    .finish_shot()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("measurements emitted by shot_end")
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert!(executor.poisoned);
+            assert!(executor.finish_shot().is_err());
+            assert!(executor.submit(&[]).is_err());
+            assert!(executor.start_shot(context(4), 8, 123).is_err());
+            assert_eq!(ends.load(Ordering::SeqCst), 1);
+            executor.reset().unwrap();
+            executor.start_shot(context(4), 8, 123).unwrap();
+            executor.finish_shot().unwrap();
+        }
+    }
 }

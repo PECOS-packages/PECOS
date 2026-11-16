@@ -23,7 +23,7 @@ use log::debug;
 use pecos_core::errors::PecosError;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
-use pecos_random::PecosRng;
+use pecos_random::{PecosRng, nth_derived_seed};
 use rayon::{
     ThreadPoolBuilder,
     iter::{IntoParallelIterator, ParallelIterator},
@@ -36,6 +36,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use super::builder::MonteCarloEngineBuilder;
+use super::worker_scope::{DirectWorkerScope, WorkerScope, execute_scoped};
 
 /// Orchestrates parallel Monte Carlo simulations of quantum programs with noise
 ///
@@ -54,7 +55,7 @@ use super::builder::MonteCarloEngineBuilder;
 ///
 /// - **Parallelization**: Distributes shots across multiple worker threads
 /// - **Seed Management**: Hierarchical seeding for reproducible results
-///   - Base seed → Worker seeds → Component seeds
+///   - Run base seed → Global shot seeds → Component seeds
 /// - **Noise Integration**: Routes quantum command batches through the configured noise model
 ///
 /// # Tips
@@ -71,6 +72,7 @@ use super::builder::MonteCarloEngineBuilder;
 /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
 /// use pecos_engines::quantum::StateVecEngine;
 ///
+/// # fn main() -> Result<(), pecos_core::errors::PecosError> {
 /// // Create sample engines
 /// let classical_engine = Box::new(ExternalClassicalEngine::new());
 /// let quantum_engine = Box::new(StateVecEngine::new(2));
@@ -79,14 +81,16 @@ use super::builder::MonteCarloEngineBuilder;
 /// let mut engine = MonteCarloEngine::builder()
 ///     .with_classical_engine(classical_engine)
 ///     .with_quantum_engine(quantum_engine)
-///     .with_depolarizing_noise(0.01)
+///     .with_depolarizing_noise(0.01)?
 ///     .build();
 ///
 /// // For reproducibility
 /// engine.set_seed(42);
 ///
-/// let results = engine.run(10).unwrap();
+/// let results = engine.run(10)?;
 /// assert_eq!(results.len(), 10);
+/// # Ok(())
+/// # }
 /// ```
 pub struct MonteCarloEngine {
     /// Template `HybridEngine` that is cloned for each worker
@@ -128,7 +132,8 @@ impl MonteCarloEngine {
     /// Convenience method to create a Monte Carlo engine with a classical engine and default components.
     ///
     /// This is the simplest way to create a Monte Carlo engine when you only have a classical engine.
-    /// It will automatically create a state vector quantum engine and a pass-through noise model.
+    /// It creates a fixed-size state-vector engine from a known classical count
+    /// and a pass-through noise model. Unknown dynamic zero requires an explicit count.
     ///
     /// # Parameters
     /// - `classical_engine`: The classical engine to use for the simulation.
@@ -143,23 +148,35 @@ impl MonteCarloEngine {
     /// use pecos_engines::monte_carlo::MonteCarloEngine;
     /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
     /// // Create a Monte Carlo engine with default settings
+    /// # fn main() -> Result<(), pecos_core::errors::PecosError> {
     /// let classical_engine = Box::new(ExternalClassicalEngine::new());
-    /// let engine = MonteCarloEngine::new_with_defaults(classical_engine);
+    /// let engine = MonteCarloEngine::new_with_defaults(classical_engine)?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
-    pub fn new_with_defaults(classical_engine: Box<dyn ClassicalControlEngine>) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error when a dynamic engine reports an unknown count of zero;
+    /// use `MonteCarloEngineBuilder::with_num_qubits` to supply a fixed capacity.
+    pub fn new_with_defaults(
+        classical_engine: Box<dyn ClassicalControlEngine>,
+    ) -> Result<Self, PecosError> {
         // Use the builder pattern
-        let num_qubits = classical_engine.num_qubits();
-        Self::builder()
+        let num_qubits = crate::classical::resolve_qubit_count(
+            classical_engine.as_ref(),
+            None,
+            "build with MonteCarloEngine::builder() and set MonteCarloEngineBuilder::with_num_qubits(n)",
+        )?;
+        Ok(Self::builder()
             .with_classical_engine(classical_engine)
             .with_quantum_engine(Box::new(StateVecEngine::new(num_qubits)))
-            .build()
+            .build())
     }
 
     /// Create a Monte Carlo engine with a classical engine and uniform depolarizing noise.
     ///
     /// This convenience method creates a state-vector quantum engine sized from
-    /// [`ClassicalEngine::num_qubits`] and applies `p` uniformly to preparation,
+    /// a known [`ClassicalEngine::num_qubits`] and applies `p` uniformly to preparation,
     /// measurement, single-qubit, and two-qubit errors.
     ///
     /// # Parameters
@@ -177,6 +194,7 @@ impl MonteCarloEngine {
     /// use pecos_engines::monte_carlo::MonteCarloEngine;
     /// use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
     ///
+    /// # fn main() -> Result<(), pecos_core::errors::PecosError> {
     /// // Prepare |+> on qubit 0, then measure it in the Z basis.
     /// let circuit = ByteMessage::quantum_operations_builder()
     ///     .pz(&[0])
@@ -186,32 +204,40 @@ impl MonteCarloEngine {
     /// let classical_engine = Box::new(ExternalClassicalEngine::new_with_circuit(circuit));
     ///
     /// let mut engine =
-    ///     MonteCarloEngine::new_with_depolarizing_noise(classical_engine, 0.1);
+    ///     MonteCarloEngine::new_with_depolarizing_noise(classical_engine, 0.1)?;
     /// engine.set_seed(42);
-    /// let results = engine.run(10).unwrap();
+    /// let results = engine.run(10)?;
     /// assert_eq!(results.len(), 10);
+    /// # Ok(())
+    /// # }
     /// ```
     ///
-    /// # Panics
-    ///
-    /// Panics if `p` is outside `0.0..=1.0` or is not a number.
-    #[must_use]
+    /// # Errors
+    /// Returns an error for a non-finite `p` or one outside `0.0..=1.0`, or an
+    /// unknown dynamic qubit count. Supply an explicit count with the builder.
     pub fn new_with_depolarizing_noise(
         classical_engine: Box<dyn ClassicalControlEngine>,
         p: f64,
-    ) -> Self {
+    ) -> Result<Self, PecosError> {
         // Use the builder pattern
-        let num_qubits = classical_engine.num_qubits();
-        Self::builder()
+        let num_qubits = crate::classical::resolve_qubit_count(
+            classical_engine.as_ref(),
+            None,
+            "build with MonteCarloEngine::builder() and set MonteCarloEngineBuilder::with_num_qubits(n)",
+        )?;
+        Ok(Self::builder()
             .with_classical_engine(classical_engine)
             .with_quantum_engine(Box::new(StateVecEngine::new(num_qubits)))
-            .with_depolarizing_noise(p)
-            .build()
+            .with_depolarizing_noise(p)?
+            .build())
     }
 
     /// Set a specific seed for the random number generator.
     ///
-    /// Setting a seed ensures deterministic behavior across runs with the same seed.
+    /// Setting a seed restarts the run-seed stream. Each run draws a base seed,
+    /// then derives each shot's seed from its global index, independently of the
+    /// worker count and earlier shots. Component seeds are derived with a fixed
+    /// hash, so they do not depend on the Rust release.
     /// This method sets the seed for:
     /// - The internal `PecosRng` used to draw the base seed for each run
     /// - The template `HybridEngine` (which sets seeds for the noise model and quantum engine)
@@ -290,10 +316,31 @@ impl MonteCarloEngine {
         Ok(shots)
     }
 
-    /// Runs a Monte Carlo simulation and returns the seeds used by each worker.
+    /// Run with a lexical scope around each logical worker's owned shot loop.
+    ///
+    /// Engine clones and initial worker seeding happen on the caller before scope
+    /// entry. Per-shot seeding, reset, execution, and worker-engine destruction
+    /// happen inside the scope. No scope is entered for an empty worker.
+    ///
+    /// # Errors
+    /// Returns an error if scope entry, scope execution, or a shot fails.
+    /// # Panics
+    /// Panics if either count is zero, as does [`Self::run_with_workers`].
+    pub fn run_with_workers_in_scope(
+        &mut self,
+        num_shots: usize,
+        num_workers: usize,
+        scope: &dyn WorkerScope,
+    ) -> Result<ShotVec, PecosError> {
+        let (shots, _) =
+            self.run_with_workers_report_seeds_in_scope(num_shots, num_workers, scope)?;
+        Ok(shots)
+    }
+
+    /// Runs a Monte Carlo simulation and returns its run seed and worker shot ranges.
     ///
     /// The seed report records the engine root seed, the base seed drawn for the run,
-    /// and each worker's deterministic seed and shot count so the run can be reproduced
+    /// and each worker's first global shot index and shot count so the run can be reproduced
     /// or audited.
     /// This method runs the simulation with the specified number of shots and worker threads,
     /// overriding the default worker count configured during construction.
@@ -316,14 +363,30 @@ impl MonteCarloEngine {
         num_shots: usize,
         num_workers: usize,
     ) -> Result<(ShotVec, SeedReport), PecosError> {
+        self.run_with_workers_report_seeds_in_scope(num_shots, num_workers, &DirectWorkerScope)
+    }
+
+    /// Scoped counterpart of [`Self::run_with_workers_report_seeds`].
+    ///
+    /// # Errors
+    /// Returns scope or simulation errors.
+    /// # Panics
+    /// Panics if either count is zero.
+    pub fn run_with_workers_report_seeds_in_scope(
+        &mut self,
+        num_shots: usize,
+        num_workers: usize,
+        scope: &dyn WorkerScope,
+    ) -> Result<(ShotVec, SeedReport), PecosError> {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
 
-        // Determine shots per worker and generate deterministic seeds
+        // Determine shots per worker and draw the run seed
         let shots_per_worker = distribute_shots(num_shots, num_workers);
         let base_seed = self.rng.next_u64();
 
         // Create the seed report for this run
+        let mut first_shot = 0;
         let seed_report = SeedReport {
             root_seed: self.seed,
             base_seed,
@@ -331,30 +394,32 @@ impl MonteCarloEngine {
             num_workers,
             workers: (0..num_workers)
                 .map(|worker_idx| {
-                    let seed = derive_seed(base_seed, &format!("worker_{worker_idx}"));
-                    WorkerSeedRecord {
+                    let shots = shots_per_worker[worker_idx];
+                    let record = WorkerSeedRecord {
                         worker_idx,
-                        shots: shots_per_worker[worker_idx],
-                        seed,
-                    }
+                        shots,
+                        first_shot,
+                    };
+                    first_shot += shots;
+                    record
                 })
                 .collect(),
         };
 
-        let shotvec = self.run_with_workers_from_seed_report(&seed_report)?;
+        let shotvec = self.run_with_workers_from_seed_report_in_scope(&seed_report, scope)?;
         Ok((shotvec, seed_report))
     }
 
-    /// Runs a Monte Carlo simulation using the worker configuration and seeds
+    /// Runs a Monte Carlo simulation using the run seed and worker shot ranges
     /// recorded in `seed_report`.
     ///
-    /// The recorded worker indices, shot counts, and seeds drive replay; records
-    /// may be reordered or describe an uneven shot distribution. The returned
+    /// The recorded base seed, first shot indices, and shot counts drive replay;
+    /// records may be reordered or describe uneven or subset shot distributions. The returned
     /// shots are ordered deterministically by worker and shot index.
     /// Replay leaves the caller's root seed, RNG stream, and engine template unchanged.
     ///
     /// # Arguments
-    /// * `seed_report` - The shot count, worker count, and worker seeds to replay
+    /// * `seed_report` - The run seed and worker shot ranges to replay
     ///
     /// # Returns
     /// The aggregated shot results.
@@ -362,7 +427,8 @@ impl MonteCarloEngine {
     /// # Errors
     /// Returns `PecosError::Input` if the report has zero shots or workers, a
     /// mismatched worker count or total shot count, duplicate worker indices,
-    /// or an overflowing total shot count. Returns a `PecosError` if the worker
+    /// an overflowing total shot count, or a worker shot range
+    /// (`first_shot + shots`) that overflows. Returns a `PecosError` if the worker
     /// pool cannot be created or any shot fails.
     ///
     /// # Panics
@@ -370,6 +436,21 @@ impl MonteCarloEngine {
     pub fn run_with_workers_from_seed_report(
         &self,
         seed_report: &SeedReport,
+    ) -> Result<ShotVec, PecosError> {
+        self.run_with_workers_from_seed_report_in_scope(seed_report, &DirectWorkerScope)
+    }
+
+    /// Replay with a lexical scope for each nonempty logical worker.
+    ///
+    /// See [`Self::run_with_workers_in_scope`] for scope ownership and lifetime.
+    /// # Errors
+    /// Returns invalid-report, scope, or simulation errors.
+    /// # Panics
+    /// Panics if the results mutex is poisoned.
+    pub fn run_with_workers_from_seed_report_in_scope(
+        &self,
+        seed_report: &SeedReport,
+        scope: &dyn WorkerScope,
     ) -> Result<ShotVec, PecosError> {
         seed_report.validate()?;
         let run = if self
@@ -400,8 +481,11 @@ impl MonteCarloEngine {
             .iter()
             .map(|record| {
                 let mut engine = self.hybrid_engine_template.clone();
-                engine.set_seed(record.seed);
-                (record.worker_idx, record.shots, engine)
+                engine.set_seed(derive_seed(
+                    seed_report.base_seed,
+                    &format!("worker_{}", record.worker_idx),
+                ));
+                (record.worker_idx, record.shots, record.first_shot, engine)
             })
             .collect();
 
@@ -420,40 +504,53 @@ impl MonteCarloEngine {
         let parallel_result = thread_pool.install(|| {
             worker_engines
                 .into_par_iter()
-                .map(|(worker_idx, shots_this_worker, mut engine)| {
+                .map(|(worker_idx, shots_this_worker, first_shot, mut engine)| {
                     if shots_this_worker == 0 {
                         return Ok(());
                     }
 
-                    // Process all shots for this worker
-                    debug!("Worker {worker_idx} running {shots_this_worker} shots");
+                    let results_vec = &results_vec;
+                    execute_scoped(scope, move || {
+                        // Process all shots for this worker
+                        debug!("Worker {worker_idx} running {shots_this_worker} shots");
 
-                    for shot_idx in 0..shots_this_worker {
-                        engine.reset()?;
+                        for shot_idx in 0..shots_this_worker {
+                            let shot_seed = nth_derived_seed(
+                                seed_report.base_seed,
+                                (first_shot + shot_idx) as u64,
+                            );
+                            engine.set_seed(shot_seed);
+                            engine.reset()?;
+                            engine.classical_engine.set_program_shot(
+                                u64::try_from(first_shot + shot_idx).map_err(|_| {
+                                    PecosError::Input("program shot index exceeds u64".into())
+                                })?,
+                            );
 
-                        // Catch panics during shot execution and convert to PecosError
-                        let shot_result =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                if let Some(run) = run {
-                                    engine.run_shot_with_context(
-                                        crate::runtime_frame::ShotContext {
-                                            run,
-                                            worker: worker_idx,
-                                            shot: shot_idx,
-                                        },
-                                    )
-                                } else {
-                                    engine.run_shot()
-                                }
-                            }));
+                            // Catch panics during shot execution and convert to PecosError
+                            let shot_result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    if let Some(run) = run {
+                                        engine.run_shot_with_context(
+                                            crate::runtime_frame::ShotContext {
+                                                run,
+                                                worker: worker_idx,
+                                                shot: shot_idx,
+                                            },
+                                        )
+                                    } else {
+                                        engine.run_shot()
+                                    }
+                                }));
 
-                        let shot_result = match shot_result {
-                            Ok(Ok(result)) => result,
-                            Ok(Err(e)) => return Err(e),
-                            Err(panic_payload) => {
-                                // Convert panic to PecosError
-                                let panic_msg =
-                                    if let Some(s) = panic_payload.downcast_ref::<String>() {
+                            let shot_result = match shot_result {
+                                Ok(Ok(result)) => result,
+                                Ok(Err(e)) => return Err(e),
+                                Err(panic_payload) => {
+                                    // Convert panic to PecosError
+                                    let panic_msg = if let Some(s) =
+                                        panic_payload.downcast_ref::<String>()
+                                    {
                                         s.clone()
                                     } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
                                         (*s).to_string()
@@ -461,31 +558,32 @@ impl MonteCarloEngine {
                                         "Unknown panic occurred during shot execution".to_string()
                                     };
 
-                                return Err(PecosError::Processing(format!(
-                                    "Shot execution failed: {panic_msg}"
-                                )));
-                            }
-                        };
+                                    return Err(PecosError::Processing(format!(
+                                        "Shot execution failed: {panic_msg}"
+                                    )));
+                                }
+                            };
 
-                        // Store with worker/shot indices for deterministic ordering
-                        results_vec.lock().expect("results mutex poisoned").push((
-                            worker_idx,
-                            shot_idx,
-                            shot_result,
-                        ));
-                    }
+                            // Store with worker/shot indices for deterministic ordering
+                            results_vec.lock().expect("results mutex poisoned").push((
+                                worker_idx,
+                                shot_idx,
+                                shot_result,
+                            ));
+                        }
 
-                    Ok(())
+                        Ok(())
+                    })
                 })
-                .collect::<Result<Vec<()>, PecosError>>()
+                // Join every logical job, including errors, before returning.
+                .collect::<Vec<Result<(), PecosError>>>()
         });
 
         // Handle the parallel execution result
-        parallel_result?;
-
         // CRITICAL: Explicitly drop the thread pool to ensure clean shutdown
         // This helps prevent TLS issues during test cleanup
         drop(thread_pool);
+        parallel_result.into_iter().collect::<Result<Vec<_>, _>>()?;
 
         // Ensure deterministic ordering of results
         let mut results = results_vec.lock().expect("results mutex poisoned");
@@ -589,7 +687,8 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `PecosError` if any part of the simulation fails.
+    /// Returns an error for an unknown dynamic count of zero or a simulation failure.
+    /// Use [`Self::run_with_noise_model_and_max_qubits`] to supply a fixed capacity.
     pub fn run_with_noise_model(
         classical_engine: Box<dyn ClassicalControlEngine>,
         noise_model: Box<dyn NoiseModel>,
@@ -598,7 +697,11 @@ impl MonteCarloEngine {
         seed: Option<u64>,
     ) -> Result<ShotVec, PecosError> {
         // Create a hybrid engine with the state vector quantum engine
-        let num_qubits = classical_engine.num_qubits();
+        let num_qubits = crate::classical::resolve_qubit_count(
+            classical_engine.as_ref(),
+            None,
+            "use MonteCarloEngine::run_with_noise_model_and_max_qubits with an explicit count",
+        )?;
         debug!(
             "MonteCarloEngine::run_with_noise_model: Creating StateVecEngine with {num_qubits} qubits"
         );
@@ -636,7 +739,7 @@ impl MonteCarloEngine {
     /// # Errors
     /// Returns a `PecosError` if any part of the simulation fails.
     pub fn run_with_noise_model_and_max_qubits(
-        classical_engine: Box<dyn ClassicalControlEngine>,
+        mut classical_engine: Box<dyn ClassicalControlEngine>,
         noise_model: Box<dyn NoiseModel>,
         num_qubits: usize,
         num_shots: usize,
@@ -646,6 +749,7 @@ impl MonteCarloEngine {
         debug!(
             "MonteCarloEngine::run_with_noise_model_and_max_qubits: Creating StateVecEngine with {num_qubits} qubits"
         );
+        classical_engine.set_num_qubits_hint(num_qubits);
         let quantum_engine = Box::new(StateVecEngine::new(num_qubits));
         let mut hybrid_engine = HybridEngineBuilder::new()
             .with_classical_engine(classical_engine)
@@ -678,11 +782,10 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `PecosError` if `config` cannot be parsed as an `f64` or if the
-    /// simulation fails.
+    /// Returns a `PecosError` if `config` cannot be parsed as an `f64`, the
+    /// probability is non-finite or outside `0.0..=1.0`, or the simulation fails.
     ///
     /// # Panics
-    /// - If the parsed probability is outside `0.0..=1.0` or is not a number.
     /// - If `num_shots` is zero.
     /// - If `num_workers` is zero.
     pub fn run_with_config(
@@ -693,11 +796,13 @@ impl MonteCarloEngine {
     ) -> Result<ShotVec, PecosError> {
         // Parse the configuration string as a noise probability
         let p = config.parse::<f64>().map_err(|e| {
-            PecosError::Input(format!("Failed to parse config string as float: {e}"))
+            PecosError::Input(format!(
+                "invalid depolarizing config {config:?}: {e}; supply a finite probability in 0.0..=1.0"
+            ))
         })?;
 
         // Create and seed a depolarizing noise model
-        let mut noise_model = crate::noise::DepolarizingNoiseModel::new_uniform(p);
+        let mut noise_model = crate::noise::DepolarizingNoiseModel::try_new_uniform(p)?;
 
         if let Some(s) = seed {
             noise_model.set_seed(derive_seed(s, "noise_model"));
@@ -748,26 +853,27 @@ fn distribute_shots(num_shots: usize, num_workers: usize) -> Vec<usize> {
 /// Seed metadata for one Monte Carlo worker.
 ///
 /// Each record captures the worker index, the number of shots assigned to that
-/// worker, and the deterministic seed used to initialize its cloned engine.
+/// worker, and the global index of its first shot.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WorkerSeedRecord {
     pub worker_idx: usize,
     pub shots: usize,
-    pub seed: u64,
+    pub first_shot: usize,
 }
 
 /// Reproducibility metadata captured for a Monte Carlo simulation run.
 ///
 /// The report records the engine's root seed, the base seed drawn for this run,
-/// the shot and worker configuration, and the deterministic seed assigned to
-/// each worker.
+/// the shot and worker configuration, and each worker's first global shot index.
 ///
 /// # Note
 /// `root_seed` alone cannot reproduce `base_seed` if the engine has a job history
-/// before this one. The per-worker seeds are the pieces that ensure deterministic replay.
+/// before this one. `root_seed` is provenance only; `base_seed` and each recorded
+/// `first_shot` determine the per-shot seeds used for replay.
 /// Worker indices must be unique but need not be contiguous or stored in order.
 /// The recorded shot counts must sum to `num_shots`; individual workers may have
 /// zero shots. Replay uses these counts rather than redistributing shots.
+/// First shot indices may exceed `num_shots`, for example in a subset replay.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SeedReport {
     pub root_seed: u64,
@@ -780,7 +886,7 @@ pub struct SeedReport {
 /// JSON serialization helpers for `SeedReport`.
 ///
 /// Use these methods to save or reload reproducibility metadata when rerunning
-/// or investigating specific worker seeds.
+/// or investigating specific shot ranges.
 impl SeedReport {
     /// Check consistency before allocating engines or executing a loaded report.
     fn validate(&self) -> Result<(), PecosError> {
@@ -812,6 +918,12 @@ impl SeedReport {
             total_shots = total_shots.checked_add(record.shots).ok_or_else(|| {
                 PecosError::Input("Seed report worker shot count total overflows usize".into())
             })?;
+            if record.first_shot.checked_add(record.shots).is_none() {
+                return Err(PecosError::Input(format!(
+                    "Seed report worker {} shot range overflows usize",
+                    record.worker_idx
+                )));
+            }
         }
         if total_shots != self.num_shots {
             return Err(PecosError::Input(format!(

@@ -33,7 +33,7 @@ creg saux_syn_x[3];
 creg saux_syn_z[3];
 creg saux_syndromes[3];
 creg saux_verify_prep[32];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_d, sin_a;
 reset sin_d[0];
 reset sin_d[1];
 reset sin_d[2];
@@ -42,7 +42,7 @@ reset sin_d[4];
 reset sin_d[5];
 reset sin_d[6];
 reset sin_a[0];
-barrier sin_d;
+barrier sin_d, sin_a;
 h sin_d[0];
 h sin_d[4];
 h sin_d[6];
@@ -54,14 +54,14 @@ cx sin_d[6], sin_d[5];
 cx sin_d[0], sin_d[3];
 cx sin_d[4], sin_d[1];
 cx sin_d[3], sin_d[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_a, sin_d;
 // verification step
 cx sin_d[5], sin_a[0];
 cx sin_d[1], sin_a[0];
 cx sin_d[3], sin_a[0];
 measure sin_a[0] -> sin_verify_prep[0];
 // Repeat 2 times (unrolled)
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) reset sin_d[0];
 if(sin_verify_prep[0] == 1) reset sin_d[1];
 if(sin_verify_prep[0] == 1) reset sin_d[2];
@@ -70,7 +70,7 @@ if(sin_verify_prep[0] == 1) reset sin_d[4];
 if(sin_verify_prep[0] == 1) reset sin_d[5];
 if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
-barrier sin_d;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) h sin_d[0];
 if(sin_verify_prep[0] == 1) h sin_d[4];
 if(sin_verify_prep[0] == 1) h sin_d[6];
@@ -82,13 +82,13 @@ if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[5];
 if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_d[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_a, sin_d;
 // verification step
 if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) reset sin_d[0];
 if(sin_verify_prep[0] == 1) reset sin_d[1];
 if(sin_verify_prep[0] == 1) reset sin_d[2];
@@ -97,7 +97,7 @@ if(sin_verify_prep[0] == 1) reset sin_d[4];
 if(sin_verify_prep[0] == 1) reset sin_d[5];
 if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
-barrier sin_d;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) h sin_d[0];
 if(sin_verify_prep[0] == 1) h sin_d[4];
 if(sin_verify_prep[0] == 1) h sin_d[6];
@@ -109,7 +109,7 @@ if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[5];
 if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_d[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_a, sin_d;
 // verification step
 if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
@@ -158,26 +158,26 @@ cx saux_d[3], saux_d[0];
 reset saux_a[0];
 reset saux_a[1];
 h saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[0];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cx saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 ch saux_a[0], saux_d[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[3];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[4];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[5];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a;
 cx saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 ch saux_a[0], saux_d[6];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 h saux_a[0];
 measure saux_a[0] -> saux_scratch[0];
 measure saux_a[1] -> saux_scratch[1];
@@ -197,9 +197,9 @@ cz saux_a[1], saux_d[5];
 // 6 -> 6
 cz saux_a[2], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cz saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cx saux_a[0], saux_d[0];
 // 1 -> 1
 cz saux_a[1], saux_d[4];
@@ -212,9 +212,9 @@ cz saux_a[1], saux_d[2];
 // 7 -> 3
 cz saux_a[2], saux_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cz saux_a[0], saux_a[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cx saux_a[0], saux_d[2];
 // 7 -> 3
 cz saux_a[1], saux_d[1];
@@ -239,60 +239,60 @@ if(saux_flags == 0) reset saux_a[2];
 if(saux_flags == 0) h saux_a[0];
 if(saux_flags == 0) h saux_a[1];
 if(saux_flags == 0) h saux_a[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[0], saux_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[1], saux_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[2], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[1], saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[0], saux_d[0];
 // 1 -> 1
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[1], saux_d[4];
 // 2 -> 5
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[2], saux_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[0], saux_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[1], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[2], saux_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[2], saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[0], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[1], saux_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[2], saux_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_flags == 0) h saux_a[0];
 if(saux_flags == 0) h saux_a[1];
 if(saux_flags == 0) h saux_a[2];
@@ -460,26 +460,26 @@ cx saux_d[3], saux_d[0];
 reset saux_a[0];
 reset saux_a[1];
 h saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[0];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cx saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 ch saux_a[0], saux_d[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[3];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[4];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 ch saux_a[0], saux_d[5];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a;
 cx saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 ch saux_a[0], saux_d[6];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 h saux_a[0];
 measure saux_a[0] -> saux_scratch[0];
 measure saux_a[1] -> saux_scratch[1];
@@ -499,9 +499,9 @@ cz saux_a[1], saux_d[5];
 // 6 -> 6
 cz saux_a[2], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cz saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cx saux_a[0], saux_d[0];
 // 1 -> 1
 cz saux_a[1], saux_d[4];
@@ -514,9 +514,9 @@ cz saux_a[1], saux_d[2];
 // 7 -> 3
 cz saux_a[2], saux_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cz saux_a[0], saux_a[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 cx saux_a[0], saux_d[2];
 // 7 -> 3
 cz saux_a[1], saux_d[1];
@@ -541,60 +541,60 @@ if(saux_flags == 0) reset saux_a[2];
 if(saux_flags == 0) h saux_a[0];
 if(saux_flags == 0) h saux_a[1];
 if(saux_flags == 0) h saux_a[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[0], saux_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[1], saux_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[2], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[1], saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[0], saux_d[0];
 // 1 -> 1
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[1], saux_d[4];
 // 2 -> 5
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[2], saux_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[0], saux_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[1], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[2], saux_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[2], saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cz saux_a[0], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[1], saux_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_flags == 0) cx saux_a[2], saux_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_flags == 0) h saux_a[0];
 if(saux_flags == 0) h saux_a[1];
 if(saux_flags == 0) h saux_a[2];
@@ -646,26 +646,26 @@ if(saux_scratch[2] != 0) cx saux_d[3], saux_d[0];
 if(saux_scratch[2] != 0) reset saux_a[0];
 if(saux_scratch[2] != 0) reset saux_a[1];
 if(saux_scratch[2] != 0) h saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) ch saux_a[0], saux_d[0];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 if(saux_scratch[2] != 0) cx saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 if(saux_scratch[2] != 0) ch saux_a[0], saux_d[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) ch saux_a[0], saux_d[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) ch saux_a[0], saux_d[3];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) ch saux_a[0], saux_d[4];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) ch saux_a[0], saux_d[5];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a;
 if(saux_scratch[2] != 0) cx saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 if(saux_scratch[2] != 0) ch saux_a[0], saux_d[6];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) h saux_a[0];
 if(saux_scratch[2] != 0) measure saux_a[0] -> saux_scratch[0];
 if(saux_scratch[2] != 0) measure saux_a[1] -> saux_scratch[1];
@@ -685,9 +685,9 @@ if(saux_scratch[2] != 0) cz saux_a[1], saux_d[5];
 // 6 -> 6
 if(saux_scratch[2] != 0) cz saux_a[2], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 if(saux_scratch[2] != 0) cz saux_a[0], saux_a[1];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 if(saux_scratch[2] != 0) cx saux_a[0], saux_d[0];
 // 1 -> 1
 if(saux_scratch[2] != 0) cz saux_a[1], saux_d[4];
@@ -700,9 +700,9 @@ if(saux_scratch[2] != 0) cz saux_a[1], saux_d[2];
 // 7 -> 3
 if(saux_scratch[2] != 0) cz saux_a[2], saux_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 if(saux_scratch[2] != 0) cz saux_a[0], saux_a[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a;
 if(saux_scratch[2] != 0) cx saux_a[0], saux_d[2];
 // 7 -> 3
 if(saux_scratch[2] != 0) cz saux_a[1], saux_d[1];
@@ -727,60 +727,60 @@ if(saux_scratch[2] != 0) reset saux_a[2];
 if(saux_scratch[2] != 0) h saux_a[0];
 if(saux_scratch[2] != 0) h saux_a[1];
 if(saux_scratch[2] != 0) h saux_a[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cz saux_a[0], saux_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cx saux_a[1], saux_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cx saux_a[2], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cz saux_a[1], saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cz saux_a[0], saux_d[0];
 // 1 -> 1
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cx saux_a[1], saux_d[4];
 // 2 -> 5
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cx saux_a[2], saux_d[3];
 // 5 -> 4
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cz saux_a[0], saux_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cx saux_a[1], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cx saux_a[2], saux_d[6];
 // 4 -> 7
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cz saux_a[2], saux_a[0];
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cz saux_a[0], saux_d[2];
 // 7 -> 3
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cx saux_a[1], saux_d[1];
 // 3 -> 2
-barrier sin_d, sin_a, saux_d, saux_a;
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) cx saux_a[2], saux_d[5];
 // 6 -> 6
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier saux_a, saux_d;
 if(saux_scratch[2] != 0) h saux_a[0];
 if(saux_scratch[2] != 0) h saux_a[1];
 if(saux_scratch[2] != 0) h saux_a[2];
@@ -808,7 +808,7 @@ rz(-pi/2) saux_d[5];
 rx(-pi/2) saux_d[6];
 rz(-pi/2) saux_d[6];
 m_reject[1] = saux_scratch[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_d, sin_a;
 reset sin_d[0];
 reset sin_d[1];
 reset sin_d[2];
@@ -817,7 +817,7 @@ reset sin_d[4];
 reset sin_d[5];
 reset sin_d[6];
 reset sin_a[0];
-barrier sin_d;
+barrier sin_d, sin_a;
 h sin_d[0];
 h sin_d[4];
 h sin_d[6];
@@ -829,14 +829,14 @@ cx sin_d[6], sin_d[5];
 cx sin_d[0], sin_d[3];
 cx sin_d[4], sin_d[1];
 cx sin_d[3], sin_d[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_a, sin_d;
 // verification step
 cx sin_d[5], sin_a[0];
 cx sin_d[1], sin_a[0];
 cx sin_d[3], sin_a[0];
 measure sin_a[0] -> sin_verify_prep[0];
 // Repeat 1 times (unrolled)
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) reset sin_d[0];
 if(sin_verify_prep[0] == 1) reset sin_d[1];
 if(sin_verify_prep[0] == 1) reset sin_d[2];
@@ -845,7 +845,7 @@ if(sin_verify_prep[0] == 1) reset sin_d[4];
 if(sin_verify_prep[0] == 1) reset sin_d[5];
 if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
-barrier sin_d;
+barrier sin_d, sin_a;
 if(sin_verify_prep[0] == 1) h sin_d[0];
 if(sin_verify_prep[0] == 1) h sin_d[4];
 if(sin_verify_prep[0] == 1) h sin_d[6];
@@ -857,7 +857,7 @@ if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[5];
 if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_d[2];
-barrier sin_d, sin_a, saux_d, saux_a;
+barrier sin_a, sin_d;
 // verification step
 if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];

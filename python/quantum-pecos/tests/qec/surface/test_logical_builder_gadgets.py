@@ -14,8 +14,9 @@ import pytest
 import stim
 from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec import DetectorErrorModel
+from pecos.qec.circuit_steps import CircuitStep, OpType
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, gadgets, logical_circuit
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep, tick_circuit_to_stim
+from pecos.qec.surface.circuit_builder import QubitAllocation, tick_circuit_to_stim
 from pecos.qec.surface.logical_circuit import (
     LogicalGateType,
     LogicalOp,
@@ -24,7 +25,7 @@ from pecos.qec.surface.logical_circuit import (
     _logical_readout_flow,
     _propagate_stabilizer_terms,
     _PropagationContext,
-    _resource_sign_checks,
+    resource_sign_checks,
 )
 from pecos.qec.surface.patch import PatchOrientation
 from pecos.testing import group_contains, simulate_tick_circuit, stabilizer_generators_after
@@ -1398,7 +1399,7 @@ def test_disjoint_terminal_bases():
     assert len(builder.operations) == 2
     assert builder.operations[0].basis == "Y"
     assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(lowered)
-    assert builder.build_dem()
+    assert str(builder.build_dem())
     with pytest.raises(
         ValueError,
         match=(
@@ -1412,7 +1413,7 @@ def test_disjoint_terminal_bases():
 
 
 def test_split_zip_padding_and_measurement_labels():
-    step = SurfaceCircuitStep
+    step = CircuitStep
     generator = GeneratorProbe({}, [])
     measurements = generator.emit_steps(
         [
@@ -1556,11 +1557,11 @@ def test_unequal_patch_streams_preserve_prep_and_rounds():
 
 def test_allocation_order_with_old_and_fresh_patches():
     generator = GeneratorProbe({}, [])
-    generator.emit_steps([(SurfaceCircuitStep(OpType.ALLOC, [0]),)])
+    generator.emit_steps([(CircuitStep(OpType.ALLOC, [0]),)])
     generator.emit_steps(
         [
-            (SurfaceCircuitStep(OpType.ALLOC, [0]),),
-            (SurfaceCircuitStep(OpType.ALLOC, [1]),),
+            (CircuitStep(OpType.ALLOC, [0]),),
+            (CircuitStep(OpType.ALLOC, [1]),),
         ],
     )
     assert [(g.gate_type.name, g.qubits) for g in generator.tc.get_tick(1).gate_batches()] == [
@@ -1630,9 +1631,9 @@ def test_same_type_conflict_rejected_across_subticks():
         generator.emit_steps(
             [
                 (
-                    SurfaceCircuitStep(OpType.H, [0]),
-                    SurfaceCircuitStep(OpType.Z, [0]),
-                    SurfaceCircuitStep(OpType.H, [0]),
+                    CircuitStep(OpType.H, [0]),
+                    CircuitStep(OpType.Z, [0]),
+                    CircuitStep(OpType.H, [0]),
                 ),
             ],
         )
@@ -1643,7 +1644,7 @@ def test_same_type_on_separate_tick_groups_allowed():
     generator = GeneratorProbe({}, [])
     generator.emit_steps(
         [
-            (SurfaceCircuitStep(OpType.H, [0]), SurfaceCircuitStep(OpType.TICK), SurfaceCircuitStep(OpType.H, [0])),
+            (CircuitStep(OpType.H, [0]), CircuitStep(OpType.TICK), CircuitStep(OpType.H, [0])),
         ],
     )
     assert generator.tc.num_ticks() == 2
@@ -1654,7 +1655,7 @@ def test_multi_qubit_measurement_step_rejected_before_emission():
     with pytest.raises(ValueError, match="MEASURE requires exactly one qubit"):
         generator.emit_steps(
             [
-                (SurfaceCircuitStep(OpType.MEASURE, [0, 1], "pair"), SurfaceCircuitStep(OpType.MEASURE, [2], "later")),
+                (CircuitStep(OpType.MEASURE, [0, 1], "pair"), CircuitStep(OpType.MEASURE, [2], "later")),
             ],
         )
     assert generator.meas_count == 0
@@ -1844,7 +1845,7 @@ def test_teleportation_readout_requires_logical_operator(helper):
 
 def test_empty_tick_groups_preserved_until_stream_end():
     generator = GeneratorProbe({}, [])
-    step = SurfaceCircuitStep
+    step = CircuitStep
     generator.emit_steps(
         [
             (
@@ -1886,8 +1887,8 @@ def test_physical_steps_require_qubits_before_emission(op_type):
     with pytest.raises(ValueError, match=f"{op_type.name} requires at least one qubit"):
         generator.emit_steps(
             [
-                (SurfaceCircuitStep(OpType.ALLOC, [0]),),
-                (SurfaceCircuitStep(op_type),),
+                (CircuitStep(OpType.ALLOC, [0]),),
+                (CircuitStep(op_type),),
             ],
         )
     assert generator.tc.num_ticks() == 0
@@ -2380,7 +2381,7 @@ def test_sz_resource_sign_fold_control(distance):
 @pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
 def test_resource_sign_signed_identity(dx, dz, alternate_x, expected_reference):
     patch = _resource_patch(dx, dz, alternate_x=alternate_x)
-    checks, reference = _resource_sign_checks(patch)
+    checks, reference = resource_sign_checks(patch)
     selected = set(checks)
     width = patch.geometry.num_qubits
     generators = [
@@ -2450,7 +2451,7 @@ def test_resource_sign_metadata(dx, dz, preceding_rounds):
     assert len(selected) == len(readout["resource_sign_meas_ids"]) == (num_data - 1) // 2
     assert sorted(Counter(row[1] for row in selected).values()) == [(num_data - 1) // 4, (num_data + 1) // 4]
     assert {(row[0], row[3], row[4]) for row in selected} == {("A", preceding_rounds, 0)}
-    checks, reference = _resource_sign_checks(patch)
+    checks, reference = resource_sign_checks(patch)
     assert {(row[1], row[2]) for row in selected} == set(checks)
     assert readout["resource_sign_reference"] == reference
     descriptor_readout = builder.build_algorithm_descriptor()["teleportation_readouts"][0]
@@ -2474,7 +2475,7 @@ def test_resource_sign_rejects_non_real_phase_in_invalid_geometry():
     geometry.x_stabilizers[0] = replace(geometry.x_stabilizers[0], data_qubits=(0,))
     geometry.logical_x = replace(geometry.logical_x, data_qubits=tuple(range(1, geometry.num_data)))
     with pytest.raises(ValueError, match=r"Resource sign.*non-real Pauli phase.*odd"):
-        _resource_sign_checks(patch)
+        resource_sign_checks(patch)
 
 
 @pytest.mark.parametrize(("dx", "dz", "family", "reference"), [(1, 1, None, 0), (1, 3, "X", 1), (3, 1, "Z", 1)])

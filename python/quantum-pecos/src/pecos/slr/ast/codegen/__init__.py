@@ -37,7 +37,7 @@ from pecos.slr.ast.codegen.quantum_circuit import (
     ast_to_quantum_circuit,
     ast_to_quantum_circuit_str,
 )
-from pecos.slr.ast.codegen.stim import AstToStim, ast_to_stim, ast_to_stim_str
+from pecos.slr.ast.codegen.stim import AstToStim, ast_to_stim, ast_to_stim_str, ast_to_stim_with_records
 from pecos.slr.ast.nodes import Program
 
 
@@ -233,6 +233,7 @@ __all__ = [
     "ast_to_quantum_circuit_str",
     "ast_to_stim",
     "ast_to_stim_str",
+    "ast_to_stim_with_records",
     # Convenience functions
     "generate",
     "generate_with_options",

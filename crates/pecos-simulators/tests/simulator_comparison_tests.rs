@@ -83,14 +83,14 @@ fn test_compare_rotations() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply various rotations
-    sv.rx(Angle64::from_radians(PI / 4.0), &qid(0));
-    dm.rx(Angle64::from_radians(PI / 4.0), &qid(0));
+    sv.rx(Angle64::from_turn_ratio(1, 8), &qid(0));
+    dm.rx(Angle64::from_turn_ratio(1, 8), &qid(0));
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 
     // Apply another rotation
-    sv.rz(Angle64::from_radians(PI / 3.0), &qid(0));
-    dm.rz(Angle64::from_radians(PI / 3.0), &qid(0));
+    sv.rz(pecos_core::radians!(PI / 3.0), &qid(0));
+    dm.rz(pecos_core::radians!(PI / 3.0), &qid(0));
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 }
@@ -107,8 +107,8 @@ fn test_compare_two_qubit_rotations() {
     dm.h(&qid(0)).h(&qid(1));
 
     // Apply ZZ rotation
-    sv.rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
-    dm.rzz(Angle64::from_radians(PI / 4.0), &[(QubitId(0), QubitId(1))]);
+    sv.rzz(Angle64::from_turn_ratio(1, 8), &[(QubitId(0), QubitId(1))]);
+    dm.rzz(Angle64::from_turn_ratio(1, 8), &[(QubitId(0), QubitId(1))]);
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 }
@@ -133,10 +133,10 @@ fn test_compare_complex_circuit() {
     // Apply more gates
     sv.x(&qid(0))
         .h(&qid(1))
-        .rz(Angle64::from_radians(PI / 3.0), &qid(2));
+        .rz(pecos_core::radians!(PI / 3.0), &qid(2));
     dm.x(&qid(0))
         .h(&qid(1))
-        .rz(Angle64::from_radians(PI / 3.0), &qid(2));
+        .rz(pecos_core::radians!(PI / 3.0), &qid(2));
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 }
@@ -279,12 +279,12 @@ fn test_compare_pure_rotated_states() {
     let mut dm = DensityMatrix::new(num_qubits);
 
     // Apply a sequence of rotation gates
-    sv.rx(Angle64::from_radians(PI / 8.0), &qid(0))
-        .rz(Angle64::from_radians(PI / 6.0), &qid(0))
-        .rx(Angle64::from_radians(PI / 4.0), &qid(0));
-    dm.rx(Angle64::from_radians(PI / 8.0), &qid(0))
-        .rz(Angle64::from_radians(PI / 6.0), &qid(0))
-        .rx(Angle64::from_radians(PI / 4.0), &qid(0));
+    sv.rx(Angle64::from_turn_ratio(1, 16), &qid(0))
+        .rz(pecos_core::radians!(PI / 6.0), &qid(0))
+        .rx(Angle64::from_turn_ratio(1, 8), &qid(0));
+    dm.rx(Angle64::from_turn_ratio(1, 16), &qid(0))
+        .rz(pecos_core::radians!(PI / 6.0), &qid(0))
+        .rx(Angle64::from_turn_ratio(1, 8), &qid(0));
 
     compare_probabilities(&mut sv, &mut dm, num_qubits);
 }

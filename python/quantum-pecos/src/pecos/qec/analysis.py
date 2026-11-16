@@ -34,6 +34,18 @@ def _require_pecos_rslib_exp(caller: str) -> None:
         raise ImportError(message) from exc
 
 
+def _require_dem_metadata(tick_circuit: object, caller: str) -> None:
+    """Raise a clear ValueError when the circuit lacks metadata a DEM route needs."""
+    for attribute in ("detectors", "observables", "num_measurements"):
+        value = tick_circuit.get_meta(attribute)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            msg = (
+                f"{caller} requires {attribute} metadata; set it on the TickCircuit before building "
+                "the DEM, because this route reads attributes, not annotations"
+            )
+            raise ValueError(msg)
+
+
 def logical_x_from_data(d: int, data: Sequence[int]) -> int:
     """Extract logical X value from measurement data.
 
@@ -677,7 +689,8 @@ def fit_dem_from_simulation(
     (or accurate simulation) combined with circuit-derived structure.
 
     Args:
-        tick_circuit: A ``TickCircuit`` with detector metadata.
+        tick_circuit: A ``TickCircuit`` with detectors, observables and
+            num_measurements metadata.
         noise_builder: A noise builder (e.g., ``depolarizing().p1(0.001)``).
         shots: Number of simulation shots.
         backend: Simulator backend — ``"stabilizer"``, ``"statevec"``,
@@ -688,6 +701,11 @@ def fit_dem_from_simulation(
 
     Returns:
         Stim-format DEM string with simulation-fitted probabilities.
+
+    Raises:
+        ValueError: If the circuit's detectors, observables or num_measurements
+            metadata is absent or blank, if ``max_correlation_order`` is below 1,
+            or if ``backend`` is unknown.
     """
     _require_pecos_rslib_exp("fit_dem_from_simulation")
     if max_correlation_order < 1:
@@ -708,6 +726,8 @@ def fit_dem_from_simulation(
         statevec,
     )
 
+    _require_dem_metadata(tick_circuit, "fit_dem_from_simulation")
+
     # Step 1: Get mechanism structure from circuit
     dag = tick_circuit.to_dag_circuit()
     analyzer = DagFaultAnalyzer(dag)
@@ -715,11 +735,7 @@ def fit_dem_from_simulation(
     # Use dummy noise to get mechanism structure (probabilities will be replaced)
     builder = DemBuilder(influence)
     builder = builder.with_noise(p1=0.01, p2=0.01, p_meas=0.01, p_prep=0.01)
-    builder = builder.with_detectors_json(tick_circuit.get_meta("detectors"))
-    builder = builder.with_observables_json(tick_circuit.get_meta("observables"))
-    builder = builder.with_num_measurements(
-        int(tick_circuit.get_meta("num_measurements")),
-    )
+    builder = builder.with_circuit_metadata(tick_circuit)
     dem = builder.build()
     dem_str = dem.to_string()
 
@@ -791,7 +807,9 @@ def build_adaptive_dem(
     Fits all mechanism probabilities to Heisenberg exact marginals + pairwise.
 
     Args:
-        tick_circuit: A ``TickCircuit`` with detector metadata.
+        tick_circuit: A ``TickCircuit`` with detector metadata. When ``idle_rz``
+            is below ``1e-10`` it also needs observables and num_measurements
+            metadata.
         noise_params: Dict with keys p1, p2, p_meas, p_prep, idle_rz.
         max_order: Correlation order for Heisenberg targets (default 2).
         prune: Pruning threshold for Heisenberg walks.
@@ -799,11 +817,17 @@ def build_adaptive_dem(
     Returns:
         Tuple of (json_str, dem_str) — noise characterization JSON and
         Stim DEM string.
+
+    Raises:
+        ValueError: If ``idle_rz`` is below ``1e-10`` and the circuit's detectors,
+            observables or num_measurements metadata is absent or blank.
     """
     _require_pecos_rslib_exp("build_adaptive_dem")
     idle_rz = noise_params.get("idle_rz", 0.0)
 
     if idle_rz == 0.0 or idle_rz < 1e-10:
+        _require_dem_metadata(tick_circuit, "build_adaptive_dem")
+
         # Pure stochastic: from_circuit is best
         from pecos_rslib.qec import DemSampler
 
@@ -840,11 +864,7 @@ def build_adaptive_dem(
             p_meas=noise_params.get("p_meas", 0.0),
             p_prep=noise_params.get("p_prep", 0.0),
         )
-        builder = builder.with_detectors_json(tick_circuit.get_meta("detectors"))
-        builder = builder.with_observables_json(tick_circuit.get_meta("observables"))
-        builder = builder.with_num_measurements(
-            int(tick_circuit.get_meta("num_measurements")),
-        )
+        builder = builder.with_circuit_metadata(tick_circuit)
         dem = builder.build()
         dem_str = dem.to_string()
 

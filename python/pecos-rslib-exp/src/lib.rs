@@ -100,7 +100,8 @@ pub(crate) fn extract_angle(
             "Expected a float 'angle' parameter for {gate_name}"
         ))
     })?;
-    Ok(Angle64::from_radians(radians))
+    Angle64::try_from_radians(radians)
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
 }
 
 #[pymodule]
@@ -117,6 +118,8 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<frontier_bindings::PyFrontierDecoder>()?;
     m.add_class::<frontier_bindings::PyFrontierCommitteeDecoder>()?;
     m.add_class::<frontier_bindings::PyFrontierResult>()?;
+    m.add_class::<frontier_bindings::PyFrontierNoPath>()?;
+    m.add_class::<frontier_bindings::PyFrontierFallback>()?;
     m.add_class::<frontier_bindings::PyFrontierCommitteeResult>()?;
     m.add_class::<frontier_bindings::PyFrontierObservableFlips>()?;
     m.add_class::<stab_mps_bindings::PyStabMps>()?;

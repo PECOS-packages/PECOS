@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+pub mod adaptive_index_set;
 pub mod angle;
 pub mod bit;
 pub mod bit_int;
@@ -35,6 +36,7 @@ pub mod phase;
 pub mod prelude;
 pub mod qubit_id;
 mod qubit_support;
+pub use qubit_support::duplicate_qubits;
 pub mod rng;
 pub mod sets;
 pub mod signal;
@@ -42,7 +44,11 @@ pub mod sorted_vec_set;
 pub mod unitary_rep;
 pub mod value;
 
-pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
+pub use adaptive_index_set::AdaptiveIndexSet;
+pub use angle::{
+    Angle, Angle8, Angle16, Angle32, Angle64, Angle128, InverseTrigError, LossyInto,
+    NonFiniteAngleError, ParseAngleError,
+};
 pub use bit::{Bit, Bits};
 pub use bit_int::BitInt;
 pub use bit_uint::BitUInt;
@@ -84,7 +90,7 @@ pub use pauli::pauli_bitmask::{
     PauliBitmaskVec,
 };
 pub use pauli::pauli_sparse::PauliSparse;
-pub use pauli::pauli_string::{ParsePauliStringError, PauliString};
+pub use pauli::pauli_string::{ParsePauliStringError, PauliString, PauliWidthError};
 pub use pauli::{Pauli, PauliOperator};
 pub use phase::Phase;
 pub use rng::choices::Choices;

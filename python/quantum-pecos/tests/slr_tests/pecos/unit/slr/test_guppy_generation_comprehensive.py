@@ -51,8 +51,8 @@ def test_quantum_teleportation() -> None:
         qb.CX(alice[0], epr[0]),
         qb.H(alice[0]),
         # Measure Alice's qubits
-        qb.Measure(alice[0]) > c[0],
-        qb.Measure(epr[0]) > c[1],
+        qb.MeasureZ(alice[0]) > c[0],
+        qb.MeasureZ(epr[0]) > c[1],
         # Bob's corrections
         If(c[1]).Then(
             qb.X(bob[0]),
@@ -119,7 +119,7 @@ def test_empty_blocks_and_edge_cases() -> None:
         ),
         # Measurement without output
         qb.H(q[0]),
-        qb.Measure(q[0]),
+        qb.MeasureZ(q[0]),
         # Apply gate to register
         qb.PZ(q),
         Return(c),
@@ -159,8 +159,8 @@ def test_grover_decomposition() -> None:
         qb.X(q),
         qb.H(q),
         # Measure
-        qb.Measure(q) > [c[0], c[1]],
-        qb.Measure(ancilla[0]) > c[2],
+        qb.MeasureZ(q) > [c[0], c[1]],
+        qb.MeasureZ(ancilla[0]) > c[2],
         Return(c),
     )
     assert_ast_guppy_compiles(prog)

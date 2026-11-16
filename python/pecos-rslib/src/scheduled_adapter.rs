@@ -1,15 +1,77 @@
-//! Python batch normalization for the existing checked Rust v4 controller.
+//! Python batch normalization for the existing checked Rust v7 controller.
 use crate::dag_circuit_bindings::PyGate;
 use pecos_core::errors::PecosError;
 use pecos_engines::scheduled_events::{
-    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventNoise,
-    ScheduledEventOp, ScheduledGateBuffer,
+    ScheduledBatchAdapter, ScheduledCrosstalk, ScheduledEventBatch, ScheduledEventNoise,
+    ScheduledEventOp, ScheduledGateBuffer, encode_event_batches,
 };
 use pecos_engines::scheduled_frame::{ScheduledIdleZ, ScheduledNoise};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use std::cell::Cell;
+
+/// An ordered spectator exposure returned alongside gates by a batch adapter.
+/// It creates no physical busy time and has no program-visible measurement.
+#[pyclass(name = "ScheduledCrosstalk", frozen, from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledCrosstalk {
+    inner: ScheduledCrosstalk,
+}
+fn check_spectator_ids(ids: &[usize]) -> PyResult<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    if let Some(duplicate) = ids.iter().find(|q| !seen.insert(**q)) {
+        return Err(PyValueError::new_err(format!(
+            "spectator ID {duplicate} appears more than once; list each spectator once (the profile capacity is checked at admission)"
+        )));
+    }
+    Ok(())
+}
+#[pymethods]
+impl PyScheduledCrosstalk {
+    /// Explicit potential victims in sampling order; unprepared/leaked are skipped.
+    #[staticmethod]
+    fn local(victims: Vec<usize>) -> PyResult<Self> {
+        check_spectator_ids(&victims)?;
+        Ok(Self {
+            inner: ScheduledCrosstalk::Local(victims),
+        })
+    }
+    /// Prepared logical qubits except these IDs, in the general model's order.
+    #[staticmethod]
+    fn global_excluding(exclusions: Vec<usize>) -> PyResult<Self> {
+        check_spectator_ids(&exclusions)?;
+        Ok(Self {
+            inner: ScheduledCrosstalk::GlobalExcluding(exclusions),
+        })
+    }
+}
+/// Opt into explicit measurement exposures while retaining all local/idle settings.
+/// No automatic exposure insertion. Wrap the returned profile with
+/// scheduled_event_idle_noise(profile, adapter_factory) for live v7 execution.
+/// Accrued idle noise runs at the next physical operation, after the exposure.
+/// Non-Z idle channels can change output distributions under this ordering even
+/// with symmetric transitions. Z/RZ channels need not preserve seeded paths:
+/// exposure leakage can suppress later idle-noise RNG draws.
+#[pyfunction]
+#[pyo3(signature = (profile, model, *, local_probability = 0.0, global_probability = 0.0))]
+pub fn scheduled_measurement_crosstalk(
+    profile: Py<PyAny>,
+    model: std::collections::BTreeMap<String, f64>,
+    local_probability: f64,
+    global_probability: f64,
+    py: Python<'_>,
+) -> PyResult<crate::engine_builders::PyScheduledIdleNoise> {
+    let profile =
+        crate::engine_builders::extract_scheduled_idle(&profile, py).ok_or_else(|| {
+            PyTypeError::new_err("expected a checked scheduled idle or local noise profile")
+        })?;
+    Ok(crate::engine_builders::PyScheduledIdleNoise {
+        inner: profile
+            .with_measurement_crosstalk(local_probability, global_probability, model)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?,
+    })
+}
 
 thread_local! {
     static IN_CALLBACK: Cell<bool> = const { Cell::new(false) };
@@ -26,11 +88,12 @@ impl Drop for CallbackScope {
     }
 }
 /// Waiting for an engine from one of its callbacks would create a worker cycle.
-/// Reject built simulation operations from callbacks; external threads may wait.
+/// Reject built simulation operations from callbacks and worker-context teardown;
+/// external threads may wait.
 pub(crate) fn reject_callback_reentry() -> PyResult<()> {
     if IN_CALLBACK.get() {
         Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "Built simulation run/reset cannot be called from a scheduled adapter callback",
+            "Built simulation run/reset cannot be called from a scheduled adapter callback or Python worker context",
         ))
     } else {
         Ok(())
@@ -44,6 +107,15 @@ struct PyScheduledEventBatch {
 }
 #[pymethods]
 impl PyScheduledEventBatch {
+    /// Owned v7 message containing exactly this original batch.
+    /// Preserves native angle bits, event order, timing and measurement identities.
+    /// Encoding applies the checked transport bounds and can raise ValueError.
+    fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let message = encode_event_batches(std::slice::from_ref(&self.inner))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyBytes::new(py, message.as_bytes()))
+    }
+
     #[getter]
     fn runtime_shot_id(&self) -> u64 {
         self.inner.runtime_shot_id
@@ -77,8 +149,8 @@ impl PyScheduledEventBatch {
             })
             .collect()
     }
-    /// (original operation position, native result ID, program result ID).
-    /// Native IDs are unique; program IDs may repeat when a slot is re-measured.
+    /// (original operation position, native result ID, source measurement ID).
+    /// Source IDs distinguish measurement occurrences, including reused QIR slots.
     #[getter]
     fn measurements(&self) -> Vec<(usize, u64, u64)> {
         self.inner
@@ -135,12 +207,25 @@ impl ScheduledBatchAdapter for PythonAdapter {
                 .bind(py)
                 .cast::<PyList>()
                 .map_err(|e| callback_error("output", e.into()))?;
-            if gates.len() > MAX_BATCH_OPERATIONS {
-                return Err(PecosError::Input(
-                    "scheduled adapter expansion limit".into(),
-                ));
+            if gates
+                .len()
+                .checked_mul(40)
+                .is_none_or(|bytes| bytes > output.remaining_bytes())
+            {
+                return Err(PecosError::Input(format!(
+                    "scheduled adapter expansion limit: {} records need at least {} bytes, with {} remaining; reduce adapter output",
+                    gates.len(),
+                    gates.len().saturating_mul(40),
+                    output.remaining_bytes()
+                )));
             }
             for gate in gates.iter() {
+                if let Ok(effect) = gate.extract::<PyScheduledCrosstalk>() {
+                    output.push_crosstalk(effect.inner).map_err(|e| {
+                        PecosError::Input(format!("scheduled adapter spectator: {e}"))
+                    })?;
+                    continue;
+                }
                 let gate = gate
                     .extract::<PyGate>()
                     .map_err(|e| callback_error("output gate", e.into()))?;
@@ -153,7 +238,7 @@ impl ScheduledBatchAdapter for PythonAdapter {
     }
 }
 
-/// Checked v4 idle-Z profile with a trusted Python factory.
+/// Checked v7 idle-Z profile with a trusted Python factory.
 #[pyclass(name = "ScheduledEventIdleZ", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventIdleZ {
@@ -176,7 +261,7 @@ pub fn scheduled_event_idle_z(
         inner: event_profile(profile.into(), adapter_factory, py)?,
     })
 }
-/// Checked v4 local idle-noise profile with a trusted Python factory.
+/// Checked v7 local idle-noise profile with a trusted Python factory.
 #[pyclass(name = "ScheduledEventIdleNoise", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventIdleNoise {
@@ -252,6 +337,8 @@ pub(crate) fn extract_event_noise(
     }
 }
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyScheduledCrosstalk>()?;
+    m.add_function(wrap_pyfunction!(scheduled_measurement_crosstalk, m)?)?;
     m.add_class::<PyScheduledEventBatch>()?;
     m.add_class::<PyScheduledEventIdleZ>()?;
     m.add_class::<PyScheduledEventIdleNoise>()?;
@@ -275,4 +362,112 @@ pub(crate) fn unsupported_route() -> PyErr {
     PyTypeError::new_err(
         "scheduled event noise requires QIS/HUGR on the engines stack without operation tracing",
     )
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use pecos_core::{Angle64, gates::Gate};
+    use pecos_engines::{
+        ByteMessage,
+        scheduled_events::{ScheduledResult, decode_event_batches},
+    };
+
+    fn example() -> ScheduledEventBatch {
+        ScheduledEventBatch {
+            runtime_shot_id: u64::MAX,
+            batch_index: 29,
+            start_nanos: 123,
+            duration_nanos: 45,
+            operations: vec![
+                ScheduledEventOp::Custom {
+                    tag: 91,
+                    payload: vec![0, 255, 7],
+                },
+                ScheduledEventOp::Gate(Box::new(Gate::rz(
+                    Angle64::new(0x1234_5678_9abc_def1),
+                    &[2],
+                ))),
+                ScheduledEventOp::Gate(Box::new(Gate::mz(&[2]))),
+                ScheduledEventOp::Custom {
+                    tag: 92,
+                    payload: vec![],
+                },
+                ScheduledEventOp::Gate(Box::new(Gate::mz(&[3]))),
+            ],
+            measurements: vec![
+                ScheduledResult {
+                    operation_index: 2,
+                    runtime_result: u64::MAX,
+                    program_result: 11,
+                },
+                ScheduledResult {
+                    operation_index: 4,
+                    runtime_result: 4,
+                    program_result: 11,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_exact_values_and_owns_bytes() {
+        Python::initialize();
+        Python::attach(|py| {
+            let snapshot = PyScheduledEventBatch { inner: example() };
+            let bytes = snapshot.to_bytes(py).unwrap();
+            drop(snapshot);
+            let decoded = decode_event_batches(&ByteMessage::new(bytes.as_bytes())).unwrap();
+            assert_eq!(decoded.len(), 1);
+            let b = &decoded[0];
+            assert_eq!(
+                (
+                    b.runtime_shot_id,
+                    b.batch_index,
+                    b.start_nanos,
+                    b.duration_nanos
+                ),
+                (u64::MAX, 29, 123, 45)
+            );
+            assert_eq!(b.measurements, example().measurements);
+            assert_eq!(b.operations.len(), 5);
+            assert!(
+                matches!(&b.operations[0], ScheduledEventOp::Custom { tag: 91, payload } if payload == &[0,255,7])
+            );
+            assert!(
+                matches!(&b.operations[3], ScheduledEventOp::Custom { tag: 92, payload } if payload.is_empty())
+            );
+            let ScheduledEventOp::Gate(gate) = &b.operations[1] else {
+                panic!("missing rotation")
+            };
+            assert_eq!(gate.angles[0].fraction(), 0x1234_5678_9abc_def1);
+            assert_eq!(gate.qubits[0].0, 2);
+        });
+    }
+
+    #[test]
+    fn snapshot_rejects_invalid_identities_and_oversized_payload() {
+        Python::initialize();
+        Python::attach(|py| {
+            let mut input = example();
+            input.measurements[1].runtime_result = u64::MAX;
+            assert!(
+                PyScheduledEventBatch { inner: input }
+                    .to_bytes(py)
+                    .unwrap_err()
+                    .is_instance_of::<PyValueError>(py)
+            );
+            let mut input = example();
+            input.operations[0] = ScheduledEventOp::Custom {
+                tag: 91,
+                payload: vec![0; pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD + 1],
+            };
+            assert!(
+                PyScheduledEventBatch { inner: input }
+                    .to_bytes(py)
+                    .unwrap_err()
+                    .is_instance_of::<PyValueError>(py)
+            );
+        });
+    }
 }

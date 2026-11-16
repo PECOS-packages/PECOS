@@ -366,14 +366,12 @@ def _replay_lowered_qis_trace_into_tick_circuit(
     a tick --- matching the parallel structure of the abstract circuit.
 
     MeasIds flow from runtime-lowered measurement provenance:
-    ``lowered_quantum_ops`` MZ and MeasureLeaked entries must carry
-    ``measurement_result_ids``. MeasureLeaked is replayed as the Boolean MZ
-    component of the accepted no-leakage path; leakage probability remains
-    outside the Pauli circuit/DEM model. Visualization instead enables
-    ``preserve_measurement_kinds`` to retain the actual leakage-aware gates.
-    This avoids inferring lowered
-    measurement IDs from raw QIS operation order, which is not stable under
-    runtime scheduling or transport.
+    ``lowered_quantum_ops`` MZ, MeasureLeaked (saved traces), and MeasureZLeaked
+    entries must carry ``measurement_result_ids``. Both leakage spellings are
+    replayed as the Boolean MZ component of the accepted no-leakage path;
+    leakage probability remains outside the Pauli circuit/DEM model. This
+    avoids inferring lowered measurement IDs from raw QIS operation order,
+    which is not stable under runtime scheduling or transport.
     """
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
         measurement_crosstalk_topology,
@@ -423,7 +421,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                     msg = f"Lowered Idle gate expected one duration param, got {params!r}"
                     raise ValueError(msg)
                 tick.idle(_runtime_idle_seconds_to_time_units(params[0]), qubits)
-            elif gate_type in {"MZ", "MeasureLeaked"}:
+            elif gate_type in {"MZ", "MeasureLeaked", "MeasureZLeaked"}:
                 if not isinstance(gate.get("measurement_result_ids"), list):
                     msg = (
                         f"Lowered {gate_type} trace is missing measurement_result_ids; "
@@ -453,7 +451,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                         "MeasCrosstalkGlobalPayload",
                         qubits,
                     )
-                if preserve_measurement_kinds and gate_type == "MeasureLeaked":
+                if preserve_measurement_kinds and gate_type in {"MeasureLeaked", "MeasureZLeaked"}:
                     tick.measure_leaked_with_ids(qubits, meas_ids)
                 else:
                     tick.mz_with_ids(qubits, meas_ids)
@@ -530,11 +528,12 @@ def _replay_lowered_qis_trace_into_tick_circuit(
 def _chunk_has_lowerable_op(chunk: dict[str, Any]) -> bool:
     """True if a chunk carries an operation that lowers to a TickCircuit gate.
 
-    Only raw ``Quantum`` operations lower to gates. Allocation defers its prep
-    until first use; allocation/release-only chunks legitimately emit no gates.
-    Result allocation, output records, metadata and barriers are bookkeeping too.
+    Quantum operations and runtime requests can emit physical work. A runtime
+    request may also emit nothing; audited deferred chunks attest that explicitly.
     """
-    return any(isinstance(op, dict) and "Quantum" in op for op in (chunk.get("operations") or []))
+    return any(
+        isinstance(op, dict) and ("Quantum" in op or "RuntimeRequest" in op) for op in (chunk.get("operations") or [])
+    )
 
 
 def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
@@ -553,9 +552,12 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
 
     This is the explicit trace-format contract for live
     ``capture_operation_trace()`` output: lowered and raw forms must not be
-    mixed across chunks. Per-chunk completeness of lowering is exercised by
-    the trace replay regressions.
+    mixed across chunks. Runtime-deferred chunks explicitly attest acceptance
+    without emission and require a final trace_complete drain attestation.
+    Their gates are consumed from later runtime output, never from raw QIS.
     """
+    if any(chunk.get("runtime_lowering_deferred") is True for chunk in chunks):
+        _validate_audited_trace_stream(chunks)
     for idx, chunk in enumerate(chunks):
         if chunk.get("runtime_events_complete", True) is not True:
             msg = "Audited trace replay rejects unhandled runtime custom events; configure a batch adapter"
@@ -569,6 +571,11 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
             )
             raise ValueError(msg)
         if _chunk_has_lowerable_op(chunk) and not chunk.get("lowered_quantum_ops"):
+            if chunk.get("runtime_lowering_deferred") is True:
+                # A scheduler can hold a lazy measurement and its preceding
+                # gates until a later read. Only a complete, framed trace can
+                # attest that the deferred work was eventually drained.
+                continue
             msg = (
                 f"Traced chunk {idx} carries lowerable operations (a quantum "
                 "gate/measure/reset) but no "
@@ -697,7 +704,7 @@ def _validate_audited_trace_stream(chunks: list[dict[str, Any]]) -> None:
         )
         raise ValueError(msg)
     terminal = chunks[-1]
-    if terminal.get("operations") or terminal.get("lowered_quantum_ops") or terminal.get("named_result_traces"):
+    if any(terminal.get(key) for key in ("operations", "lowered_quantum_ops", "named_result_traces", "named_results")):
         msg = (
             "audited runtime trace terminal chunk must be empty; operations or "
             "results after the terminal marker cannot be certified"
@@ -721,14 +728,19 @@ def source_measurement_ids_from_operation_trace(chunks: list[dict[str, Any]]) ->
             if not isinstance(operation, Mapping):
                 continue
             quantum = operation.get("Quantum")
-            if not isinstance(quantum, Mapping):
-                continue
-            measure = quantum.get("Measure")
-            if measure is None:
-                measure = quantum.get("MeasureLeaked")
-            if not isinstance(measure, Sequence) or isinstance(measure, (str, bytes)) or len(measure) != 2:
-                continue
-            result_id = measure[1]
+            if isinstance(quantum, Mapping):
+                measure = quantum.get("Measure", quantum.get("MeasureLeaked"))
+                if not isinstance(measure, Sequence) or isinstance(measure, (str, bytes)) or len(measure) != 2:
+                    continue
+                result_id = measure[1]
+            else:
+                request = operation.get("RuntimeRequest")
+                request = request.get("request") if isinstance(request, Mapping) else None
+                native = request.get("Native") if isinstance(request, Mapping) else None
+                measure = native.get("Measure") if isinstance(native, Mapping) else None
+                if not isinstance(measure, Mapping):
+                    continue
+                result_id = measure.get("result_id")
             if isinstance(result_id, bool) or not isinstance(result_id, int):
                 msg = f"raw QIS measurement result id must be an integer, got {result_id!r}"
                 raise TypeError(msg)

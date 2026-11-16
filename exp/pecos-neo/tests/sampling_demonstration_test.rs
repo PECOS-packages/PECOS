@@ -199,10 +199,11 @@ fn demo_importance_sampling_boosted_errors() {
     // Run many shots with boosted error rate
     let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
         .with_single_qubit_boost(p_true, boost)
+        .unwrap()
         .with_seed(42);
 
-    let noise =
-        ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p_proposal));
+    let noise = ComposableNoiseModel::new()
+        .add_channel(SingleQubitChannel::depolarizing(p_proposal).unwrap());
     runner = runner.with_noise(noise);
 
     let num_shots = 1000;
@@ -249,7 +250,8 @@ fn demo_variance_comparison() {
         let mut mc_state = SparseStab::with_seed(1, trial as u64);
         let mut mc_runner = CircuitRunner::<SparseStab>::new()
             .with_noise(
-                ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(p_true)),
+                ComposableNoiseModel::new()
+                    .add_channel(SingleQubitChannel::depolarizing(p_true).unwrap()),
             )
             .with_seed(trial as u64);
 
@@ -268,9 +270,10 @@ fn demo_variance_comparison() {
         let mut is_runner =
             ImportanceSamplingRunner::new(SparseStab::with_seed(1, 1000 + trial as u64))
                 .with_single_qubit_boost(p_true, boost)
+                .unwrap()
                 .with_noise(
                     ComposableNoiseModel::new()
-                        .add_channel(SingleQubitChannel::depolarizing(p_proposal)),
+                        .add_channel(SingleQubitChannel::depolarizing(p_proposal).unwrap()),
                 )
                 .with_seed(1000 + trial as u64);
 
@@ -340,7 +343,7 @@ fn demo_outcome_biasing() {
     println!("  Unbiased: {}% measured '1'", f64::from(count_one) / 10.0);
 
     // With biasing toward '1': more '1' outcomes (but with weights)
-    let bias_config = OutcomeBiasConfig::bias_toward_one(0.9);
+    let bias_config = OutcomeBiasConfig::bias_toward_one(0.9).unwrap();
     let mut biased_runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
         .with_outcome_bias(bias_config)
         .with_seed(42);
@@ -585,11 +588,13 @@ fn demo_subset_simulation_bernoulli() {
     let threshold = 20.0;
 
     // First, compute the analytical probability for validation
-    let sim = BernoulliSubsetSimulation::new(p_damage, num_steps, threshold).with_config(
-        SubsetConfig::new()
-            .with_samples_per_level(1000)
-            .with_seed(42),
-    );
+    let sim = BernoulliSubsetSimulation::new(p_damage, num_steps, threshold)
+        .unwrap()
+        .with_config(
+            SubsetConfig::new()
+                .with_samples_per_level(1000)
+                .with_seed(42),
+        );
 
     let analytical = sim.analytical_probability();
     println!("  Parameters: p={p_damage}, n={num_steps}, threshold={threshold}");
@@ -655,12 +660,14 @@ fn demo_proper_subset_simulation() {
         failure_threshold,
         num_rounds,
         config,
-    );
+    )
+    .unwrap();
 
     // Use BernoulliSubsetSimulation to compute analytical probability
     // (same underlying binomial model)
     let bernoulli =
-        BernoulliSubsetSimulation::new(p_damage, num_rounds, failure_threshold / damage_increment);
+        BernoulliSubsetSimulation::new(p_damage, num_rounds, failure_threshold / damage_increment)
+            .unwrap();
     let analytical = bernoulli.analytical_probability();
 
     println!("  Parameters: p={p_damage}, threshold={failure_threshold}, rounds={num_rounds}");

@@ -156,7 +156,13 @@ impl PhasePoly {
         let Clifford { k, s, m } = &derivative;
         let case;
         let mut deterministic = None;
-        let fail = |reason| Err(IncompatibleMeasurement { reason });
+        let fail = |reason| {
+            Err(IncompatibleMeasurement {
+                reason: format!(
+                    "X measurement on {qubit:?}: {reason} Change the preceding circuit to satisfy these coefficient constraints or use a simulator supporting this measurement."
+                ),
+            })
+        };
         if k % 2 == 0 {
             if let Some((i, coefficient)) = s.iter().enumerate().find(|(_, s)| *s % 2 != 0) {
                 return fail(format!(

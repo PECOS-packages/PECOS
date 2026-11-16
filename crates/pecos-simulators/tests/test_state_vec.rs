@@ -4,7 +4,7 @@ mod advanced_gates {
     use crate::helpers::assert_states_equal;
     use pecos_core::{Angle64, QubitId};
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
-    use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI};
+    use std::f64::consts::{FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI};
 
     #[test]
     fn test_rotation_composition() {
@@ -13,11 +13,11 @@ mod advanced_gates {
 
         // Test that rotation decompositions work
         // RY(θ) = RX(π/2)RZ(θ)RX(-π/2)
-        q1.ry(Angle64::from_radians(FRAC_PI_3), &qid(0));
+        q1.ry(pecos_core::radians!(FRAC_PI_3), &qid(0));
 
-        q2.rx(Angle64::from_radians(FRAC_PI_2), &qid(0))
-            .rz(Angle64::from_radians(FRAC_PI_3), &qid(0))
-            .rx(Angle64::from_radians(-FRAC_PI_2), &qid(0));
+        q2.rx(Angle64::QUARTER_TURN, &qid(0))
+            .rz(pecos_core::radians!(FRAC_PI_3), &qid(0))
+            .rx(Angle64::THREE_QUARTERS_TURN, &qid(0));
 
         assert_states_equal(q1.state(), q2.state());
     }
@@ -36,12 +36,12 @@ mod advanced_gates {
 
         // Method 1: Two separate rotations
         let mut q1 = q.clone();
-        q1.ry(Angle64::from_radians(theta1), &qid(0))
-            .ry(Angle64::from_radians(theta2), &qid(0));
+        q1.ry(Angle64::try_from_radians(theta1).unwrap(), &qid(0))
+            .ry(Angle64::try_from_radians(theta2).unwrap(), &qid(0));
 
         // Method 2: Combined rotation
         let mut q2 = q.clone();
-        q2.ry(Angle64::from_radians(theta1 + theta2), &qid(0));
+        q2.ry(Angle64::try_from_radians(theta1 + theta2).unwrap(), &qid(0));
 
         assert_states_equal(q1.state(), q2.state());
     }
@@ -61,8 +61,14 @@ mod advanced_gates {
         let theta = PI / 3.0;
 
         // Test RYY symmetry
-        q1.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
-        q2.ryy(Angle64::from_radians(theta), &[(QubitId(1), QubitId(0))]);
+        q1.ryy(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(0), QubitId(1))],
+        );
+        q2.ryy(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(1), QubitId(0))],
+        );
 
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
             assert!((a - b).norm() < 1e-10);
@@ -76,8 +82,14 @@ mod advanced_gates {
         q2.h(&qid(0));
         q2.h(&qid(1));
 
-        q1.rzz(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
-        q2.rzz(Angle64::from_radians(theta), &[(QubitId(1), QubitId(0))]);
+        q1.rzz(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(0), QubitId(1))],
+        );
+        q2.rzz(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(1), QubitId(0))],
+        );
 
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
             assert!((a - b).norm() < 1e-10);
@@ -94,10 +106,10 @@ mod advanced_gates {
         let phi = FRAC_PI_4; // π/4
 
         // Apply in different orders
-        q1.rx(Angle64::from_radians(theta), &qid(0))
-            .ry(Angle64::from_radians(phi), &qid(0));
-        q2.ry(Angle64::from_radians(phi), &qid(0))
-            .rx(Angle64::from_radians(theta), &qid(0));
+        q1.rx(Angle64::try_from_radians(theta).unwrap(), &qid(0))
+            .ry(Angle64::try_from_radians(phi).unwrap(), &qid(0));
+        q2.ry(Angle64::try_from_radians(phi).unwrap(), &qid(0))
+            .rx(Angle64::try_from_radians(theta).unwrap(), &qid(0));
 
         println!("RY(π/4)RX(π/3)|0⟩ = {:?}", q1.state());
         println!("RX(π/3)RY(π/4)|0⟩ = {:?}", q2.state());
@@ -121,8 +133,8 @@ mod advanced_gates {
         println!("After H: q1 = {:?}", q1.state());
 
         // H via rotations - changed order and added negative sign to RZ angle
-        q2.ry(Angle64::from_radians(-FRAC_PI_2), &qid(0))
-            .rz(Angle64::from_radians(-PI), &qid(0));
+        q2.ry(Angle64::THREE_QUARTERS_TURN, &qid(0))
+            .rz(Angle64::HALF_TURN, &qid(0));
         println!("After RZ(-π)RY(-π/2): q2 = {:?}", q2.state());
 
         // Compare up to global phase by looking at ratios between components
@@ -144,7 +156,7 @@ mod quantum_states {
     use pecos_simulators::{
         ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, qid,
     };
-    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2};
+    use std::f64::consts::FRAC_1_SQRT_2;
 
     #[test]
     fn test_bell_state_entanglement() {
@@ -198,7 +210,7 @@ mod quantum_states {
 
         // Method 2: Rotations
         q.reset();
-        q.ry(Angle64::from_radians(FRAC_PI_2), &qid(0))
+        q.ry(Angle64::QUARTER_TURN, &qid(0))
             .cx(&[(QubitId(0), QubitId(1))]); // Remove rz(PI) since it just adds phase
 
         // Compare probability distributions
@@ -600,7 +612,7 @@ mod gate_sequences {
 mod numerical_properties {
     use pecos_core::{Angle64, QubitId};
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
-    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6};
+    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_3, FRAC_PI_6};
 
     #[test]
     fn test_state_normalization() {
@@ -626,9 +638,9 @@ mod numerical_properties {
 
         // Apply many rotations to test numerical stability
         for _ in 0..100 {
-            q.rx(Angle64::from_radians(FRAC_PI_3), &qid(0))
-                .ry(Angle64::from_radians(FRAC_PI_4), &qid(1))
-                .rz(Angle64::from_radians(FRAC_PI_6), &qid(2))
+            q.rx(pecos_core::radians!(FRAC_PI_3), &qid(0))
+                .ry(Angle64::from_turn_ratio(1, 8), &qid(1))
+                .rz(pecos_core::radians!(FRAC_PI_6), &qid(2))
                 .cx(&[(QubitId(0), QubitId(3))]);
         }
 
@@ -643,9 +655,9 @@ mod numerical_properties {
 
         // Apply series of phase rotations that should cancel
         q.h(&qid(0)) // Create superposition
-            .rz(Angle64::from_radians(FRAC_PI_4), &qid(0))
-            .rz(Angle64::from_radians(FRAC_PI_4), &qid(0))
-            .rz(Angle64::from_radians(-FRAC_PI_2), &qid(0)); // Should cancel
+            .rz(Angle64::from_turn_ratio(1, 8), &qid(0))
+            .rz(Angle64::from_turn_ratio(1, 8), &qid(0))
+            .rz(Angle64::THREE_QUARTERS_TURN, &qid(0)); // Should cancel
 
         // Should be back to |+⟩
         assert!((q.state()[0].re - FRAC_1_SQRT_2).abs() < 1e-10);
@@ -697,7 +709,7 @@ mod numerical_properties {
 mod locality_tests {
     use pecos_core::{Angle64, QubitId};
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
-    use std::f64::consts::{FRAC_1_SQRT_2, PI};
+    use std::f64::consts::FRAC_1_SQRT_2;
 
     #[test]
     fn test_single_qubit_locality() {
@@ -795,7 +807,7 @@ mod locality_tests {
         }
 
         // Apply rotation to qubit 1
-        q.rx(Angle64::from_radians(PI / 2.0), &qid(1));
+        q.rx(Angle64::QUARTER_TURN, &qid(1));
 
         println!("\nAfter RX on qubit 1:");
         for i in 0..8 {
@@ -834,13 +846,12 @@ mod edge_cases {
     use crate::helpers::assert_states_equal;
     use pecos_core::Angle64;
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
-    use std::f64::consts::PI;
 
     #[test]
     fn test_small_angle_rotations() {
         let mut q = StateVec::new(1);
         let small_angle = 1e-6;
-        q.rx(Angle64::from_radians(small_angle), &qid(0));
+        q.rx(Angle64::try_from_radians(small_angle).unwrap(), &qid(0));
         let total_prob: f64 = q.state().iter().map(num_complex::Complex::norm_sqr).sum();
         assert!((total_prob - 1.0).abs() < 1e-10);
     }
@@ -861,7 +872,7 @@ mod edge_cases {
 
         // Test small angle rotations
         let small_angle = 1e-6;
-        q.rx(Angle64::from_radians(small_angle), &qid(0));
+        q.rx(Angle64::try_from_radians(small_angle).unwrap(), &qid(0));
 
         // Check that probabilities sum to 1
         let total_prob: f64 = q.state().iter().map(num_complex::Complex::norm_sqr).sum();
@@ -874,33 +885,33 @@ mod edge_cases {
 
         // Test RX(0): Should be identity
         let initial = q.state().clone();
-        q.rx(Angle64::from_radians(0.0), &qid(0));
+        q.rx(Angle64::ZERO, &qid(0));
         assert_states_equal(q.state(), &initial);
 
         // Test RX(2π): Should also be identity up to global phase
-        q.rx(Angle64::from_radians(2.0 * PI), &qid(0));
+        q.rx(Angle64::ZERO, &qid(0));
         assert_states_equal(q.state(), &initial);
 
         // Test RY(0): Should be identity
-        q.ry(Angle64::from_radians(0.0), &qid(0));
+        q.ry(Angle64::ZERO, &qid(0));
         assert_states_equal(q.state(), &initial);
 
         // Test RY(2π): Should also be identity up to global phase
-        q.ry(Angle64::from_radians(2.0 * PI), &qid(0));
+        q.ry(Angle64::ZERO, &qid(0));
         assert_states_equal(q.state(), &initial);
 
         // Test RZ(0): Should be identity
-        q.rz(Angle64::from_radians(0.0), &qid(0));
+        q.rz(Angle64::ZERO, &qid(0));
         assert_states_equal(q.state(), &initial);
 
         // Test RZ(2π): Should also be identity up to global phase
-        q.rz(Angle64::from_radians(2.0 * PI), &qid(0));
+        q.rz(Angle64::ZERO, &qid(0));
         assert_states_equal(q.state(), &initial);
     }
 }
 
 mod large_systems {
-    use pecos_core::{Angle64, QubitId};
+    use pecos_core::QubitId;
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
 
     #[test]
@@ -910,7 +921,7 @@ mod large_systems {
         // Apply a sequence of random gates
         state_vec.h(&qid(0));
         state_vec.cx(&[(QubitId(0), QubitId(1))]);
-        state_vec.rz(Angle64::from_radians(std::f64::consts::PI / 3.0), &qid(2));
+        state_vec.rz(pecos_core::radians!(std::f64::consts::PI / 3.0), &qid(2));
         state_vec.swap(&[(QubitId(1), QubitId(2))]);
 
         // Check if the state is still normalized
@@ -936,20 +947,20 @@ mod detailed_sq_gate_cases {
         let mut q = StateVec::new(1);
 
         // Step 1: RX(0) should be identity
-        q.rx(Angle64::from_radians(0.0), &qid(0));
+        q.rx(Angle64::ZERO, &qid(0));
         assert!((q.state()[0].re - 1.0).abs() < 1e-10);
         assert!(q.state()[1].norm() < 1e-10);
 
         // Step 2: RX(π) on |0⟩ should give -i|1⟩
         let mut q = StateVec::new(1);
-        q.rx(Angle64::from_radians(PI), &qid(0));
+        q.rx(Angle64::HALF_TURN, &qid(0));
         println!("RX(π)|0⟩ = {:?}", q.state()); // Debug output
         assert!(q.state()[0].norm() < 1e-10);
         assert!((q.state()[1].im + 1.0).abs() < 1e-10);
 
         // Step 3: RX(π/2) on |0⟩ should give (|0⟩ - i|1⟩)/√2
         let mut q = StateVec::new(1);
-        q.rx(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q.rx(Angle64::QUARTER_TURN, &qid(0));
         println!("RX(π/2)|0⟩ = {:?}", q.state()); // Debug output
         let expected_amp = 1.0 / 2.0_f64.sqrt();
         assert!((q.state()[0].re - expected_amp).abs() < 1e-10);
@@ -960,21 +971,21 @@ mod detailed_sq_gate_cases {
     fn test_ry_step_by_step() {
         // Step 1: RY(0) should be identity
         let mut q = StateVec::new(1);
-        q.ry(Angle64::from_radians(0.0), &qid(0));
+        q.ry(Angle64::ZERO, &qid(0));
         println!("RY(0)|0⟩ = {:?}", q.state());
         assert!((q.state()[0].re - 1.0).abs() < 1e-10);
         assert!(q.state()[1].norm() < 1e-10);
 
         // Step 2: RY(π) on |0⟩ should give |1⟩
         let mut q = StateVec::new(1);
-        q.ry(Angle64::from_radians(PI), &qid(0));
+        q.ry(Angle64::HALF_TURN, &qid(0));
         println!("RY(π)|0⟩ = {:?}", q.state());
         assert!(q.state()[0].norm() < 1e-10);
         assert!((q.state()[1].re - 1.0).abs() < 1e-10);
 
         // Step 3: RY(π/2) on |0⟩ should give (|0⟩ + |1⟩)/√2
         let mut q = StateVec::new(1);
-        q.ry(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q.ry(Angle64::QUARTER_TURN, &qid(0));
         println!("RY(π/2)|0⟩ = {:?}", q.state());
         let expected_amp = 1.0 / 2.0_f64.sqrt();
         assert!((q.state()[0].re - expected_amp).abs() < 1e-10);
@@ -982,7 +993,7 @@ mod detailed_sq_gate_cases {
 
         // Step 4: RY(-π/2) on |0⟩ should give (|0⟩ - |1⟩)/√2
         let mut q = StateVec::new(1);
-        q.ry(Angle64::from_radians(-FRAC_PI_2), &qid(0));
+        q.ry(Angle64::THREE_QUARTERS_TURN, &qid(0));
         println!("RY(-π/2)|0⟩ = {:?}", q.state());
         assert!((q.state()[0].re - expected_amp).abs() < 1e-10);
         assert!((q.state()[1].re + expected_amp).abs() < 1e-10);
@@ -992,7 +1003,7 @@ mod detailed_sq_gate_cases {
     fn test_rz_step_by_step() {
         // Step 1: RZ(0) should be identity
         let mut q = StateVec::new(1);
-        q.rz(Angle64::from_radians(0.0), &qid(0));
+        q.rz(Angle64::ZERO, &qid(0));
         println!("RZ(0)|0⟩ = {:?}", q.state());
         assert!((q.state()[0].re - 1.0).abs() < 1e-10);
         assert!(q.state()[1].norm() < 1e-10);
@@ -1000,7 +1011,7 @@ mod detailed_sq_gate_cases {
         // Step 2: RZ(π/2) on |+⟩ should give |+i⟩ = (|0⟩ + i|1⟩)/√2
         let mut q = StateVec::new(1);
         q.h(&qid(0)); // Create |+⟩
-        q.rz(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q.rz(Angle64::QUARTER_TURN, &qid(0));
         println!("RZ(π/2)|+⟩ = {:?}", q.state());
         let expected_amp = 1.0 / 2.0_f64.sqrt();
         assert!((q.state()[0].norm() - expected_amp).abs() < 1e-10);
@@ -1021,9 +1032,9 @@ mod detailed_sq_gate_cases {
         // Step 3: Two RZ(π/2) operations should equal one RZ(π)
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
-        q1.rz(Angle64::from_radians(PI), &qid(0));
-        q2.rz(Angle64::from_radians(FRAC_PI_2), &qid(0));
-        q2.rz(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q1.rz(Angle64::HALF_TURN, &qid(0));
+        q2.rz(Angle64::QUARTER_TURN, &qid(0));
+        q2.rz(Angle64::QUARTER_TURN, &qid(0));
         println!("RZ(π)|0⟩ vs RZ(π/2)RZ(π/2)|0⟩:");
         println!("q1 = {:?}", q1.state());
         println!("q2 = {:?}", q2.state());
@@ -1044,7 +1055,7 @@ mod detailed_sq_gate_cases {
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.sz(&qid(0));
-        q2.rz(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q2.rz(Angle64::QUARTER_TURN, &qid(0));
         println!("S|0⟩ = {:?}", q1.state());
         println!("RZ(π/2)|0⟩ = {:?}", q2.state());
         assert_states_equal(q1.state(), q2.state());
@@ -1053,7 +1064,7 @@ mod detailed_sq_gate_cases {
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.x(&qid(0));
-        q2.rx(Angle64::from_radians(PI), &qid(0));
+        q2.rx(Angle64::HALF_TURN, &qid(0));
         println!("X|0⟩ = {:?}", q1.state());
         println!("RX(π)|0⟩ = {:?}", q2.state());
         assert_states_equal(q1.state(), q2.state());
@@ -1062,7 +1073,7 @@ mod detailed_sq_gate_cases {
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.y(&qid(0));
-        q2.ry(Angle64::from_radians(PI), &qid(0));
+        q2.ry(Angle64::HALF_TURN, &qid(0));
         println!("Y|0⟩ = {:?}", q1.state());
         println!("RY(π)|0⟩ = {:?}", q2.state());
         assert_states_equal(q1.state(), q2.state());
@@ -1071,7 +1082,7 @@ mod detailed_sq_gate_cases {
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.z(&qid(0));
-        q2.rz(Angle64::from_radians(PI), &qid(0));
+        q2.rz(Angle64::HALF_TURN, &qid(0));
         println!("Z|0⟩ = {:?}", q1.state());
         println!("RZ(π)|0⟩ = {:?}", q2.state());
         assert_states_equal(q1.state(), q2.state());
@@ -1080,7 +1091,7 @@ mod detailed_sq_gate_cases {
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.sx(&qid(0));
-        q2.rx(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q2.rx(Angle64::QUARTER_TURN, &qid(0));
         println!("√X|0⟩ = {:?}", q1.state());
         println!("RX(π/2)|0⟩ = {:?}", q2.state());
         assert_states_equal(q1.state(), q2.state());
@@ -1089,7 +1100,7 @@ mod detailed_sq_gate_cases {
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.sy(&qid(0));
-        q2.ry(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q2.ry(Angle64::QUARTER_TURN, &qid(0));
         println!("√Y|0⟩ = {:?}", q1.state());
         println!("RY(π/2)|0⟩ = {:?}", q2.state());
         assert_states_equal(q1.state(), q2.state());
@@ -1097,8 +1108,8 @@ mod detailed_sq_gate_cases {
         // Test S = TT as RZ(π/4)RZ(π/4)
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
-        q2.rz(Angle64::from_radians(FRAC_PI_4), &qid(0))
-            .rz(Angle64::from_radians(FRAC_PI_4), &qid(0));
+        q2.rz(Angle64::from_turn_ratio(1, 8), &qid(0))
+            .rz(Angle64::from_turn_ratio(1, 8), &qid(0));
         q1.sz(&qid(0));
         println!("S|0⟩ = {:?}", q1.state());
         println!("T²|0⟩ = RZ(π/4)RZ(π/4)|0⟩ = {:?}", q2.state());
@@ -1108,8 +1119,8 @@ mod detailed_sq_gate_cases {
         let mut q1 = StateVec::new(1);
         let mut q2 = StateVec::new(1);
         q1.h(&qid(0));
-        q2.ry(Angle64::from_radians(FRAC_PI_2), &qid(0))
-            .rx(Angle64::from_radians(PI), &qid(0));
+        q2.ry(Angle64::QUARTER_TURN, &qid(0))
+            .rx(Angle64::HALF_TURN, &qid(0));
         println!("H|0⟩ = {:?}", q1.state());
         println!("RX(π)RY(π/2)|0⟩ = {:?}", q2.state());
         assert_states_equal(q1.state(), q2.state());
@@ -1122,8 +1133,8 @@ mod detailed_sq_gate_cases {
         let theta = FRAC_PI_3;
 
         // Apply forward then reverse rotations
-        q.rx(Angle64::from_radians(theta), &qid(0))
-            .rx(Angle64::from_radians(-theta), &qid(0));
+        q.rx(Angle64::try_from_radians(theta).unwrap(), &qid(0))
+            .rx(Angle64::try_from_radians(-theta).unwrap(), &qid(0));
 
         // Should get back to |0⟩ up to global phase
         assert!(q.state()[1].norm() < 1e-10);
@@ -1137,8 +1148,8 @@ mod detailed_sq_gate_cases {
         let theta = FRAC_PI_3;
 
         // Apply forward then reverse rotations
-        q.ry(Angle64::from_radians(theta), &qid(0))
-            .ry(Angle64::from_radians(-theta), &qid(0));
+        q.ry(Angle64::try_from_radians(theta).unwrap(), &qid(0))
+            .ry(Angle64::try_from_radians(-theta).unwrap(), &qid(0));
 
         // Should get back to |0⟩ up to global phase
         assert!(q.state()[1].norm() < 1e-10);
@@ -1152,8 +1163,8 @@ mod detailed_sq_gate_cases {
         let theta = FRAC_PI_3;
 
         // Apply forward then reverse rotations
-        q.rz(Angle64::from_radians(theta), &qid(0))
-            .rz(Angle64::from_radians(-theta), &qid(0));
+        q.rz(Angle64::try_from_radians(theta).unwrap(), &qid(0))
+            .rz(Angle64::try_from_radians(-theta).unwrap(), &qid(0));
 
         // Should get back to |0⟩ up to global phase
         assert!(q.state()[1].norm() < 1e-10);
@@ -1172,18 +1183,18 @@ mod detailed_sq_gate_cases {
 
         // Apply `u` from the StateVec implementation.
         state_vec_u.u(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
-            Angle64::from_radians(lambda),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
+            Angle64::try_from_radians(lambda).unwrap(),
             &qid(0),
         );
 
         // Apply `u` from the ArbitraryRotationGateable trait.
         ArbitraryRotationGateable::u(
             &mut trait_u,
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
-            Angle64::from_radians(lambda),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
+            Angle64::try_from_radians(lambda).unwrap(),
             &qid(0),
         );
 
@@ -1200,14 +1211,14 @@ mod detailed_sq_gate_cases {
 
         // Apply rxy1q and equivalent u gates
         state_rxy1q.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &qid(0),
         );
         state_u.u(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi - FRAC_PI_2),
-            Angle64::from_radians(FRAC_PI_2 - phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi - FRAC_PI_2).unwrap(),
+            Angle64::try_from_radians(FRAC_PI_2 - phi).unwrap(),
             &qid(0),
         );
 
@@ -1222,11 +1233,11 @@ mod detailed_sq_gate_cases {
         let theta = FRAC_PI_3;
 
         // Apply rz and u gates
-        state_rz.rz(Angle64::from_radians(theta), &qid(0));
+        state_rz.rz(Angle64::try_from_radians(theta).unwrap(), &qid(0));
         state_u.u(
-            Angle64::from_radians(0.0),
-            Angle64::from_radians(0.0),
-            Angle64::from_radians(theta),
+            Angle64::ZERO,
+            Angle64::ZERO,
+            Angle64::try_from_radians(theta).unwrap(),
             &qid(0),
         );
 
@@ -1244,20 +1255,20 @@ mod detailed_sq_gate_cases {
 
         // Apply U gate
         state_u.u(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
-            Angle64::from_radians(lambda),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
+            Angle64::try_from_radians(lambda).unwrap(),
             &qid(0),
         );
 
         // Apply the decomposed gates
-        state_decomposed.rz(Angle64::from_radians(lambda), &qid(0));
+        state_decomposed.rz(Angle64::try_from_radians(lambda).unwrap(), &qid(0));
         state_decomposed.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(FRAC_PI_2),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::QUARTER_TURN,
             &qid(0),
         );
-        state_decomposed.rz(Angle64::from_radians(phi), &qid(0));
+        state_decomposed.rz(Angle64::try_from_radians(phi).unwrap(), &qid(0));
 
         // Assert that the states are equal
         assert_states_equal(state_u.state(), state_decomposed.state());
@@ -1270,11 +1281,7 @@ mod detailed_sq_gate_cases {
         let mut state_after_x = state.clone();
 
         state.reset();
-        state.rxy1q(
-            Angle64::from_radians(PI),
-            Angle64::from_radians(0.0),
-            &qid(0),
-        );
+        state.rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &qid(0));
         let mut state_after_rxy1q = state.clone();
 
         assert_states_equal(state_after_x.state(), state_after_rxy1q.state());
@@ -1287,11 +1294,7 @@ mod detailed_sq_gate_cases {
         let mut state_after_y = state.clone();
 
         state.reset();
-        state.rxy1q(
-            Angle64::from_radians(PI),
-            Angle64::from_radians(FRAC_PI_2),
-            &qid(0),
-        );
+        state.rxy1q(Angle64::HALF_TURN, Angle64::QUARTER_TURN, &qid(0));
         let mut state_after_rxy1q = state.clone();
 
         assert_states_equal(state_after_y.state(), state_after_rxy1q.state());
@@ -1305,12 +1308,8 @@ mod detailed_sq_gate_cases {
 
         state.reset(); // Reset state to |0⟩
         state
-            .rxy1q(
-                Angle64::from_radians(FRAC_PI_2),
-                Angle64::from_radians(-FRAC_PI_2),
-                &qid(0),
-            )
-            .rz(Angle64::from_radians(PI), &qid(0));
+            .rxy1q(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN, &qid(0))
+            .rz(Angle64::HALF_TURN, &qid(0));
         let mut state_after_rxy1q_rz = state.clone();
 
         assert_states_equal(state_after_h.state(), state_after_rxy1q_rz.state());
@@ -1321,9 +1320,9 @@ mod detailed_sq_gate_cases {
         // Test 1: U(π, 0, π) should be X gate
         let mut q = StateVec::new(1);
         q.u(
-            Angle64::from_radians(PI),
-            Angle64::from_radians(0.0),
-            Angle64::from_radians(PI),
+            Angle64::HALF_TURN,
+            Angle64::ZERO,
+            Angle64::HALF_TURN,
             &qid(0),
         );
         assert!(q.state()[0].norm() < 1e-10);
@@ -1333,9 +1332,9 @@ mod detailed_sq_gate_cases {
         // H = U(π/2, 0, π)
         let mut q = StateVec::new(1);
         q.u(
-            Angle64::from_radians(PI / 2.0),
-            Angle64::from_radians(0.0),
-            Angle64::from_radians(PI),
+            Angle64::QUARTER_TURN,
+            Angle64::ZERO,
+            Angle64::HALF_TURN,
             &qid(0),
         );
         assert!((q.state()[0].re - FRAC_1_SQRT_2).abs() < 1e-10);
@@ -1345,21 +1344,16 @@ mod detailed_sq_gate_cases {
         let mut q = StateVec::new(1);
         q.h(&qid(0)); // First put in superposition
         let initial = q.state().clone();
-        q.u(
-            Angle64::from_radians(0.0),
-            Angle64::from_radians(0.0),
-            Angle64::from_radians(PI),
-            &qid(0),
-        );
+        q.u(Angle64::ZERO, Angle64::ZERO, Angle64::HALF_TURN, &qid(0));
         assert!((q.state()[0] - initial[0]).norm() < 1e-10);
         assert!((q.state()[1] + initial[1]).norm() < 1e-10);
 
         // Additional test: U3(π/2, π/2, -π/2) should be S†H
         let mut q = StateVec::new(1);
         q.u(
-            Angle64::from_radians(PI / 2.0),
-            Angle64::from_radians(PI / 2.0),
-            Angle64::from_radians(-PI / 2.0),
+            Angle64::QUARTER_TURN,
+            Angle64::QUARTER_TURN,
+            Angle64::THREE_QUARTERS_TURN,
             &qid(0),
         );
         // This creates the state (|0⟩ + i|1⟩)/√2
@@ -1374,15 +1368,15 @@ mod detailed_sq_gate_cases {
 
         // Two U gates that should multiply to identity
         q1.u(
-            Angle64::from_radians(PI / 3.0),
-            Angle64::from_radians(PI / 4.0),
-            Angle64::from_radians(PI / 6.0),
+            pecos_core::radians!(PI / 3.0),
+            Angle64::from_turn_ratio(1, 8),
+            pecos_core::radians!(PI / 6.0),
             &qid(0),
         );
         q1.u(
-            Angle64::from_radians(-PI / 3.0),
-            Angle64::from_radians(-PI / 6.0),
-            Angle64::from_radians(-PI / 4.0),
+            pecos_core::radians!(-PI / 3.0),
+            pecos_core::radians!(-PI / 6.0),
+            Angle64::from_turn_ratio(7, 8),
             &qid(0),
         );
 
@@ -1653,14 +1647,17 @@ mod detailed_sq_gate_cases {
         let mut decomposed = StateVec::new(1);
 
         direct.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &qid(0),
         );
         decomposed
-            .rz(Angle64::from_radians(-phi + FRAC_PI_2), &qid(0))
-            .ry(Angle64::from_radians(theta), &qid(0))
-            .rz(Angle64::from_radians(phi - FRAC_PI_2), &qid(0));
+            .rz(
+                Angle64::try_from_radians(-phi + FRAC_PI_2).unwrap(),
+                &qid(0),
+            )
+            .ry(Angle64::try_from_radians(theta).unwrap(), &qid(0))
+            .rz(Angle64::try_from_radians(phi - FRAC_PI_2).unwrap(), &qid(0));
 
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -1671,14 +1668,17 @@ mod detailed_sq_gate_cases {
         decomposed.x(&qid(0));
 
         direct.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &qid(0),
         );
         decomposed
-            .rz(Angle64::from_radians(-phi + FRAC_PI_2), &qid(0))
-            .ry(Angle64::from_radians(theta), &qid(0))
-            .rz(Angle64::from_radians(phi - FRAC_PI_2), &qid(0));
+            .rz(
+                Angle64::try_from_radians(-phi + FRAC_PI_2).unwrap(),
+                &qid(0),
+            )
+            .ry(Angle64::try_from_radians(theta).unwrap(), &qid(0))
+            .rz(Angle64::try_from_radians(phi - FRAC_PI_2).unwrap(), &qid(0));
 
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -1689,14 +1689,17 @@ mod detailed_sq_gate_cases {
         decomposed.h(&qid(0));
 
         direct.rxy1q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &qid(0),
         );
         decomposed
-            .rz(Angle64::from_radians(-phi + FRAC_PI_2), &qid(0))
-            .ry(Angle64::from_radians(theta), &qid(0))
-            .rz(Angle64::from_radians(phi - FRAC_PI_2), &qid(0));
+            .rz(
+                Angle64::try_from_radians(-phi + FRAC_PI_2).unwrap(),
+                &qid(0),
+            )
+            .ry(Angle64::try_from_radians(theta).unwrap(), &qid(0))
+            .rz(Angle64::try_from_radians(phi - FRAC_PI_2).unwrap(), &qid(0));
 
         assert_states_equal(direct.state(), decomposed.state());
 
@@ -1709,14 +1712,17 @@ mod detailed_sq_gate_cases {
                 decomposed.h(&qid(0));
 
                 direct.rxy1q(
-                    Angle64::from_radians(theta),
-                    Angle64::from_radians(phi),
+                    Angle64::try_from_radians(theta).unwrap(),
+                    Angle64::try_from_radians(phi).unwrap(),
                     &qid(0),
                 );
                 decomposed
-                    .rz(Angle64::from_radians(-phi + FRAC_PI_2), &qid(0))
-                    .ry(Angle64::from_radians(theta), &qid(0))
-                    .rz(Angle64::from_radians(phi - FRAC_PI_2), &qid(0));
+                    .rz(
+                        Angle64::try_from_radians(-phi + FRAC_PI_2).unwrap(),
+                        &qid(0),
+                    )
+                    .ry(Angle64::try_from_radians(theta).unwrap(), &qid(0))
+                    .rz(Angle64::try_from_radians(phi - FRAC_PI_2).unwrap(), &qid(0));
 
                 assert_states_equal(direct.state(), decomposed.state());
             }
@@ -2595,7 +2601,7 @@ mod detailed_sq_gate_cases {
         q2.h(&qid(0));
 
         q1.sx(&qid(0));
-        q2.rx(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q2.rx(Angle64::QUARTER_TURN, &qid(0));
 
         assert_states_equal(q1.state(), q2.state());
 
@@ -2606,7 +2612,7 @@ mod detailed_sq_gate_cases {
         q2.h(&qid(0));
 
         q1.sxdg(&qid(0));
-        q2.rx(Angle64::from_radians(-FRAC_PI_2), &qid(0));
+        q2.rx(Angle64::THREE_QUARTERS_TURN, &qid(0));
 
         assert_states_equal(q1.state(), q2.state());
 
@@ -2617,7 +2623,7 @@ mod detailed_sq_gate_cases {
         q2.h(&qid(0));
 
         q1.sy(&qid(0));
-        q2.ry(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q2.ry(Angle64::QUARTER_TURN, &qid(0));
 
         assert_states_equal(q1.state(), q2.state());
 
@@ -2628,7 +2634,7 @@ mod detailed_sq_gate_cases {
         q2.h(&qid(0));
 
         q1.sydg(&qid(0));
-        q2.ry(Angle64::from_radians(-FRAC_PI_2), &qid(0));
+        q2.ry(Angle64::THREE_QUARTERS_TURN, &qid(0));
 
         assert_states_equal(q1.state(), q2.state());
 
@@ -2639,7 +2645,7 @@ mod detailed_sq_gate_cases {
         q2.h(&qid(0));
 
         q1.sz(&qid(0));
-        q2.rz(Angle64::from_radians(FRAC_PI_2), &qid(0));
+        q2.rz(Angle64::QUARTER_TURN, &qid(0));
 
         assert_states_equal(q1.state(), q2.state());
 
@@ -2650,7 +2656,7 @@ mod detailed_sq_gate_cases {
         q2.h(&qid(0));
 
         q1.szdg(&qid(0));
-        q2.rz(Angle64::from_radians(-FRAC_PI_2), &qid(0));
+        q2.rz(Angle64::THREE_QUARTERS_TURN, &qid(0));
 
         assert_states_equal(q1.state(), q2.state());
     }
@@ -2661,7 +2667,7 @@ mod detailed_tq_gate_cases {
     use num_complex::Complex64;
     use pecos_core::{Angle64, QubitId};
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
-    use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, PI};
+    use std::f64::consts::{FRAC_PI_3, FRAC_PI_4, PI};
 
     #[test]
     fn test_cx_decomposition() {
@@ -2676,21 +2682,17 @@ mod detailed_tq_gate_cases {
 
         // Apply the decomposed gates
         state_decomposed.rxy1q(
-            Angle64::from_radians(-FRAC_PI_2),
-            Angle64::from_radians(FRAC_PI_2),
+            Angle64::THREE_QUARTERS_TURN,
+            Angle64::QUARTER_TURN,
             &qid(target),
         );
         state_decomposed.rzz(
-            Angle64::from_radians(FRAC_PI_2),
+            Angle64::QUARTER_TURN,
             &[(QubitId(control), QubitId(target))],
         );
-        state_decomposed.rz(Angle64::from_radians(-FRAC_PI_2), &qid(control));
-        state_decomposed.rxy1q(
-            Angle64::from_radians(FRAC_PI_2),
-            Angle64::from_radians(PI),
-            &qid(target),
-        );
-        state_decomposed.rz(Angle64::from_radians(-FRAC_PI_2), &qid(target));
+        state_decomposed.rz(Angle64::THREE_QUARTERS_TURN, &qid(control));
+        state_decomposed.rxy1q(Angle64::QUARTER_TURN, Angle64::HALF_TURN, &qid(target));
+        state_decomposed.rz(Angle64::THREE_QUARTERS_TURN, &qid(target));
 
         // Assert that the states are equal
         assert_states_equal(state_cx.state(), state_decomposed.state());
@@ -2706,33 +2708,25 @@ mod detailed_tq_gate_cases {
 
         // Apply RXX gate
         state_rxx.rxx(
-            Angle64::from_radians(FRAC_PI_4),
+            Angle64::from_turn_ratio(1, 8),
             &[(QubitId(control), QubitId(target))],
         );
 
         // Apply the decomposed gates
-        state_decomposed.rxy1q(
-            Angle64::from_radians(FRAC_PI_2),
-            Angle64::from_radians(FRAC_PI_2),
-            &qid(control),
-        );
-        state_decomposed.rxy1q(
-            Angle64::from_radians(FRAC_PI_2),
-            Angle64::from_radians(FRAC_PI_2),
-            &qid(target),
-        );
+        state_decomposed.rxy1q(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &qid(control));
+        state_decomposed.rxy1q(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &qid(target));
         state_decomposed.rzz(
-            Angle64::from_radians(FRAC_PI_4),
+            Angle64::from_turn_ratio(1, 8),
             &[(QubitId(control), QubitId(target))],
         );
         state_decomposed.rxy1q(
-            Angle64::from_radians(FRAC_PI_2),
-            Angle64::from_radians(-FRAC_PI_2),
+            Angle64::QUARTER_TURN,
+            Angle64::THREE_QUARTERS_TURN,
             &qid(control),
         );
         state_decomposed.rxy1q(
-            Angle64::from_radians(FRAC_PI_2),
-            Angle64::from_radians(-FRAC_PI_2),
+            Angle64::QUARTER_TURN,
+            Angle64::THREE_QUARTERS_TURN,
             &qid(target),
         );
 
@@ -2834,14 +2828,8 @@ mod detailed_tq_gate_cases {
         q2.h(&qid(1));
 
         // Apply RXX with different qubit orders
-        q1.rxx(
-            Angle64::from_radians(FRAC_PI_3),
-            &[(QubitId(0), QubitId(1))],
-        );
-        q2.rxx(
-            Angle64::from_radians(FRAC_PI_3),
-            &[(QubitId(1), QubitId(0))],
-        );
+        q1.rxx(pecos_core::radians!(FRAC_PI_3), &[(QubitId(0), QubitId(1))]);
+        q2.rxx(pecos_core::radians!(FRAC_PI_3), &[(QubitId(1), QubitId(0))]);
 
         // Results should be identical
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
@@ -2859,8 +2847,14 @@ mod detailed_tq_gate_cases {
         q1.h(&qid(0)).x(&qid(1)); // Random state
         q2.h(&qid(0)).x(&qid(1)); // Same initial state
 
-        q1.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
-        q2.ryy(Angle64::from_radians(theta), &[(QubitId(1), QubitId(0))]);
+        q1.ryy(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(0), QubitId(1))],
+        );
+        q2.ryy(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(1), QubitId(0))],
+        );
 
         // States should be exactly equal
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
@@ -2880,7 +2874,10 @@ mod detailed_tq_gate_cases {
         q.h(&qid(0)).h(&qid(1)).h(&qid(2)).h(&qid(3)).h(&qid(4)); // Superposition state
 
         // Apply RYY on qubits 2 and 4
-        q.ryy(Angle64::from_radians(theta), &[(QubitId(2), QubitId(4))]);
+        q.ryy(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(2), QubitId(4))],
+        );
 
         // Ensure state vector normalization is preserved
         let norm: f64 = q.state().iter().map(num_complex::Complex::norm_sqr).sum();
@@ -2895,7 +2892,7 @@ mod detailed_tq_gate_cases {
         let mut q = StateVec::new(2);
 
         // Apply RYY gate
-        q.ryy(Angle64::from_radians(PI), &[(QubitId(0), QubitId(1))]);
+        q.ryy(Angle64::HALF_TURN, &[(QubitId(0), QubitId(1))]);
 
         // Define the expected result for RYY(π)
         let expected = vec![
@@ -2913,7 +2910,7 @@ mod detailed_tq_gate_cases {
     fn test_ryy_global_phase() {
         let mut q = StateVec::new(2);
 
-        q.ryy(Angle64::from_radians(PI), &[(QubitId(0), QubitId(1))]);
+        q.ryy(Angle64::HALF_TURN, &[(QubitId(0), QubitId(1))]);
 
         // Define the expected result for RYY(π)
         let expected = vec![
@@ -2934,7 +2931,10 @@ mod detailed_tq_gate_cases {
 
         // Initialize |00⟩
         let initial = q.state().clone();
-        q.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
+        q.ryy(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(0), QubitId(1))],
+        );
 
         // Expect state to remain close to the initial state
         for (a, b) in q.state().iter().zip(initial.iter()) {
@@ -2960,8 +2960,14 @@ mod detailed_tq_gate_cases {
         q2.h(&qid(0)).h(&qid(1));
 
         // Apply RYY with random qubit order
-        q1.ryy(Angle64::from_radians(theta), &[(QubitId(0), QubitId(1))]);
-        q2.ryy(Angle64::from_radians(theta), &[(QubitId(1), QubitId(0))]);
+        q1.ryy(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(0), QubitId(1))],
+        );
+        q2.ryy(
+            Angle64::try_from_radians(theta).unwrap(),
+            &[(QubitId(1), QubitId(0))],
+        );
 
         // Compare states
         for (a, b) in q1.state().iter().zip(q2.state().iter()) {
@@ -2984,10 +2990,7 @@ mod detailed_tq_gate_cases {
 
         // Compare direct SZZ vs RZZ(π/2)
         q1.szz(&[(QubitId(0), QubitId(1))]);
-        q2.rzz(
-            Angle64::from_radians(FRAC_PI_2),
-            &[(QubitId(0), QubitId(1))],
-        );
+        q2.rzz(Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
 
         assert_states_equal(q1.state(), q2.state());
 
@@ -3014,11 +3017,7 @@ mod detailed_tq_gate_cases {
 
         // Compare CliffordGateable trait szz vs ArbitraryRotationGateable trait rzz(π/2)
         CliffordGateable::szz(&mut q1, &[(QubitId(0), QubitId(1))]);
-        ArbitraryRotationGateable::rzz(
-            &mut q2,
-            Angle64::from_radians(PI / 2.0),
-            &[(QubitId(0), QubitId(1))],
-        );
+        ArbitraryRotationGateable::rzz(&mut q2, Angle64::QUARTER_TURN, &[(QubitId(0), QubitId(1))]);
 
         assert_states_equal(q1.state(), q2.state());
     }

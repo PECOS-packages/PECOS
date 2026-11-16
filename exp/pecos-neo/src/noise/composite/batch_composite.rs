@@ -27,7 +27,7 @@
 //! use pecos_random::PecosRng;
 //!
 //! // Create optimized batch processor
-//! let processor = fast_depolarizing(1e-4, pauli());
+//! let processor = fast_depolarizing(1e-4, pauli()).unwrap();
 //!
 //! // Process all qubits
 //! let mut state = BatchState::new(1_000);
@@ -41,6 +41,7 @@ use super::Primitive;
 use super::batch::GeometricSampler;
 use super::response::CompositeResponse;
 use crate::noise::NoiseContext;
+use crate::noise::validation::ValidationResult;
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
 use smallvec::SmallVec;
@@ -174,15 +175,21 @@ impl BatchState {
 // ============================================================================
 
 /// Result of batch processing.
+///
+/// `responses` retains exact response targets, including those named by a
+/// wrapped channel. The `skip` list records an invoked qubit only when the
+/// response skips that qubit. The `leaked` and `unleaked` lists record the invoked
+/// qubit when its response reports that effect, even if a wrapped channel names
+/// other qubits. Use `responses` to determine exact leakage targets.
 #[derive(Debug, Clone, Default)]
 pub struct BatchCompositeResult {
-    /// Qubits to skip.
+    /// Invoked qubits skipped by their response.
     pub skip: SmallVec<[QubitId; 8]>,
-    /// Qubits that leaked.
+    /// Invoked qubits whose response causes leakage.
     pub leaked: SmallVec<[QubitId; 8]>,
-    /// Qubits that unleaked.
+    /// Invoked qubits whose response clears leakage.
     pub unleaked: SmallVec<[QubitId; 8]>,
-    /// Flow responses per qubit.
+    /// Responses paired with the invoked qubit, retaining exact channel targets.
     pub responses: SmallVec<[(QubitId, CompositeResponse); 16]>,
 }
 
@@ -225,13 +232,16 @@ pub struct FastBatchProcessor<P: Primitive> {
 
 impl<P: Primitive> FastBatchProcessor<P> {
     /// Create a new fast batch processor.
-    pub fn new(probability: f64, action: P) -> Self {
-        Self {
-            sampler: GeometricSampler::new(probability),
+    ///
+    /// # Errors
+    /// Returns an error if probability is not finite and within [0, 1].
+    pub fn new(probability: f64, action: P) -> ValidationResult<Self> {
+        Ok(Self {
+            sampler: GeometricSampler::new(probability)?,
             action,
             check_not_leaked: false,
             check_active: false,
-        }
+        })
     }
 
     /// Enable not-leaked filter check on candidates.
@@ -285,10 +295,10 @@ impl<P: Primitive> FastBatchProcessor<P> {
                 if response.causes_leak() {
                     result.leaked.push(qubit);
                 }
-                if matches!(response, CompositeResponse::Unleak) {
+                if response.causes_unleak() {
                     result.unleaked.push(qubit);
                 }
-                if response.skips_gate() {
+                if response.skips_qubit(qubit) {
                     result.skip.push(qubit);
                 }
                 result.responses.push((qubit, response));
@@ -313,8 +323,14 @@ impl<P: Primitive> FastBatchProcessor<P> {
 ///
 /// This is the recommended way to create a batch processor for common
 /// depolarizing noise scenarios. It automatically filters out leaked qubits.
-pub fn fast_depolarizing<P: Primitive>(probability: f64, action: P) -> FastBatchProcessor<P> {
-    FastBatchProcessor::new(probability, action).filter_not_leaked()
+///
+/// # Errors
+/// Returns an error if probability is not finite and within [0, 1].
+pub fn fast_depolarizing<P: Primitive>(
+    probability: f64,
+    action: P,
+) -> ValidationResult<FastBatchProcessor<P>> {
+    Ok(FastBatchProcessor::new(probability, action)?.filter_not_leaked())
 }
 
 // ============================================================================
@@ -366,7 +382,7 @@ mod tests {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
 
-        let processor = fast_depolarizing(1e-4, inject_x());
+        let processor = fast_depolarizing(1e-4, inject_x()).unwrap();
         let result = processor.process_all(&state, &mut ctx, &mut rng);
 
         // ~10 affected (0.01% of 100K)
@@ -390,7 +406,7 @@ mod tests {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
 
-        let processor = fast_depolarizing(0.01, inject_x());
+        let processor = fast_depolarizing(0.01, inject_x()).unwrap();
         let result = processor.process_all(&state, &mut ctx, &mut rng);
 
         // Check that no leaked qubits were affected
@@ -423,7 +439,7 @@ mod tests {
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);
 
-        let processor = fast_depolarizing(0.1, inject_x());
+        let processor = fast_depolarizing(0.1, inject_x()).unwrap();
         let result = processor.process_all(&state, &mut ctx, &mut rng);
 
         // Only ~10 non-leaked qubits, 10% = ~1
@@ -444,7 +460,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(12345);
 
         // 1% probability
-        let processor = FastBatchProcessor::new(0.01, inject_x());
+        let processor = FastBatchProcessor::new(0.01, inject_x()).unwrap();
         let result = processor.process_all(&state, &mut ctx, &mut rng);
 
         // Should be ~1000 affected (1% of 100K)

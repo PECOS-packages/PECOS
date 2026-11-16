@@ -35,7 +35,9 @@ pub enum ParseAngleError {
     /// Division by zero in fractions
     DivisionByZero,
     /// Angle value exceeds the representable range
-    Overflow,
+    Overflow { value: String },
+    /// Decimal input or its conversion to radians is non-finite.
+    DecimalOverflow { value: String },
 }
 
 impl std::fmt::Display for ParseAngleError {
@@ -43,7 +45,14 @@ impl std::fmt::Display for ParseAngleError {
         match self {
             Self::InvalidFormat => write!(f, "invalid angle format"),
             Self::DivisionByZero => write!(f, "division by zero"),
-            Self::Overflow => write!(f, "angle too large to represent"),
+            Self::DecimalOverflow { value } => write!(
+                f,
+                "decimal angle {value} is not finite; use a finite decimal value small enough that conversion to radians remains finite"
+            ),
+            Self::Overflow { value } => write!(
+                f,
+                "angle {value} is too large to represent; use a finite angle with smaller numerator and denominator"
+            ),
         }
     }
 }
@@ -184,14 +193,18 @@ where
 
         // First check if it's just "pi" or "π" or "-pi" or "-π"
         if s == "pi" || s == "π" {
-            return Ok(Self::from_radians(std::f64::consts::PI));
+            return Ok(Self::from_turn_ratio(1, 2));
         } else if s == "-pi" || s == "-π" {
-            return Ok(Self::from_radians(-std::f64::consts::PI));
+            return Ok(Self::from_turn_ratio(-1, 2));
         }
 
         // Handle decimal numbers (with or without pi)
         if s.contains('.') {
-            return Ok(Self::from_radians(Self::parse_decimal(&s)?));
+            return Self::try_from_radians(Self::parse_decimal(&s)?).map_err(|error| {
+                ParseAngleError::DecimalOverflow {
+                    value: format!("{} {} (input {s:?})", error.value, error.unit),
+                }
+            });
         }
 
         // Split into numerator and denominator parts
@@ -212,7 +225,7 @@ where
                 && num_part[1..].chars().all(|c| c.is_ascii_digit())
                 || num_part.chars().all(|c| c.is_ascii_digit());
             if is_valid {
-                return Err(ParseAngleError::Overflow);
+                return Err(ParseAngleError::Overflow { value: s.clone() });
             }
             return Err(ParseAngleError::InvalidFormat);
         };
@@ -232,17 +245,32 @@ where
             1
         };
 
-        // Check for potential overflow in multiplication when has_pi is true
-        if has_pi && (num_val.checked_mul(2).is_none() || den_val.checked_mul(2).is_none()) {
-            return Err(ParseAngleError::Overflow);
-        }
-
-        // Convert to angle using appropriate method
+        // Normalize and reduce in i128: twice any nonzero i64 denominator fits.
         if has_pi {
-            Ok(Self::from_turn_ratio(num_val, den_val * 2))
+            let denominator = (i128::from(den_val) * 2).abs();
+            let numerator = i128::from(num_val) % denominator;
+            let numerator = if den_val < 0 { -numerator } else { numerator };
+            let bits = u64::from(T::zero().count_zeros());
+            let magnitude = super::rounded_scaled_ratio(
+                numerator.unsigned_abs(),
+                denominator.unsigned_abs(),
+                bits,
+            );
+            let fraction = if numerator < 0 {
+                magnitude.wrapping_neg()
+            } else {
+                magnitude
+            };
+            let fraction = fraction & (u128::MAX >> (128 - bits));
+            Ok(Self {
+                fraction: T::try_from(fraction)
+                    .map_err(|_| ParseAngleError::Overflow { value: s.clone() })?,
+            })
         } else {
             let radians = num_val as f64 / den_val as f64;
-            Ok(Self::from_radians(radians))
+            Self::try_from_radians(radians).map_err(|error| ParseAngleError::Overflow {
+                value: error.to_string(),
+            })
         }
     }
 
@@ -279,7 +307,9 @@ where
                 .parse::<f64>()
                 .map_err(|_| ParseAngleError::InvalidFormat)?;
             if !value.is_finite() {
-                return Err(ParseAngleError::Overflow);
+                return Err(ParseAngleError::DecimalOverflow {
+                    value: s.to_string(),
+                });
             }
             Ok(value * std::f64::consts::PI)
         } else {
@@ -290,7 +320,9 @@ where
                 .parse::<f64>()
                 .map_err(|_| ParseAngleError::InvalidFormat)?;
             if !value.is_finite() {
-                return Err(ParseAngleError::Overflow);
+                return Err(ParseAngleError::DecimalOverflow {
+                    value: s.to_string(),
+                });
             }
             Ok(value)
         }
@@ -312,7 +344,9 @@ where
             let is_valid = n.starts_with('-') && n[1..].chars().all(|c| c.is_ascii_digit())
                 || n.chars().all(|c| c.is_ascii_digit());
             if is_valid {
-                Err(ParseAngleError::Overflow)
+                Err(ParseAngleError::Overflow {
+                    value: n.to_string(),
+                })
             } else {
                 Err(ParseAngleError::InvalidFormat)
             }
@@ -487,10 +521,10 @@ mod tests {
 
     #[test]
     fn test_parse_edge_cases() {
-        // Very large numbers
-        assert!(
-            Angle64::from_str_radians(&format!("{}pi", i64::MAX)).is_err(),
-            "failed to deal with large numbers"
+        // An odd integer multiple of pi reduces exactly to a half turn.
+        assert_eq!(
+            Angle64::from_str_radians(&format!("{}pi", i64::MAX)).unwrap(),
+            Angle64::HALF_TURN,
         );
 
         // Negative numbers - Note: -pi/2 gets normalized to 3pi/2

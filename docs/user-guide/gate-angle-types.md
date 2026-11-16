@@ -60,7 +60,7 @@ let p = GlobalPhase::i();
 assert_eq!(p.as_quarter(), Some(pecos_core::QuarterPhase::PlusI));
 
 // Arbitrary phase
-let p = GlobalPhase::from_angle(Angle64::from_turns(0.125)); // e^{i*pi/4}
+let p = GlobalPhase::from_angle(Angle64::from_turn_ratio(1, 8)); // e^{i*pi/4}
 ```
 
 ## Angle Types
@@ -81,7 +81,7 @@ let half = Angle64::HALF_TURN;         // pi
 let full = Angle64::FULL_TURN;         // 2*pi (wraps to 0)
 
 // From turns (fractional rotations)
-let eighth = Angle64::from_turns(0.125);  // pi/4
+let eighth = Angle64::from_turn_ratio(1, 8);  // pi/4
 
 // Exact rational construction
 let third = Angle64::from_turn_ratio(1, 3);  // 2*pi/3
@@ -92,6 +92,26 @@ assert_eq!(half + half, zero);  // wraps around
 
 // Conversion to radians (for interop)
 let radians: f64 = quarter.to_radians();
+```
+
+### Constructing Angles
+
+Use named constants or `from_turn_ratio` for exact fractions of a turn. For
+floating-point literals, `radians!` and `turns!` check finiteness at compile time;
+`radians!(f64::NAN)` and a runtime variable inside either macro do not compile.
+For runtime values, use the fallible constructors and propagate errors with `?`.
+
+```rust
+use pecos_core::{Angle64, NonFiniteAngleError, radians, turns};
+
+let half = Angle64::HALF_TURN;
+let eighth = Angle64::from_turn_ratio(1, 8);
+let literal_radians = radians!(0.37);
+let literal_turns = turns!(0.125);
+
+fn runtime_angles(radians: f64, turns: f64) -> Result<(Angle64, Angle64), NonFiniteAngleError> {
+    Ok((Angle64::try_from_radians(radians)?, Angle64::try_from_turns(turns)?))
+}
 ```
 
 ### Angle Macros
@@ -211,10 +231,15 @@ let mut registry = GateRegistry::new();
 let def = GateDefinitionBuilder::new("RZX", 2)
     .angle_arity(1)
     .step(GateType::H, &[1])                              // H on target
+    .expect("valid step positions")
     .step(GateType::CX, &[0, 1])                          // CX
+    .expect("valid step positions")
     .step_with_angles(GateType::RZ, &[1], &[AngleSource::Input(0)])  // RZ(theta)
+    .expect("valid step positions")
     .step(GateType::CX, &[0, 1])                          // CX
+    .expect("valid step positions")
     .step(GateType::H, &[1])                              // H on target
+    .expect("valid step positions")
     .build();
 registry.register(def);
 
@@ -230,6 +255,15 @@ When decomposing parameterized gates, `AngleSource` specifies where each angle c
 - `AngleSource::NegInput(i)` -- negate the i-th input angle
 
 ### Python API
+
+`GateRegistry.decompose` takes input angles in turns and returns step angles in
+turns; `AngleSource.fixed(0.25)` is a quarter turn. Angles are normalized modulo
+one turn by `Angle64`, including negated inputs. Simulator circuit parameters
+and step bindings use radians: `DefaultSimulator` reads a registered gate's
+`angles` (or `angle`, for a one-angle gate), converts them from radians to turns
+before decomposition, and converts the returned step angles back to radians.
+Step metadata can override a step's `angles`, in simulator radians. A one-angle
+step's `angle` always follows its `angles`, so override `angles`, not `angle`.
 
 ```python
 from pecos.quantum import GateRegistry
@@ -249,7 +283,7 @@ registry = GateRegistry()
     .register_into(registry)
 )
 
-# Decompose
+# Decompose with a half-turn input (pi radians); returned angles are turns
 steps = registry.decompose("RZX", [0, 1], [0.5])
 ```
 

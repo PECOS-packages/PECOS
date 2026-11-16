@@ -76,11 +76,7 @@ impl EventHandler for PreparationStateHandler {
     }
 
     fn handle(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext) {
-        if let NoiseEvent::AfterPreparation { qubits } = event {
-            for &qubit in *qubits {
-                ctx.mark_prepared(qubit);
-            }
-        }
+        event.apply_state_updates(ctx);
     }
 
     fn name(&self) -> &'static str {
@@ -111,11 +107,7 @@ impl EventHandler for MeasurementStateHandler {
     }
 
     fn handle(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext) {
-        if let NoiseEvent::AfterMeasurement { qubits, .. } = event {
-            for &qubit in *qubits {
-                ctx.mark_measured(qubit);
-            }
-        }
+        event.apply_state_updates(ctx);
     }
 
     fn name(&self) -> &'static str {
@@ -135,6 +127,7 @@ impl EventHandler for MeasurementStateHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::GateType;
     use pecos_core::QubitId;
 
     #[test]
@@ -150,15 +143,20 @@ mod tests {
     fn test_preparation_handler() {
         let handler = PreparationStateHandler;
         let qubits = [QubitId(0), QubitId(1)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         assert!(handler.handles(&event));
 
         let mut ctx = NoiseContext::new();
+        ctx.mark_leaked(QubitId(1));
         handler.handle(&event, &mut ctx);
 
         assert!(ctx.is_active(QubitId(0)));
         assert!(ctx.is_active(QubitId(1)));
+        assert!(!ctx.is_leaked(QubitId(1)), "preparation clears leakage");
         assert!(ctx.exists(QubitId(0)));
         assert!(ctx.exists(QubitId(1)));
     }
@@ -169,6 +167,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };

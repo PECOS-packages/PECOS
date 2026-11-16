@@ -32,26 +32,28 @@ impl SeleneSimBehavior for StateVecBehavior {
 
     fn apply_rxy(&mut self, qubit: QubitId, theta: f64, phi: f64) -> Result<()> {
         self.sim
-            .rz(Angle64::from_radians(-phi), &[qubit])
-            .rx(Angle64::from_radians(theta), &[qubit])
-            .rz(Angle64::from_radians(phi), &[qubit]);
+            .rz(Angle64::try_from_radians(-phi).unwrap(), &[qubit])
+            .rx(Angle64::try_from_radians(theta).unwrap(), &[qubit])
+            .rz(Angle64::try_from_radians(phi).unwrap(), &[qubit]);
         Ok(())
     }
 
     fn apply_rz(&mut self, qubit: QubitId, theta: f64) -> Result<()> {
-        self.sim.rz(Angle64::from_radians(theta), &[qubit]);
+        self.sim
+            .rz(Angle64::try_from_radians(theta).unwrap(), &[qubit]);
         Ok(())
     }
 
     fn apply_rzz(&mut self, q1: QubitId, q2: QubitId, theta: f64) -> Result<()> {
-        self.sim.rzz(Angle64::from_radians(theta), &[(q1, q2)]);
+        self.sim
+            .rzz(Angle64::try_from_radians(theta).unwrap(), &[(q1, q2)]);
         Ok(())
     }
 
     fn apply_rxyxy2q(&mut self, q1: QubitId, q2: QubitId, theta: f64, phi: f64) -> Result<()> {
         self.sim.rxyxy2q(
-            Angle64::from_radians(theta),
-            Angle64::from_radians(phi),
+            Angle64::try_from_radians(theta).unwrap(),
+            Angle64::try_from_radians(phi).unwrap(),
             &[(q1, q2)],
         );
         Ok(())
@@ -226,8 +228,8 @@ impl SeleneSimBehavior for StabilizerBehavior {
     fn apply_rxyxy2q(&mut self, q1: QubitId, q2: QubitId, theta: f64, phi: f64) -> Result<()> {
         self.sim
             .try_rxyxy2q(
-                Angle64::from_radians(theta),
-                Angle64::from_radians(phi),
+                Angle64::try_from_radians(theta).unwrap(),
+                Angle64::try_from_radians(phi).unwrap(),
                 &[(q1, q2)],
             )
             .map_err(|error| anyhow!(error))?;
@@ -328,5 +330,41 @@ fn adapter_dispatches_rpp_and_checks_targets() {
                 }]))
                 .is_err()
         );
+    }
+}
+
+#[test]
+fn adapter_rejects_repeated_rzz_without_mutation() {
+    use selene_core::operation::{BatchOperation, Operation};
+    use selene_core::simulator::SimulatorInterface;
+
+    let mut adapter = SeleneAdapter {
+        behavior: StateVecBehavior {
+            sim: StateVec::with_seed(2, 0),
+        },
+        num_qubits: 2,
+    };
+    adapter.behavior.sim.h(&[QubitId(0)]);
+    let before = adapter.behavior.sim.state();
+    for theta in [
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+        std::f64::consts::PI,
+        3.0 * std::f64::consts::FRAC_PI_2,
+    ] {
+        let error = adapter
+            .handle_operations(BatchOperation::error_model(vec![Operation::RZZGate {
+                qubit_id_1: 1,
+                qubit_id_2: 1,
+                theta,
+            }]))
+            .err()
+            .expect("repeated operands must return an error");
+        assert!(
+            error
+                .to_string()
+                .contains("RZZ requires distinct qubits; repeated qubit 1")
+        );
+        assert_eq!(adapter.behavior.sim.state(), before);
     }
 }

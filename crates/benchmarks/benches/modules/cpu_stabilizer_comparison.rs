@@ -22,7 +22,7 @@
 //! - `DenseStabRowOnly` (row-only dense)
 //! - `SparseColOnly` (column-only sparse `SmallVec`)
 //! - `SparseRowOnly` (row-only sparse `SmallVec`)
-//! - `SparseStab` (BitSet-based sparse, row+column)
+//! - `SparseStab` (adaptive sparse, row+column)
 //! - `GpuStab` (column-only dense, u32 words)
 //! - `GpuStabOpt` (optimized `GpuStab` variant)
 //! - `GpuStabParallel` (parallel `GpuStab` variant)
@@ -231,7 +231,7 @@ fn bench_cpu_stabilizer_surface_code<M: Measurement>(c: &mut Criterion<M>) {
                 );
             });
 
-            // --- SparseStab (BitSet-based, row+col) ---
+            // --- SparseStab (adaptive, row+col) ---
             group.bench_with_input(BenchmarkId::new("SparseStab", &label), &(), |b, ()| {
                 b.iter_batched(
                     || {

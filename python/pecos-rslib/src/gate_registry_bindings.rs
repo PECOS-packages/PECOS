@@ -57,8 +57,8 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "RXYXY2Q" => Ok(GateType::RXYXY2Q),
         "RXXRYYRZZ" => Ok(GateType::RXXRYYRZZ),
         "CCX" | "Toffoli" => Ok(GateType::CCX),
-        "Measure" | "MZ" => Ok(GateType::MZ),
-        "MeasureLeaked" => Ok(GateType::MeasureLeaked),
+        "Measure" | "MeasureZ" | "MZ" => Ok(GateType::MZ),
+        "MeasureLeaked" | "MeasureZLeaked" => Ok(GateType::MeasureZLeaked),
         "MeasureFree" => Ok(GateType::MeasureFree),
         "Prep" | "PZ" => Ok(GateType::PZ),
         "QAlloc" => Ok(GateType::QAlloc),
@@ -247,10 +247,13 @@ impl PyAngleSource {
 
     /// Use a fixed angle value (in turns, where 1.0 = full turn).
     #[staticmethod]
-    fn fixed(value: f64) -> Self {
-        Self {
-            inner: AngleSource::Fixed(Angle64::from_turns(value)),
-        }
+    fn fixed(value: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: AngleSource::Fixed(
+                Angle64::try_from_turns(value)
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+            ),
+        })
     }
 
     /// Negate the i-th input angle from the parent gate.
@@ -279,12 +282,16 @@ pub struct PyGateDefBuilder {
 #[pymethods]
 impl PyGateDefBuilder {
     /// Set the number of angle parameters this gate accepts.
-    fn angle_arity(slf: Py<Self>, py: Python<'_>, arity: usize) -> Py<Self> {
+    fn angle_arity(slf: Py<Self>, py: Python<'_>, arity: usize) -> PyResult<Py<Self>> {
         let mut this = slf.borrow_mut(py);
-        let builder = this.inner.take().expect("Builder already consumed");
+        let builder = this.inner.take().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Builder already consumed; create a new definition before adding steps",
+            )
+        })?;
         this.inner = Some(builder.angle_arity(arity));
         drop(this);
-        slf
+        Ok(slf)
     }
 
     /// Add a non-parameterized gate step to the decomposition.
@@ -296,8 +303,14 @@ impl PyGateDefBuilder {
     ) -> PyResult<Py<Self>> {
         let gate_type = parse_gate_type(gate_name)?;
         let mut this = slf.borrow_mut(py);
-        let builder = this.inner.take().expect("Builder already consumed");
-        this.inner = Some(builder.step(gate_type, &qubit_indices));
+        let builder = this.inner.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Builder already consumed; create a new definition before adding steps",
+            )
+        })?;
+        builder
+            .add_step(gate_type, &qubit_indices, &[], HashMap::new())
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         drop(this);
         Ok(slf)
     }
@@ -313,8 +326,14 @@ impl PyGateDefBuilder {
         let gate_type = parse_gate_type(gate_name)?;
         let sources: Vec<AngleSource> = angle_sources.into_iter().map(|s| s.inner).collect();
         let mut this = slf.borrow_mut(py);
-        let builder = this.inner.take().expect("Builder already consumed");
-        this.inner = Some(builder.step_with_angles(gate_type, &qubit_indices, &sources));
+        let builder = this.inner.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Builder already consumed; create a new definition before adding steps",
+            )
+        })?;
+        builder
+            .add_step(gate_type, &qubit_indices, &sources, HashMap::new())
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         drop(this);
         Ok(slf)
     }
@@ -334,8 +353,14 @@ impl PyGateDefBuilder {
         let sources: Vec<AngleSource> = angle_sources.into_iter().map(|s| s.inner).collect();
         let meta = py_dict_to_value_map(metadata)?;
         let mut this = slf.borrow_mut(py);
-        let builder = this.inner.take().expect("Builder already consumed");
-        this.inner = Some(builder.step_with_metadata(gate_type, &qubit_indices, &sources, meta));
+        let builder = this.inner.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Builder already consumed; create a new definition before adding steps",
+            )
+        })?;
+        builder
+            .add_step(gate_type, &qubit_indices, &sources, meta)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         drop(this);
         Ok(slf)
     }
@@ -379,6 +404,13 @@ impl PyGateRegistry {
         self.inner.contains(name)
     }
 
+    /// Return the definition's qubit arity, or None if the gate is not registered.
+    fn quantum_arity(&self, name: &str) -> Option<usize> {
+        self.inner
+            .get(name)
+            .map(|definition| definition.quantum_arity)
+    }
+
     fn __len__(&self) -> usize {
         self.inner.len()
     }
@@ -395,9 +427,17 @@ impl PyGateRegistry {
         angles: Vec<f64>,
     ) -> PyResult<Py<PyAny>> {
         let qubit_ids: Vec<QubitId> = qubits.into_iter().map(QubitId::from).collect();
-        let angle_vals: Vec<Angle64> = angles.into_iter().map(Angle64::from_turns).collect();
+        let angle_vals: Vec<Angle64> = angles
+            .into_iter()
+            .map(Angle64::try_from_turns)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
 
-        match self.inner.decompose(name, &qubit_ids, &angle_vals) {
+        match self
+            .inner
+            .decompose(name, &qubit_ids, &angle_vals)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
+        {
             None => Ok(py.None()),
             Some(steps) => {
                 let result = PyList::empty(py);

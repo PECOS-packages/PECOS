@@ -665,10 +665,13 @@ class TestDemGeneration:
             ancilla_budget=2,
             circuit_source="traced_qis",
         )
-        # The native topology path normalizes traced-QIS circuits (Clifford-rotation
-        # lowering + single-qubit Clifford-chain simplification) before DEM
-        # construction; the fresh comparison must apply the same normalization.
-        normalize_traced_tick_circuit(traced_tc, context="constrained budget cache test")
+        # The native topology path lowers Clifford rotations without simplifying
+        # physical gate chains; the fresh comparison must retain the same noise sites.
+        normalize_traced_tick_circuit(
+            traced_tc,
+            context="constrained budget cache test",
+            simplify_single_qubit_clifford_chains=False,
+        )
         cached_traced = generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=2,
@@ -803,7 +806,13 @@ class TestDemGeneration:
 
     def test_traced_qis_native_topology_lowers_clifford_rotations(self) -> None:
         """Surface native topology should match from_guppy's traced-QIS normalization."""
-        from pecos.qec.surface.decode import _surface_native_topology, _surface_patch_cache_key
+        from collections import Counter
+
+        from pecos.qec.surface.decode import (
+            _build_surface_tick_circuit_for_native_model,
+            _surface_native_topology,
+            _surface_patch_cache_key,
+        )
 
         _require_selene_runtime()
 
@@ -824,6 +833,21 @@ class TestDemGeneration:
 
         assert "RZZ" not in gate_names
         assert "SZZ" in gate_names
+
+        # Compare against the emitted trace, lowering rotations without ideal
+        # gate-chain cancellation. DAG conversion may split gate batches, so
+        # count operands rather than batches to preserve every noise location.
+        traced = _build_surface_tick_circuit_for_native_model(patch, 2, "Z", circuit_source="traced_qis")
+        traced.lower_clifford_rotations()
+        emitted_sites: Counter[str] = Counter()
+        for _, gate in traced.gate_batches():
+            emitted_sites[gate.gate_type.name] += len(gate.qubits)
+        topology_sites: Counter[str] = Counter()
+        for node in topology.dag_circuit.nodes():
+            gate = topology.dag_circuit.gate(node)
+            if gate is not None:
+                topology_sites[gate.gate_type.name] += len(gate.qubits)
+        assert topology_sites == emitted_sites
 
     def test_guppy_module_cache_keys_on_full_patch_identity(self) -> None:
         """Rotated and non-rotated patches of the same dx/dz/budget must NOT

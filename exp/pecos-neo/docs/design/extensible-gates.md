@@ -166,17 +166,17 @@ gates:
 
 ### Loading: String Resolution (Once)
 
-When building the circuit, strings are resolved to IDs **once**:
+When building the circuit, strings are resolved to IDs **once**. The application's `BuildError` implements `From<pecos_core::NonFiniteAngleError>` so invalid angles retain their value, unit, and correction hint:
 
 ```rust
 impl CircuitBuilder {
-    pub fn gate(mut self, name: &str, qubits: &[usize], angles: &[f64]) -> Self {
+    pub fn gate(mut self, name: &str, qubits: &[usize], angles: &[f64]) -> Result<Self, BuildError> {
         // String lookup happens HERE - once per gate definition
         let gate_id = self.registry.lookup(name)  // O(log n) binary search
             .ok_or_else(|| BuildError::UnknownGate(name.to_string()))?;
 
         // Validate signature matches spec
-        let spec = self.registry.get(gate_id).unwrap();
+        let spec = self.registry.get(gate_id)?;
         if qubits.len() != spec.quantum_arity as usize {
             return Err(BuildError::WrongQubitCount {
                 gate: name.to_string(),
@@ -196,10 +196,10 @@ impl CircuitBuilder {
         self.gates.push(Gate {
             gate_id,  // GateId(u16), not String
             qubits: qubits.iter().map(|&q| QubitId(q as u32)).collect(),
-            angles: angles.iter().map(|&a| Angle64::from_turns(a)).collect(),
+            angles: angles.iter().map(|&a| Angle64::try_from_turns(a)).collect::<Result<_, _>>()?,
         });
 
-        self
+        Ok(self)
     }
 }
 ```
@@ -1075,11 +1075,11 @@ Canonicalization happens during circuit construction:
 
 ```rust
 impl CircuitBuilder {
-    pub fn gate(mut self, name: &str, qubits: &[usize], angles: &[f64]) -> Self {
-        let gate_id = self.registry.lookup(name)?;
+    pub fn gate(mut self, name: &str, qubits: &[usize], angles: &[f64]) -> Result<Self, BuildError> {
+        let gate_id = self.registry.lookup(name).ok_or_else(|| BuildError::UnknownGate(name.to_string()))?;
         let angle_vals: SmallVec<[Angle64; 3]> = angles.iter()
-            .map(|&a| Angle64::from_turns(a))
-            .collect();
+            .map(|&a| Angle64::try_from_turns(a))
+            .collect::<Result<_, _>>()?;
 
         // Try to canonicalize
         let (final_id, final_angles) = if let Some(canonical) =
@@ -1098,7 +1098,7 @@ impl CircuitBuilder {
             qubits: qubits.iter().map(|&q| QubitId(q as u32)).collect(),
         });
 
-        self
+        Ok(self)
     }
 }
 ```
@@ -1143,19 +1143,19 @@ Sometimes you want the opposite - expand fixed gates to parameterized form:
 ```rust
 impl GateCanonicalizer {
     /// Expand fixed gate to parameterized form
-    pub fn expand(&self, gate_id: GateId) -> Option<(GateId, Angle64)> {
+    pub fn expand(&self, gate_id: GateId) -> Result<Option<(GateId, Angle64)>, pecos_core::NonFiniteAngleError> {
         // Reverse lookup
         for canon in &self.rules {
             if canon.to_gate == gate_id {
-                return Some((canon.from_gate, Angle64::from_turns(canon.angle_turns)));
+                return Ok(Some((canon.from_gate, Angle64::try_from_turns(canon.angle_turns)?)));
             }
         }
-        None
+        Ok(None)
     }
 }
 
 // Usage: SZ → RZ(π/2)
-let (rz, angle) = canonicalizer.expand(gates::SZ).unwrap();
+let (rz, angle) = canonicalizer.expand(gates::SZ)?;
 assert_eq!(rz, gates::RZ);
 assert_eq!(angle.to_turns(), 0.25);
 ```
@@ -1202,9 +1202,9 @@ This is useful when:
    angle == Angle64::QUARTER_TURN  // ✓ Always works
 
    // Tolerance only needed when PARSING from floating-point input
-   fn parse_angle(radians: f64) -> Angle64 {
+   fn parse_angle(radians: f64) -> Result<Angle64, pecos_core::NonFiniteAngleError> {
        // Convert float to fixed-point - this is where precision loss can occur
-       Angle64::from_radians(radians)
+       Angle64::try_from_radians(radians)
    }
    ```
 
@@ -1219,7 +1219,7 @@ This is useful when:
    ```rust
    // Parse floating-point, convert to fixed-point immediately
    let angle_f64: f64 = parse_from_file()?;
-   let angle = Angle64::from_turns(angle_f64);  // Now it's exact
+   let angle = Angle64::try_from_turns(angle_f64)?;  // Now it's exact
 
    // All subsequent comparisons are exact
    if angle == Angle64::QUARTER_TURN { ... }
@@ -1414,7 +1414,7 @@ impl Tool {
             noise_model: builder.noise_model,
             adaptor: builder.adaptor,
             gate_registry: builder.gate_registry,
-            program: builder.program.unwrap(),  // Validated to exist
+            program: builder.program?,  // Validated to exist
         }
     }
 
@@ -1590,14 +1590,12 @@ static CORE_CATEGORY: [GateCategory; 256] = const {
 
 ```rust
 // Define noise that applies to ALL 2-qubit gates
-let two_qubit_noise = CompositeChannel::new("tq_depol", prob(0.01, two_qubit_pauli()))
+let two_qubit_noise = CompositeChannel::new("tq_depol", prob(0.01, two_qubit_pauli()).unwrap())
     .with_filter(CompositeEventFilter::TwoQubitGate);
 
 // Define noise for parameterized gates with angle-dependent probability
 let angle_noise = CompositeChannel::new("angle_dep",
-    prob_fn(|gate| gate.angles.first().map(|a| a.abs()).unwrap_or(0.0) * 0.01,
-        depolarize()
-    ))
+    prob_angle_linear(0.01, two_qubit_pauli())?)
     .with_filter(CompositeEventFilter::ParameterizedGate);
 
 // User registers a custom 2-qubit parameterized gate
@@ -1947,10 +1945,10 @@ When parsing from floating-point input, there's a precision boundary:
 
 ```rust
 // User writes in file: angle = 0.25 (meaning 1/4 turn, π/2)
-let angle_f64 = 0.25_f64;  // Exact in f64
+let angle_f64: f64 = "0.25".parse()?;  // Parsed runtime input, exact in f64
 
 // Convert to Angle64
-let angle = Angle64::from_turns(angle_f64);
+let angle = Angle64::try_from_turns(angle_f64)?;
 
 // Is this EXACTLY Angle64::QUARTER_TURN?
 // It should be, but floating-point conversion could introduce error
@@ -2175,7 +2173,7 @@ impl AnglePrecisionValidator {
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. PARSE: Read angles from file                                │
-│     "RZ(0.25)" → Angle64::from_turns(0.25)                      │
+│     "RZ(0.25)" → Angle64::QUARTER_TURN                      │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -2343,7 +2341,7 @@ impl CircuitParser {
 
     fn parse_angle(&self, value: f64) -> Result<Angle64, ParseError> {
         // Convert float to fixed-point
-        let angle = Angle64::from_turns(value);
+        let angle = Angle64::try_from_turns(value)?;
 
         // Optionally snap to nearest exact value
         if let Some(snapper) = &self.snapper {

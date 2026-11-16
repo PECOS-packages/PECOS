@@ -35,8 +35,9 @@ def definition_takes_parameters(guppy_func: Callable) -> bool:
     parametric definition must never share a cache entry with the entry-point
     form. Guppy definitions do not expose ``__wrapped__``; the raw Python
     function sits at ``wrapped.python_func``. When no real signature is
-    reachable, the definition is treated as parametric -- the conservative
-    direction (parametric definitions are simply never cached).
+    reachable (for example ``@guppy.overload`` or ``@guppy.load_pytket``), the
+    definition is treated as parametric: it is never cached, and
+    ``guppy_to_hugr`` rejects it as a runnable entry point.
     """
     target = getattr(getattr(guppy_func, "wrapped", None), "python_func", None)
     if target is None:

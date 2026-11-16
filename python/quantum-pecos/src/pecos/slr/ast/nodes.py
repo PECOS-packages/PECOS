@@ -368,6 +368,7 @@ class AllocatorDecl(Declaration):
     name: str
     capacity: int
     parent: str | None = None  # Name of parent allocator
+    offset: int | None = None  # Required first slot within parent; None or zero for roots
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -390,11 +391,24 @@ class Statement(AstNode):
 
 @dataclass(frozen=True, kw_only=True)
 class GateOp(Statement):
-    """Quantum gate application."""
+    """Quantum gate application; multi-qubit gates have exactly ``gate.arity`` distinct targets."""
 
     gate: GateKind
     targets: tuple[SlotRef, ...]
     params: tuple[Expression, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.gate.arity > 1 and len(self.targets) != self.gate.arity:
+            msg = f"Gate {self.gate.name} expects {self.gate.arity} qubit(s), got {len(self.targets)}: {self.targets!r}"
+            raise ValueError(msg)
+        if self.gate.arity > 1:
+            seen = set()
+            for target in self.targets:
+                key = (target.allocator, target.index)
+                if key in seen:
+                    msg = f"Gate {self.gate.name} repeats qubit {target}"
+                    raise ValueError(msg)
+                seen.add(key)
 
     def children(self) -> Sequence[AstNode]:
         return (*self.targets, *self.params)
@@ -734,6 +748,7 @@ class Program(AstNode):
     returns: tuple[TypeExpr, ...] = ()
     allocator: AllocatorDecl | None = None  # Base allocator
     block_decls: tuple[BlockDecl, ...] = ()
+    is_fragment: bool = False  # A standalone Block, rather than a complete Main
 
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = []

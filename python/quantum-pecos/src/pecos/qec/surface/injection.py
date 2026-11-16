@@ -12,7 +12,8 @@ seed error is not suppressed by increasing the patch distance.
 from dataclasses import dataclass
 from itertools import pairwise
 
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
+from pecos.qec.circuit_steps import CircuitStep, OpType
+from pecos.qec.surface.circuit_builder import QubitAllocation
 from pecos.qec.surface.gadgets import Gadget, GadgetKind, default_allocation, syndrome_round_gadget
 from pecos.qec.surface.patch import SurfacePatch
 
@@ -76,7 +77,7 @@ class StateInjection:
             if bit:
                 support.symmetric_difference_update(correction)
         data = self.seed.allocations[0].data_qubits
-        steps = tuple(SurfaceCircuitStep(OpType.Z, [data[q]]) for q in sorted(support))
+        steps = tuple(CircuitStep(OpType.Z, [data[q]]) for q in sorted(support))
         return Gadget(
             GadgetKind.TRANSVERSAL,
             "correct_injection_signs",
@@ -126,12 +127,12 @@ def state_injection(
     _validate_injection_allocation(patch, allocation)
     data = allocation.data_qubits
     logical_x = patch.geometry.logical_x.data_qubits
-    steps = [SurfaceCircuitStep(OpType.ALLOC, [q], f"data[{i}]") for i, q in enumerate(data)]
-    steps.append(SurfaceCircuitStep(OpType.TICK))
+    steps = [CircuitStep(OpType.ALLOC, [q], f"data[{i}]") for i, q in enumerate(data)]
+    steps.append(CircuitStep(OpType.TICK))
     for gate in gates[state]:
-        steps.extend((SurfaceCircuitStep(gate, [data[logical_x[0]]]), SurfaceCircuitStep(OpType.TICK)))
+        steps.extend((CircuitStep(gate, [data[logical_x[0]]]), CircuitStep(OpType.TICK)))
     for control, target in pairwise(logical_x):
-        steps.extend((SurfaceCircuitStep(OpType.CX, [data[control], data[target]]), SurfaceCircuitStep(OpType.TICK)))
+        steps.extend((CircuitStep(OpType.CX, [data[control], data[target]]), CircuitStep(OpType.TICK)))
     seed = Gadget(
         GadgetKind.PREP,
         f"prep_injection_{state.lower().replace('-', 'minus_')}_seed",

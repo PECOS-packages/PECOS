@@ -16,11 +16,11 @@ use crate::prelude::PauliString as RustPauliString;
 use pecos_quantum::PauliStabilizerGroup as RustGroup;
 use pyo3::prelude::*;
 
-use crate::pauli_bindings::PauliString;
+use crate::pauli_bindings::{PauliString, extract_unsigned_index};
 
 /// A validated Pauli stabilizer group.
 ///
-/// All generators mutually commute and have real phases (+1 or -1).
+/// All generators mutually commute, have real phases (+1 or -1), and do not generate -I.
 /// Provides algebraic analysis: rank, group membership, element
 /// enumeration, and Clifford conjugation.
 ///
@@ -49,7 +49,7 @@ impl PyPauliStabilizerGroup {
     ///     generators: List of PauliString stabilizer generators
     ///
     /// Raises:
-    ///     ValueError: If generators don't commute or have non-real phases
+    ///     ValueError: If generators don't commute, have non-real phases, or generate -I
     #[new]
     #[pyo3(signature = (generators))]
     fn new(generators: Vec<PauliString>) -> PyResult<Self> {
@@ -69,6 +69,9 @@ impl PyPauliStabilizerGroup {
     ///
     /// Returns:
     ///     PauliStabilizerGroup
+    ///
+    /// Raises:
+    ///     ValueError: If parsing fails, generators anticommute, have non-real phases, or generate -I
     ///
     /// Examples:
     ///     >>> PauliStabilizerGroup.from_str("ZZI\nIZZ")
@@ -115,6 +118,32 @@ impl PyPauliStabilizerGroup {
         self.inner.contains_with_phase(&pauli.to_rust())
     }
 
+    /// Return each distinct element once, in Rust enumeration order.
+    ///
+    /// Raises `ValueError` if the rank exceeds 30.
+    fn elements(&self) -> PyResult<Vec<PauliString>> {
+        Ok(self
+            .inner
+            .elements()
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?
+            .map(PauliString::from_rust)
+            .collect())
+    }
+
+    /// Multiply generators selected by the bits of an unsigned 64-bit mask.
+    ///
+    /// Bit zero selects the first supplied generator, including dependent generators.
+    /// Generators at indices >= 64 cannot be selected, even with 64 or more generators.
+    /// Raises `TypeError` for bool or non-integer masks.
+    /// Raises `ValueError` for masks outside the generator range or unsigned 64-bit range.
+    fn element(&self, mask: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+        let mask = extract_unsigned_index(mask, "mask")?;
+        self.inner
+            .element(mask)
+            .map(PauliString::from_rust)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
     /// Get the list of stabilizer generators.
     fn stabilizers(&self) -> Vec<PauliString> {
         self.inner
@@ -131,13 +160,13 @@ impl PyPauliStabilizerGroup {
     /// Add a generator to the stabilizer group.
     ///
     /// The new generator must commute with all existing generators and
-    /// have a real phase (+1 or -1).
+    /// have a real phase (+1 or -1). The combined group must not generate -I.
     ///
     /// Args:
     ///     generator: PauliString to add
     ///
     /// Raises:
-    ///     ValueError: If generator doesn't commute or has non-real phase
+    ///     ValueError: If the generator doesn't commute, has non-real phase, or generates -I with the group
     fn add_generator(&mut self, generator: &PauliString) -> PyResult<()> {
         self.inner
             .add_generator(generator.to_rust())
@@ -150,26 +179,33 @@ impl PyPauliStabilizerGroup {
     ///     index: Index of the generator to remove
     ///
     /// Raises:
+    ///     TypeError: If index is bool or does not support the integer protocol
+    ///     ValueError: If index is negative or exceeds the platform index range
     ///     IndexError: If index is out of range
-    fn remove_generator(&mut self, index: usize) -> PyResult<PauliString> {
-        if index >= self.inner.num_generators() {
-            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "index {index} out of range for {} generators",
-                self.inner.num_generators()
-            )));
-        }
-        Ok(PauliString::from_rust(self.inner.remove_generator(index)))
+    fn remove_generator(&mut self, index: &Bound<'_, PyAny>) -> PyResult<PauliString> {
+        let index = extract_unsigned_index(index, "index")?;
+        let index = usize::try_from(index).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "index {index} exceeds the platform index range; use at most {}",
+                usize::MAX
+            ))
+        })?;
+        self.inner
+            .remove_generator(index)
+            .map(PauliString::from_rust)
+            .map_err(|error| pyo3::exceptions::PyIndexError::new_err(error.to_string()))
     }
 
     /// Merge another stabilizer group into this one.
     ///
-    /// All generators from other must commute with all generators in self.
+    /// All generators from other must commute with all generators in self,
+    /// and the combined group must not generate -I.
     ///
     /// Args:
     ///     other: PauliStabilizerGroup to merge
     ///
     /// Raises:
-    ///     ValueError: If any generators anticommute
+    ///     ValueError: If any generators anticommute or the combined group generates -I
     fn merge(&mut self, other: &PyPauliStabilizerGroup) -> PyResult<()> {
         self.inner
             .merge(&other.inner)
@@ -180,7 +216,7 @@ impl PyPauliStabilizerGroup {
     // String representations
     // ========================================================================
 
-    /// Dense string representation (one stabilizer per line).
+    /// Dense string representation (one stabilizer per line, with phase prefix, padded to num_qubits).
     fn to_dense_str(&self) -> String {
         self.inner.to_dense_str()
     }

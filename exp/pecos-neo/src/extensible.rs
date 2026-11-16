@@ -36,19 +36,24 @@ pub use adaptor::{
     AdaptedGate, CompositeAdaptor, CompositeExtendedAdaptor, CustomAdaptor, GateAdaptor,
     LiftedAdaptor, StandardAdaptor,
 };
-pub use batch::{Batch, BatchExecutor, BatchedCircuit, SimpleExecutor};
+pub use batch::{Batch, BatchError, BatchExecutor, BatchedCircuit, SimpleExecutor};
 pub use bridge::GateIdConversionError;
 pub use canonicalizer::{CanonicalForm, GateCanonicalizer};
 pub use decomposition::{
     AngleSource, CircuitResolver, DecompEntry, DecompOp, Decomposition, DecompositionRegistry,
     InstantiatedOp, Resolution, ResolutionError, ResolvedCircuit, ResolvedOp,
 };
+pub(crate) use decomposition::{
+    DEFAULT_MAX_DECOMPOSITION_DEPTH, GroupInstantiationError, instantiate_per_group, operand_groups,
+};
 pub use definitions::{
     GateDefinitions, GateDefinitionsBuilder, GateDefinitionsError, GateExecutor, NoNativeGates,
 };
 pub use gate_id::{GateId, gates};
 pub use gate_spec::{GateCategory, GateSpec};
-pub use noise_integration::{DecompositionNoiseStrategy, GateIdNoiseConfig, GateNoiseParams};
+pub use noise_integration::{
+    DecompositionNoiseStrategy, GateIdNoiseConfig, GateNoiseParams, HighLevelWeight,
+};
 pub use op_builder::{ConversionError, GateLibrary, OpBuilder, Subcircuit};
 pub use operation::{
     AdaptedOp, AdaptedSequence, AncillaRequirements, ConditionalOp, MeasBasis, PrepBasis, ResultId,

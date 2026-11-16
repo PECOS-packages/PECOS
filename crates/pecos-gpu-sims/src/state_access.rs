@@ -149,7 +149,7 @@ fn hilbert_dim(num_qubits: usize) -> Result<usize, StateAccessError> {
 }
 
 #[cfg(test)]
-mod tests {
+mod gpu_free_tests {
     use super::*;
 
     #[test]

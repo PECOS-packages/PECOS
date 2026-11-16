@@ -427,7 +427,7 @@ mod tests {
             for outcome in [false, true] {
                 let mut structure = ActiveStructure::with_seed(1, 0);
                 let _ = structure
-                    .rotation(Angle64::from_radians(0.37), &pauli, false)
+                    .rotation(pecos_core::radians!(0.37), &pauli, false)
                     .apply_rotation();
                 let work = structure
                     .measurement(&pauli, negative)

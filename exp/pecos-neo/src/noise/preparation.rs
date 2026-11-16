@@ -16,6 +16,7 @@
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use crate::command::{GateCommand, GateType};
+use crate::noise::validation::{ValidationResult, validate_probability};
 use pecos_random::PecosRng;
 use smallvec::SmallVec;
 
@@ -26,10 +27,10 @@ use smallvec::SmallVec;
 #[derive(Debug, Clone)]
 pub struct PreparationChannel {
     /// Probability of preparation error.
-    pub error_probability: f64,
+    error_probability: f64,
 
     /// Probability that a preparation error causes leakage.
-    pub leakage_ratio: f64,
+    leakage_ratio: f64,
 
     // Precomputed probability thresholds for fast sampling
     error_threshold: u64,
@@ -48,22 +49,40 @@ impl Default for PreparationChannel {
 }
 
 impl PreparationChannel {
-    /// Create a preparation error channel.
+    /// Return the configured `error_probability`.
     #[must_use]
-    pub fn new(p: f64) -> Self {
-        Self {
+    pub fn error_probability(&self) -> f64 {
+        self.error_probability
+    }
+
+    /// Return the configured `leakage_ratio`.
+    #[must_use]
+    pub fn leakage_ratio(&self) -> f64 {
+        self.leakage_ratio
+    }
+
+    /// Create a preparation error channel.
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn new(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Ok(Self {
             error_probability: p,
             error_threshold: PecosRng::probability_threshold(p),
             ..Default::default()
-        }
+        })
     }
 
     /// Set the leakage ratio.
-    #[must_use]
-    pub fn with_leakage(mut self, ratio: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_leakage(mut self, ratio: f64) -> ValidationResult<Self> {
+        validate_probability(ratio, "ratio")?;
         self.leakage_ratio = ratio;
         self.leakage_threshold = PecosRng::probability_threshold(ratio);
-        self
+        Ok(self)
     }
 }
 
@@ -82,10 +101,13 @@ impl NoiseChannel for PreparationChannel {
     fn apply(
         &self,
         event: &NoiseEvent<'_>,
-        _ctx: &mut NoiseContext,
+        ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let NoiseEvent::AfterPreparation { qubits } = event else {
+        if ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
+        let NoiseEvent::AfterPreparation { qubits, .. } = event else {
             return NoiseResponse::None;
         };
 
@@ -93,8 +115,8 @@ impl NoiseChannel for PreparationChannel {
         let mut leaked = SmallVec::new();
 
         for &qubit in *qubits {
-            // Note: mark_prepared() is called by the composer, not here,
-            // so that state tracking happens even without this channel.
+            // Note: mark_prepared() is called by CorePlugin's event handler,
+            // not here, so that state tracking happens even without this channel.
 
             // Apply preparation error with probability (using precomputed threshold)
             if rng.check_probability(self.error_threshold) {
@@ -135,15 +157,18 @@ mod tests {
 
     #[test]
     fn test_preparation_error() {
-        let channel = PreparationChannel::new(1.0); // Always error
+        let channel = PreparationChannel::new(1.0).unwrap(); // Always error
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         assert!(channel.responds_to(&event));
 
         let mut ctx = NoiseContext::new();
-        // State updates are handled by the composer via event.apply_state_updates()
+        // State updates are handled by CorePlugin via event.apply_state_updates()
         // In isolated channel tests, we call it manually:
         event.apply_state_updates(&mut ctx);
 
@@ -164,10 +189,13 @@ mod tests {
 
     #[test]
     fn test_preparation_marks_prepared() {
-        let channel = PreparationChannel::new(0.0); // No error
+        let channel = PreparationChannel::new(0.0).unwrap(); // No error
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         let mut ctx = NoiseContext::new();
         // State updates are handled by event.apply_state_updates()
@@ -182,10 +210,16 @@ mod tests {
 
     #[test]
     fn test_preparation_with_leakage() {
-        let channel = PreparationChannel::new(1.0).with_leakage(1.0); // Always leak
+        let channel = PreparationChannel::new(1.0)
+            .unwrap()
+            .with_leakage(1.0)
+            .unwrap(); // Always leak
 
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         let mut ctx = NoiseContext::new();
         let mut rng = PecosRng::seed_from_u64(42);

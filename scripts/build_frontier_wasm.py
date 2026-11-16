@@ -92,12 +92,22 @@ def build(
     max_shots: int | None = None,
     replay_output: Path | None = None,
     output_path: Path | None = None,
+    *,
+    simd: bool = False,
 ) -> tuple[Path, dict[str, int] | None]:
     """Build and copy the module, returning the distribution path."""
     cargo = cargo_executable()
     target_dir = target_directory(cargo)
     environment = os.environ.copy()
-    environment["RUSTFLAGS"] = " ".join(value for value in (environment.get("RUSTFLAGS"), GETRANDOM_CFG) if value)
+    environment["RUSTFLAGS"] = " ".join(
+        value
+        for value in (
+            environment.get("RUSTFLAGS"),
+            "-Ctarget-feature=+simd128" if simd else None,
+            GETRANDOM_CFG,
+        )
+        if value
+    )
     resolved_dem = dem_path or REPO_ROOT / "exp" / PACKAGE / "model.dem"
     if dem_path is None:
         environment.pop("FRONTIER_DEM_PATH", None)
@@ -164,6 +174,7 @@ def main() -> None:
     parser.add_argument("--max-shots", type=int, help="embed at most this many corpus shots")
     parser.add_argument("--replay-output", type=Path, help="also save the generated .fwr fixture here")
     parser.add_argument("--output", type=Path, help="Wasm output path (default: dist/pecos_frontier_wasm.wasm)")
+    parser.add_argument("--simd", action="store_true", help="Enable standard WASM SIMD; requires a compatible runtime")
     args = parser.parse_args()
     if args.max_shots is not None and args.max_shots <= 0:
         parser.error("--max-shots must be positive")
@@ -179,6 +190,7 @@ def main() -> None:
         max_shots=args.max_shots,
         replay_output=args.replay_output,
         output_path=args.output,
+        simd=args.simd,
     )
     print(f"Built {output} ({output.stat().st_size:,} bytes)")
     if replay_metadata is not None:

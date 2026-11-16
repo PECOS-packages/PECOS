@@ -231,6 +231,7 @@ mod tests {
             QuarterPhase::PlusOne,
             terms.iter().map(|&(p, q)| (p, QubitId::new(q))).collect(),
         )
+        .unwrap()
     }
 
     /// Bacon-Shor on an `m x n` grid: qubit (r, c) at index `r * n + c`.

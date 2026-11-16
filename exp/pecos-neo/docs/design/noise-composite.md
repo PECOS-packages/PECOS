@@ -123,7 +123,7 @@ let prep_noise = seq([
             (leak_ratio, leak()),
             (1.0 - leak_ratio, inject(X)),
         ])
-    ),
+    ).unwrap(),
 ]);
 ```
 
@@ -139,6 +139,11 @@ Prep
         ├── leak_ratio ──▶ leak()
         └── 1-leak_ratio ──▶ X gate
 ```
+
+Composite seepage has marginal rate `p * emission_ratio * p_seep`, where `p`
+includes angle scaling. `leakage_scale` does not scale seepage. Composite draws
+are per qubit; two-qubit engine/channel outer fault and emission draws are shared
+per pair, so both-leaked joint rates differ.
 
 ### Single-Qubit Gate Noise
 
@@ -157,14 +162,14 @@ let sq_noise = seq([
     prob(p1,
         when(leaked,
             // Leaked: seepage opportunity
-            prob(p_seep, seep()),
+            prob(emission_ratio * p_seep, seep()).unwrap(),
             // Not leaked: emission vs pauli
             sample([
                 (emission_ratio, emission_noise),
                 (1.0 - emission_ratio, pauli(weights)),
             ])
         )
-    ),
+    ).unwrap(),
 ]);
 ```
 
@@ -180,7 +185,7 @@ SingleQubitGate
         │
         └─▶ when(leaked)
             │
-            ├─ YES ──▶ prob(p_seep) ──▶ seep()
+            ├─ YES ──▶ prob(emission_ratio * p_seep) ──▶ seep()
             │
             └─ NO ──▶ sample
                       ├── emission_ratio ──▶ emission
@@ -188,6 +193,9 @@ SingleQubitGate
 ```
 
 ### Two-Qubit Gate Noise
+
+In the sketches below, `p2_angle_rate` and `p2_angle_error_rate` return a validated
+`Probability`; `prob_fn` callbacks cannot return unchecked floating-point values.
 
 Similar to single-qubit, with additions:
 - Angle-dependent probability: `prob_fn(|gate| p2_angle_rate(gate.angle()))`
@@ -200,7 +208,7 @@ let tq_noise = seq([
     skip_if_any(leaked),
     prob_fn(|gate| p2_angle_error_rate(gate.angle()),
         when(any_leaked,
-            per_qubit(prob(p_seep, seep())),
+            per_qubit(prob(emission_ratio * p_seep, seep()).unwrap()),
             sample([
                 (emission_ratio, tq_emission_noise),
                 (1.0 - emission_ratio, tq_pauli(weights)),
@@ -231,8 +239,8 @@ let meas_noise = seq([
     when(leaked, force_outcome(1)),
 
     // Step 2: Asymmetric flip noise (applies to possibly-forced outcome)
-    on_outcome(0, prob(p_meas_0, flip_outcome())),
-    on_outcome(1, prob(p_meas_1, flip_outcome())),
+    on_outcome(0, prob(p_meas_0, flip_outcome()).unwrap()),
+    on_outcome(1, prob(p_meas_1, flip_outcome()).unwrap()),
 ]);
 ```
 
@@ -313,20 +321,20 @@ let idle_noise = seq([
     // Linear (T1-like): prob scales with duration
     per_qubit(
         skip_if(leaked),
-        prob_fn(|gate| p_linear * gate.duration(),
+        prob_linear(p_linear,
             sample_pauli(t1_weights)
-        )
+        )?
     ),
 
     // Quadratic (T2-like): prob scales with duration^2
     per_qubit(
         skip_if(leaked),
-        prob_fn(|gate| p_quad * gate.duration().powi(2),
+        prob_quadratic(p_quad,
             when(coherent_mode,
                 inject(RZ(angle)),
                 dephase()
             )
-        )
+        )?
     ),
 ]);
 ```
@@ -381,7 +389,7 @@ let noise = NoiseModel::new()
 
 The tree structure naturally supports early exit:
 ```rust
-prob(0.01, ...)  // 99% of the time, exit here
+prob(0.01, ...).unwrap()  // 99% of the time, exit here
 ```
 
 ### RNG Batching
@@ -446,8 +454,8 @@ fn in_hot_zone(qubit: QubitId, ctx: &Ctx) -> bool {
 
 // Use them
 let noise = when(in_hot_zone,
-    prob(0.1, AmplitudeDamping { gamma: 0.05 }),
-    prob(0.01, depolarize()),
+    prob(0.1, AmplitudeDamping { gamma: 0.05 }).unwrap(),
+    prob(0.01, depolarize()).unwrap(),
 );
 ```
 
@@ -665,8 +673,8 @@ pub enum NoiseResponse {
     None,
     /// Inject these gates after the current gate
     InjectGates(Vec<GateCommand>),
-    /// Skip/remove the current gate
-    SkipGate,
+    /// Suppress operand groups containing a listed qubit
+    SkipGate(SmallVec<[QubitId; 4]>),
     /// Multiple responses to combine
     Multiple(Vec<NoiseResponse>),
 }
@@ -682,13 +690,13 @@ fn test_sq_noise_expression() {
         SkipIf::new(Leaked),
         Prob::new(p1,
             When::new(Leaked,
-                Prob::new(p_seep, Seep),
+                Prob::new(emission_ratio * p_seep, Seep)?,
                 Sample::new(vec![
                     (emission_ratio, EmissionNoise::new(...)),
                     (1.0 - emission_ratio, Pauli::uniform()),
-                ])
+                ])?
             )
-        ),
+        )?,
     ]);
 
     // Verify statistical distribution

@@ -41,9 +41,9 @@ fn rxxryyrzz_identity_is_noop() {
 #[test]
 fn rxxryyrzz_inverse_cancels() {
     // RXXRYYRZZ(a,b,c) * RXXRYYRZZ(-a,-b,-c) = I
-    let a = Angle64::from_radians(0.5);
-    let b = Angle64::from_radians(0.3);
-    let c = Angle64::from_radians(0.7);
+    let a = pecos_core::radians!(0.5);
+    let b = pecos_core::radians!(0.3);
+    let c = pecos_core::radians!(0.7);
 
     let outcomes = run_state_vec(2, |builder| {
         builder.x(&[1]); // |01>
@@ -106,31 +106,31 @@ fn u2q_identity_preserves_input_state() {
 fn u2q_inverse_cancels() {
     let before = [
         [
-            Angle64::from_radians(0.5),
-            Angle64::from_radians(0.3),
-            Angle64::from_radians(0.7),
+            pecos_core::radians!(0.5),
+            pecos_core::radians!(0.3),
+            pecos_core::radians!(0.7),
         ],
         [
-            Angle64::from_radians(1.0),
-            Angle64::from_radians(0.2),
-            Angle64::from_radians(0.4),
+            pecos_core::radians!(1.0),
+            pecos_core::radians!(0.2),
+            pecos_core::radians!(0.4),
         ],
     ];
     let interaction = [
-        Angle64::from_radians(0.6),
-        Angle64::from_radians(0.3),
-        Angle64::from_radians(0.8),
+        pecos_core::radians!(0.6),
+        pecos_core::radians!(0.3),
+        pecos_core::radians!(0.8),
     ];
     let after = [
         [
-            Angle64::from_radians(0.9),
-            Angle64::from_radians(0.1),
-            Angle64::from_radians(0.5),
+            pecos_core::radians!(0.9),
+            pecos_core::radians!(0.1),
+            pecos_core::radians!(0.5),
         ],
         [
-            Angle64::from_radians(0.4),
-            Angle64::from_radians(0.7),
-            Angle64::from_radians(0.2),
+            pecos_core::radians!(0.4),
+            pecos_core::radians!(0.7),
+            pecos_core::radians!(0.2),
         ],
     ];
 
@@ -162,9 +162,9 @@ fn u2q_interaction_only_matches_rxxryyrzz() {
     // Apply U2q(I, angles, I) then RXXRYYRZZ(-angles) -- should cancel.
     let zero = [Angle64::ZERO; 3];
     let id = [zero; 2];
-    let a = Angle64::from_radians(0.5);
-    let b = Angle64::from_radians(0.3);
-    let c = Angle64::from_radians(0.7);
+    let a = pecos_core::radians!(0.5);
+    let b = pecos_core::radians!(0.3);
+    let c = pecos_core::radians!(0.7);
 
     let outcomes = run_state_vec(2, |builder| {
         builder.x(&[1]); // |01>
@@ -204,31 +204,31 @@ fn u2q_unitary_rep_to_gates_roundtrip() {
     // the resulting Gate produces the same state as Gate::u2q() directly.
     let before = [
         [
-            Angle64::from_radians(0.5),
-            Angle64::from_radians(0.3),
-            Angle64::from_radians(0.7),
+            pecos_core::radians!(0.5),
+            pecos_core::radians!(0.3),
+            pecos_core::radians!(0.7),
         ],
         [
-            Angle64::from_radians(1.0),
-            Angle64::from_radians(0.2),
-            Angle64::from_radians(0.4),
+            pecos_core::radians!(1.0),
+            pecos_core::radians!(0.2),
+            pecos_core::radians!(0.4),
         ],
     ];
     let interaction = [
-        Angle64::from_radians(0.6),
-        Angle64::from_radians(0.3),
-        Angle64::from_radians(0.8),
+        pecos_core::radians!(0.6),
+        pecos_core::radians!(0.3),
+        pecos_core::radians!(0.8),
     ];
     let after = [
         [
-            Angle64::from_radians(0.9),
-            Angle64::from_radians(0.1),
-            Angle64::from_radians(0.5),
+            pecos_core::radians!(0.9),
+            pecos_core::radians!(0.1),
+            pecos_core::radians!(0.5),
         ],
         [
-            Angle64::from_radians(0.4),
-            Angle64::from_radians(0.7),
-            Angle64::from_radians(0.2),
+            pecos_core::radians!(0.4),
+            pecos_core::radians!(0.7),
+            pecos_core::radians!(0.2),
         ],
     ];
 
@@ -298,9 +298,9 @@ fn rxxryyrzz_multi_pair_pure_xx() {
 #[test]
 fn rxxryyrzz_multi_pair_inverse_cancels() {
     // Forward then inverse on two pairs should preserve |0110>
-    let a = Angle64::from_radians(0.5);
-    let b = Angle64::from_radians(0.3);
-    let c = Angle64::from_radians(0.7);
+    let a = pecos_core::radians!(0.5);
+    let b = pecos_core::radians!(0.3);
+    let c = pecos_core::radians!(0.7);
 
     let outcomes = run_state_vec(4, |builder| {
         builder.x(&[1, 2]); // |0110>
@@ -358,31 +358,31 @@ fn u2q_multi_pair_single_qubit_x_on_first() {
 fn u2q_multi_pair_inverse_cancels() {
     let before = [
         [
-            Angle64::from_radians(0.5),
-            Angle64::from_radians(0.3),
-            Angle64::from_radians(0.7),
+            pecos_core::radians!(0.5),
+            pecos_core::radians!(0.3),
+            pecos_core::radians!(0.7),
         ],
         [
-            Angle64::from_radians(1.0),
-            Angle64::from_radians(0.2),
-            Angle64::from_radians(0.4),
+            pecos_core::radians!(1.0),
+            pecos_core::radians!(0.2),
+            pecos_core::radians!(0.4),
         ],
     ];
     let interaction = [
-        Angle64::from_radians(0.6),
-        Angle64::from_radians(0.3),
-        Angle64::from_radians(0.8),
+        pecos_core::radians!(0.6),
+        pecos_core::radians!(0.3),
+        pecos_core::radians!(0.8),
     ];
     let after = [
         [
-            Angle64::from_radians(0.9),
-            Angle64::from_radians(0.1),
-            Angle64::from_radians(0.5),
+            pecos_core::radians!(0.9),
+            pecos_core::radians!(0.1),
+            pecos_core::radians!(0.5),
         ],
         [
-            Angle64::from_radians(0.4),
-            Angle64::from_radians(0.7),
-            Angle64::from_radians(0.2),
+            pecos_core::radians!(0.4),
+            pecos_core::radians!(0.7),
+            pecos_core::radians!(0.2),
         ],
     ];
 
@@ -421,9 +421,9 @@ fn u2q_multi_pair_inverse_cancels() {
 
 #[test]
 fn rxxryyrzz_unitary_rep_to_gates_roundtrip() {
-    let alpha = Angle64::from_radians(0.5);
-    let beta = Angle64::from_radians(0.3);
-    let gamma = Angle64::from_radians(0.7);
+    let alpha = pecos_core::radians!(0.5);
+    let beta = pecos_core::radians!(0.3);
+    let gamma = pecos_core::radians!(0.7);
 
     let unitary = Unitary::RXXRYYRZZ { alpha, beta, gamma };
     let rep = unitary.on_qubits(0, 1);

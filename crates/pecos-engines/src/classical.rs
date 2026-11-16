@@ -48,6 +48,12 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
     /// Returns `PecosError` if result retrieval fails.
     fn get_results(&self) -> Result<Shot, PecosError>;
 
+    /// Assign the job-wide index visible to the next program invocation.
+    ///
+    /// Schedulers call this after reset, independently of RNG seeding and native
+    /// runtime identity. Engines without program-visible shot queries may ignore it.
+    fn set_program_shot(&mut self, _shot: u64) {}
+
     /// Sets a specific seed for the classical engine.
     fn set_seed(&mut self, _seed: u64) {
         // Default implementation does nothing
@@ -137,6 +143,10 @@ impl ClassicalEngine for Box<dyn ClassicalControlEngine> {
         (**self).get_results()
     }
 
+    fn set_program_shot(&mut self, shot: u64) {
+        (**self).set_program_shot(shot);
+    }
+
     fn set_seed(&mut self, seed: u64) {
         (**self).set_seed(seed);
     }
@@ -222,4 +232,21 @@ impl Engine for Box<dyn ClassicalControlEngine> {
         // Use fully qualified path to disambiguate
         ClassicalEngine::reset(&mut **self)
     }
+}
+
+/// Resolve a fixed simulator capacity, distinguishing unknown dynamic zero from static zero.
+///
+/// `remedy` names the caller's own way to supply an explicit count.
+pub(crate) fn resolve_qubit_count(
+    engine: &dyn ClassicalControlEngine,
+    explicit: Option<usize>,
+    remedy: &str,
+) -> Result<usize, PecosError> {
+    let count = explicit.unwrap_or_else(|| engine.num_qubits());
+    if explicit.is_none() && count == 0 && engine.has_dynamic_qubit_count() {
+        return Err(PecosError::Input(format!(
+            "A dynamic classical engine reports 0 qubits before execution, which is not a known capacity; {remedy} to cover runtime allocations"
+        )));
+    }
+    Ok(count)
 }

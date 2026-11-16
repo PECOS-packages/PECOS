@@ -77,9 +77,9 @@ class TestRoundTripStructure:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
-            qb.Measure(q[2]) > c[2],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
+            qb.MeasureZ(q[2]) > c[2],
         )
 
         ast = slr_to_ast(prog)
@@ -140,7 +140,7 @@ class TestRoundTripQASM:
             qb.PZ(ancilla[0]),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
-            qb.Measure(ancilla[0]) > c[0],
+            qb.MeasureZ(ancilla[0]) > c[0],
         )
 
         ast = slr_to_ast(prog)
@@ -213,7 +213,7 @@ class TestRoundTripGuppy:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
 
         ast = slr_to_ast(prog)
@@ -234,8 +234,8 @@ class TestRoundTripStim:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
         )
 
         ast = slr_to_ast(prog)
@@ -260,9 +260,9 @@ class TestRoundTripStim:
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.CX(q[1], q[2]),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
-            qb.Measure(q[2]) > c[2],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
+            qb.MeasureZ(q[2]) > c[2],
         )
 
         ast = slr_to_ast(prog)
@@ -389,9 +389,9 @@ class TestRoundTripQIR:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 3),
-            qb.Measure(q[0]) > c[0],
-            qb.Measure(q[1]) > c[1],
-            qb.Measure(q[2]) > c[2],
+            qb.MeasureZ(q[0]) > c[0],
+            qb.MeasureZ(q[1]) > c[1],
+            qb.MeasureZ(q[2]) > c[2],
         )
 
         ast = slr_to_ast(prog)

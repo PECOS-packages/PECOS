@@ -1,10 +1,13 @@
 //! Feature-independent decoder configuration data.
 
 use super::DecoderSpec;
+use pecos_decoder_core::graphlike_projection::IrreduciblePolicy;
 
 /// `PyMatching` construction options.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PyMatchingConfig {
+    /// Policy for raw faults that cannot be projected into graphlike components.
+    pub irreducible: IrreduciblePolicy,
     /// Enable correlated matching.
     pub correlated: bool,
     /// Replace every edge probability when set.
@@ -92,12 +95,17 @@ impl Default for TesseractTrellisConfig {
 /// K-MWPM construction options.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KMwpmConfig {
+    /// Policy for raw faults that cannot be projected into graphlike components.
+    pub irreducible: IrreduciblePolicy,
     pub k: usize,
 }
 
 impl Default for KMwpmConfig {
     fn default() -> Self {
-        Self { k: 10 }
+        Self {
+            k: 10,
+            irreducible: IrreduciblePolicy::default(),
+        }
     }
 }
 
@@ -115,6 +123,8 @@ pub enum FusionBlossomSolverType {
 /// Fusion Blossom construction options.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FusionBlossomConfig {
+    /// Policy for raw faults that cannot be projected into graphlike components.
+    pub irreducible: IrreduciblePolicy,
     pub correlated: bool,
     pub solver_type: FusionBlossomSolverType,
 }
@@ -197,8 +207,10 @@ pub enum RelayStoppingCriterion {
 /// Relay BP construction options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RelayBpConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` uses the original DEM probabilities before merging.
     pub error_rate: Option<f64>,
-    pub max_iter: usize,
     pub alpha: Option<f64>,
     pub alpha_iteration_scaling_factor: f64,
     pub gamma0: Option<f64>,
@@ -214,7 +226,6 @@ impl Default for RelayBpConfig {
     fn default() -> Self {
         Self {
             error_rate: None,
-            max_iter: 200,
             alpha: None,
             alpha_iteration_scaling_factor: 1.0,
             gamma0: Some(0.65),
@@ -231,6 +242,9 @@ impl Default for RelayBpConfig {
 /// Standalone min-sum BP construction options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MinSumBpConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` uses the original DEM probabilities before merging.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub alpha: Option<f64>,
@@ -244,6 +258,21 @@ impl Default for MinSumBpConfig {
             alpha: None,
         }
     }
+}
+
+/// A-star matching-graph construction options.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AStarConfig {
+    /// Policy for raw faults that cannot be projected into graphlike components.
+    pub irreducible: IrreduciblePolicy,
+}
+
+/// PECOS Union-Find construction options.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PecosUfConfig {
+    pub preset: PecosUfPreset,
+    /// Policy for raw faults that cannot be projected into graphlike components.
+    pub irreducible: IrreduciblePolicy,
 }
 
 /// PECOS Union-Find preset.
@@ -270,6 +299,8 @@ pub enum BeliefMatchingMode {
 /// Belief-matching construction options.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BeliefMatchingConfig {
+    /// Policy for raw faults that cannot be projected into graphlike components.
+    pub irreducible: IrreduciblePolicy,
     pub mode: BeliefMatchingMode,
     /// Full DEM carried only by the legacy `belief_matching_hybrid:<DEM>` grammar.
     /// `build` still requires a `HybridDem`; the Python adapter combines this
@@ -317,6 +348,9 @@ impl Default for MwpfConfig {
 }
 
 /// Perturbed-weight ensemble construction options.
+/// A recursively shared inner policy projects once before perturbing probabilities.
+/// For an inner ensemble mixing graph and non-graph decoders or different policies,
+/// each graph member projects its own perturbed model; copies may choose different decompositions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PerturbedConfig {
     pub k: usize,
@@ -332,6 +366,7 @@ impl Default for PerturbedConfig {
             sigma: 0.7,
             seed: 42,
             inner: Box::new(DecoderSpec::PyMatching(PyMatchingConfig {
+                irreducible: IrreduciblePolicy::default(),
                 correlated: true,
                 error_probability: None,
             })),
@@ -342,6 +377,8 @@ impl Default for PerturbedConfig {
 /// Fast correlated Fusion Blossom perturbation options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PerturbedFusionBlossomConfig {
+    /// Policy for raw faults that cannot be projected into graphlike components.
+    pub irreducible: IrreduciblePolicy,
     pub k: usize,
     pub sigma: f64,
     pub seed: u64,
@@ -350,6 +387,7 @@ pub struct PerturbedFusionBlossomConfig {
 impl Default for PerturbedFusionBlossomConfig {
     fn default() -> Self {
         Self {
+            irreducible: IrreduciblePolicy::default(),
             k: 5,
             sigma: 0.5,
             seed: 42,
@@ -358,6 +396,12 @@ impl Default for PerturbedFusionBlossomConfig {
 }
 
 /// Beam-search windowed decoder construction options.
+/// Phase 1 refuses raw hyperedges in its windows. A graph decoder in phase 2
+/// projects the full residual model under Refuse. Drop is rejected because this
+/// composition has no shared projection report. Phase 2 may instead use a
+/// hypergraph-capable decoder, selected through `phase2` in
+/// this typed config (Python: `pecos_rslib.decoders.beamsearch(phase2=...)`);
+/// the beamsearch string grammar has no `phase2` key.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BeamSearchConfig {
     pub beam_width: usize,
@@ -379,6 +423,7 @@ impl Default for BeamSearchConfig {
             buffer_size: 0,
             commit_weight_max: 0.0,
             phase2: Box::new(DecoderSpec::PyMatching(PyMatchingConfig {
+                irreducible: IrreduciblePolicy::default(),
                 correlated: true,
                 error_probability: None,
             })),
@@ -387,6 +432,9 @@ impl Default for BeamSearchConfig {
 }
 
 /// Voting ensemble construction options.
+/// When every member recursively resolves to the same graph projection policy,
+/// the ensemble shares one projection. Mixed graph/non-graph members or differing
+/// policies project individually in each graph member and have no shared report.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EnsembleConfig {
     pub members: Vec<DecoderSpec>,

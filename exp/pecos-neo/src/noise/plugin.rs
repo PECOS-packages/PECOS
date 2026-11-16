@@ -31,7 +31,8 @@
 //! let model = ComposableNoiseModel::new()
 //!     .add_plugin(&CorePlugin)           // Fundamental state tracking
 //!     .add_plugin(&LeakagePlugin::new()) // Leakage handling
-//!     .add_plugin(&DepolarizingPlugin::new(0.01, 0.02));
+//!     .add_plugin(&DepolarizingPlugin::new(0.01, 0.02)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use super::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
@@ -189,6 +190,7 @@ pub trait ContextObserver: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::GateType;
 
     #[derive(Clone, Copy)]
     struct TestHandler;
@@ -199,7 +201,7 @@ mod tests {
         }
 
         fn handle(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext) {
-            if let NoiseEvent::AfterPreparation { qubits } = event {
+            if let NoiseEvent::AfterPreparation { qubits, .. } = event {
                 for &qubit in *qubits {
                     ctx.mark_prepared(qubit);
                 }
@@ -240,7 +242,10 @@ mod tests {
     fn test_event_handler() {
         let handler = TestHandler;
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         assert!(handler.handles(&event));
 

@@ -150,3 +150,19 @@ fn test_edge_case_comments() {
         }
     }
 }
+
+#[test]
+fn test_comment_at_end_of_input() {
+    // A line comment runs to the end of the line or the end of the input.
+    let body = "OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[1];\nh q[0];";
+    for source in [
+        format!("{body}\n// done"),
+        format!("{body} // done"),
+        format!("{body}\r\n// done\r\n"),
+        format!("{body}\n//"),
+    ] {
+        let program = QASMParser::parse_str(&source)
+            .unwrap_or_else(|e| panic!("failed to parse {source:?}: {e}"));
+        assert_eq!(program.operations.len(), 1, "source {source:?}");
+    }
+}

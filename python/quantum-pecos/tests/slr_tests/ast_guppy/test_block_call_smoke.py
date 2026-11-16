@@ -417,7 +417,7 @@ class TestNestedConvertedBlocks:
     def _build_nested_program(self) -> object:
         from pecos.slr import Block, CReg, Main, QReg, Return
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class InnerBlock(Block):
             block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
@@ -440,7 +440,7 @@ class TestNestedConvertedBlocks:
             c := CReg("c", 2),
             qb.PZ(outer),
             OuterBlock(outer),
-            Measure(outer) > c,
+            MeasureZ(outer) > c,
             Return(c),
         )
 
@@ -472,7 +472,7 @@ class TestNestedConvertedBlocks:
         from pecos.slr import Block, CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class InnerBlock(Block):
             block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
@@ -496,7 +496,7 @@ class TestNestedConvertedBlocks:
             qb.PZ(outer),
             InnerBlock(outer),
             OuterBlock(outer),
-            Measure(outer) > c,
+            MeasureZ(outer) > c,
             Return(c),
         )
         ast = slr_to_ast(prog)
@@ -572,14 +572,14 @@ class TestConvertedBlocksInsideParallel:
     def test_parallel_with_converted_block_preserves_block_call_via_slr_converter(self) -> None:
         from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.misc import Parallel
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
         from pecos.slr.qeclib.steane.gates_sq.hadamards import H as SteaneH
 
         prog = Main(
             q := QReg("q", 7),
             c := CReg("c", 7),
             Parallel(SteaneH(q)),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         guppy_src = SlrConverter(prog).guppy()
@@ -1085,10 +1085,10 @@ class TestQubitBundleInputSupport:
             warnings.simplefilter("ignore", DeprecationWarning)
             result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(5).seed(42).run(8)
         raw = result.to_dict() if hasattr(result, "to_dict") else result
-        # Empirical probe 2026-05-15:
+        # Re-pinned for global per-shot seeding (2026-10-11).
         assert raw == {
-            "measurement_0": [1, 0, 0, 1, 0, 0, 0, 1],
-            "measurement_1": [1, 0, 0, 1, 0, 0, 0, 1],
+            "measurement_0": [0, 1, 0, 0, 1, 0, 1, 1],
+            "measurement_1": [0, 1, 0, 0, 1, 0, 1, 1],
         }, raw
         # Bell correlation: bundled slots a[2] and b[0] measure identically.
         assert raw["measurement_0"] == raw["measurement_1"], raw
@@ -1552,7 +1552,7 @@ class TestBlockBodyStatementSubstitution:
         from pecos.slr.ast.nodes import PermuteOp
         from pecos.slr.misc import Permute
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class SwapBlock(Block):
             block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
@@ -1567,7 +1567,7 @@ class TestBlockBodyStatementSubstitution:
             c := CReg("c", 2),
             qb.PZ(outer),
             SwapBlock(outer),
-            Measure(outer) > c,
+            MeasureZ(outer) > c,
             Return(c),
         )
         ast = slr_to_ast(prog)
@@ -1623,7 +1623,7 @@ class TestSlrBlockInputsWiring:
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class BellBlock(Block):
             block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
@@ -1638,7 +1638,7 @@ class TestSlrBlockInputsWiring:
             c := CReg("c", 2),
             qb.PZ(outer_q),
             BellBlock(outer_q),
-            Measure(outer_q) > c,
+            MeasureZ(outer_q) > c,
             Return(c),
         )
         ast = slr_to_ast(prog)
@@ -1668,7 +1668,7 @@ class TestSlrBlockInputsWiring:
         from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class BellBlock(Block):
             block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
@@ -1683,7 +1683,7 @@ class TestSlrBlockInputsWiring:
             c := CReg("c", 2),
             qb.PZ(outer_q),
             BellBlock(outer_q),
-            Measure(outer_q) > c,
+            MeasureZ(outer_q) > c,
             Return(c),
         )
 
@@ -1775,7 +1775,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         from pecos.slr.ast.nodes import SingleQubitArg, SlotRef
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class SqBlock(Block):
             block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
@@ -1790,7 +1790,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             c := CReg("c", 1),
             qb.PZ(outer_q),
             SqBlock(outer_q[0]),
-            Measure(outer_q) > c,
+            MeasureZ(outer_q) > c,
             Return(c),
         )
 
@@ -1813,7 +1813,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         from pecos.slr.ast.nodes import QubitBundleArg, SlotRef
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class BundleBlock(Block):
             block_inputs: ClassVar[dict[str, str]] = {"d": "live_preserved"}
@@ -1828,7 +1828,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             c := CReg("c", 3),
             qb.PZ(outer_q),
             BundleBlock([outer_q[0], outer_q[2]]),
-            Measure(outer_q) > c,
+            MeasureZ(outer_q) > c,
             Return(c),
         )
 
@@ -1855,7 +1855,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         from pecos.slr.ast.nodes import QubitBundleArg, SlotRef
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class BundleBlock(Block):
             block_inputs: ClassVar[dict[str, str]] = {"d": "live_preserved"}
@@ -1872,8 +1872,8 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             qb.PZ(qa),
             qb.PZ(qb_reg),
             BundleBlock([qa[0], qb_reg[1]]),
-            Measure(qa) > c[0:2],
-            Measure(qb_reg) > c[2:4],
+            MeasureZ(qa) > c[0:2],
+            MeasureZ(qb_reg) > c[2:4],
             Return(c),
         )
 
@@ -1911,7 +1911,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         )
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class CheckLike(Block):
             block_inputs: ClassVar[dict[str, str]] = {
@@ -1930,7 +1930,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
                     qb.CX(a, d[0]),
                     qb.CX(a, d[1]),
                     qb.H(a),
-                    Measure(a) > out,
+                    MeasureZ(a) > out,
                 )
 
         prog = Main(
@@ -1938,8 +1938,8 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             c := CReg("c", 3),
             qb.PZ(outer_q),
             CheckLike([outer_q[0], outer_q[1]], outer_q[2], c[0]),
-            Measure(outer_q[0]) > c[1],
-            Measure(outer_q[1]) > c[2],
+            MeasureZ(outer_q[0]) > c[1],
+            MeasureZ(outer_q[1]) > c[2],
             Return(c),
         )
 
@@ -2152,7 +2152,7 @@ class TestScratchEffectS1:
     def _good_check():
         from pecos.slr import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class GoodCheck(Block):
             block_inputs: ClassVar[dict[str, str]] = {
@@ -2166,7 +2166,7 @@ class TestScratchEffectS1:
                 self.d = d
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), qb.CX(a, d[0]), qb.CX(a, d[1]), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.CX(a, d[0]), qb.CX(a, d[1]), MeasureZ(a) > out)
 
         return GoodCheck
 
@@ -2254,7 +2254,7 @@ class TestScratchEffectS1:
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class BadFirst(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2263,7 +2263,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.H(a), qb.PZ(a), Measure(a) > out)
+                self.extend(qb.H(a), qb.PZ(a), MeasureZ(a) > out)
 
         prog = Main(
             q := QReg("q", 1),
@@ -2279,7 +2279,7 @@ class TestScratchEffectS1:
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class BadAfter(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2288,7 +2288,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), Measure(a) > out, qb.H(a))
+                self.extend(qb.PZ(a), MeasureZ(a) > out, qb.H(a))
 
         prog = Main(
             q := QReg("q", 1),
@@ -2323,7 +2323,7 @@ class TestScratchEffectS1:
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class LoopScratch(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2335,7 +2335,7 @@ class TestScratchEffectS1:
                 self.extend(
                     qb.PZ(a),
                     Repeat(2).block(qb.H(a)),
-                    Measure(a) > out,
+                    MeasureZ(a) > out,
                 )
 
         prog = Main(
@@ -2356,7 +2356,7 @@ class TestScratchEffectS1:
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class Alias(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "b": "live_preserved"}
@@ -2365,7 +2365,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.b = b
-                self.extend(qb.PZ(a), qb.CX(a, b), Measure(a))
+                self.extend(qb.PZ(a), qb.CX(a, b), MeasureZ(a))
 
         prog = Main(q := QReg("q", 2), Alias(q[0], q[0]))
         with pytest.raises(ValueError, match=r"qubit q\[0\] is also bound by input 'a'"):
@@ -2417,7 +2417,7 @@ class TestScratchEffectS1:
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class PrepMeasurePrep(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2426,7 +2426,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), Measure(a) > out, qb.PZ(a))
+                self.extend(qb.PZ(a), MeasureZ(a) > out, qb.PZ(a))
 
         prog = Main(
             q := QReg("q", 1),
@@ -2462,7 +2462,7 @@ class TestScratchEffectS1:
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class TwoLifecycles(Block):
             block_inputs: ClassVar[dict[str, str]] = {
@@ -2478,9 +2478,9 @@ class TestScratchEffectS1:
                 self.out1 = out1
                 self.extend(
                     qb.PZ(a),
-                    Measure(a) > out0,
+                    MeasureZ(a) > out0,
                     qb.PZ(a),
-                    Measure(a) > out1,
+                    MeasureZ(a) > out1,
                 )
 
         prog = Main(
@@ -2511,7 +2511,7 @@ class TestScratchEffectS1:
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class RetScratch(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2520,7 +2520,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), Measure(a) > out, Return(a))
+                self.extend(qb.PZ(a), MeasureZ(a) > out, Return(a))
 
         prog = Main(
             q := QReg("q", 1),
@@ -2538,7 +2538,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), Measure(a) > out, Return(out))
+                self.extend(qb.PZ(a), MeasureZ(a) > out, Return(out))
 
         prog2 = Main(
             q := QReg("q", 1),
@@ -2559,7 +2559,7 @@ class TestScratchEffectS1:
         from pecos import Hugr, selene_engine, sim
         from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class Chk(Block):
             block_inputs: ClassVar[dict[str, str]] = {
@@ -2579,7 +2579,7 @@ class TestScratchEffectS1:
                     qb.CX(a, d[0]),
                     qb.CX(a, d[1]),
                     qb.H(a),
-                    Measure(a) > out,
+                    MeasureZ(a) > out,
                 )
 
         prog = Main(
@@ -2606,8 +2606,8 @@ class TestScratchEffectS1:
         raw = result.to_dict() if hasattr(result, "to_dict") else result
         # Probe-pinned: both Checks see the same |00> data, same seed.
         assert raw == {
-            "measurement_0": [1, 0, 0, 1],
-            "measurement_1": [1, 0, 0, 1],
+            "measurement_0": [0, 1, 0, 0],
+            "measurement_1": [0, 1, 0, 0],
         }, raw
 
     def test_scratch_outer_slot_misuse_rejected(self) -> None:
@@ -2618,7 +2618,7 @@ class TestScratchEffectS1:
         from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast.codegen.guppy import GuppyCodegenError
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class MS(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2627,7 +2627,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), qb.H(a), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.H(a), MeasureZ(a) > out)
 
         prog = Main(
             q := QReg("q", 1),
@@ -2635,7 +2635,7 @@ class TestScratchEffectS1:
             qb.PZ(q[0]),
             qb.X(q[0]),  # meaningful caller state on the scratch slot
             MS(q[0], c[0]),
-            Measure(q[0]) > c[1],  # ...observed after the scratch call
+            MeasureZ(q[0]) > c[1],  # ...observed after the scratch call
             Return(c),
         )
         with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[0\].*meaningful caller state"):
@@ -2648,7 +2648,7 @@ class TestScratchEffectS1:
         """
         from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class Chk(Block):
             block_inputs: ClassVar[dict[str, str]] = {
@@ -2662,7 +2662,7 @@ class TestScratchEffectS1:
                 self.d = d
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), qb.CX(a, d[0]), qb.CX(a, d[1]), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.CX(a, d[0]), qb.CX(a, d[1]), MeasureZ(a) > out)
 
         prog = Main(
             q := QReg("q", 3),
@@ -2712,7 +2712,7 @@ class TestScratchEffectS1:
         from pecos.slr import Block, CReg, Main, Permute, QReg, Return, SlrConverter
         from pecos.slr.ast.codegen.guppy import GuppyCodegenError
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class MS(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2721,7 +2721,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), qb.H(a), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.H(a), MeasureZ(a) > out)
 
         prog = Main(
             q := QReg("q", 2),
@@ -2730,7 +2730,7 @@ class TestScratchEffectS1:
             qb.X(q[0]),
             MS(q[1], c[0]),
             Permute([q[0], q[1]], [q[1], q[0]]),
-            Measure(q[0]) > c[1],
+            MeasureZ(q[0]) > c[1],
             Return(c),
         )
         with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[1\].*Permute"):
@@ -2743,7 +2743,7 @@ class TestScratchEffectS1:
         from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast.codegen.guppy import GuppyCodegenError
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class MS(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2752,7 +2752,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), qb.H(a), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.H(a), MeasureZ(a) > out)
 
         prog = Main(
             q := QReg("q", 2),
@@ -2772,7 +2772,7 @@ class TestScratchEffectS1:
         from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast.codegen.guppy import GuppyCodegenError
         from pecos.slr.qeclib import qubit as qb
-        from pecos.slr.qeclib.qubit.measures import Measure
+        from pecos.slr.qeclib.qubit.measures import MeasureZ
 
         class Inner(Block):
             block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
@@ -2781,7 +2781,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.PZ(a), qb.H(a), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.H(a), MeasureZ(a) > out)
 
         class Outer(Block):
             block_inputs: ClassVar[dict[str, str]] = {
@@ -2865,14 +2865,14 @@ class TestScratchCheckS4ProductionLockIn:
         # (design R2: parity is on behavioral records, not qubit count).
         result = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(10).seed(42).run(4)
         raw = result.to_dict() if hasattr(result, "to_dict") else result
-        # Empirical probe 2026-05-16 (post-conversion, scratch internal alloc).
+        # Re-pinned for global per-shot seeding (2026-10-11).
         assert raw == {
             "measurement_0": [0, 0, 0, 0],
             "measurement_1": [0, 0, 0, 0],
             "measurement_2": [0, 0, 0, 0],
-            "measurement_3": [1, 1, 0, 1],
-            "measurement_4": [0, 0, 1, 0],
-            "measurement_5": [0, 0, 1, 0],
+            "measurement_3": [0, 1, 0, 0],
+            "measurement_4": [1, 1, 1, 1],
+            "measurement_5": [0, 1, 1, 0],
         }, raw
 
     def test_color488_syn_extract_bare_routes_and_runs(self) -> None:
@@ -2910,9 +2910,9 @@ class TestScratchCheckS4ProductionLockIn:
             "measurement_0": [0, 0, 0, 0],
             "measurement_1": [0, 0, 0, 0],
             "measurement_2": [0, 0, 0, 0],
-            "measurement_3": [1, 1, 0, 1],
-            "measurement_4": [0, 0, 1, 0],
-            "measurement_5": [0, 0, 1, 0],
+            "measurement_3": [0, 1, 0, 0],
+            "measurement_4": [1, 1, 1, 1],
+            "measurement_5": [0, 1, 1, 0],
         }, raw
 
 
@@ -2960,7 +2960,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
             .run(4)
         )
         raw = result.to_dict() if hasattr(result, "to_dict") else result
-        # Empirical probe 2026-05-16 (post-conversion, scratch internal alloc).
+        # Re-pinned for global per-shot seeding (2026-10-11).
         assert raw == {
             "measurement_0": [0, 0, 0, 0],
             "measurement_1": [0, 0, 0, 0],
@@ -2968,11 +2968,11 @@ class TestScratchCheck1FlagS5ProductionLockIn:
             "measurement_3": [0, 0, 0, 0],
             "measurement_4": [0, 0, 0, 0],
             "measurement_5": [0, 0, 0, 0],
-            "measurement_6": [1, 1, 0, 1],
+            "measurement_6": [0, 1, 0, 0],
             "measurement_7": [0, 0, 0, 0],
-            "measurement_8": [0, 0, 1, 0],
+            "measurement_8": [1, 1, 1, 1],
             "measurement_9": [0, 0, 0, 0],
-            "measurement_10": [0, 0, 1, 0],
+            "measurement_10": [0, 1, 1, 0],
             "measurement_11": [0, 0, 0, 0],
         }, raw
 
@@ -3005,3 +3005,169 @@ class TestScratchCheck1FlagS5ProductionLockIn:
         assert "reset q[4];" in qasm
         assert "measure q[3] -> c[0];" in qasm
         assert "measure q[4] -> c[1];" in qasm
+
+
+class TestBlockInputCapture:
+    """Block inputs must not capture direct references to unrelated outer state."""
+
+    def test_partial_binding_error_precedes_capture(self) -> None:
+        from pecos.slr import Barrier, Block, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+
+        q = QReg("q", 2)
+
+        class Partial(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.q = q[0]
+                self.extend(Barrier(q))
+
+        with pytest.raises(ValueError, match=r"Barrier.*'q'.*only partially bound"):
+            slr_to_ast(Main(q, Partial()))
+
+    def test_measurement_result_capture(self) -> None:
+        from pecos.slr import Block, CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib import qubit as qb
+
+        q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 1)
+
+        class Meas(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "live_preserved", "c": "live_preserved"}
+
+            def __init__(self, a, bit) -> None:
+                super().__init__()
+                self.a = a
+                self.c = bit
+                self.extend(qb.MeasureZ(a[0]) > bit, qb.MeasureZ(a[1]) > c[0])
+
+        with pytest.raises(ValueError, match=r"Block 'Meas'.*input 'c'.*c\[0\].*rename.*input"):
+            slr_to_ast(Main(q, c, d, qb.X(q[0]), Meas(q, d[0])))
+
+    @pytest.mark.parametrize("binding", ["same_element", "other_element", "other_register"])
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_qubit_capture(self, binding, nested) -> None:
+        from pecos.slr import Block, Main, QReg, Repeat
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib import qubit as qb
+
+        q, r = QReg("q", 2), QReg("r", 2)
+
+        class UsesOuter(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+            def __init__(self, bound) -> None:
+                super().__init__()
+                self.q = bound
+                op = qb.X(q[1])
+                self.extend(Repeat(2).block(Block(op)) if nested else op)
+
+        bound = {"same_element": q[0], "other_element": r[0], "other_register": r}[binding]
+        with pytest.raises(ValueError, match=r"Block 'UsesOuter'.*input 'q'.*q\[1\].*rename.*input"):
+            slr_to_ast(Main(q, r, UsesOuter(bound)))
+
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            "assign_bit",
+            "assign_register",
+            "condition_bit",
+            "condition_register",
+            "permute_bit",
+            "permute_register",
+            "nested_bit",
+            "nested_register",
+            "prepare",
+            "barrier",
+            "print_bit",
+            "print_register",
+            "return_register",
+        ],
+    )
+    def test_capture_reference_forms(self, reference) -> None:
+        from pecos.slr import Barrier, Block, CReg, If, Main, Permute, Print, QReg, Return
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib import qubit as qb
+
+        c, d = CReg("c", 2), CReg("d", 2)
+        q, r = QReg("q", 2), QReg("r", 2)
+
+        class Inner(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"value": "live_preserved"}
+
+            def __init__(self, value) -> None:
+                super().__init__()
+                self.value = value
+
+        operations = {
+            "assign_bit": c[0].set(1),
+            "assign_register": c.set(1),
+            "condition_bit": If(c[0]).Then(qb.X(q[0])),
+            "condition_register": If(c == 0).Then(qb.X(q[0])),
+            "permute_bit": Permute([c[0], c[1]], [c[1], c[0]]),
+            "permute_register": Permute(c, d),
+            "nested_bit": Inner(c[0]),
+            "nested_register": Inner(q),
+            "prepare": qb.PZ(q[1]),
+            "barrier": Barrier(q),
+            "print_bit": Print(c[0]),
+            "print_register": Print(c),
+            "return_register": Return(c),
+        }
+
+        class Captures(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"c": "live_preserved", "q": "live_preserved"}
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.c = d[0]
+                self.q = r
+                self.extend(operations[reference])
+
+        with pytest.raises(ValueError, match=r"Block 'Captures'.*input '[cq]'.*[cq].*rename.*input"):
+            slr_to_ast(Main(q, r, c, d, Captures()))
+
+    @pytest.mark.parametrize("reference", ["bit", "register"])
+    def test_classical_capture_despite_same_named_qubit_binding(self, reference) -> None:
+        from pecos.slr import Block, CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib import qubit as qb
+
+        q, c = QReg("q", 2), CReg("q", 2)
+
+        class MixedNames(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.q = q
+                self.extend(qb.MeasureZ(q[0]) > c[0] if reference == "bit" else c.set(1))
+
+        with pytest.raises(ValueError, match=r"quantum.*classical.*'q'.*[Rr]ename"):
+            slr_to_ast(Main(q, c, MixedNames()))
+
+    @pytest.mark.parametrize("binding", ["whole", "element", "unrelated"])
+    def test_non_capturing_bindings_still_work(self, binding) -> None:
+        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr.qeclib import qubit as qb
+
+        q, r, c = QReg("q", 2), QReg("r", 2), CReg("c", 2)
+
+        class Safe(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved", "c": "live_preserved"}
+
+            def __init__(self, bound) -> None:
+                super().__init__()
+                self.q = bound
+                self.c = c[1]
+                target = bound[0] if isinstance(bound, QReg) else bound
+                self.extend(qb.X(target), qb.MeasureZ(target) > self.c)
+                self.extend(qb.X(r[1]))
+
+        bound = q if binding == "whole" else (r[0] if binding == "unrelated" else q[1])
+        text = SlrConverter(Main(q, r, c, Safe(bound))).qasm()
+        target = "q[0]" if binding == "whole" else ("r[0]" if binding == "unrelated" else "q[1]")
+        assert f"measure {target} -> c[1];" in text
+        assert "x r[1];" in text

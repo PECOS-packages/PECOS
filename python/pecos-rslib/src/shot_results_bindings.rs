@@ -30,6 +30,19 @@ impl PyShotVec {
         self.inner.len()
     }
 
+    /// Ordinary exits in result-row order. Each item is None or a dictionary
+    /// with `code` and `message`. Available even when register conversion fails.
+    #[getter]
+    fn program_exits(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        program_exits_to_python(
+            py,
+            self.inner
+                .shots
+                .iter()
+                .map(|shot| shot.program_exit.as_ref()),
+        )
+    }
+
     /// Check if empty
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
@@ -190,6 +203,12 @@ pub struct PyShotMap {
 
 #[pymethods]
 impl PyShotMap {
+    /// Ordinary exits in result-row order, separate from register data.
+    #[getter]
+    fn program_exits(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        program_exits_to_python(py, self.inner.program_exits().iter().map(Option::as_ref))
+    }
+
     /// Get all register names
     #[getter]
     fn register_names(&self) -> Vec<String> {
@@ -468,4 +487,23 @@ impl From<ShotMap> for PyShotMap {
     fn from(shot_map: ShotMap) -> Self {
         PyShotMap { inner: shot_map }
     }
+}
+
+/// Convert diagnostics without inserting keys into the user's output namespace.
+fn program_exits_to_python<'a>(
+    py: Python<'_>,
+    exits: impl Iterator<Item = Option<&'a pecos_engines::shot_results::ProgramExit>>,
+) -> PyResult<Py<PyAny>> {
+    let result = PyList::empty(py);
+    for exit in exits {
+        if let Some(exit) = exit {
+            let value = PyDict::new(py);
+            value.set_item("code", exit.code)?;
+            value.set_item("message", &exit.message)?;
+            result.append(value)?;
+        } else {
+            result.append(py.None())?;
+        }
+    }
+    Ok(result.into_any().unbind())
 }

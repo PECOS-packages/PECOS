@@ -25,11 +25,14 @@ Example:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._allocator_layout import allocator_offsets
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
-from pecos.slr.ast.codegen._permutation import iter_permutes, reject_permute_in_region
+from pecos.slr.ast.codegen._loop_bounds import static_for_range
+from pecos.slr.ast.codegen._permutation import iter_permutes, parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -52,6 +55,7 @@ from pecos.slr.ast.nodes import (
     PrintOp,
     RegisterDecl,
     RepeatStmt,
+    ReturnOp,
     WhileStmt,
 )
 
@@ -152,11 +156,15 @@ _GATE_DECOMP: dict[GateKind, tuple[tuple[str, tuple[int, ...]], ...]] = {
 class StimCodeGenContext:
     """Context for Stim code generation."""
 
+    is_fragment: bool = False
     qubit_map: dict[tuple[str, int], int] = field(default_factory=dict)
     next_qubit_id: int = 0
     # Number of measurements in the current record frame: the top-level
     # circuit, or one iteration of the innermost REPEAT body.
     measurement_count: int = 0
+    # Optional history in record order, with one entry per measured target.
+    # Unlike bit_records, these destinations never change after a write.
+    record_bits: list[tuple[str, int] | None] = field(default_factory=list)
     # Measurement-record provenance of classical bits in the current frame:
     # (register, index) -> position of the measurement that last wrote the
     # bit. None marks a bit whose value no longer comes from a tracked
@@ -171,6 +179,7 @@ class StimCodeGenContext:
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
     qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
+    creg_sizes: dict[str, int] = field(default_factory=dict)  # name -> size
     # Static logical permutation (same model as the QIR codegen /
     # the Guppy linearity tracker -- Stim has no permute instruction).
     # Maps a logical (reg, index) ref to the (reg, index) whose qubit
@@ -182,11 +191,16 @@ class StimCodeGenContext:
         current = name
         while self.allocator_parents.get(current) is not None:
             current = self.allocator_parents[current]
+        if current not in self.allocator_parents and not self.is_fragment:
+            msg = f"Undeclared allocator {current!r}; declare it before generating code."
+            raise ValueError(msg)
         return current
 
     def get_absolute_index(self, allocator: str, index: int) -> int:
         """Get the absolute index in the root allocator."""
-        offset = self.allocator_offsets.get(allocator, 0)
+        if self.is_fragment and allocator not in self.allocator_offsets:
+            return index
+        offset = self.allocator_offsets[allocator]
         return offset + index
 
     def get_qubit(self, allocator: str, index: int) -> int:
@@ -220,10 +234,11 @@ class AstToStim:
         circuit = generator.generate(ast_program)
     """
 
-    def __init__(self) -> None:
-        """Initialize the generator."""
+    def __init__(self, *, collect_records: bool = False) -> None:
+        """Initialize the generator, optionally collecting measurement destinations."""
         self.context = StimCodeGenContext()
         self.circuit: stim.Circuit | None = None
+        self._collect_records = collect_records
 
     def generate(self, program: Program) -> stim.Circuit:
         """Generate a Stim circuit for a program.
@@ -238,7 +253,7 @@ class AstToStim:
 
         program = flatten_block_calls(program)
 
-        self.context = StimCodeGenContext()
+        self.context = StimCodeGenContext(is_fragment=program.is_fragment)
         self.circuit = stim.Circuit()
 
         # Process declarations to allocate qubits
@@ -261,7 +276,7 @@ class AstToStim:
             self.context.allocator_parents[program.allocator.name] = program.allocator.parent
 
         # Calculate offsets for child allocators
-        self._calculate_allocator_offsets(program)
+        self.context.allocator_offsets = allocator_offsets(program)
 
         # Allocate qubits only for root allocators
         for decl in program.declarations:
@@ -272,36 +287,13 @@ class AstToStim:
                     for i in range(decl.capacity):
                         self.context.get_qubit(decl.name, i)
             elif isinstance(decl, RegisterDecl):
-                pass  # Classical registers don't need qubit allocation
+                self.context.creg_sizes[decl.name] = decl.size
 
         if program.allocator:
             self.context.qreg_sizes[program.allocator.name] = program.allocator.capacity
         if program.allocator and program.allocator.parent is None:
             for i in range(program.allocator.capacity):
                 self.context.get_qubit(program.allocator.name, i)
-
-    def _calculate_allocator_offsets(self, program: Program) -> None:
-        """Calculate the offset of each child allocator within its parent."""
-        parent_next_offset: dict[str, int] = {}
-
-        # Root allocators have offset 0
-        for decl in program.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is None:
-                self.context.allocator_offsets[decl.name] = 0
-
-        if program.allocator and program.allocator.parent is None:
-            self.context.allocator_offsets[program.allocator.name] = 0
-
-        # Process child allocators in declaration order
-        for decl in program.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is not None:
-                parent = decl.parent
-                if parent not in parent_next_offset:
-                    parent_next_offset[parent] = 0
-
-                parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
-                parent_next_offset[parent] += decl.capacity
 
     def _process_statement(self, stmt: Statement) -> None:
         """Process a statement using recursive descent."""
@@ -337,7 +329,9 @@ class AstToStim:
                 "lose observable program output)."
             )
             raise NotImplementedError(msg)
-        # Other statement types (Comment, Return) don't generate Stim output
+        elif not isinstance(stmt, CommentOp | ReturnOp):
+            msg = f"Stim codegen does not support statement {type(stmt).__name__}: {stmt!r}"
+            raise NotImplementedError(msg)
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
@@ -414,6 +408,11 @@ class AstToStim:
         # Result bits pair with targets by position, as in the QIR backend.
         for offset, bit in enumerate(node.results[: len(qubits)]):
             self.context.bit_records[bit.register, bit.index] = self.context.measurement_count + offset
+        if self._collect_records:
+            # QASM's visit_measure writes the result BitRef directly, even
+            # after a classical Permute. Block flattening has resolved aliases.
+            self.context.record_bits.extend((bit.register, bit.index) for bit in node.results[: len(qubits)])
+            self.context.record_bits.extend([None] * (len(qubits) - len(node.results)))
         self.circuit.append_operation("M", qubits)
         self.context.measurement_count += len(qubits)
 
@@ -427,7 +426,9 @@ class AstToStim:
         if isinstance(node.target, BitRef):
             self.context.bit_records[node.target.register, node.target.index] = None
         else:
-            self._invalidate_register(node.target)
+            # A declared name is a whole register, even if it contains brackets.
+            indexed = None if node.target in self.context.creg_sizes else re.fullmatch(r"(\w+)\[.*\]", node.target)
+            self._invalidate_register(indexed[1] if indexed is not None else node.target)
 
     def _invalidate_register(self, name: str) -> None:
         """Mark every bit of register `name` as no longer holding a tracked measurement."""
@@ -439,13 +440,14 @@ class AstToStim:
     def _process_prepare(self, node: PrepareOp) -> None:
         """Process a prepare/reset operation (Z-reset + canonical basis tail)."""
         tail = prep_tail(node.basis)
-        if node.slots is None:
-            if tail:
-                msg = f"Stim codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
-                raise NotImplementedError(msg)
-            return
-
-        qubits = [self.context.get_qubit(node.allocator, slot) for slot in node.slots]
+        if node.slots is None and node.allocator not in self.context.qreg_sizes:
+            msg = (
+                f"Stim codegen: prepare_all references unknown allocator {node.allocator!r}; "
+                "declare the allocator before preparing it."
+            )
+            raise ValueError(msg)
+        slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
+        qubits = [self.context.get_qubit(node.allocator, slot) for slot in slots]
         self.circuit.append_operation("R", qubits)
         for gk in tail:
             self.circuit.append_operation(GATE_TO_STIM[gk], qubits)
@@ -581,34 +583,9 @@ class AstToStim:
         )
         raise NotImplementedError(msg)
 
-    def _static_int_bound(self, expr: object, which: str) -> int:
-        """Resolve a static integer `For` bound.
-
-        The AST converter wraps integer range bounds in `LiteralExpr`
-        (`converter.py` `_convert_for`), so the bound is never a raw
-        `int` -- the old `isinstance(int)` guard was always false and
-        silently dropped every `For` body. A non-literal / non-int
-        bound is a symbolic/dynamic `For`: fail LOUD, never drop.
-        """
-        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
-            return expr.value
-        msg = (
-            f"Stim codegen: For loop {which} bound is not a static integer "
-            f"({type(expr).__name__}); only fixed-bound `For(i, <int>, "
-            "<int>)` is supported (symbolic/dynamic For is out of scope -- "
-            "and must not silently drop the loop body)."
-        )
-        raise NotImplementedError(msg)
-
     def _process_for(self, node: ForStmt) -> None:
-        """Unroll a static fixed-bound `For` (v1-supported)."""
-        start = self._static_int_bound(node.start, "start")
-        stop = self._static_int_bound(node.stop, "stop")
-        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
-        if step == 0:
-            msg = "Stim codegen: For loop step is 0 (infinite loop); only a non-zero static step is supported."
-            raise NotImplementedError(msg)
-        for _ in range(start, stop, step):
+        """Unroll a static fixed-bound For."""
+        for _ in static_for_range(node, "Stim"):
             for stmt in node.body:
                 self._process_statement(stmt)
 
@@ -634,10 +611,12 @@ class AstToStim:
         # current iteration are visible to conditions inside the body.
         original_circuit = self.circuit
         outer_records = self.context.bit_records
+        outer_record_bits = self.context.record_bits
         outer_count = self.context.measurement_count
         outer_invalidated = self.context.invalidated_registers
         self.circuit = stim.Circuit()
         self.context.bit_records = {}
+        self.context.record_bits = []
         self.context.measurement_count = 0
         self.context.invalidated_registers = set()
 
@@ -646,10 +625,12 @@ class AstToStim:
 
         sub_circuit = self.circuit
         body_records = self.context.bit_records
+        body_record_bits = self.context.record_bits
         body_count = self.context.measurement_count
         body_invalidated = self.context.invalidated_registers
         self.circuit = original_circuit
         self.context.bit_records = outer_records
+        self.context.record_bits = outer_record_bits
         self.context.measurement_count = outer_count
         self.context.invalidated_registers = outer_invalidated
 
@@ -661,6 +642,8 @@ class AstToStim:
         for bit, position in body_records.items():
             outer_records[bit] = None if position is None else last_iteration_start + position
         self.context.measurement_count = outer_count + node.count * body_count
+        if self._collect_records:
+            self.context.record_bits.extend(body_record_bits * node.count)
 
         # Add repeat block if sub-circuit has content
         if len(sub_circuit) > 0:
@@ -680,11 +663,23 @@ class AstToStim:
         so a bare CReg permute is not realizable -> fail loud (never
         a silent no-op). Mirrors the QIR codegen's helper.
         """
-        if ref.endswith("]") and "[" in ref:
-            name, idx = ref[:-1].split("[", 1)
-            return [(name, int(idx))]
-        if ref in self.context.qreg_sizes:
-            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
+        parsed = parse_permute_ref(ref, "Stim")
+        name = parsed[0] if parsed is not None else ref
+        sizes = {**self.context.creg_sizes, **self.context.qreg_sizes}
+        if name not in sizes:
+            msg = (
+                f"Stim codegen: unknown Permute reference {ref!r}; "
+                f"declare register {name!r} in Main or in an ordinary Block."
+            )
+            raise ValueError(msg)
+        if parsed is not None:
+            _, index = parsed
+            if not 0 <= index < sizes[name]:
+                msg = f"Stim codegen: Permute reference {ref!r} is not a declared slot."
+                raise ValueError(msg)
+            return [(name, index)]
+        if name in self.context.qreg_sizes:
+            return [(name, i) for i in range(sizes[name])]
         msg = (
             f"Stim codegen: whole-register Permute of {ref!r} is not "
             "supported (no classical-register model in Stim); a "
@@ -730,13 +725,18 @@ class AstToStim:
             msg = "Stim codegen: Permute must be bijective over the same ref set"
             raise NotImplementedError(msg)
 
-        # Compose ATOMICALLY (snapshot old, then map[s] = old.get(t, t))
-        # so a whole-register (a,b)/(b,a) pair applies once.
-        old = dict(self.context.permutation_map)
-        self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
-        # A Permute ref is a bare string that may name a qubit or a classical
-        # register (SLR allows both under one name), so classical bits under
-        # any permuted name stop being valid If conditions.
+        kinds = {name in self.context.qreg_sizes for name, _ in src_all}
+        if len(kinds) > 1:
+            msg = "Stim codegen: Permute cannot mix quantum and classical refs."
+            raise NotImplementedError(msg)
+
+        # Classical permutations only invalidate provenance. Quantum ones
+        # compose atomically so a whole-register swap applies exactly once.
+        if kinds == {True}:
+            old = dict(self.context.permutation_map)
+            self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
+        # Classical element permutations invalidate the tracked measurement
+        # records under the permuted register names.
         for name in {ref[0] for ref in src_all}:
             self._invalidate_register(name)
 
@@ -744,7 +744,10 @@ class AstToStim:
 def ast_to_stim(program: Program) -> stim.Circuit:
     """Convert an AST Program to a Stim circuit.
 
-    Convenience function for simple code generation.
+    Sample columns are measurement records in program order (REPEAT bodies
+    counted per iteration), not classical-register bits. Use
+    ast_to_stim_with_records(), or SlrConverter.stim_with_records(), for the
+    mapping to bits written at measurement time.
 
     Args:
         program: The AST Program to convert.
@@ -754,6 +757,27 @@ def ast_to_stim(program: Program) -> stim.Circuit:
     """
     generator = AstToStim()
     return generator.generate(program)
+
+
+def ast_to_stim_with_records(program: Program) -> tuple[stim.Circuit, tuple[tuple[str, int] | None, ...]]:
+    """Convert an AST Program to a Stim circuit and its measurement destinations.
+
+    Args:
+        program: The AST Program to convert.
+
+    Returns:
+        The circuit and a tuple with exactly one entry per measurement record,
+        in program order with REPEAT bodies counted per iteration. Each entry
+        is the (register_name, index) bit written by that measurement, or None
+        when the target has no result bit. A later classical assignment or
+        permutation does not change the entry: it names the bit written at
+        measurement time, as in the QASM backend. REPEAT blocks are expanded,
+        so the tuple has circuit.num_measurements entries even where the
+        circuit itself stays compact.
+    """
+    generator = AstToStim(collect_records=True)
+    circuit = generator.generate(program)
+    return circuit, tuple(generator.context.record_bits)
 
 
 def ast_to_stim_str(program: Program) -> str:

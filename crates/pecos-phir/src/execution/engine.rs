@@ -162,6 +162,27 @@ impl ClassicalEngine for PhirEngine {
         while self.current_op < self.function_ops.len() && batch_count < MAX_BATCH_SIZE {
             let instruction = &self.function_ops[self.current_op];
 
+            // Pause consumers until earlier measurements have been received.
+            if matches!(
+                instruction.operation,
+                crate::ops::Operation::Classical(_) | crate::ops::Operation::Memory(_)
+            ) {
+                let depends_on_measurements = instruction.operands.iter().any(|operand| {
+                    self.function_ops[..self.current_op].iter().any(|previous| {
+                        matches!(
+                            previous.operation,
+                            crate::ops::Operation::Quantum(crate::ops::QuantumOp::Measure)
+                        ) && previous
+                            .results
+                            .iter()
+                            .any(|result| result.id == operand.id)
+                    })
+                });
+                if depends_on_measurements && has_quantum_ops {
+                    break;
+                }
+            }
+
             // Process based on operation type
             match &instruction.operation {
                 crate::ops::Operation::Quantum(quantum_op) => {
@@ -185,28 +206,6 @@ impl ClassicalEngine for PhirEngine {
                     }
                 }
                 crate::ops::Operation::Classical(classical_op) => {
-                    // Check if this classical operation depends on measurement results
-                    // We need to check if any operand SSA ID will be produced by a future measurement
-                    let depends_on_measurements = instruction.operands.iter().any(|operand| {
-                        // Check if this operand SSA ID is produced by a Measure operation
-                        // Look ahead in the operations to see if this SSA ID is a measurement result
-                        self.function_ops[..self.current_op].iter().any(|prev_op| {
-                            matches!(
-                                prev_op.operation,
-                                crate::ops::Operation::Quantum(crate::ops::QuantumOp::Measure)
-                            ) && prev_op.results.iter().any(|r| r.id == operand.id)
-                        })
-                    });
-
-                    if depends_on_measurements {
-                        // This operation depends on measurements
-                        // If we have quantum ops to send, stop here and wait for measurements
-                        if has_quantum_ops {
-                            break;
-                        }
-                        // Otherwise, try to process it - measurements should be available
-                    }
-
                     // Process classical operation
                     if let Err(e) = self
                         .processor
@@ -228,6 +227,17 @@ impl ClassicalEngine for PhirEngine {
                         self.finished = true;
                         return Err(PecosError::Input(format!(
                             "Error processing builtin operation: {e}"
+                        )));
+                    }
+                }
+                crate::ops::Operation::Memory(_) => {
+                    if let Err(e) = self
+                        .processor
+                        .process_instruction(instruction, &mut self.message_builder)
+                    {
+                        self.finished = true;
+                        return Err(PecosError::Input(format!(
+                            "Error processing memory operation: {e}"
                         )));
                     }
                 }
@@ -279,7 +289,9 @@ impl ClassicalEngine for PhirEngine {
 
         // Check if all operations have been processed
         if self.current_op >= self.function_ops.len() {
-            self.processor.finalize_exports();
+            self.processor
+                .finalize_exports()
+                .map_err(|e| PecosError::Input(e.to_string()))?;
         }
 
         Ok(())
@@ -293,6 +305,11 @@ impl ClassicalEngine for PhirEngine {
 
         for (export_name, value) in export_results {
             let data = match value {
+                TypedValue::Aggregate(_) => {
+                    return Err(PecosError::Input(
+                        "arith.result: cannot export aggregate".to_string(),
+                    ));
+                }
                 TypedValue::I8(v) => Data::I32(i32::from(v)),
                 TypedValue::I16(v) => Data::I32(i32::from(v)),
                 TypedValue::I32(v) => Data::I32(v),
@@ -381,9 +398,11 @@ impl ControlEngine for PhirEngine {
         // Generate first batch of commands
         match self.generate_commands() {
             Ok(commands) => {
-                if commands.as_bytes().is_empty() {
+                if commands.is_empty()? {
                     // No quantum operations, finalize and return results immediately
-                    self.processor.finalize_exports();
+                    self.processor
+                        .finalize_exports()
+                        .map_err(|e| PecosError::Input(e.to_string()))?;
                     Ok(EngineStage::Complete(self.get_results()?))
                 } else {
                     Ok(EngineStage::NeedsProcessing(commands))
@@ -403,9 +422,13 @@ impl ControlEngine for PhirEngine {
         // Generate next batch of commands (if any)
         match self.generate_commands() {
             Ok(commands) => {
-                if commands.as_bytes().is_empty() || self.finished {
-                    // No more commands, finalize exports now that all operations are done
-                    self.processor.finalize_exports();
+                if commands.is_empty()? {
+                    // No more commands, finalize exports now that all operations are done.
+                    // A final non-empty batch is sent first even when the program has
+                    // finished; the next call then completes.
+                    self.processor
+                        .finalize_exports()
+                        .map_err(|e| PecosError::Input(e.to_string()))?;
                     Ok(EngineStage::Complete(self.get_results()?))
                 } else {
                     Ok(EngineStage::NeedsProcessing(commands))
@@ -530,7 +553,15 @@ mod tests {
                 blocks: vec![Block {
                     label: None,
                     arguments: vec![],
-                    operations: vec![h_instr],
+                    operations: vec![
+                        Instruction::new(
+                            Operation::Classical(crate::ops::ClassicalOp::ConstInt(0)),
+                            vec![],
+                            vec![SSAValue::new(0)],
+                            vec![Type::Int(crate::types::IntWidth::I64)],
+                        ),
+                        h_instr,
+                    ],
                     terminator: None,
                     attributes: std::collections::BTreeMap::new(),
                 }],
@@ -569,7 +600,15 @@ mod tests {
                 blocks: vec![Block {
                     label: None,
                     arguments: vec![],
-                    operations: vec![measure_instr],
+                    operations: vec![
+                        Instruction::new(
+                            Operation::Classical(crate::ops::ClassicalOp::ConstInt(0)),
+                            vec![],
+                            vec![SSAValue::new(0)],
+                            vec![Type::Int(crate::types::IntWidth::I64)],
+                        ),
+                        measure_instr,
+                    ],
                     terminator: None,
                     attributes: std::collections::BTreeMap::new(),
                 }],

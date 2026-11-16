@@ -22,6 +22,10 @@ fn probe(mode: &str, test: &str) {
                  let words: [u64; 4] = {words:?}; words.get(i as usize).copied().unwrap_or(0) }}"
             )
         };
+        let handshake = format!(
+            "{handshake}\n#[unsafe(no_mangle)] pub extern \"C\" fn pecos_qis_ffi_abi_version() -> u64 {{ {} }}",
+            pecos_qis_ffi_types::QIS_FFI_ABI_VERSION
+        );
         // Reaching the old ownership-transferring export would kill the probe.
         std::fs::write(&source, format!(
             "{handshake}\n#[unsafe(no_mangle)] pub extern \"C\" fn pecos_qis_get_operations() -> *mut u8 {{ std::process::abort() }}"

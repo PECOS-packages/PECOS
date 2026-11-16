@@ -96,7 +96,7 @@ fn trivial_exact_random_circuits_match_general_path_bitwise() {
                         assert_eq!(a, b);
                         for simulator in [&mut fast, &mut slow] {
                             simulator.h(&[QubitId(0)]);
-                            simulator.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+                            simulator.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
                         }
                         assert!(!measure::is_mps_trivial(&fast.mps));
                         let a = with_fast_path(true, || fast.mz(&[QubitId(0)]));
@@ -153,7 +153,7 @@ fn trivial_exact_retains_rz_normalization_bits() {
             .merge_rz(false)
             .normalize_after_gate(normalize)
             .build();
-        fast.rz(Angle64::from_radians(0.001), &[QubitId(0)]);
+        fast.rz(pecos_core::radians!(0.001), &[QubitId(0)]);
         let mut slow = fast.clone();
         let before = tensor_bits(&fast.mps);
         let a = with_fast_path(true, || fast.mz(&[QubitId(0)]));
@@ -263,7 +263,7 @@ fn assert_unnormalized_trivial_measurement_matches(mut fast: StabMps) {
     for _ in 0..3 {
         for simulator in [&mut fast, &mut slow] {
             simulator.h(&[QubitId(0)]);
-            simulator.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+            simulator.rz(pecos_core::radians!(0.37), &[QubitId(0)]);
             if simulator.num_qubits() > 1 {
                 simulator.cx(&[(QubitId(0), QubitId(1))]);
                 simulator.h(&[QubitId(1)]);
@@ -294,7 +294,7 @@ fn trivial_exact_unnormalized_public_circuit_matches_general_path() {
             .build();
         for _ in 0..271 {
             stn.h(&[QubitId(0)]);
-            stn.rz(Angle64::from_radians(0.9), &[QubitId(0)]);
+            stn.rz(pecos_core::radians!(0.9), &[QubitId(0)]);
             stn.cx(&[(QubitId(0), QubitId(1))]);
             stn.h(&[QubitId(1)]);
         }
@@ -376,7 +376,7 @@ fn decayed_circuit(seed: u64) -> StabMps {
         .build();
     for _ in 0..271 {
         stn.h(&[QubitId(0)]);
-        stn.rz(Angle64::from_radians(0.9), &[QubitId(0)]);
+        stn.rz(pecos_core::radians!(0.9), &[QubitId(0)]);
         stn.cx(&[(QubitId(0), QubitId(1))]);
         stn.h(&[QubitId(1)]);
     }
@@ -757,7 +757,7 @@ fn subnormal_normalize_after_gate_matches_normalized_state() {
                 let (mut scaled, mut normalized) =
                     subnormal_measurement_pair(scale, sites, tracked, 0);
                 for simulator in [&mut scaled, &mut normalized] {
-                    simulator.rz(Angle64::from_radians(0.37), &[QubitId(sites / 2)]);
+                    simulator.rz(pecos_core::radians!(0.37), &[QubitId(sites / 2)]);
                 }
                 assert_pair_state_close(&scaled, &normalized);
             }

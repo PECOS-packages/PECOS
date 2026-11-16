@@ -117,3 +117,69 @@ macro_rules! turn {
         $crate::Angle64::from_turn_ratio(-($numer as i64), $denom)
     };
 }
+
+/// Creates an `Angle64` from a finite constant expression in radians.
+/// Prefer exact angle constants or `from_turn_ratio` for exact turn fractions.
+///
+/// ```
+/// use pecos_core::{radians, turns, Angle64};
+/// let angle = radians!(0.37);
+/// let quarter = turns!(0.25);
+/// assert_eq!(quarter, Angle64::QUARTER_TURN);
+/// assert!((angle.to_radians() - 0.37).abs() < 1e-15);
+/// ```
+///
+/// Non-finite values and runtime variables are rejected at compile time:
+/// ```compile_fail,E0080
+/// use pecos_core::radians;
+/// let angle = radians!(f64::NAN);
+/// ```
+/// ```compile_fail,E0080
+/// use pecos_core::radians;
+/// let angle = radians!(f64::INFINITY);
+/// ```
+/// ```compile_fail,E0435
+/// use pecos_core::radians;
+/// let x = 0.3;
+/// let angle = radians!(x);
+/// ```
+#[macro_export]
+macro_rules! radians {
+    ($expr:expr) => {
+        const {
+            match $crate::Angle64::const_try_from_radians($expr) {
+                ::core::result::Result::Ok(angle) => angle,
+                ::core::result::Result::Err(_) => ::core::panic!("angle literal must be finite"),
+            }
+        }
+    };
+}
+
+/// Creates an `Angle64` from a finite constant expression in turns.
+///
+/// ```
+/// use pecos_core::turns;
+/// let angle = turns!(0.123);
+/// assert!((angle.to_turns() - 0.123).abs() < 1e-15);
+/// ```
+/// ```compile_fail,E0080
+/// let angle = pecos_core::turns!(f64::NAN);
+/// ```
+/// ```compile_fail,E0080
+/// let angle = pecos_core::turns!(f64::INFINITY);
+/// ```
+/// ```compile_fail,E0435
+/// let x = 0.3;
+/// let angle = pecos_core::turns!(x);
+/// ```
+#[macro_export]
+macro_rules! turns {
+    ($expr:expr) => {
+        const {
+            match $crate::Angle64::const_try_from_turns($expr) {
+                ::core::result::Result::Ok(angle) => angle,
+                ::core::result::Result::Err(_) => ::core::panic!("angle literal must be finite"),
+            }
+        }
+    };
+}

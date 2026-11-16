@@ -64,7 +64,7 @@ fn message(batches: &[TimedBatch], events: bool) -> ByteMessage {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, g)| {
-                    matches!(g.gate_type, GateType::MZ | GateType::MeasureLeaked).then_some(
+                    matches!(g.gate_type, GateType::MZ | GateType::MeasureZLeaked).then_some(
                         ScheduledResult {
                             operation_index: i,
                             runtime_result: b.batch_index * 10 + i as u64,
@@ -99,9 +99,11 @@ fn message(batches: &[TimedBatch], events: bool) -> ByteMessage {
 }
 fn system(profile: ScheduledIdleNoise, events: bool, seed: u64) -> QuantumSystem {
     let noise = if events {
-        ScheduledEventIdleNoise::new(profile, |_| Ok(Box::new(PassThrough))).into_noise_model()
+        ScheduledEventIdleNoise::new(profile, |_| Ok(Box::new(PassThrough)))
+            .into_noise_model()
+            .unwrap()
     } else {
-        profile.into_noise_model()
+        profile.into_noise_model().unwrap()
     };
     let mut system = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
     system.set_seed(seed);
@@ -146,7 +148,7 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
                     &mut s,
                     &[
                         batch(1, 2_000_000_000, 0, vec![Gate::mz(&[0])]),
-                        batch(2, 2_000_000_000, 0, vec![Gate::measure_leaked(&[0])]),
+                        batch(2, 2_000_000_000, 0, vec![Gate::measure_z_leaked(&[0])]),
                     ],
                     events
                 ),
@@ -154,7 +156,7 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
             );
             s.process(ByteMessage::create_empty()).unwrap();
             // This observes leakage persistence, not whether the rotation was
-            // suppressed: MeasureLeaked returns 2 in either case.
+            // suppressed: MeasureZLeaked returns 2 in either case.
             assert_eq!(
                 run(
                     &mut s,
@@ -163,12 +165,8 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
                         2_000_000_000,
                         0,
                         vec![
-                            Gate::rxy1q(
-                                Angle64::from_radians(std::f64::consts::PI),
-                                Angle64::ZERO,
-                                &[0]
-                            ),
-                            Gate::measure_leaked(&[0])
+                            Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0]),
+                            Gate::measure_z_leaked(&[0])
                         ]
                     )],
                     events
@@ -184,13 +182,13 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
                             4,
                             4_000_000_000,
                             1_000_000_000,
-                            vec![Gate::pz(&[0]), Gate::measure_leaked(&[0])]
+                            vec![Gate::pz(&[0]), Gate::measure_z_leaked(&[0])]
                         ),
                         batch(
                             5,
                             5_000_000_000,
                             0,
-                            vec![Gate::measure_leaked(&[0]), Gate::measure_leaked(&[1])]
+                            vec![Gate::measure_z_leaked(&[0]), Gate::measure_z_leaked(&[1])]
                         )
                     ],
                     events
@@ -212,7 +210,7 @@ fn nonlinear_idle_is_not_split_by_metadata_or_host_input_boundaries() {
         let batches = [
             batch(0, 0, 0, vec![Gate::pz(&[0])]),
             batch(1, 500_000_000, 0, vec![]),
-            batch(2, 1_000_000_000, 0, vec![Gate::measure_leaked(&[0])]),
+            batch(2, 1_000_000_000, 0, vec![Gate::measure_z_leaked(&[0])]),
         ];
         assert_eq!(run(&mut together, &batches, events), vec![0]);
         for b in &batches[..2] {
@@ -237,13 +235,23 @@ fn leakage_is_cleared_by_whole_system_reset_and_cannot_escape_live_clone() {
         assert_eq!(
             run(
                 &mut original,
-                &[batch(0, 1_000_000_000, 0, vec![Gate::measure_leaked(&[0])])],
+                &[batch(
+                    0,
+                    1_000_000_000,
+                    0,
+                    vec![Gate::measure_z_leaked(&[0])]
+                )],
                 events
             ),
             vec![2]
         );
         let mut cloned = original.clone();
-        let next = [batch(1, 1_000_000_000, 0, vec![Gate::measure_leaked(&[0])])];
+        let next = [batch(
+            1,
+            1_000_000_000,
+            0,
+            vec![Gate::measure_z_leaked(&[0])],
+        )];
         assert!(cloned.process(message(&next, events)).is_err());
         assert_eq!(run(&mut original, &next, events), vec![2]);
         for s in [&mut original, &mut cloned] {
@@ -252,7 +260,7 @@ fn leakage_is_cleared_by_whole_system_reset_and_cannot_escape_live_clone() {
             assert_eq!(
                 run(
                     s,
-                    &[batch(0, 0, 0, vec![Gate::measure_leaked(&[0])])],
+                    &[batch(0, 0, 0, vec![Gate::measure_z_leaked(&[0])])],
                     events
                 ),
                 vec![0]
@@ -285,15 +293,15 @@ fn all_idle_families_match_explicit_general_noise_outcomes_and_rng() {
             1_300_000_000,
             200_000_000,
             vec![
-                Gate::rxy1q(Angle64::from_radians(0.9), Angle64::ZERO, &[0]),
-                Gate::rzz(Angle64::from_radians(0.7), &[(0, 1)]),
+                Gate::rxy1q(pecos_core::radians!(0.9), Angle64::ZERO, &[0]),
+                Gate::rzz(pecos_core::radians!(0.7), &[(0, 1)]),
             ],
         ),
         batch(
             2,
             2_000_000_000,
             0,
-            vec![Gate::measure_leaked(&[0]), Gate::mz(&[1])],
+            vec![Gate::measure_z_leaked(&[0]), Gate::mz(&[1])],
         ),
         batch(
             3,
@@ -301,8 +309,8 @@ fn all_idle_families_match_explicit_general_noise_outcomes_and_rng() {
             0,
             vec![
                 Gate::pz(&[0]),
-                Gate::measure_leaked(&[0]),
-                Gate::measure_leaked(&[1]),
+                Gate::measure_z_leaked(&[0]),
+                Gate::measure_z_leaked(&[1]),
             ],
         ),
     ];
@@ -366,7 +374,6 @@ fn all_idle_families_match_explicit_general_noise_outcomes_and_rng() {
 #[test]
 fn checked_profile_rejects_invalid_models_without_panicking() {
     assert!(ScheduledIdleNoise::new(0).is_err());
-    assert!(ScheduledIdleNoise::new(17).is_err());
     let p = ScheduledIdleNoise::new(1).unwrap();
     for rate in [-1.0, f64::NAN, f64::INFINITY] {
         assert!(p.clone().with_linear(rate, model(&[("L", 1.0)])).is_err());
@@ -413,18 +420,14 @@ fn overflowing_later_gap_rejects_before_execution_or_rng_mutation() {
                 0,
                 0,
                 0,
-                vec![Gate::rxy1q(
-                    Angle64::from_radians(std::f64::consts::PI),
-                    Angle64::ZERO,
-                    &[0],
-                )],
+                vec![Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])],
             ),
             batch(1, 10_000_000_000, 0, vec![Gate::mz(&[0])]),
         ];
         assert!(s.process(message(&invalid, events)).is_err());
         assert_eq!(before, s.controller().rng().clone().next_u64());
-        // v4 adapter normalization failures poison the owner, even before gate
-        // execution. Reset is required there; v3 admission permits retry.
+        // v7 adapter normalization failures poison the owner, even before gate
+        // execution. Reset is required there; v6 admission permits retry.
         if events {
             s.reset().unwrap();
             s.begin_shot(context(1)).unwrap();
@@ -466,7 +469,12 @@ fn changing_rates_without_models_retains_existing_channels() {
             assert_eq!(
                 run(
                     &mut s,
-                    &[batch(0, 1_000_000_000, 0, vec![Gate::measure_leaked(&[0])])],
+                    &[batch(
+                        0,
+                        1_000_000_000,
+                        0,
+                        vec![Gate::measure_z_leaked(&[0])]
+                    )],
                     events
                 ),
                 vec![expected]
@@ -478,7 +486,7 @@ fn changing_rates_without_models_retains_existing_channels() {
 #[test]
 fn same_batch_readouts_capture_leakage_before_each_reset() {
     for events in [false, true] {
-        for (measurement, expected) in [(Gate::mz(&[0]), 1), (Gate::measure_leaked(&[0]), 2)] {
+        for (measurement, expected) in [(Gate::mz(&[0]), 1), (Gate::measure_z_leaked(&[0]), 2)] {
             let mut sim = system(leakage(false), events, 1);
             let batches = [batch(
                 0,
@@ -509,12 +517,12 @@ fn same_batch_readouts_capture_leakage_before_each_reset() {
 }
 
 #[test]
-fn idle_only_batch_limit_matches_local_profiles() {
+fn idle_only_accepts_batch_above_old_record_bound() {
     let mut sim = system(ScheduledIdleNoise::new(2).unwrap(), false, 0);
-    let invalid = [batch(0, 0, 0, vec![Gate::pz(&[0]); 4097])];
-    assert!(sim.process(message(&invalid, false)).is_err());
+    let large = [batch(0, 0, 0, vec![Gate::pz(&[0]); 4097])];
+    sim.process(message(&large, false)).unwrap();
     assert_eq!(
-        run(&mut sim, &[batch(0, 0, 0, vec![Gate::mz(&[0])])], false),
+        run(&mut sim, &[batch(1, 0, 0, vec![Gate::mz(&[0])])], false),
         vec![0]
     );
 }

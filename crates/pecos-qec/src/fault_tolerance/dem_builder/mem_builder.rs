@@ -105,6 +105,10 @@ impl<'a> MemBuilder<'a> {
         let mut mem = MeasurementNoiseModel::new(num_measurements);
 
         super::builder::validate_sampler_measurements(self.influence_map)?;
+        super::builder::validate_idle_noise_targets(
+            self.influence_map,
+            self.noise.idle_noise_request(),
+        )?;
 
         let locations = &self.influence_map.locations;
         let mut two_qubit_groups: std::collections::BTreeMap<usize, Vec<usize>> =

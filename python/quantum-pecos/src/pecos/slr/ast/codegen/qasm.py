@@ -29,14 +29,17 @@ Example:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._allocator_layout import allocator_offsets
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
-from pecos.slr.ast.codegen._permutation import reject_permute_in_region
+from pecos.slr.ast.codegen._loop_bounds import static_for_range
+from pecos.slr.ast.codegen._permutation import parse_permute_ref, reject_permute_in_region
 from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    AssignOp,
     BinaryExpr,
     BinaryOp,
     BitExpr,
@@ -44,16 +47,20 @@ from pecos.slr.ast.nodes import (
     GateKind,
     LiteralExpr,
     RegisterDecl,
+    ReturnOp,
+    SlotRef,
     UnaryExpr,
     UnaryOp,
     VarExpr,
 )
 from pecos.slr.ast.visitor import BaseVisitor
+from pecos.slr.vars import IDENTIFIER_PATTERN
 
 if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
-        AssignOp,
+        AstNode,
         BarrierOp,
+        BlockCall,
         CommentOp,
         Expression,
         ForStmt,
@@ -66,8 +73,7 @@ if TYPE_CHECKING:
         PrintOp,
         Program,
         RepeatStmt,
-        ReturnOp,
-        SlotRef,
+        Statement,
         WhileStmt,
     )
 
@@ -138,10 +144,22 @@ BINARY_OP_TO_QASM: dict[BinaryOp, str] = {
     BinaryOp.RSHIFT: ">>",
 }
 
+# OpenQASM 2.0 has no else: an else-branch runs under the negated comparison.
+NEGATED_COMPARISON: dict[BinaryOp, BinaryOp] = {
+    BinaryOp.EQ: BinaryOp.NE,
+    BinaryOp.NE: BinaryOp.EQ,
+    BinaryOp.LT: BinaryOp.GE,
+    BinaryOp.GE: BinaryOp.LT,
+    BinaryOp.LE: BinaryOp.GT,
+    BinaryOp.GT: BinaryOp.LE,
+}
+
 
 @dataclass
 class QasmContext:
     """Context for QASM code generation."""
+
+    is_fragment: bool = False
 
     allocators: dict[str, int] = field(default_factory=dict)  # name -> size
     allocator_parents: dict[str, str | None] = field(
@@ -152,6 +170,10 @@ class QasmContext:
     )  # name -> offset in parent
     registers: dict[str, int] = field(default_factory=dict)  # name -> size
     condition: str | None = None  # Current if condition
+    # Bits the current if condition reads, as (register, index); index None is the whole register
+    condition_reads: frozenset[tuple[str, int | None]] = frozenset()
+    condition_written: bool = False  # Whether the current if has written a bit its condition reads
+    bit_swap_temp: str | None = None
     # Permutation map: (allocator, index) -> (new_allocator, new_index)
     permutation_map: dict[tuple[str, int], tuple[str, int]] = field(
         default_factory=dict,
@@ -162,11 +184,16 @@ class QasmContext:
         current = name
         while self.allocator_parents.get(current) is not None:
             current = self.allocator_parents[current]
+        if current not in self.allocator_parents and not self.is_fragment:
+            msg = f"Undeclared allocator {current!r}; declare it before generating code."
+            raise ValueError(msg)
         return current
 
     def get_absolute_index(self, allocator: str, index: int) -> int:
         """Get the absolute index in the root allocator."""
-        offset = self.allocator_offsets.get(allocator, 0)
+        if self.is_fragment and allocator not in self.allocator_offsets:
+            return index
+        offset = self.allocator_offsets[allocator]
         return offset + index
 
     def apply_permutation(self, allocator: str, index: int) -> tuple[str, int]:
@@ -241,6 +268,7 @@ class AstToQasm(BaseVisitor[list[str]]):
     def visit_program(self, node: Program) -> list[str]:
         """Generate code for a complete program."""
         lines: list[str] = []
+        self.context.is_fragment = node.is_fragment
 
         # Header
         if self.include_header:
@@ -260,7 +288,7 @@ class AstToQasm(BaseVisitor[list[str]]):
             self.context.allocator_parents[node.allocator.name] = node.allocator.parent
 
         # Calculate offsets for child allocators
-        self._calculate_allocator_offsets(node)
+        self.context.allocator_offsets = allocator_offsets(node)
 
         # Output declarations (only root allocators, not children)
         for decl in node.declarations:
@@ -279,29 +307,6 @@ class AstToQasm(BaseVisitor[list[str]]):
             lines.extend(self.visit(stmt))
 
         return lines
-
-    def _calculate_allocator_offsets(self, node: Program) -> None:
-        """Calculate the offset of each child allocator within its parent."""
-        parent_next_offset: dict[str, int] = {}
-
-        # Root allocators have offset 0
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is None:
-                self.context.allocator_offsets[decl.name] = 0
-
-        if node.allocator and node.allocator.parent is None:
-            self.context.allocator_offsets[node.allocator.name] = 0
-
-        # Process child allocators in declaration order
-        for decl in node.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is not None:
-                parent = decl.parent
-                if parent not in parent_next_offset:
-                    parent_next_offset[parent] = 0
-
-                parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
-                parent_next_offset[parent] += decl.capacity
 
     # === Declarations ===
 
@@ -433,8 +438,10 @@ class AstToQasm(BaseVisitor[list[str]]):
             indices = [self.context.get_absolute_index(node.allocator, slot) for slot in node.slots]
 
         for abs_index in indices:
-            lines.append(self._maybe_conditional(f"reset {root}[{abs_index}];"))
-            lines.extend(self._maybe_conditional(f"{GATE_TO_QASM[gk]} {root}[{abs_index}];") for gk in tail)
+            actual_root, actual_index = self.context.apply_permutation(root, abs_index)
+            ref = f"{actual_root}[{actual_index}]"
+            lines.append(self._maybe_conditional(f"reset {ref};"))
+            lines.extend(self._maybe_conditional(f"{GATE_TO_QASM[gk]} {ref};") for gk in tail)
 
         return lines
 
@@ -447,9 +454,12 @@ class AstToQasm(BaseVisitor[list[str]]):
 
             if i < len(node.results):
                 result = node.results[i]
-                result_ref = f"{result.register}[{result.index}]"
+                result_ref = self._render_bit_ref(result)
                 lines.append(
-                    self._maybe_conditional(f"measure {target_ref} -> {result_ref};"),
+                    self._maybe_conditional(
+                        f"measure {target_ref} -> {result_ref};",
+                        writes=(result.register, result.index),
+                    ),
                 )
             else:
                 # Measurement without result storage
@@ -461,15 +471,57 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_assign(self, node: AssignOp) -> list[str]:
         """Generate assignment operation."""
-        target = f"{node.target.register}[{node.target.index}]" if isinstance(node.target, BitRef) else str(node.target)
+        if isinstance(node.target, BitRef):
+            target = self._render_bit_ref(node.target)
+            writes = (node.target.register, node.target.index)
+        else:
+            target = self._render_classical_name(node.target)
+            writes = (target, None)
 
         value = self._render_expression(node.value)
-        return [self._maybe_conditional(f"{target} = {value};")]
+        return [self._maybe_conditional(f"{target} = {value};", writes=writes)]
 
     def visit_barrier(self, node: BarrierOp) -> list[str]:
         """Generate barrier operation."""
-        qubits = ", ".join(node.allocators) if node.allocators else ", ".join(self.context.allocators.keys())
-        return [f"barrier {qubits};"]
+        allocators = node.allocators or tuple(
+            name for name in self.context.allocators if self.context.allocator_parents.get(name) is None
+        )
+        if not node.allocators and not allocators:
+            if self.context.is_fragment:
+                msg = "QASM codegen: global Barrier with no declared registers is not supported."
+                raise NotImplementedError(msg)
+            return []
+        refs = []
+        seen: set[str] = set()
+        for name in allocators:
+            if name not in self.context.allocators:
+                if self.context.is_fragment:
+                    if name not in seen:
+                        refs.append(name)
+                        seen.add(name)
+                    continue
+                msg = f"QASM codegen: undeclared allocator {name!r}; declare it before using Barrier."
+                raise ValueError(msg)
+            physical = list(
+                dict.fromkeys(
+                    self._render_slot_ref(SlotRef(allocator=name, index=i))
+                    for i in range(self.context.allocators[name])
+                ),
+            )
+            uncovered = [ref for ref in physical if ref not in seen]
+            if not uncovered:
+                continue
+            # Unchanged root operands can remain whole-register references,
+            # provided no earlier operand already fenced part of the register.
+            permuted = any(
+                source[0] == name and source != target for source, target in self.context.permutation_map.items()
+            )
+            if self.context.allocator_parents.get(name) is None and not permuted and len(uncovered) == len(physical):
+                refs.append(name)
+            else:
+                refs.extend(uncovered)
+            seen.update(physical)
+        return [f"barrier {', '.join(refs)};"] if refs else []
 
     def visit_comment(self, node: CommentOp) -> list[str]:
         """Generate comment.
@@ -495,9 +547,14 @@ class AstToQasm(BaseVisitor[list[str]]):
         return []
 
     def visit_print(self, node: PrintOp) -> list[str]:
-        """Print has no native QASM equivalent; emit as a comment for traceability."""
-        value_repr = node.value if isinstance(node.value, str) else f"{node.value.register}[{node.value.index}]"
-        return [f"// Print {node.namespace}.{node.tag} {value_repr}"]
+        """Reject observable output that QASM cannot represent."""
+        msg = f"QASM codegen does not support Print ({node.namespace}.{node.tag}); use the Guppy target."
+        raise NotImplementedError(msg)
+
+    def visit_block_call(self, node: BlockCall) -> list[str]:
+        """Reject calls left unresolved by block flattening."""
+        msg = f"QASM codegen cannot lower BlockCall {node.callee!r}; provide its block declaration."
+        raise NotImplementedError(msg)
 
     def visit_permute(self, node: PermuteOp) -> list[str]:
         """Handle permutation.
@@ -512,12 +569,49 @@ class AstToQasm(BaseVisitor[list[str]]):
 
             Returns None for whole register references (no index).
             """
-            match = re.match(r"(\w+)\[(\d+)\]", ref)
-            if match:
-                return (match.group(1), int(match.group(2)))
-            return None  # Whole register reference
+            return parse_permute_ref(ref, "QASM")
 
+        if (
+            len(node.sources) != len(node.targets)
+            or len(set(node.sources)) != len(node.sources)
+            or set(node.sources) != set(node.targets)
+        ):
+            msg = "QASM codegen: Permute must be bijective over the same ref set."
+            raise NotImplementedError(msg)
         if not node.sources:
+            return lines
+        parsed = [parse_ref(ref) for ref in node.sources]
+        sizes = {**self.context.allocators, **self.context.registers}
+        for reference, slot in zip(node.sources, parsed, strict=True):
+            name = reference if slot is None else slot[0]
+            if name not in sizes and not self.context.is_fragment:
+                msg = f"QASM codegen: undeclared register {name!r}; declare it before using Permute."
+                raise ValueError(msg)
+        if any(ref is None for ref in parsed):
+            if not all(ref is None for ref in parsed) or len(node.sources) != 2:
+                msg = "QASM codegen: Permute supports either indexed refs or a swap of two whole registers."
+                raise NotImplementedError(msg)
+            a, b = node.sources
+            if a not in sizes or b not in sizes:
+                msg = "QASM codegen: Permute requires known whole registers of equal size."
+                raise ValueError(msg)
+            if sizes[a] != sizes[b]:
+                msg = "QASM codegen: Permute requires known whole registers of equal size."
+                raise NotImplementedError(msg)
+            if (a in self.context.registers) != (b in self.context.registers):
+                msg = "QASM codegen: Permute cannot swap quantum and classical registers."
+                raise NotImplementedError(msg)
+        else:
+            for name, index in parsed:
+                size = self.context.registers.get(name, self.context.allocators.get(name, 0))
+                if not 0 <= index < size:
+                    msg = f"QASM codegen: Permute reference {name}[{index}] is not a declared slot."
+                    raise ValueError(msg)
+            kinds = {name in self.context.registers for name, _ in parsed}
+            if len(kinds) > 1:
+                msg = "QASM codegen: Permute cannot mix quantum and classical element refs."
+                raise NotImplementedError(msg)
+        if node.sources == node.targets:
             return lines
 
         # Check if this is a whole register permutation (no indices)
@@ -589,17 +683,23 @@ class AstToQasm(BaseVisitor[list[str]]):
 
         # If there are cycles, we need a temporary bit
         if cycles:
-            lines.append("creg _bit_swap[1];")
+            if self.context.bit_swap_temp is None:
+                temp = "bitswap"
+                while temp in self.context.registers or temp in self.context.allocators:
+                    temp += "x"
+                self.context.bit_swap_temp = temp
+                lines.append(f"creg {temp}[1];")
+            temp = self.context.bit_swap_temp
 
             for cycle in cycles:
                 # Save first element to temp
-                lines.append(f"_bit_swap[0] = {cycle[0]};")
+                lines.append(f"{temp}[0] = {cycle[0]};")
 
                 # Shift elements: each gets value of next in cycle
                 lines.extend(f"{cycle[i]} = {cycle[i + 1]};" for i in range(len(cycle) - 1))
 
                 # Last element gets the saved value
-                lines.append(f"{cycle[-1]} = _bit_swap[0];")
+                lines.append(f"{cycle[-1]} = {temp}[0];")
 
         # Add comment describing the permutation
         if node.add_comment:
@@ -622,33 +722,9 @@ class AstToQasm(BaseVisitor[list[str]]):
         if node.add_comment and node.sources:
             lines.append(f"// Permutation: {' <-> '.join(node.sources)}")
 
-        # For whole register swap, create mappings for all elements
-        if len(node.sources) == 2:
-            reg_a = node.sources[0]
-            reg_b = node.sources[1]
-            size_a = self.context.allocators.get(reg_a, 0)
-            size_b = self.context.allocators.get(reg_b, 0)
-
-            if size_a == size_b and size_a > 0:
-                # Build new permutation
-                new_perm: dict[tuple[str, int], tuple[str, int]] = {}
-                for i in range(size_a):
-                    new_perm[(reg_a, i)] = (reg_b, i)
-                    new_perm[(reg_b, i)] = (reg_a, i)
-
-                # Compose with existing permutation map
-                # Update existing mappings
-                composed: dict[tuple[str, int], tuple[str, int]] = {
-                    src: new_perm.get(intermediate, intermediate)
-                    for src, intermediate in self.context.permutation_map.items()
-                }
-
-                # Add new mappings only if source is not already mapped
-                composed.update(
-                    {src: dst for src, dst in new_perm.items() if src not in self.context.permutation_map},
-                )
-
-                self.context.permutation_map = composed
+        sources = tuple(f"{name}[{i}]" for name in node.sources for i in range(self.context.allocators[name]))
+        targets = tuple(f"{name}[{i}]" for name in node.targets for i in range(self.context.allocators[name]))
+        self._generate_qubit_permute(replace(node, sources=sources, targets=targets, add_comment=False), _parse_ref)
 
         return lines
 
@@ -659,9 +735,8 @@ class AstToQasm(BaseVisitor[list[str]]):
     ) -> list[str]:
         """Update permutation map for qubit permutation (no physical ops).
 
-        Uses composition semantics: existing mappings are updated if their
-        destination is being remapped, but new mappings only added if the
-        source is not already mapped.
+        Resolve every target through the old map before updating the source
+        bindings together, so repeated relabels compose in logical space.
         """
         lines: list[str] = []
 
@@ -676,67 +751,98 @@ class AstToQasm(BaseVisitor[list[str]]):
             tgt_key = parse_ref(tgt)
 
             if src_key is None or tgt_key is None:
-                continue
+                msg = "QASM codegen: Permute requires indexed refs in an element permutation."
+                raise NotImplementedError(msg)
 
-            # Where does tgt currently point? That's where src should now point
-            tgt_physical = self.context.apply_permutation(*tgt_key)
-            new_perm[src_key] = tgt_physical
+            def absolute_ref(key: tuple[str, int]) -> tuple[str, int]:
+                name, index = key
+                return self.context.get_root_allocator(name), self.context.get_absolute_index(name, index)
 
-        # Compose with existing permutation map
-        # Update existing mappings: if destination is in new_perm, follow the chain
-        composed: dict[tuple[str, int], tuple[str, int]] = {
-            src: new_perm.get(intermediate, intermediate) for src, intermediate in self.context.permutation_map.items()
-        }
+            src_key, tgt_key = absolute_ref(src_key), absolute_ref(tgt_key)
+            new_perm[src_key] = self.context.apply_permutation(*tgt_key)
 
-        # Add new mappings only if source is not already in existing map
-        composed.update(
-            {src: dst for src, dst in new_perm.items() if src not in self.context.permutation_map},
-        )
-
-        self.context.permutation_map = composed
+        # Resolve all destinations against the old map, then update together.
+        self.context.permutation_map.update(new_perm)
 
         return lines
 
     # === Control Flow ===
 
     def visit_if(self, node: IfStmt) -> list[str]:
-        """Generate conditional statements."""
-        reject_permute_in_region(node, "QASM")
-        lines = []
+        """Generate conditional statements.
 
-        # Render condition
-        cond = self._render_expression(node.condition)
+        An OpenQASM 2.0 condition guards a single operation, so every operation in
+        a branch carries the condition and re-reads it when it runs. The else-branch
+        runs under the negated comparison. Nested ifs, and branches that write a bit
+        the condition reads before a later operation re-reads it, are rejected; the
+        branches are exclusive, so a then-branch that writes the condition last is
+        emitted after the else-branch.
+        """
+        reject_permute_in_region(node, "QASM")
+        if self.context.condition is not None:
+            msg = (
+                "QASM codegen: nested If is not supported; an OpenQASM 2.0 condition "
+                "cannot be combined with the enclosing one"
+            )
+            raise NotImplementedError(msg)
+
+        self.context.condition_reads = frozenset(_condition_reads(node.condition))
+        self.context.condition_written = False
+        lines = self._conditional_branch(node.condition, node.then_body)
+        if node.else_body:
+            condition = node.condition
+            if not (isinstance(condition, BinaryExpr) and condition.op in NEGATED_COMPARISON):
+                msg = (
+                    "QASM codegen: an If with an else-branch needs a comparison condition "
+                    "(==, !=, <, <=, >, >=) so the else-branch can run under its negation"
+                )
+                raise NotImplementedError(msg)
+            negated = BinaryExpr(op=NEGATED_COMPARISON[condition.op], left=condition.left, right=condition.right)
+            if self.context.condition_written:
+                self.context.condition_written = False
+                else_lines = self._conditional_branch(negated, node.else_body)
+                if self.context.condition_written:
+                    msg = (
+                        "QASM codegen: both branches of an If write a bit its condition reads, so "
+                        "whichever is emitted second would check the changed value"
+                    )
+                    raise NotImplementedError(msg)
+                lines = else_lines + lines
+            else:
+                lines.extend(self._conditional_branch(negated, node.else_body))
+        self.context.condition_reads = frozenset()
+        return lines
+
+    def _conditional_branch(self, condition: Expression, body: tuple[Statement, ...]) -> list[str]:
+        """Emit each statement of a branch guarded by `condition`."""
+        cond = self._render_expression(condition)
         # Remove outer parentheses if present
         if cond.startswith("(") and cond.endswith(")"):
             cond = cond[1:-1]
 
-        # Save previous condition
-        prev_cond = self.context.condition
         self.context.condition = cond
-
-        # Generate then body
-        for stmt in node.then_body:
+        lines = []
+        for stmt in body:
             lines.extend(self.visit(stmt))
-
-        # Restore condition
-        self.context.condition = prev_cond
-
-        # Note: QASM 2.0 doesn't support else blocks in the standard way
-        # We just add a comment if there's an else block
-        if node.else_body:
-            lines.append("// Note: else block not directly supported in QASM 2.0")
-
+        self.context.condition = None
         return lines
 
     def visit_while(self, node: WhileStmt) -> list[str]:
         """While loops are not supported in QASM 2.0."""
         reject_permute_in_region(node, "QASM")
-        return ["// ERROR: While loops not supported in QASM 2.0"]
+        msg = "While: QASM 2.0 has no runtime loops, and no SLR code generator lowers While yet"
+        raise NotImplementedError(msg)
 
     def visit_for(self, node: ForStmt) -> list[str]:
-        """For loops are not supported in QASM 2.0."""
-        reject_permute_in_region(node, "QASM")
-        return ["// ERROR: For loops not supported in QASM 2.0"]
+        """Generate a static For by unrolling in the current context."""
+        if any(self._references_variable(stmt, node.variable) for stmt in node.body):
+            msg = f"QASM codegen: For body references loop variable {node.variable!r}; binding it is not supported."
+            raise NotImplementedError(msg)
+        lines = []
+        for _ in static_for_range(node, "QASM"):
+            for stmt in node.body:
+                lines.extend(self.visit(stmt))
+        return lines
 
     def visit_repeat(self, node: RepeatStmt) -> list[str]:
         """Generate repeat loop by unrolling."""
@@ -768,7 +874,7 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_bit_ref(self, node: BitRef) -> list[str]:
         """Bit refs are rendered inline."""
-        return [f"{node.register}[{node.index}]"]
+        return [self._render_bit_ref(node)]
 
     # === Expressions ===
 
@@ -778,11 +884,11 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def visit_var(self, node: VarExpr) -> list[str]:
         """Variables are rendered inline."""
-        return [node.name]
+        return [self._render_classical_name(node.name)]
 
     def visit_bit_expr(self, node: BitExpr) -> list[str]:
         """Bit expressions are rendered inline."""
-        return [f"{node.ref.register}[{node.ref.index}]"]
+        return [self._render_bit_ref(node.ref)]
 
     def visit_binary(self, node: BinaryExpr) -> list[str]:
         """Binary expressions are rendered inline."""
@@ -808,6 +914,33 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     # === Helper methods ===
 
+    def _references_variable(self, node: AstNode, variable: str) -> bool:
+        """Find unbound variable references without conflating them with register names."""
+        if isinstance(node, VarExpr) and self._name_references_variable(node.name, variable):
+            return True
+        if (
+            isinstance(node, AssignOp)
+            and isinstance(node.target, str)
+            and self._name_references_variable(node.target, variable)
+        ):
+            return True
+        if isinstance(node, ReturnOp) and any(
+            self._name_references_variable(value, variable) for value in node.values if isinstance(value, str)
+        ):
+            return True
+        # Converted references have integer indices. Keep the direct-AST guard
+        # structural too, for callers constructing an unsupported symbolic index.
+        if isinstance(node, BitRef | SlotRef) and node.index == variable:
+            return True
+        return any(self._references_variable(child, variable) for child in node.children())
+
+    def _name_references_variable(self, name: str, variable: str) -> bool:
+        """Recognize a bare variable or the converter's symbolic bit name reg[var]."""
+        if name == variable:
+            return variable not in self.context.registers and variable not in self.context.allocators
+        match = re.fullmatch(r"(\w+)\[(\w+)\]", name)
+        return match is not None and IDENTIFIER_PATTERN.fullmatch(match[1]) is not None and match[2] == variable
+
     def _render_slot_ref(self, node: SlotRef) -> str:
         """Render a slot reference as array access.
 
@@ -828,8 +961,9 @@ class AstToQasm(BaseVisitor[list[str]]):
         if isinstance(expr, LiteralExpr):
             return self._render_literal(expr)
         if isinstance(expr, VarExpr):
-            return expr.name
+            return self._render_classical_name(expr.name)
         if isinstance(expr, BitExpr):
+            self._require_register(expr.ref.register)
             # Apply permutation to bit references (for mixed qubit/classical permutations)
             reg, idx = self.context.apply_permutation(expr.ref.register, expr.ref.index)
             return f"{reg}[{idx}]"
@@ -839,6 +973,28 @@ class AstToQasm(BaseVisitor[list[str]]):
             return self._render_unary(expr)
         return str(expr)
 
+    def _require_register(self, name: str) -> None:
+        if name not in self.context.registers and not self.context.is_fragment:
+            msg = (
+                f"QASM codegen: undeclared classical register {name!r}; "
+                "QASM needs every classical register declared; declare it in Main(...)."
+            )
+            raise ValueError(msg)
+
+    def _render_bit_ref(self, ref: BitRef) -> str:
+        self._require_register(ref.register)
+        return f"{ref.register}[{ref.index}]"
+
+    def _render_classical_name(self, reference: str) -> str:
+        # Exact declared names take precedence over indexed-reference syntax.
+        name = reference
+        if name not in self.context.registers:
+            match = re.fullmatch(r"([A-Za-z_]\w*)\[.*\]", reference)
+            if match is not None:
+                name = match[1]
+        self._require_register(name)
+        return reference
+
     def _render_literal(self, node: LiteralExpr) -> str:
         """Render a literal value."""
         from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
@@ -846,6 +1002,8 @@ class AstToQasm(BaseVisitor[list[str]]):
         if isinstance(node.value, Angle):
             # OpenQASM stored rotations are emitted in radians.
             return str(node.value.value.to_radians_signed())
+        if isinstance(node.value, bool):
+            return "1" if node.value else "0"
         return str(node.value)
 
     def _render_binary(self, node: BinaryExpr) -> str:
@@ -864,11 +1022,43 @@ class AstToQasm(BaseVisitor[list[str]]):
             return f"(-{operand})"
         return f"({node.op} {operand})"
 
-    def _maybe_conditional(self, stmt: str) -> str:
-        """Wrap statement with condition if one is active."""
-        if self.context.condition:
-            return f"if({self.context.condition}) {stmt}"
-        return stmt
+    def _maybe_conditional(self, stmt: str, *, writes: tuple[str, int | None] | None = None) -> str:
+        """Wrap statement with condition if one is active.
+
+        `writes` is the (register, index) the statement assigns; index None is the
+        whole register.
+        """
+        if not self.context.condition:
+            return stmt
+        guarded = f"if({self.context.condition}) {stmt}"
+        if self.context.condition_written:
+            msg = (
+                "QASM codegen: an If writes a bit its condition reads and then runs "
+                f"`{guarded}`, which would check the changed value (OpenQASM 2.0 re-reads the "
+                "condition for every operation). Make the write the last operation of the If, "
+                "or write a different register."
+            )
+            raise NotImplementedError(msg)
+        if writes is not None:
+            register, index = writes
+            self.context.condition_written = any(
+                read_register == register and (read_index is None or index is None or read_index == index)
+                for read_register, read_index in self.context.condition_reads
+            )
+        return guarded
+
+
+def _condition_reads(expr: Expression) -> set[tuple[str, int | None]]:
+    """Return the (register, index) bits an if condition reads; index None is the whole register."""
+    if isinstance(expr, BitExpr):
+        return {(expr.ref.register, expr.ref.index)}
+    if isinstance(expr, VarExpr):
+        return {(expr.name, None)}
+    if isinstance(expr, BinaryExpr):
+        return _condition_reads(expr.left) | _condition_reads(expr.right)
+    if isinstance(expr, UnaryExpr):
+        return _condition_reads(expr.operand)
+    return set()
 
 
 def ast_to_qasm(

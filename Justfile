@@ -331,7 +331,7 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
-# One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
+# One shard of `pytest-ci-core`, shared by PR, trunk, and nightly CI. The four shards
 # partition the lane: `qec-surface-harvest` owns one file, `qec-surface` the
 # rest of that directory, `qec-guppy` the rest of qec/ plus guppy/, and `rest`
 # is everything else, ignoring exactly the paths the other shards own. Keep
@@ -361,8 +361,8 @@ pytest-ci-core-shard shard:
       rest)
         # pecos-rslib's own Rust unit tests ride this shard: it is a required
         # check that runs on pull requests and has already built the crate, so
-        # the marginal cost is the test run. `python-ci-core` runs them again
-        # post-merge; its heavy step skips on a pull request.
+        # the marginal cost is the test run. Trunk and nightly CI use this
+        # same shard, so they retain these tests too.
         just rslib-rust-test
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
         uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
@@ -1068,15 +1068,6 @@ install-build-llvm: _msvc-bootstrap
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Quick check: the packages used by the default dev/test lane are importable
-    # (catches newly added workspace members an older .venv lacks) and every
-    # installed package has its dependencies (catches a venv that was never
-    # synced, which is what `pecos python build` refuses at the end).
-    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null \
-        && uv pip check >/dev/null 2>&1; then
-        exit 0
-    fi
-    echo "Python deps incomplete, running uv sync..."
     # The extension crates that `pecos python build` installs later in `just
     # build` are excluded here, as the python-ci-sync* recipes do: otherwise uv
     # builds a release wheel of each one that maturin develop then replaces.
@@ -1095,8 +1086,28 @@ sync-deps:
         # Pick the cuda group matching the CUDA major (default cuda13).
         CUDA_GROUP=cuda13
         if nvcc --version 2>/dev/null | grep -qE "release 12[.,]"; then CUDA_GROUP=cuda12; fi
-        echo "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages ($CUDA_GROUP)"
         SYNC_ARGS+=(--group "$CUDA_GROUP")
+    fi
+    # Quick check: the venv matches uv.lock, which catches a requirement bump
+    # that the installed workspace metadata does not list yet, and every
+    # installed package has its dependencies, which `pecos python build`
+    # refuses at the end. The check is inexact so the extension crates that
+    # maturin installed do not count as drift, and it skips the remaining
+    # `reinstall-package` entries, which uv always reports as outdated. Those
+    # two are only checked for presence, one `uv pip show` each because it
+    # succeeds when any one of several names is installed.
+    if uv sync "${SYNC_ARGS[@]}" --inexact \
+        --no-install-package pecos-rslib-cuda \
+        --no-install-package pecos-selene-general-noise \
+        --check >/dev/null 2>&1 \
+        && uv pip show pecos-rslib-cuda >/dev/null 2>&1 \
+        && uv pip show pecos-selene-general-noise >/dev/null 2>&1 \
+        && uv pip check >/dev/null 2>&1; then
+        exit 0
+    fi
+    echo "Python deps incomplete, running uv sync..."
+    if [ -n "${CUDA_GROUP:-}" ]; then
+        echo "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages ($CUDA_GROUP)"
     fi
     uv sync "${SYNC_ARGS[@]}"
 

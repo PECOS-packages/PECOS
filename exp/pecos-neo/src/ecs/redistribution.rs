@@ -22,6 +22,7 @@
 //! ## Usage
 //!
 //! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::ecs::{ParallelCoordinator, ParallelConfig, redistribute_by_weight};
 //! use pecos_simulators::SparseStab;
 //! use pecos_random::PecosRng;
@@ -31,6 +32,7 @@
 //! let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
 //! let mut rng = PecosRng::seed_from_u64(42);
 //! let target_per_worker = 10;
+//! let mut redistribution_error = None;
 //!
 //! coordinator.run_with_sync::<_, _, _, ()>(
 //!     || SparseStab::new(1),
@@ -38,15 +40,21 @@
 //!     |_world, _step| {},
 //!     |workers, _step| {
 //!         // Redistribute entities based on weights
-//!         redistribute_by_weight(workers, target_per_worker, &mut rng);
+//!         if redistribution_error.is_none() {
+//!             redistribution_error = redistribute_by_weight(workers, target_per_worker, &mut rng).err();
+//!         }
 //!     },
 //! );
+//! if let Some(error) = redistribution_error { return Err(error.into()); }
+//! # Ok(())
+//! # }
 //! ```
 
 use super::coordinator::WorkerState;
 use super::entity::EntityId;
 use super::world::EntityTransfer;
-use crate::sampling::SampleWeight;
+use crate::noise::validation::{ValidationError, ValidationResult};
+use crate::sampling::weight::ResamplingWeights;
 use pecos_random::PecosRng;
 use pecos_simulators::CliffordGateable;
 use rand::RngExt;
@@ -81,6 +89,15 @@ impl RedistributionStats {
 pub fn collect_weights<S: CliffordGateable>(
     workers: &[WorkerState<S>],
 ) -> Vec<(usize, EntityId, f64)> {
+    collect_log_weights(workers)
+        .into_iter()
+        .map(|(worker, entity, log_weight)| (worker, entity, log_weight.exp()))
+        .collect()
+}
+
+fn collect_log_weights<S: CliffordGateable>(
+    workers: &[WorkerState<S>],
+) -> Vec<(usize, EntityId, f64)> {
     let mut weights = Vec::new();
     for (worker_idx, worker) in workers.iter().enumerate() {
         for entity in worker.world.active_entities() {
@@ -88,7 +105,7 @@ pub fn collect_weights<S: CliffordGateable>(
                 .world
                 .weights
                 .get(entity)
-                .map_or(1.0, |w| w.weight.weight());
+                .map_or(0.0, |w| w.weight.log_weight());
             weights.push((worker_idx, entity, weight));
         }
     }
@@ -114,46 +131,47 @@ pub fn total_weight<S: CliffordGateable>(workers: &[WorkerState<S>]) -> f64 {
 /// - Total weight is preserved
 ///
 /// Returns statistics about the redistribution.
+///
+/// # Errors
+/// Rejects target-count overflow, NaN/positive-infinity log weights, or an all-zero total before sampling.
+/// Finite log weights are normalized without overflow or underflow of their scale.
 #[allow(clippy::cast_precision_loss)] // statistical weight calculation
 pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
     workers: &mut [WorkerState<S>],
     target_per_worker: usize,
     rng: &mut PecosRng,
-) -> RedistributionStats {
+) -> ValidationResult<RedistributionStats> {
     let num_workers = workers.len();
     if num_workers == 0 || target_per_worker == 0 {
-        return RedistributionStats::default();
+        return Ok(RedistributionStats::default());
     }
 
-    let total_target = target_per_worker * num_workers;
+    let total_target = target_per_worker.checked_mul(num_workers).ok_or_else(|| {
+        ValidationError::new(
+            "target_per_worker",
+            "total target entity count overflows usize",
+        )
+        .with_value(&format!("{target_per_worker} * {num_workers} workers"))
+        .with_suggestion("Reduce target_per_worker or the number of workers")
+    })?;
 
     // Collect all entities and weights
-    let entity_info = collect_weights(workers);
+    let entity_info = collect_log_weights(workers);
     if entity_info.is_empty() {
-        return RedistributionStats::default();
+        return Ok(RedistributionStats::default());
     }
 
     let entities_before = entity_info.len();
-    let weight_before: f64 = entity_info.iter().map(|(_, _, w)| w).sum();
-
-    // Build CDF for weighted sampling
-    let total_w: f64 = entity_info.iter().map(|(_, _, w)| w).sum();
-    if total_w <= 0.0 {
-        return RedistributionStats::default();
-    }
-
-    let mut cdf = Vec::with_capacity(entity_info.len());
-    let mut cumsum = 0.0;
-    for (_, _, w) in &entity_info {
-        cumsum += w / total_w;
-        cdf.push(cumsum);
-    }
+    let normalized = ResamplingWeights::from_log_weights(
+        &entity_info.iter().map(|(_, _, w)| *w).collect::<Vec<_>>(),
+    )?;
+    let weight_before = normalized.total_weight();
 
     // Sample entities with replacement
     let mut selection_counts = vec![0usize; entity_info.len()];
     for _ in 0..total_target {
         let u: f64 = rng.random();
-        let idx = cdf.partition_point(|&x| x < u).min(cdf.len() - 1);
+        let idx = normalized.cdf.partition_point(|&x| x <= u);
         selection_counts[idx] += 1;
     }
 
@@ -182,7 +200,7 @@ pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
 
     // Distribute extracted entities across workers
     // Each entity gets weight = total_weight / total_entities
-    let new_weight = SampleWeight::from_linear(weight_before / total_target as f64);
+    let new_weight = normalized.equal_weight(total_target as f64);
 
     let mut worker_idx = 0;
     let mut entities_in_current_worker = 0;
@@ -214,13 +232,13 @@ pub fn redistribute_by_weight<S: CliffordGateable + Clone>(
         .sum();
     let weight_after = total_weight(workers);
 
-    RedistributionStats {
+    Ok(RedistributionStats {
         entities_before,
         entities_after,
         transfers: transfer_count,
         weight_before,
         weight_after,
-    }
+    })
 }
 
 /// Balance entity counts across workers without resampling.
@@ -289,6 +307,7 @@ pub fn balance_entity_counts<S: CliffordGateable + Clone>(workers: &mut [WorkerS
 #[allow(clippy::cast_precision_loss)]
 mod tests {
     use super::*;
+    use crate::sampling::SampleWeight;
     use pecos_simulators::SparseStab;
 
     #[test]
@@ -335,13 +354,13 @@ mod tests {
         for worker in &mut workers {
             for (i, entity) in worker.world.active_entities().into_iter().enumerate() {
                 if let Some(w) = worker.world.weights.get_mut(entity) {
-                    w.weight = SampleWeight::from_linear((i + 1) as f64);
+                    w.weight = SampleWeight::from_linear((i + 1) as f64).unwrap();
                 }
             }
         }
 
         let mut rng = PecosRng::seed_from_u64(42);
-        let stats = redistribute_by_weight(&mut workers, 5, &mut rng);
+        let stats = redistribute_by_weight(&mut workers, 5, &mut rng).unwrap();
 
         // Weight should be preserved
         assert!(

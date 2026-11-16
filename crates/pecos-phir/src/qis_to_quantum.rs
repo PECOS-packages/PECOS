@@ -90,7 +90,7 @@ fn convert_qis_op(
         "qalloc" => Ok(Some(Instruction {
             results: instr.results.clone(),
             operation: Operation::Quantum(QuantumOp::Alloc),
-            operands: vec![],
+            operands: instr.operands.clone(),
             result_types: vec![crate::types::Type::Qubit],
             regions: vec![],
             attributes: BTreeMap::new(),
@@ -307,7 +307,7 @@ fn resolve_angle(
             "qis_to_quantum: cannot resolve {context} (SSA {ssa}) to a constant"
         ))
     })?;
-    Ok(Angle64::from_radians(radians))
+    Angle64::try_from_radians(radians).map_err(|error| PhirError::internal(error.to_string()))
 }
 
 #[cfg(test)]
@@ -408,7 +408,7 @@ mod tests {
         assert_eq!(quantum_ops.len(), 1);
         assert!(matches!(
             quantum_ops[0].operation,
-            Operation::Quantum(QuantumOp::RZ(v)) if v == Angle64::from_radians(FRAC_PI_2)
+            Operation::Quantum(QuantumOp::RZ(v)) if v == Angle64::QUARTER_TURN
         ));
     }
 
@@ -489,7 +489,7 @@ mod tests {
         assert!(matches!(
             quantum_ops[0].operation,
             Operation::Quantum(QuantumOp::RXY1Q(theta, phi))
-                if theta == Angle64::from_radians(FRAC_PI_2) && phi == Angle64::ZERO
+                if theta == Angle64::QUARTER_TURN && phi == Angle64::ZERO
         ));
     }
 
@@ -601,7 +601,7 @@ entry:
         assert_eq!(quantum_ops.len(), 1);
         assert!(matches!(
             quantum_ops[0].operation,
-            Operation::Quantum(QuantumOp::RZZ(v)) if v == Angle64::from_radians(FRAC_PI_2)
+            Operation::Quantum(QuantumOp::RZZ(v)) if v == Angle64::QUARTER_TURN
         ));
         assert_eq!(quantum_ops[0].operands.len(), 2);
     }
@@ -695,7 +695,7 @@ entry:
         assert_eq!(quantum_ops.len(), 1);
         assert!(matches!(
             quantum_ops[0].operation,
-            Operation::Quantum(QuantumOp::CPhase(v)) if v == Angle64::from_radians(std::f64::consts::PI)
+            Operation::Quantum(QuantumOp::CPhase(v)) if v == Angle64::HALF_TURN
         ));
         assert_eq!(quantum_ops[0].operands.len(), 2);
     }
@@ -921,8 +921,8 @@ entry:
         assert_eq!(
             instruction.operation,
             Operation::Quantum(QuantumOp::RXYXY2Q(
-                Angle64::from_radians(-0.73),
-                Angle64::from_radians(0.41)
+                pecos_core::radians!(-0.73),
+                pecos_core::radians!(0.41)
             ))
         );
         assert_eq!(

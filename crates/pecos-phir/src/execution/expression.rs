@@ -56,6 +56,11 @@ impl ExpressionEvaluator {
         right: &TypedValue,
         op: &str,
     ) -> Result<TypedValue> {
+        if matches!(left, TypedValue::Aggregate(_)) || matches!(right, TypedValue::Aggregate(_)) {
+            return Err(PhirError::internal(format!(
+                "{op}: aggregate operand is unsupported"
+            )));
+        }
         match op {
             "+" => Self::add(left, right),
             "-" => Self::subtract(left, right),

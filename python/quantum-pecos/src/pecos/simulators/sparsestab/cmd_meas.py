@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 
 from pecos.simulators.sparsestab.cmd_one_qubit import H5, H
+from pecos.simulators.sparsestab.phase import product_phase
 
 
 def meas_x(
@@ -135,24 +136,7 @@ def meas_z(
     anticom_destabs_col = destabs.col_x[qubit]
 
     if len(anticom_stabs_col) == 0:  # No anti-commuting stabilizer => determined sign
-        stabs_row_x = stabs.row_x
-        stabs_row_z = stabs.row_z
-
-        num_minuses = len(anticom_destabs_col & stabs.signs_minus)
-        num_is = len(anticom_destabs_col & stabs.signs_i)
-
-        # Sign correction due ZX -> -XZ
-        cumulative_x = set()
-        for row in anticom_destabs_col:
-            num_minuses += len(stabs_row_z[row] & cumulative_x)
-
-            # Update the row sum Paulis
-            cumulative_x ^= stabs_row_x[row]
-
-        if num_is % 4:  # Can only be 0 or 2
-            num_minuses += 1
-
-        meas_outcome = num_minuses % 2
+        meas_outcome = product_phase(stabs, anticom_destabs_col) // 2
 
     elif collapse:
         return nondeterministic_meas(

@@ -353,7 +353,7 @@ mod tests {
                         parity ^ measurements[id.index()].outcome
                     }))
                 }
-                AnnotationKind::TrackedPauli => None,
+                AnnotationKind::TrackedPauli { .. } => None,
             })
             .collect()
     }

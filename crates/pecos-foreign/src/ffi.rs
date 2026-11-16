@@ -86,6 +86,10 @@ pub unsafe extern "C" fn pecos_foreign_decoder_decode(
     use crate::pecos_decoder_core::Decoder;
     use ndarray::ArrayView1;
 
+    if input_len > isize::MAX as usize {
+        return -1;
+    }
+
     let d = unsafe { &mut *decoder };
     let input_slice = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
     let view = ArrayView1::from(input_slice);

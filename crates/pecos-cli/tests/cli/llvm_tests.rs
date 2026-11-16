@@ -51,11 +51,12 @@ fn run_pecos(
     seed: u64,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pecos"));
-    cmd.env("RUST_LOG", "warn").arg("run"); // Use warn to avoid pipe buffer issues with verbose output
+    // Use warn to avoid pipe buffer issues with verbose output.
+    cmd.env("RUST_LOG", "warn").arg("run");
 
     // Add --jit flag for LLVM files (when Selene is not available)
     if file_path.extension().and_then(|s| s.to_str()) == Some("ll") {
-        cmd.arg("--jit");
+        cmd.args(["--jit", "--qubits", "2"]);
     }
 
     cmd.arg(file_path)
@@ -378,6 +379,7 @@ fn test_qis_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
+        .args(["--qubits", "2"])
         .arg("--jit")
         .arg(&test_file)
         .arg("-s")

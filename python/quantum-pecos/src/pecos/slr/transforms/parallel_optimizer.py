@@ -19,11 +19,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pecos.slr.fund import Node
 
+from pecos.slr._qubit_args import expand_qubit_args, qubit_key
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
-from pecos.slr.loop_block import For
+from pecos.slr.loop_block import For, While
 from pecos.slr.main import Main
 from pecos.slr.misc import Parallel
+from pecos.slr.vars import CReg, SymbolicBit, SymbolicElem
 
 
 class ParallelOptimizer:
@@ -34,7 +36,7 @@ class ParallelOptimizer:
     that act on disjoint sets of qubits can be grouped together for parallel execution.
 
     The optimizer is conservative and will not optimize Parallel blocks containing
-    control flow (If/Repeat blocks) to ensure correctness.
+    control flow (If/Repeat/For/While blocks) to ensure correctness.
     """
 
     def transform(self, block: Block) -> Block:
@@ -79,11 +81,13 @@ class ParallelOptimizer:
             if new_ops:
                 new_block.block(*new_ops)
         elif isinstance(block, For):
-            # Create new For block preserving loop variable and iteration
+            # Create new For block preserving the loop variable object (the body
+            # refers to it by identity), its string-label flag, and iteration
             if block.iterable is not None:
                 new_block = For(block.var, block.iterable)
             else:
                 new_block = For(block.var, block.start, block.stop, block.step)
+            new_block.var_is_string = block.var_is_string
             if new_ops:
                 new_block.Do(*new_ops)
         # Only reconstruct certain block types
@@ -159,20 +163,36 @@ class ParallelOptimizer:
             else:
                 new_ops.append(Parallel(*group))
 
-        # Return a Block containing the optimized structure
-        return Block(*new_ops)
+        # Keep storage in its original block order even when executable ops
+        # are flattened and regrouped. QAllocs are declarations, not gates.
+        declarations = self._declaration_block(parallel)
+        return Block(*([declarations] if declarations is not None else []), *new_ops)
+
+    def _declaration_block(self, block: Block) -> Block | None:
+        """Retain the declaration tree of a region whose operations are flattened."""
+        declarations = Block()
+        declarations.vars = block.vars
+        declarations.ops = [op for op in block.ops if type(op).__name__ == "QAlloc"]
+        for op in block.ops:
+            if isinstance(op, Block):
+                child = self._declaration_block(op)
+                if child is not None:
+                    declarations.ops.append(child)
+        if not declarations.vars.vars and not declarations.ops:
+            return None
+        return declarations
 
     def _can_optimize_parallel(self, parallel: Parallel) -> bool:
         """Check if a Parallel block can be safely optimized.
 
-        Returns False if the block contains control flow (If/Repeat) or any
+        Returns False if the block contains control flow (If/Repeat/For/While) or any
         converted Block (a Block subclass with class-level `block_inputs`).
         Splatting a converted Block's body into the surrounding Parallel
         would destroy its scope boundary -- the BlockCall lowering needs the
         Block to remain a single op in the AST.
         """
         for op in parallel.ops:
-            if isinstance(op, If | Repeat):
+            if isinstance(op, If | Repeat | For | While):
                 return False
             if isinstance(op, Block):
                 if hasattr(type(op), "block_inputs"):
@@ -196,7 +216,7 @@ class ParallelOptimizer:
     def _contains_control_flow(self, block: Block) -> bool:
         """Check if a block contains any control flow operations."""
         for op in block.ops:
-            if isinstance(op, If | Repeat):
+            if isinstance(op, If | Repeat | For | While):
                 return True
             if isinstance(op, Block) and self._contains_control_flow(op):
                 return True
@@ -204,16 +224,7 @@ class ParallelOptimizer:
 
     def _collect_operations(self, parallel: Parallel) -> list[Node]:
         """Recursively collect all operations from a Parallel block."""
-        operations = []
-
-        for op in parallel.ops:
-            if isinstance(op, Block):
-                # Recursively collect from nested blocks
-                operations.extend(self._collect_from_block(op))
-            else:
-                operations.append(op)
-
-        return operations
+        return self._collect_from_block(parallel)
 
     def _collect_from_block(self, block: Block) -> list[Node]:
         """Recursively collect all operations from a Block."""
@@ -222,13 +233,13 @@ class ParallelOptimizer:
         for op in block.ops:
             if isinstance(op, Block):
                 operations.extend(self._collect_from_block(op))
-            else:
+            elif type(op).__name__ != "QAlloc":
                 operations.append(op)
 
         return operations
 
     def _build_dependency_graph(self, operations: list[Node]) -> dict[int, set[int]]:
-        """Build a dependency graph based on qubit usage.
+        """Build dependencies from qubits, result writes and non-quantum barriers.
 
         Returns a dict mapping operation index to set of indices it depends on.
         """
@@ -236,41 +247,70 @@ class ParallelOptimizer:
 
         # Track which qubits are used by each operation
         qubit_usage = {}
+        result_usage = {}
+        barriers = set()
         for i, op in enumerate(operations):
             qubits = self._get_qubits(op)
             qubit_usage[i] = qubits
+            result_usage[i] = self._get_result_bits(op)
+            if not getattr(op, "is_qgate", False) or not qubits:
+                barriers.add(i)
 
-        # Build dependencies: op_i depends on op_j if they share qubits and j < i
+        # A non-quantum operation or one without qubits separates all surrounding operations.
         for i in range(len(operations)):
             for j in range(i):
-                if qubit_usage[i] & qubit_usage[j]:  # Intersection of qubit sets
+                if (
+                    i in barriers
+                    or j in barriers
+                    or qubit_usage[i] & qubit_usage[j]
+                    or result_usage[i] & result_usage[j]
+                ):
                     dep_graph[i].add(j)
 
         return dict(dep_graph)
 
+    def _get_result_bits(self, op: Node) -> set:
+        """Expand measurement outputs so register, slice and individual-bit writes overlap."""
+        bits = set()
+        pending = list(getattr(op, "cout", None) or ())
+        while pending:
+            result = pending.pop()
+            if isinstance(result, CReg):
+                pending.extend(result.elems)
+            elif isinstance(result, SymbolicBit):
+                # Its unresolved index may name any concrete bit of this register.
+                pending.extend(result.reg.elems)
+            elif isinstance(result, list):
+                pending.extend(result)
+            else:
+                bits.add((result.reg.sym, result.index))
+        return bits
+
     def _get_qubits(self, op: Node) -> set:
         """Extract the set of qubits an operation acts on."""
-        qubits = set()
-
-        # Handle quantum gates with qargs
         if hasattr(op, "qargs"):
-            for qarg in op.qargs:
-                qubits.add(self._qubit_to_key(qarg))
-
-        # Handle measurements
+            args = op.qargs
         elif hasattr(op, "qin"):
-            for q in op.qin:
-                qubits.add(self._qubit_to_key(q))
+            args = op.qin
+        else:
+            return set()
+        return {qubit_key(qubit) for qubit in expand_qubit_args(self._widen_symbolic(args), type(op).__name__)}
 
-        return qubits
+    def _widen_symbolic(self, args):
+        """Replace loop-variable elements by their register, as for symbolic result bits.
 
-    def _qubit_to_key(self, qubit) -> tuple:
-        """Convert a qubit to a hashable key."""
-        if hasattr(qubit, "reg") and hasattr(qubit, "index"):
-            return (qubit.reg.sym, qubit.index)
-        if hasattr(qubit, "sym"):
-            return (qubit.sym,)
-        return (str(qubit),)
+        The optimizer only orders operations; rejecting symbolic indices is left
+        to the code generators, which report it with their own error.
+        """
+        widened = []
+        for arg in args:
+            if isinstance(arg, SymbolicElem):
+                widened.append(arg.reg)
+            elif isinstance(arg, tuple | list):
+                widened.append(type(arg)(self._widen_symbolic(arg)))
+            else:
+                widened.append(arg)
+        return widened
 
     def _group_operations(
         self,
@@ -309,7 +349,7 @@ class ParallelOptimizer:
                 "CX",
                 "CY",
                 "CZ",
-                "Measure",
+                "MeasureZ",
                 "Other",
             ]
             # Use list comprehension to build groups from ordered types

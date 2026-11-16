@@ -99,8 +99,12 @@ impl CliffordTableau {
     /// Mark qubit `q` as prepared in |0> and reset its Clifford columns to identity.
     pub fn prepare(&mut self, q: usize) {
         self.prepared[q] = true;
-        self.clifford.set_x_image(q, PauliString::x(q));
-        self.clifford.set_z_image(q, PauliString::z(q));
+        self.clifford
+            .set_x_image(q, PauliString::x(q))
+            .expect("generator index and image lie within the allocated tableau width");
+        self.clifford
+            .set_z_image(q, PauliString::z(q))
+            .expect("generator index and image lie within the allocated tableau width");
     }
 
     /// Record a measurement of qubit `q`, optionally targeting classical bit `cbit`.
@@ -1027,7 +1031,7 @@ mod tests {
 
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
-        dag.rz(Angle64::from_turns(0.125), &[0]); // T up to global phase, non-Clifford
+        dag.rz(Angle64::from_turn_ratio(1, 8), &[0]); // T up to global phase, non-Clifford
         dag.mz(&[0]);
 
         let result = CliffordTableau::from_dag(&dag);

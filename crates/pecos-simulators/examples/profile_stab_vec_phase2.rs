@@ -33,7 +33,7 @@ fn build_case(structure: &str, target_terms: usize) -> StabVec {
     sim.h(&all_qubits);
     black_box(sim.state_vector());
 
-    let theta = Angle64::from_radians(std::f64::consts::FRAC_PI_4);
+    let theta = Angle64::from_turn_ratio(1, 8);
     for step in 0..rotations {
         let q = if structure == "shared" {
             QubitId(0)

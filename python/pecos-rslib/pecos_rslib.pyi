@@ -24,6 +24,7 @@ from typing import (
     Generic,
     Iterable,
     Iterator,
+    Literal,
     Mapping,
     Protocol,
     Sequence,
@@ -853,6 +854,8 @@ class StateVec:
     def __init__(self, num_qubits: int) -> None: ...
     def reset(self) -> StateVec: ...
     @property
+    def gate_capacity(self) -> int | None: ...
+    @property
     def num_qubits(self) -> int: ...
     @property
     def vector(self) -> Array: ...
@@ -1033,12 +1036,16 @@ class SparseStab:
 
     def __init__(self, num_qubits: int, *, seed: int | None = None) -> None: ...
     @property
+    def gate_capacity(self) -> int | None: ...
+    @property
     def num_qubits(self) -> int: ...
 
 class Stabilizer:
     """Rust stabilizer simulator."""
 
     def __init__(self, num_qubits: int, *, seed: int | None = None) -> None: ...
+    @property
+    def gate_capacity(self) -> int | None: ...
     @property
     def num_qubits(self) -> int: ...
 
@@ -1053,6 +1060,8 @@ class StabVec:
         mc_threshold: int | None = 2048,
     ) -> None: ...
     @property
+    def gate_capacity(self) -> int | None: ...
+    @property
     def num_qubits(self) -> int: ...
     @property
     def num_terms(self) -> int: ...
@@ -1061,6 +1070,8 @@ class CoinToss:
     """Coin toss simulator for random measurement outcomes."""
 
     def __init__(self, num_qubits: int, prob: float = 0.5, seed: int | None = None) -> None: ...
+    @property
+    def gate_capacity(self) -> int | None: ...
     @property
     def num_qubits(self) -> int: ...
 
@@ -1116,6 +1127,12 @@ class QasmEngineBuilder:
 class QisEngineBuilder:
     """Builder for QIS engines."""
 
+    def runtime_decoder(
+        self, factory: object, *, capture_batches: bool = False, capture_control_flow: bool = False
+    ) -> QisEngineBuilder:
+        """Configure a zero-argument factory returning a fresh shot-local decoder session."""
+        ...
+
     def scheduled_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def scheduled_event_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def selene_runtime(
@@ -1125,6 +1142,7 @@ class QisEngineBuilder:
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
         batch_adapter_factory: Callable[[], object] | None = None,
+        clock_model: str = "continuous",
     ) -> QisEngineBuilder: ...
     def selene_runtime_plugin(
         self,
@@ -1135,7 +1153,7 @@ class QisEngineBuilder:
         custom_event_policy: str = "reject_unhandled",
         native_gates: list[str] | None = None,
         batch_adapter_factory: Callable[[], object] | None = None,
-        defer_measurements: bool = False,
+        clock_model: str = "continuous",
     ) -> QisEngineBuilder: ...
 
 class PhirJsonEngineBuilder:
@@ -1146,7 +1164,9 @@ class PhirJsonEngineBuilder:
 class SimBuilder:
     """General simulation builder."""
 
-    ...
+    def python_worker_context(self, enabled: bool = True) -> SimBuilder:
+        """Opt into Python context persistence across a QIS worker's callbacks/shots."""
+        ...
 
 class StateVectorEngineBuilder:
     """Builder for state vector engines."""
@@ -1186,10 +1206,211 @@ class QisInterfaceBuilder:
 # =============================================================================
 # Noise Model Builders
 # =============================================================================
-class GeneralNoiseModelBuilder:
-    """Builder for general noise models."""
+class PauliLeakageDict:
+    """Validated normalized distribution of Pauli and ``L`` events."""
 
-    ...
+    def __init__(self, events: dict[str, float]) -> None: ...
+    @property
+    def arity(self) -> int: ...
+    @property
+    def events(self) -> dict[str, float]: ...
+    def to_dict(self) -> dict[str, float]: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, event: str) -> float: ...
+    def __contains__(self, event: str) -> bool: ...
+    def get(self, event: str) -> float | None: ...
+    def keys(self) -> list[str]: ...
+    def items(self) -> list[tuple[str, float]]: ...
+    def values(self) -> list[float]: ...
+    def tensor(self, other: PauliLeakageDict) -> PauliLeakageDict: ...
+    def __mul__(self, other: PauliLeakageDict) -> PauliLeakageDict: ...
+
+class PauliLeakageChannel:
+    """Stochastic single-qubit Pauli-plus-leakage channel."""
+
+    def __init__(
+        self,
+        probability: float,
+        events: dict[str, float] | PauliLeakageDict,
+    ) -> None: ...
+    @property
+    def probability(self) -> float: ...
+    @property
+    def events(self) -> dict[str, float]: ...
+    @property
+    def event_dict(self) -> PauliLeakageDict: ...
+    def __mul__(self, other: PauliLeakageChannel) -> P2PauliLeakageStep: ...
+
+class TwoQubitPauliLeakageChannel:
+    """Stochastic joint two-qubit Pauli-plus-leakage channel."""
+
+    def __init__(
+        self,
+        probability: float,
+        events: dict[str, float] | PauliLeakageDict,
+    ) -> None: ...
+    @property
+    def probability(self) -> float: ...
+    @property
+    def events(self) -> dict[str, float]: ...
+    @property
+    def event_dict(self) -> PauliLeakageDict: ...
+
+class P2PauliLeakageStep:
+    """Independent-leg or joint Pauli-plus-leakage step at a two-qubit hook."""
+
+    @staticmethod
+    def independent(
+        first: PauliLeakageChannel,
+        second: PauliLeakageChannel,
+    ) -> P2PauliLeakageStep: ...
+    @staticmethod
+    def tensor_product(
+        first: PauliLeakageChannel,
+        second: PauliLeakageChannel,
+    ) -> P2PauliLeakageStep: ...
+    @staticmethod
+    def same_on_each(channel: PauliLeakageChannel) -> P2PauliLeakageStep: ...
+    @staticmethod
+    def joint(channel: TwoQubitPauliLeakageChannel) -> P2PauliLeakageStep: ...
+
+class TransitionDict:
+    """Validated conditional-transition mapping over ``{0, 1, L}^arity``.
+
+    ``a * b`` is the tensor/Kronecker product. In a two-qubit mapping, ``*`` in
+    the same source and destination position is an unmeasured identity wire.
+    Products of two one-qubit dictionaries expose wildcard rows, preserving identity
+    wires when reconstructed from ``transitions`` or ``to_dict()``. Higher-arity
+    products expose expanded rows.
+    Concrete one- and two-qubit maps require every computational completion of
+    each supplied leakage pattern; missing source rows raise ValueError.
+    """
+
+    def __init__(self, transitions: dict[str, float] | dict[str, dict[str, float]]) -> None: ...
+    @property
+    def arity(self) -> int: ...
+    @property
+    def transitions(self) -> dict[str, dict[str, float]]: ...
+    def to_dict(self) -> dict[str, dict[str, float]]: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, source: str) -> dict[str, float]: ...
+    def __contains__(self, source: str) -> bool: ...
+    def get(self, source: str) -> dict[str, float] | None: ...
+    def keys(self) -> list[str]: ...
+    def items(self) -> list[tuple[str, dict[str, float]]]: ...
+    def values(self) -> list[dict[str, float]]: ...
+    def tensor(self, other: TransitionDict) -> TransitionDict: ...
+    def __mul__(self, other: TransitionDict) -> TransitionDict: ...
+
+class StateTransitionChannel:
+    """Conditional population channel on ``0``, ``1``, and ``L``.
+
+    Each supplied source row sums to one. Computational rows must be supplied
+    together: firing performs MZ even for explicit identity rows.
+    """
+
+    def __init__(
+        self,
+        probability: float,
+        transitions: dict[str, float] | dict[str, dict[str, float]] | TransitionDict,
+    ) -> None: ...
+    @staticmethod
+    def leak_recovery(probability: float, p_zero: float = 0.5) -> StateTransitionChannel: ...
+    @property
+    def probability(self) -> float: ...
+    @property
+    def transitions(self) -> dict[str, dict[str, float]]: ...
+    @property
+    def transition_dict(self) -> TransitionDict: ...
+    def __mul__(self, other: StateTransitionChannel) -> P2TransitionStep: ...
+
+class TwoQubitStateTransitionChannel:
+    """Joint conditional population channel on two effective qutrits.
+
+    A matching ``*`` in one source/destination position leaves that qubit
+    untouched and unresolved. Rules for ``*x`` and ``x*`` may coexist.
+    Concrete rows require both 0L/1L, both L0/L1, or all 00/01/10/11 when any
+    row in that group is supplied; LL stands alone. Missing rows raise ValueError
+    naming each incomplete leakage pattern (C denotes 0 or 1) and its missing sources.
+    A selected channel measures a non-leaked leg only when it depends on that
+    leg's computational state and a row matches the pair's leakage pattern.
+    Unmatched patterns and wildcard/tensor identity legs remain unmeasured.
+    """
+
+    def __init__(
+        self,
+        probability: float,
+        transitions: dict[str, float] | dict[str, dict[str, float]] | TransitionDict,
+    ) -> None: ...
+    @property
+    def probability(self) -> float: ...
+    @property
+    def transitions(self) -> dict[str, dict[str, float]]: ...
+    @property
+    def transition_dict(self) -> TransitionDict: ...
+
+class P2TransitionStep:
+    """Independent-leg or joint transition step at a two-qubit gate hook."""
+
+    @staticmethod
+    def independent(
+        first: StateTransitionChannel,
+        second: StateTransitionChannel,
+    ) -> P2TransitionStep: ...
+    @staticmethod
+    def tensor_product(
+        first: StateTransitionChannel,
+        second: StateTransitionChannel,
+    ) -> P2TransitionStep: ...
+    @staticmethod
+    def same_on_each(channel: StateTransitionChannel) -> P2TransitionStep: ...
+    @staticmethod
+    def joint(channel: TwoQubitStateTransitionChannel) -> P2TransitionStep: ...
+
+class GeneralNoiseModelBuilder:
+    """Builder for general noise models.
+
+    Hook probabilities use the global and corresponding p1/p2 scale factors.
+    Scaled hook probabilities outside [0, 1] raise ValueError; each independent
+    leg is checked separately.
+    """
+
+    def with_config_json(self, json: str) -> GeneralNoiseModelBuilder:
+        """Apply model JSON; schema and recorded setter errors raise ValueError."""
+        ...
+
+    def with_p1_pauli_leakage_channels_before_gate(
+        self, channels: list[PauliLeakageChannel]
+    ) -> GeneralNoiseModelBuilder: ...
+    def add_p1_pauli_leakage_channel_before_gate(self, channel: PauliLeakageChannel) -> GeneralNoiseModelBuilder: ...
+    def with_p1_pauli_leakage_channels_after_gate(
+        self, channels: list[PauliLeakageChannel]
+    ) -> GeneralNoiseModelBuilder: ...
+    def add_p1_pauli_leakage_channel_after_gate(self, channel: PauliLeakageChannel) -> GeneralNoiseModelBuilder: ...
+    def with_p1_transition_channels_before_gate(
+        self, channels: list[StateTransitionChannel]
+    ) -> GeneralNoiseModelBuilder: ...
+    def add_p1_transition_channel_before_gate(self, channel: StateTransitionChannel) -> GeneralNoiseModelBuilder: ...
+    def with_p1_transition_channels_after_gate(
+        self, channels: list[StateTransitionChannel]
+    ) -> GeneralNoiseModelBuilder: ...
+    def add_p1_transition_channel_after_gate(self, channel: StateTransitionChannel) -> GeneralNoiseModelBuilder: ...
+    def with_p2_pauli_leakage_steps_before_gate(self, steps: list[P2PauliLeakageStep]) -> GeneralNoiseModelBuilder: ...
+    def add_p2_pauli_leakage_step_before_gate(self, step: P2PauliLeakageStep) -> GeneralNoiseModelBuilder: ...
+    def add_p2_pauli_leakage_channel_before_gate(self, channel: PauliLeakageChannel) -> GeneralNoiseModelBuilder: ...
+    def with_p2_pauli_leakage_steps_after_gate(self, steps: list[P2PauliLeakageStep]) -> GeneralNoiseModelBuilder: ...
+    def add_p2_pauli_leakage_step_after_gate(self, step: P2PauliLeakageStep) -> GeneralNoiseModelBuilder: ...
+    def add_p2_pauli_leakage_channel_after_gate(self, channel: PauliLeakageChannel) -> GeneralNoiseModelBuilder: ...
+    def with_p2_transition_steps_before_gate(self, steps: list[P2TransitionStep]) -> GeneralNoiseModelBuilder: ...
+    def add_p2_transition_step_before_gate(self, step: P2TransitionStep) -> GeneralNoiseModelBuilder: ...
+    def add_p2_transition_channel_before_gate(
+        self, channel: StateTransitionChannel | TwoQubitStateTransitionChannel
+    ) -> GeneralNoiseModelBuilder: ...
+    def with_p2_transition_steps_after_gate(self, steps: list[P2TransitionStep]) -> GeneralNoiseModelBuilder: ...
+    def add_p2_transition_step_after_gate(self, step: P2TransitionStep) -> GeneralNoiseModelBuilder: ...
+    def add_p2_transition_channel_after_gate(
+        self, channel: StateTransitionChannel | TwoQubitStateTransitionChannel
+    ) -> GeneralNoiseModelBuilder: ...
 
 class DepolarizingNoiseModelBuilder:
     """Builder for depolarizing noise models."""
@@ -1228,14 +1449,20 @@ class ByteMessageBuilder:
     ...
 
 class ShotMap:
-    """Map of measurement outcomes."""
+    """Results with separate, shot-aligned exit diagnostics."""
 
-    ...
+    @property
+    def program_exits(self) -> list[dict[str, int | str] | None]:
+        """Each item is None or {"code": int, "message": str}."""
+        ...
 
 class ShotVec:
-    """Vector of measurement outcomes."""
+    """Results with separate, shot-aligned exit diagnostics."""
 
-    ...
+    @property
+    def program_exits(self) -> list[dict[str, int | str] | None]:
+        """Each item is None or {"code": int, "message": str}."""
+        ...
 
 # =============================================================================
 # Quantum Types
@@ -1250,7 +1477,7 @@ class PauliString:
 
     def __init__(
         self,
-        paulis: list[tuple[Pauli, int]] | list[Pauli] | None = None,
+        paulis: list[tuple[Pauli, SupportsIndex]] | list[Pauli] | None = None,
         phase: int = 0,
     ) -> None: ...
     @staticmethod
@@ -1260,19 +1487,23 @@ class PauliString:
     @staticmethod
     def from_sparse_str(s: str) -> PauliString: ...
     @staticmethod
-    def X(qubit: int) -> PauliString: ...
+    def X(qubit: SupportsIndex) -> PauliString: ...
     @staticmethod
-    def Y(qubit: int) -> PauliString: ...
+    def Y(qubit: SupportsIndex) -> PauliString: ...
     @staticmethod
-    def Z(qubit: int) -> PauliString: ...
+    def Z(qubit: SupportsIndex) -> PauliString: ...
     @staticmethod
     def I() -> PauliString: ...  # noqa: E743
-    def to_dense_str(self, num_qubits: int | None = None) -> str: ...
+    def to_dense_str(self, num_qubits: int | None = None) -> str:
+        """Format with phase prefix; raise ValueError if non-identity support exceeds the width."""
+        ...
+
     def to_sparse_str(self) -> str: ...
     def get_phase(self) -> int: ...
     def get_paulis(self) -> list[tuple[Pauli, int]]: ...
     def to_matrix(self, num_qubits: int | None = None) -> list[list[tuple[float, float]]]: ...
     def commutes_with(self, other: PauliString) -> bool: ...
+    def qubitwise_commutes_with(self, other: PauliString) -> bool: ...
     def anticommutes_with(self, other: PauliString) -> bool: ...
     def weight(self) -> int: ...
     def qubits(self) -> list[int]: ...
@@ -1281,17 +1512,45 @@ class PauliString:
     def __neg__(self) -> PauliString: ...
     def __eq__(self, other: object) -> bool: ...
 
-def X(qubit: int) -> PauliString: ...
-def Xs(qubits: Sequence[int]) -> PauliString: ...
-def Y(qubit: int) -> PauliString: ...
-def Ys(qubits: Sequence[int]) -> PauliString: ...
-def Z(qubit: int) -> PauliString: ...
-def Zs(qubits: Sequence[int]) -> PauliString: ...
+def X(qubit: SupportsIndex) -> PauliString: ...
+def Xs(qubits: Sequence[SupportsIndex]) -> PauliString: ...
+def Y(qubit: SupportsIndex) -> PauliString: ...
+def Ys(qubits: Sequence[SupportsIndex]) -> PauliString: ...
+def Z(qubit: SupportsIndex) -> PauliString: ...
+def Zs(qubits: Sequence[SupportsIndex]) -> PauliString: ...
 
 class PauliStabilizerGroup:
-    """A group of commuting Pauli operators with real phases."""
+    """A group of commuting real-phase Paulis that does not generate -I."""
 
-    ...
+    def __init__(self, generators: list[PauliString]) -> None: ...
+    @staticmethod
+    def from_str(s: str) -> PauliStabilizerGroup: ...
+    def rank(self) -> int: ...
+    def num_qubits(self) -> int: ...
+    def num_generators(self) -> int: ...
+    def is_independent(self) -> bool: ...
+    def contains(self, pauli: PauliString) -> bool: ...
+    def contains_with_phase(self, pauli: PauliString) -> bool: ...
+    def stabilizers(self) -> list[PauliString]: ...
+    def elements(self) -> list[PauliString]: ...
+    def element(self, mask: SupportsIndex) -> PauliString:
+        """Select original generators using an unsigned 64-bit integer mask.
+
+        Generators at indices >= 64 cannot be selected, even in larger groups.
+        Bool/non-integers raise TypeError; out-of-range masks raise ValueError.
+        """
+        ...
+
+    def add_generator(self, generator: PauliString) -> None: ...
+    def remove_generator(self, index: SupportsIndex) -> PauliString: ...
+    def merge(self, other: PauliStabilizerGroup) -> None: ...
+    def to_dense_str(self) -> str:
+        """Format one Pauli per line with phase prefix, padded to num_qubits."""
+        ...
+
+    def __str__(self) -> str: ...
+    def to_sparse_str(self) -> str: ...
+    def __len__(self) -> int: ...
 
 class StabilizerCode:
     """A stabilizer group with an explicit physical-qubit count."""
@@ -1429,6 +1688,11 @@ class StabilizerCodeSpec:
 class PauliSequence:
     """Ordered sequence of Pauli operators with symplectic analysis."""
 
+    def to_dense_str(self) -> str:
+        """Format one Pauli per line with phase prefix, padded to num_qubits."""
+        ...
+
+    def __str__(self) -> str: ...
     def group_commuting(self) -> list[PauliSequence]: ...
 
 class CliffordRep:
@@ -1542,10 +1806,23 @@ class CliffordRep:
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
 
-class PauliPropRs:
-    """Pauli propagator (Rust implementation)."""
+class PauliProp:
+    """Width-independent Pauli tracker (Rust implementation)."""
 
-    ...
+    def __init__(self, *, track_sign: bool = False) -> None: ...
+    @property
+    def gate_capacity(self) -> int | None: ...
+    @property
+    def track_sign(self) -> bool: ...
+    def dense_string(self, num_qubits: int | None = None) -> str:
+        """Format without phase; None uses natural width, insufficient width raises ValueError."""
+        ...
+
+    def to_dense_string(self, num_qubits: int | None = None) -> str:
+        """Format with tracked phase; None uses natural width, insufficient width raises ValueError."""
+        ...
+
+    def sparse_string(self) -> str: ...
 
 ComplexMatrix = Sequence[Sequence[complex]]
 RealMatrix = Sequence[Sequence[float]]
@@ -1802,6 +2079,7 @@ class GateType:
     CCX: GateType
     MeasureX: GateType
     Measure: GateType
+    MeasureZ: GateType
     MeasureFree: GateType
     PrepX: GateType
     Prep: GateType
@@ -1874,7 +2152,7 @@ def resolve_result_tags_for_guppy(
     """Resolve result tags using Python-computed static measurement provenance.
 
     Occurrences contain measurement ordinals or None for unsupported values.
-    Raises ValueError for runtime loops, unknown tags, or invalid metadata.
+    Raises ValueError for measurement-count mismatches, unknown tags, or invalid metadata.
     Returns detector and observable JSON with tags replaced by record offsets.
     """
 
@@ -1919,12 +2197,28 @@ class DagCircuit:
     def gate(self, node: int) -> Gate | None: ...
     def nodes(self) -> list[int]: ...
     def to_tick_circuit(self) -> TickCircuit: ...
+    def sx(self, qubits: Sequence[int]) -> DagCircuit: ...
+    def sxdg(self, qubits: Sequence[int]) -> DagCircuit: ...
+    def t(self, qubits: Sequence[int]) -> DagCircuit: ...
+    def tdg(self, qubits: Sequence[int]) -> DagCircuit: ...
     def detector(self, measurements: Any, label: str | None = None) -> int:
         """Return the zero-based definition id: the number of preceding detector annotations."""
         ...
 
     def observable(self, measurements: Any, label: str | None = None) -> int:
         """Return the zero-based definition id: the number of preceding observable annotations."""
+        ...
+
+    def measured_pauli(self, meas_id: int) -> tuple[str, int]:
+        """Return (basis, qubit) for a measurement id; raise ValueError if unresolved."""
+        ...
+
+    def measured_paulis(self, meas_ids: Sequence[int]) -> list[tuple[str, int]]:
+        """Resolve IDs in order with one scan; raise ValueError for an unresolved ID."""
+        ...
+
+    def annotations(self) -> list[dict[str, Any]]:
+        """Return stored data only: tracked entries have pauli; readouts have measurement_ids."""
         ...
 
 class Tick:
@@ -1963,6 +2257,10 @@ class TickHandle:
     def depolarize2(self, probability: float, pair: tuple[int, int]) -> TickHandle: ...
 
     def index(self) -> int: ...
+    def gate_on_qubit(self, qubit: int) -> int | None: ...
+    def get_gate(self, index: int) -> Gate | None: ...
+    def get_gate_attr(self, index: int, key: str) -> Any: ...
+    def gate_batches(self) -> list[Gate]: ...
     def meta(self, key: str, value: Any) -> TickHandle: ...
     def metas(self, attrs: Mapping[str, Any]) -> TickHandle: ...
     def h(self, qubits: Sequence[int]) -> TickHandle: ...
@@ -2083,6 +2381,8 @@ class TickCircuit:
     def to_dot(self) -> str: ...
     def _repr_svg_(self) -> str: ...
     def __init__(self) -> None: ...
+    @staticmethod
+    def gate_locations(name: str, qubits: Sequence[int]) -> list[list[int]]: ...
     def tick(self) -> TickHandle:
         """Add a new tick and return a handle for adding gates."""
         ...
@@ -2102,8 +2402,13 @@ class TickCircuit:
         ...
 
     def circuit_definitions(self) -> dict[str, Any]:
-        """Return definitions resolved to absolute measurement emission positions.
+        """Return measurement-readout definitions resolved to absolute emission positions.
 
+        Detector dictionaries always include the effective ``fault_sector`` (an opaque
+        non-empty string, or ``None`` when unknown). With ``measurement_classes``, labels
+        are derived from parity-reduced support and explicit labels must agree; the
+        result also includes the validated classes in emission order. Without classes,
+        explicit labels pass through unchanged.
         Observable dictionaries include ``reference`` (integer 0 or 1) when
         metadata supplies a noiseless value, or ``None`` when absent.
         """
@@ -2125,6 +2430,7 @@ class TickCircuit:
         coords: Sequence[float] | None = None,
         label: str | None = None,
         detector_id: int | None = None,
+        fault_sector: str | None = None,
     ) -> int: ...
     def add_observable(
         self,
@@ -2133,7 +2439,18 @@ class TickCircuit:
         label: str | None = None,
         reference: int | None = None,
     ) -> int: ...
-    def annotations(self) -> list[Any]: ...
+    def measured_pauli(self, meas_id: int) -> tuple[str, int]:
+        """Return (basis, qubit) for a measurement id; raise ValueError if unresolved."""
+        ...
+
+    def measured_paulis(self, meas_ids: Sequence[int]) -> list[tuple[str, int]]:
+        """Resolve IDs in order with one scan; raise ValueError for an unresolved ID. Removed IDs report "does not name a measurement"."""
+        ...
+
+    def annotations(self) -> list[dict[str, Any]]:
+        """Return stored data only: tracked entries have pauli; readouts have measurement_ids."""
+        ...
+
     def detector(self, measurements: Any, label: str | None = None) -> int:
         """Return the zero-based definition id: the number of preceding detector annotations."""
         ...
@@ -2154,7 +2471,7 @@ class TickCircuit:
     def get_tick_meta(self, tick_idx: int, key: str) -> Any | None: ...
     def set_gate_meta(self, tick_idx: int, gate_idx: int, key: str, value: Any) -> None: ...
     def get_gate_meta(self, tick_idx: int, gate_idx: int, key: str) -> Any | None: ...
-    def lower_clifford_rotations(self) -> None: ...
+    def lower_clifford_rotations(self, *, preserve_gate_arity: bool = False) -> None: ...
     def strip_identities(self) -> None: ...
     def strip_idles(self) -> None: ...
     def cancel_inverses(self) -> None: ...
@@ -2702,6 +3019,7 @@ class qec:
         @property
         def num_contributions(self) -> int: ...
         def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
+        def detector_fault_sectors(self) -> list[tuple[int, str | None]]: ...
         def round_schedule(
             self,
             influence_map: qec.DagFaultInfluenceMap,
@@ -2743,10 +3061,16 @@ class qec:
         def to_sampler(self) -> qec.DemSampler: ...
 
     class StructuredDemDecoder:
-        """Decoder built directly from a structured PECOS DEM."""
+        """Decoder built from standard DEM text plus the object's fault_sector labels."""
 
         @property
+        def dem(self) -> str: ...
+        @property
         def num_detectors(self) -> int | None: ...
+        @property
+        def projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
         def decode_syndrome(self, syndrome: list[int]) -> decoders.ObservableFlips: ...
 
     class DemBuilder:
@@ -2759,7 +3083,33 @@ class qec:
             p_prep: float,
             **noise_options: Any,
         ) -> qec.DemBuilder: ...
+        def with_circuit_metadata(self, circuit: TickCircuit) -> qec.DemBuilder:
+            """Copy detectors, observables, measurement_classes and num_measurements.
+
+            Absent attributes preserve earlier settings, as do blank detectors,
+            observables and num_measurements strings. A blank measurement_classes
+            string is kept, and build() rejects it as malformed, as it does malformed
+            class JSON. Only attributes are copied, after checking them against the
+            circuit. ValueError is raised for non-string attributes, a circuit that does
+            not convert to a DAG, a count that is invalid or differs from the circuit's,
+            an influence map whose measurement records differ from those of
+            circuit.to_dag_circuit(), malformed detectors or observables, repeated ids,
+            unresolved references, attributes that disagree with annotations on ids,
+            measurements or labels, and annotations whose matching attribute defines
+            nothing. The map check compares only each measurement's node, qubit, basis
+            and id, so a map from another circuit with the same records passes whatever
+            its other gates, as do annotated outputs merged into the map from elsewhere.
+            Build the map from this circuit. Use
+            DetectorErrorModel.from_circuit for circuits defined by annotation alone. A
+            map that already carries annotated observables, from a circuit with no
+            observables attribute, needs the separate setters. Those setters do not check
+            agreement with observables the map carries, so omit those observables.
+            Tracked Pauli annotations are not copied; they reach the DEM only through the
+            influence map.
+            """
+
         def with_detectors_json(self, json: str) -> qec.DemBuilder: ...
+        def with_measurement_classes_json(self, json: str) -> qec.DemBuilder: ...
         def with_observables_json(self, json: str) -> qec.DemBuilder: ...
         def with_num_measurements(self, num: int) -> qec.DemBuilder: ...
         def with_exact_branch_replay_circuit(self, circuit: DagCircuit) -> qec.DemBuilder: ...
@@ -2785,6 +3135,8 @@ class qec:
         @property
         def dem(self) -> str | None: ...
         @property
+        def dem_fault_sectors(self) -> list[str | None] | None: ...
+        @property
         def metadata_json(self) -> str | None: ...
         @property
         def generator(self) -> str | None: ...
@@ -2798,16 +3150,30 @@ class qec:
             self,
             path: str | os.PathLike[str],
             *,
-            dem: str,
+            dem: str | qec.DetectorErrorModel,
             metadata_json: str | None = ...,
             clear_metadata: bool = ...,
             allow_dem_mismatch: bool = ...,
-        ) -> None: ...
+        ) -> None:
+            """Write v2 (older PECOS rejects it); readers accept v1 and v2.
+
+            Objects supply labels; equal embedded text preserves stored labels;
+            other text writes all-null labels. Identity compares only text.
+            Saving does not attach a model or mutate the source batch.
+            """
+            ...
+
         @staticmethod
-        def load(path: str | os.PathLike[str]) -> qec.SampleBatch: ...
+        def load(path: str | os.PathLike[str]) -> qec.SampleBatch:
+            """Read v1 (unlabelled) or v2; format_version reports the disk version.
+
+            Every save writes v2, which older PECOS installations reject.
+            """
+            ...
+
         def decode(
             self,
-            dem: str | None = ...,
+            dem: str | qec.DetectorErrorModel | None = ...,
             decoder: decoders.DecoderSpec | str = ...,
             *,
             workers: int | None = ...,
@@ -2818,7 +3184,10 @@ class qec:
             """Decode all shots with planned native, sequential, or parallel execution.
 
             ``decoder`` is a typed decoder spec or legacy string. ``dem=None``
-            requires a corpus-loaded batch with an embedded DEM. Explicit
+            requires a loaded corpus and uses its text plus stored fault-sector labels.
+            Labelled embedded models use object semantics and refuse providers;
+            all-null labels use text semantics. Explicit text is unlabelled.
+            An object decodes its standard text plus its fault_sector labels. Explicit
             ``workers`` requests that exact count; automatic execution respects
             stateful and wall-clock-limited decoder contracts. Predictions are
             wide Python integers, and timing forces per-shot dispatch.
@@ -2827,13 +3196,83 @@ class qec:
 
         def compare_decoders(
             self,
-            dem: str,
+            dem: str | qec.DetectorErrorModel,
             dut_decoder_type: str,
             reference_decoder_type: str,
             alpha: float = ...,
             *,
             allow_dem_mismatch: bool = ...,
         ) -> qec.DecoderComparisonResult: ...
+
+    class ProjectionReport:
+        """Immutable projection diagnostics. Pickling is not supported."""
+
+        __hash__: ClassVar[None]
+
+        @property
+        def input_hyperedges(self) -> int: ...
+        @property
+        def projected(self) -> int: ...
+        @property
+        def zero_probability_omitted(self) -> list[int]: ...
+        @property
+        def dropped_indices(self) -> list[int]: ...
+        @property
+        def cross_sector_components(self) -> int: ...
+        @property
+        def label_conflicts(self) -> int: ...
+        @property
+        def unlabelled_detectors(self) -> int: ...
+        @property
+        def distinct_sectors(self) -> int: ...
+        def __eq__(self, other: object) -> bool: ...
+        def __repr__(self) -> str: ...
+
+    class DecoderComparisonResult:
+        @property
+        def dut_projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
+        @property
+        def reference_projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
+
+        @property
+        def counts(self) -> list[list[int]]: ...
+        @property
+        def total_shots(self) -> int: ...
+        @property
+        def alpha(self) -> float: ...
+        @property
+        def dut_correct_reference_correct(self) -> int: ...
+        @property
+        def dut_correct_reference_mismatch(self) -> int: ...
+        @property
+        def dut_correct_reference_error(self) -> int: ...
+        @property
+        def dut_mismatch_reference_correct(self) -> int: ...
+        @property
+        def dut_mismatch_reference_mismatch(self) -> int: ...
+        @property
+        def dut_mismatch_reference_error(self) -> int: ...
+        @property
+        def dut_error_reference_correct(self) -> int: ...
+        @property
+        def dut_error_reference_mismatch(self) -> int: ...
+        @property
+        def dut_error_reference_error(self) -> int: ...
+        @property
+        def dut_only_failures(self) -> int: ...
+        @property
+        def dut_only_failure_proportion(self) -> float: ...
+        @property
+        def dut_only_failure_interval(self) -> tuple[float, float]: ...
+        @property
+        def both_failed(self) -> int: ...
+        @property
+        def both_failed_proportion(self) -> float: ...
+        @property
+        def both_failed_interval(self) -> tuple[float, float]: ...
 
     class DecodeStats:
         num_shots: int
@@ -2851,6 +3290,9 @@ class qec:
         quantiles: list[float]
 
     class DecodeResult:
+        @property
+        def projection(self) -> qec.ProjectionReport | None:
+            """Shared report, or None if unneeded or projected within members without a shared policy."""
         num_shots: int
         num_errors: int
         logical_error_rate: float
@@ -2935,7 +3377,7 @@ class qec:
         def sample_statistics(self, num_shots: int, seed: int | None = ...) -> dict[str, Any]: ...
         def decode(
             self,
-            dem: str,
+            dem: str | qec.DetectorErrorModel,
             num_shots: int,
             decoder: decoders.DecoderSpec | str,
             *,
@@ -3206,7 +3648,9 @@ class decoders:
         def __eq__(self, other: object) -> bool: ...
 
     @staticmethod
-    def pymatching(*, correlated: bool, error_probability: float | None = ...) -> decoders.DecoderSpec: ...
+    def pymatching(
+        *, correlated: bool, error_probability: float | None = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
     @staticmethod
     def tesseract(
         *,
@@ -3251,12 +3695,13 @@ class decoders:
         random_schedule_seed: int | None = ...,
     ) -> decoders.DecoderSpec: ...
     @staticmethod
-    def fusion_blossom(*, correlated: bool = ..., solver: str = ...) -> decoders.DecoderSpec: ...
+    def fusion_blossom(
+        *, correlated: bool = ..., solver: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
     @staticmethod
     def relay_bp(
         *,
         error_rate: float | None = ...,
-        max_iter: int = ...,
         alpha: float | None = ...,
         alpha_iteration_scaling_factor: float = ...,
         gamma0: float | None = ...,
@@ -3266,15 +3711,26 @@ class decoders:
         gamma_dist_interval: tuple[float, float] = ...,
         stopping_criterion: str | int = ...,
         seed: int = ...,
-    ) -> decoders.DecoderSpec: ...
+    ) -> decoders.DecoderSpec:
+        """Native Relay-BP, deterministic per (seed, syndrome).
+
+        gamma0=None makes leg zero memoryless; relay legs retain memory.
+        alpha=0.0 selects dynamic scaling; None means unit scaling.
+        alpha_iteration_scaling_factor must be finite and > 0.
+        Use pre_iter and set_max_iter for iteration limits.
+        """
+        ...
+
     @staticmethod
     def min_sum_bp(
         *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
     ) -> decoders.DecoderSpec: ...
     @staticmethod
-    def pecos_uf(*, preset: str = ...) -> decoders.DecoderSpec: ...
+    def pecos_uf(*, preset: str = ..., irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
-    def belief_matching(*, mode: str = ...) -> decoders.DecoderSpec: ...
+    def belief_matching(
+        *, mode: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
     @staticmethod
     def windowed(
         *,
@@ -3319,9 +3775,9 @@ class decoders:
     @staticmethod
     def ensemble(*members: decoders.DecoderSpec) -> decoders.DecoderSpec: ...
     @staticmethod
-    def k_mwpm(*, k: int = ...) -> decoders.DecoderSpec: ...
+    def k_mwpm(*, k: int = ..., irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
-    def astar() -> decoders.DecoderSpec: ...
+    def astar(*, irreducible: Literal["refuse", "drop"] = "refuse") -> decoders.DecoderSpec: ...
     @staticmethod
     def astar_full() -> decoders.DecoderSpec: ...
     @staticmethod
@@ -3329,7 +3785,9 @@ class decoders:
     @staticmethod
     def belief_find() -> decoders.DecoderSpec: ...
     @staticmethod
-    def perturbed_fb_corr(*, k: int = ..., sigma: float = ..., seed: int = ...) -> decoders.DecoderSpec: ...
+    def perturbed_fb_corr(
+        *, k: int = ..., sigma: float = ..., seed: int = ..., irreducible: Literal["refuse", "drop"] = "refuse"
+    ) -> decoders.DecoderSpec: ...
 
     class BpResult:
         """Result from belief propagation decoders.
@@ -3803,8 +4261,20 @@ class decoders:
             dem: str,
             decoder_type: str = ...,
             error_rate: float | None = ...,
-            max_iter: int = ...,
-        ) -> decoders.DemAwareDecoder: ...
+            max_iter: int | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build a DEM decoder. None uses 100 iterations for iterative families.
+
+            Relay-BP and union_find reject explicit max_iter. For Relay-BP,
+            use pre_iter / set_max_iter through its builder or spec factory.
+
+            error_rate is a uniform probability per original DEM error line; None uses
+            DEM probabilities. For relay_bp and min_sum_bp, it applies before merging
+            identical detector and observable sets. A group of k lines receives the
+            k-fold independent XOR of the rate.
+            """
+            ...
+
         def decode_syndrome(self, syndrome: list[int]) -> decoders.DemAwareResult: ...
         def __repr__(self) -> str: ...
 
@@ -3812,7 +4282,7 @@ class decoders:
         """Builder for Relay BP ensemble decoder.
 
         Configures and constructs a RelayBpDecoder for qLDPC codes. Uses an
-        ensemble of min-sum BP decoders with randomized damping parameters
+        ensemble of min-sum BP decoders with randomized memory strengths
         (relay strategy) to improve convergence on codes where standard BP fails.
 
         Args:
@@ -3829,21 +4299,26 @@ class decoders:
         """
 
         def __init__(self, check_matrix: list[list[int]], error_priors: list[float]) -> None: ...
-        def max_iter(self, val: int) -> decoders.RelayBpBuilder:
-            """Set maximum BP iterations (default: 200)."""
-            ...
-
         def alpha(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set min-sum scaling factor (None = no scaling)."""
+            """Set min-sum scaling factor (None = unit scaling; 0.0 = dynamic scaling)."""
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Enable memory-BP for the relay ensemble (default: 0.65).
+            """Set leg-zero memory strength (default: 0.65).
 
-            The pre-relay leg uses this directly and relay legs draw per-leg strengths
-            only when it is set; None disables memory entirely and makes relay
-            ensembling ineffective.
+            None makes leg zero memoryless; relay legs retain their sampled memory.
             """
+            ...
+
+        def explicit_gammas(self, rows: list[list[float]] | None) -> decoders.RelayBpBuilder:
+            """Set per-bit memory rows: row 0 serves relay leg 1, and rows cycle.
+
+            None restores sampled gammas. Invalid rows raise ValueError on build.
+            """
+            ...
+
+        def gamma_dist_interval(self, low: float, high: float) -> decoders.RelayBpBuilder:
+            """Set sampled gamma bounds; invalid bounds raise ValueError on build."""
             ...
 
         def pre_iter(self, val: int) -> decoders.RelayBpBuilder:
@@ -3861,9 +4336,8 @@ class decoders:
         def seed(self, val: int) -> decoders.RelayBpBuilder:
             """Set the run-level random seed for relay strengths (default: 0).
 
-            The RNG advances across decodes, so reused-decoder outcomes depend on
-            decode history. Equal seeds reproduce only the same full shot sequence,
-            not an individual syndrome independently.
+            Results are deterministic per (seed, syndrome), independent of decode
+            order, batch splitting and worker count.
             """
             ...
 
@@ -3881,16 +4355,15 @@ class decoders:
         """Relay BP ensemble decoder for qLDPC codes.
 
         Created via ``RelayBpBuilder(...).build()``.
-        Its relay RNG advances across decodes, so a reused decoder's per-shot outcomes
-        depend on decode history. A seed reproduces the same full shot sequence, not
-        each syndrome independently.
+        Results are deterministic per (seed, syndrome), independent of decode
+        order, batch splitting and worker count.
         """
 
         @staticmethod
         def from_dem(
             dem: str,
+            *,
             error_rate: float | None = ...,
-            max_iter: int | None = ...,
             alpha: float | None = ...,
             seed: int | None = ...,
         ) -> decoders.DemAwareDecoder:
@@ -3898,8 +4371,9 @@ class decoders:
 
             Args:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
-                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
-                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                error_rate: Uniform probability per original DEM error line, before merging
+                    identical detector and observable sets. A group of k lines receives the
+                    k-fold independent XOR of this rate. None uses DEM probabilities before merging.
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
                 seed: Makes relay sampling reproducible without increasing its runtime bound.
             """
@@ -3913,6 +4387,16 @@ class decoders:
 
             Returns:
                 BpResult with decoding, convergence status, and iteration count.
+            """
+            ...
+
+        def decode_batch(self, detection_events: bytes, num_shots: int) -> bytes:
+            """Decode sequentially with the GIL released.
+
+            Input is num_shots * check_count row-major 0/1 bytes, e.g.
+            numpy_array.astype(numpy.uint8).tobytes(). Output contains
+            num_shots * bit_count row-major correction bytes.
+            Invalid length or non-binary entries raise ValueError.
             """
             ...
 
@@ -3954,11 +4438,11 @@ class decoders:
             ...
 
         def alpha(self, val: float | None) -> decoders.MinSumBpBuilder:
-            """Set min-sum scaling factor (None = no scaling)."""
+            """Set min-sum scaling factor (None = unit scaling; 0.0 = dynamic scaling)."""
             ...
 
         def gamma0(self, val: float | None) -> decoders.MinSumBpBuilder:
-            """Set initial damping factor (None = disabled)."""
+            """Set memory strength (None = plain min-sum without memory)."""
             ...
 
         def build(self) -> decoders.MinSumBpDecoder:
@@ -3976,6 +4460,7 @@ class decoders:
         @staticmethod
         def from_dem(
             dem: str,
+            *,
             error_rate: float | None = ...,
             max_iter: int | None = ...,
             alpha: float | None = ...,
@@ -3984,7 +4469,9 @@ class decoders:
 
             Args:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
-                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                error_rate: Uniform probability per original DEM error line, before merging
+                    identical detector and observable sets. A group of k lines receives the
+                    k-fold independent XOR of this rate. None uses DEM probabilities before merging.
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
             """
@@ -3998,6 +4485,16 @@ class decoders:
 
             Returns:
                 BpResult with decoding, convergence status, and iteration count.
+            """
+            ...
+
+        def decode_batch(self, detection_events: bytes, num_shots: int) -> bytes:
+            """Decode sequentially with the GIL released.
+
+            Input is num_shots * check_count row-major 0/1 bytes, e.g.
+            numpy_array.astype(numpy.uint8).tobytes(). Output contains
+            num_shots * bit_count row-major correction bytes.
+            Invalid length or non-binary entries raise ValueError.
             """
             ...
 
@@ -4039,6 +4536,10 @@ def scheduled_idle_z(
 class ScheduledEventBatch:
     """Read-only original native batch supplied to a scheduled adapter."""
 
+    def to_bytes(self) -> bytes:
+        """Owned checked v7 message containing this one batch; may raise ValueError."""
+        ...
+
     @property
     def runtime_shot_id(self) -> int: ...
     @property
@@ -4054,14 +4555,36 @@ class ScheduledEventBatch:
         """(operation position, native ID, program ID); program IDs may repeat."""
         ...
 
+class ScheduledCrosstalk:
+    """Ordered spectator exposure returned alongside gates by a batch adapter.
+
+    Creates no physical busy time and no program-visible measurement. IDs must be
+    distinct; the profile capacity is checked at admission.
+    """
+
+    @staticmethod
+    def local(victims: Sequence[int]) -> ScheduledCrosstalk:
+        """Explicit potential victims in sampling order; unprepared/leaked are skipped."""
+        ...
+
+    @staticmethod
+    def global_excluding(exclusions: Sequence[int]) -> ScheduledCrosstalk:
+        """Prepared logical qubits except these IDs, in the general model's order."""
+        ...
+
 class _ScheduledBatchAdapter(Protocol):
     """Structural callback protocol; not a runtime extension class."""
 
     def validate(self, batch: ScheduledEventBatch) -> None: ...
-    def translate(self, batch: ScheduledEventBatch) -> list[Gate]: ...
+    def translate(
+        self,
+        batch: ScheduledEventBatch,
+    ) -> list[Gate] | list[ScheduledCrosstalk] | list[Gate | ScheduledCrosstalk]:
+        """Return a list; homogeneous and mixed lists are all accepted."""
+        ...
 
 class ScheduledEventIdleZ:
-    """Checked v4 profile returned by scheduled_event_idle_z()."""
+    """Checked v7 profile returned by scheduled_event_idle_z()."""
 
     ...
 
@@ -4087,9 +4610,28 @@ def scheduled_idle_noise(
     coherent: float = 0.0,
     coherent_model: dict[str, float] | None = None,
 ) -> ScheduledIdleNoise: ...
+def scheduled_measurement_crosstalk(
+    profile: ScheduledIdleZ | ScheduledIdleNoise | ScheduledLocalNoise,
+    model: dict[str, float],
+    *,
+    local_probability: float = 0.0,
+    global_probability: float = 0.0,
+) -> ScheduledIdleNoise:
+    """Opt into explicit measurement exposures, retaining idle/local settings.
+
+    model maps 0/1 transitions (for example "0->1" or "1->L") to weights, using
+    GeneralNoiseModel validation. No exposures are inserted automatically; wrap
+    the result with scheduled_event_idle_noise(profile, adapter_factory).
+
+    Accrued idle noise runs at the next physical operation, after the exposure.
+    Non-Z idle channels can change output distributions under this ordering even
+    with symmetric transitions. Z/RZ channels need not preserve seeded paths:
+    exposure leakage can suppress later idle-noise RNG draws.
+    """
+    ...
 
 class ScheduledEventIdleNoise:
-    """Checked v4 local idle-noise profile with a per-shot batch adapter."""
+    """Checked v7 local idle-noise profile with a per-shot batch adapter."""
 
 def scheduled_event_idle_noise(
     profile: ScheduledIdleNoise,
@@ -4097,7 +4639,7 @@ def scheduled_event_idle_noise(
 ) -> ScheduledEventIdleNoise: ...
 
 class ScheduledLocalNoise:
-    """Checked uniform Pauli gate, preparation bit-flip and asymmetric readout faults."""
+    """Checked gate Pauli/emission/seepage, preparation and readout faults."""
 
 def scheduled_local_noise(
     idle: ScheduledIdleNoise,
@@ -4107,12 +4649,59 @@ def scheduled_local_noise(
     prep: float = 0.0,
     meas0: float = 0.0,
     meas1: float = 0.0,
-) -> ScheduledLocalNoise: ...
+    prep_leak_ratio: float = 0.0,
+    prep_crosstalk: float = 0.0,
+    p2_pauli_model: dict[str, float] | None = None,
+    p2_angle_params: tuple[float, float, float, float] | None = None,
+    p2_angle_power: float | None = None,
+    p1_emission_ratio: float = 0.0,
+    p1_emission_model: dict[str, float] | None = None,
+    p1_seepage_prob: float = 0.0,
+    p2_emission_ratio: float = 0.0,
+    p2_emission_model: dict[str, float] | None = None,
+    p2_seepage_prob: float = 0.0,
+) -> ScheduledLocalNoise:
+    """Configure preparation leakage and optional ordered two-qubit Pauli weights.
+
+    prep_crosstalk collapses each other prepared qubit in Z on preparation,
+    independently of prep. Internal results are discarded, and spectators retain
+    their original whole idle intervals. Defaults to zero.
+    prep_leak_ratio is conditional on a preparation fault. p2_pauli_model maps
+    nonidentity I/X/Y/Z pairs to finite nonnegative weights summing to one.
+    Optional angle coefficients (a, b, c, d) and a positive exponent scale p2
+    using signed principal angles; combined event probabilities must stay in [0, 1].
+    Emission ratios select gate-replacing faults. Models map X/Y/Z/L (one qubit)
+    or ordered I/X/Y/Z/L pairs except II (two qubits) to normalized weights.
+    Seepage is conditional on emission for an already leaked operand.
+    All ratios/probabilities and distributions are checked even when disabled.
+    """
+    ...
 
 class ScheduledEventLocalNoise:
-    """Checked v4 local faults with a per-shot batch adapter."""
+    """Checked v7 local faults with a per-shot batch adapter."""
 
 def scheduled_event_local_noise(
     profile: ScheduledLocalNoise,
     adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
 ) -> ScheduledEventLocalNoise: ...
+def validate_phir_qop(
+    name: str,
+    args_json: str,
+    angles: Sequence[float] | None,
+    registers: Sequence[tuple[str, int]],
+) -> None:
+    """Validate a quantum operation with the native PHIR rules."""
+    ...
+
+def validate_phir_result_counts(args: int, returns: int) -> None:
+    """Require equal, nonzero Result argument and destination counts."""
+    ...
+
+def validate_phir_classical_inputs(program_json: str) -> None:
+    """Validate Result JSON references and boolean declaration sizes."""
+
+def validate_phir_result_reference(reference_json: str, field: str) -> tuple[str, int | None]:
+    """Decode a Result reference with shared diagnostics."""
+
+def validate_phir_classical_declaration(name: str, data_type: str, size: int) -> None:
+    """Validate classical register type and size using native storage rules."""

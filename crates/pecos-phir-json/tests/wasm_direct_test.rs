@@ -30,6 +30,7 @@ mod tests {
     "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
   },
   "ops": [
+    {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 31},
     {"cop": "ffcall", "function": "add", "args": [7, 3], "returns": ["result"]},
     {"cop": "Result", "args": ["result"], "returns": ["output"]}
   ]

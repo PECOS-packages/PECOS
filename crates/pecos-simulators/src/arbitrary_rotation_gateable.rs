@@ -48,6 +48,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a rotation around the Y-axis by an angle `theta`.
@@ -66,8 +69,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn ry(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.szdg(qubits).rx(theta, qubits).sz(qubits)
     }
 
@@ -89,6 +96,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self;
 
     /// Applies a general single-qubit unitary U(theta, phi, lambda) gate.
@@ -109,6 +119,9 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn u(
         &mut self,
@@ -117,10 +130,10 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         lambda: Angle64,
         qubits: &[QubitId],
     ) -> &mut Self {
+        self.validate_qubits(qubits);
         // Use the signed principal values independently. Adding the fixed-point
         // angles before halving can wrap at 2*pi and lose a compensating pi.
-        let phase =
-            Angle64::from_radians((lambda.to_radians_signed() + phi.to_radians_signed()) / 2.0);
+        let phase = lambda.signed_half() + phi.signed_half();
         self.rz(lambda, qubits)
             .ry(theta, qubits)
             .rz(phi, qubits)
@@ -133,8 +146,16 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// At phi = pi, the principal-value convention gives both inverse Z
     /// rotations the same sign. Each ion contributes a minus sign, so the
     /// two-qubit global phase still cancels.
+    ///
+    /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxyxy2q(&mut self, theta: Angle64, phi: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXYXY2Q");
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         // These basis changes implement one RXYXY2Q gate inside the simulator.
         // Noise models still see a single two-qubit gate.
         for &(q0, q1) in pairs {
@@ -164,8 +185,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         let z = -phi + Angle64::QUARTER_TURN;
         self.rz(z, qubits).ry(theta, qubits).rz(-z, qubits);
         if z == Angle64::HALF_TURN {
@@ -184,8 +209,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.rz(Angle64::QUARTER_TURN / 2u64, qubits)
             .apply_global_phase(Angle64::QUARTER_TURN / 4u64, qubits)
     }
@@ -199,8 +228,12 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn tdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.validate_qubits(qubits);
         self.rz(-(Angle64::QUARTER_TURN / 2u64), qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 4u64), qubits)
     }
@@ -217,8 +250,16 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// The default implementation panics if both operands name the same qubit.
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXX");
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.h(&q1s).h(&q2s).rzz(theta, pairs).h(&q1s).h(&q2s)
@@ -242,8 +283,16 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// The default implementation panics if both operands name the same qubit.
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn ryy(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RYY");
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
         self.sx(&q1s)
@@ -281,6 +330,11 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// Pairs must name two distinct qubits. The simulators in this crate panic before
+    /// applying any gates if a pair repeats a qubit.
+    /// GPU backends panic if any operand is outside their register.
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self;
 
     /// Applies a composite rotation gate using RXX, RYY, and RZZ gates.
@@ -294,6 +348,10 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
     ///
+    ///
+    /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn rxxryyrzz(
         &mut self,
@@ -302,6 +360,10 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         lambda: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RXXRYYRZZ");
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
         self.rxx(theta, pairs).ryy(phi, pairs).rzz(lambda, pairs)
     }
 
@@ -316,6 +378,10 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     ///
     /// # Returns
     /// A mutable reference to `Self` for method chaining.
+    ///
+    /// # Panics
+    /// Panics before applying any gates if a pair repeats a qubit.
+    /// GPU backends panic if any operand is outside their register.
     #[inline]
     fn u2q(
         &mut self,
@@ -324,6 +390,11 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         after: [[Angle64; 3]; 2],
         pairs: &[(QubitId, QubitId)],
     ) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "U2Q");
+        for &(a, b) in pairs {
+            self.validate_qubits(&[a, b]);
+        }
+
         for &(q0, q1) in pairs {
             let q0s = &[q0];
             let q1s = &[q1];
@@ -452,8 +523,25 @@ mod tests {
         recorder.u(Angle64::ZERO, Angle64::ZERO, lambda, &target);
         assert_eq!(recorder.global_phase_calls.len(), 1);
         let (actual_phase, actual_targets) = &recorder.global_phase_calls[0];
-        assert!(actual_phase.abs_diff_eq_radians(&expected_half_phase, 1e-14));
+        assert!(actual_phase.abs_diff_eq(
+            &expected_half_phase,
+            Angle64::try_epsilon_from_radians(1e-14).unwrap()
+        ));
         assert_eq!(actual_targets, &target);
+    }
+
+    #[test]
+    fn default_u_odd_phase_halves_cancel_exactly() {
+        let target = [QubitId(0)];
+        for fraction in [1, 2, 3, 5, Angle64::HALF_TURN.fraction() - 1] {
+            let angle = Angle64::new(fraction);
+            let mut recorder = RecordingSimulator::default();
+            recorder.u(Angle64::ZERO, angle, -angle, &target);
+            assert_eq!(
+                recorder.global_phase_calls,
+                vec![(Angle64::ZERO, target.to_vec())]
+            );
+        }
     }
 
     #[test]
@@ -500,9 +588,9 @@ mod tests {
         use crate::StateVecSoA32;
         use num_complex::Complex64;
 
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(-0.41);
-        let lambda = Angle64::from_radians(1.17);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(-0.41);
+        let lambda = pecos_core::radians!(1.17);
         let theta_rad = theta.to_radians_signed();
         let phi_rad = phi.to_radians_signed();
         let lambda_rad = lambda.to_radians_signed();
@@ -541,8 +629,8 @@ mod tests {
 
         let angles = [
             Angle64::ZERO,
-            Angle64::from_radians(0.73),
-            Angle64::from_radians(-0.41),
+            pecos_core::radians!(0.73),
+            pecos_core::radians!(-0.41),
             Angle64::QUARTER_TURN,
             Angle64::HALF_TURN,
             Angle64::THREE_QUARTERS_TURN,
@@ -592,8 +680,8 @@ mod tests {
     fn default_rxyxy2q_batches_match_sequential_pairs() {
         use crate::StateVecSoA32;
 
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(-0.41);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(-0.41);
         // Include disjoint, overlapping and reversed pairs, as well as an
         // empty batch. Qubit 4 is a spectator in every case.
         let batches: &[&[(QubitId, QubitId)]] = &[
@@ -628,8 +716,8 @@ mod tests {
         use crate::StateVecSoA32;
         use num_complex::Complex64;
 
-        let theta = Angle64::from_radians(0.73);
-        let phi = Angle64::from_radians(0.31);
+        let theta = pecos_core::radians!(0.73);
+        let phi = pecos_core::radians!(0.31);
         let theta_rad = theta.to_radians_signed();
         let phi_rad = phi.to_radians_signed();
         let c = (theta_rad / 2.0).cos();

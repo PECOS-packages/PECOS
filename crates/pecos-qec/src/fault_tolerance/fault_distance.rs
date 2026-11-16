@@ -596,6 +596,133 @@ mod tests {
         dem
     }
 
+    /// Independent decoder-existence oracle: enumerate fault sets, including the empty set,
+    /// and require each detector pattern to determine the entire observable pattern. Work
+    /// from the input effects, not the DEM's normalized mechanisms or its XOR implementation.
+    fn decoder_exists(effects: &[(Vec<u32>, Vec<u32>)], max_faults: usize) -> bool {
+        assert!(effects.len() < usize::BITS as usize);
+        let mut decoder = BTreeMap::new();
+        for mask in 0_usize..1 << effects.len() {
+            if mask.count_ones() as usize > max_faults {
+                continue;
+            }
+            let mut detectors = BTreeSet::new();
+            let mut observables = BTreeSet::new();
+            for (index, (detector_ids, observable_ids)) in effects.iter().enumerate() {
+                if mask & (1 << index) == 0 {
+                    continue;
+                }
+                for &detector in detector_ids {
+                    if !detectors.insert(detector) {
+                        detectors.remove(&detector);
+                    }
+                }
+                for &observable in observable_ids {
+                    if !observables.insert(observable) {
+                        observables.remove(&observable);
+                    }
+                }
+            }
+            if let Some(previous) = decoder.insert(detectors, observables.clone())
+                && previous != observables
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn assert_decoder_existence_matches_searches(
+        effects: &[(Vec<u32>, Vec<u32>)],
+        max_faults: usize,
+    ) {
+        let expected = decoder_exists(effects, max_faults);
+        let dem = dem_from_effects(effects);
+        let bound = 2 * max_faults;
+        let problem = crate::DistanceProblem::from_dem(&dem);
+        let certified = crate::certified_distance(&problem, bound).unwrap();
+        let exhaustive = exhaustive_fault_distance(&dem, bound);
+        let connected = connected_cluster_fault_distance(&dem, bound);
+        for (method, correctable) in [
+            ("exhaustive", exhaustive.is_none()),
+            ("connected cluster", connected.is_none()),
+            ("SAT", certified.is_none()),
+        ] {
+            assert_eq!(
+                correctable, expected,
+                "{method}: t={max_faults}, effects={effects:?}"
+            );
+        }
+        if let Ok(graphlike) = graphlike_fault_distance(&dem) {
+            assert_eq!(
+                graphlike.is_none_or(|result| result.distance > bound),
+                expected,
+                "graphlike: t={max_faults}, effects={effects:?}"
+            );
+        }
+        if let Some(result) = certified {
+            assert_eq!(problem.verify_witness(&result.witness), Ok(result.distance));
+        }
+    }
+
+    #[test]
+    fn decoder_existence_allows_harmless_degeneracy() {
+        let effects = [
+            (vec![], vec![]), // Invisible and harmless, including against the empty set.
+            (vec![0], vec![0, 1]),
+            (vec![0], vec![0, 1]), // Distinct events with identical complete effects.
+            (vec![1], vec![]),
+        ];
+        for max_faults in 0..=effects.len() {
+            assert!(decoder_exists(&effects, max_faults));
+            assert_decoder_existence_matches_searches(&effects, max_faults);
+        }
+        assert!(decoder_exists(&[], 1));
+        assert_decoder_existence_matches_searches(&[], 1);
+        // A nonempty model with no declared observables is also harmless.
+        assert_decoder_existence_matches_searches(&[(vec![0], vec![])], 1);
+    }
+
+    #[test]
+    fn decoder_existence_includes_no_faults_and_distinguishes_observable_vectors() {
+        for effects in [
+            vec![(vec![], vec![0])], // Collides with the no-fault configuration.
+            vec![(vec![0], vec![0]), (vec![0], vec![1])], // Both logical vectors nonzero.
+            vec![(vec![0, 1, 2], vec![0]), (vec![0, 1, 2], vec![1])], // Hyperedges.
+        ] {
+            assert!(decoder_exists(&effects, 0));
+            assert!(!decoder_exists(&effects, 1));
+            for max_faults in 0..=2 {
+                assert_decoder_existence_matches_searches(&effects, max_faults);
+            }
+        }
+    }
+
+    #[test]
+    fn decoder_existence_changes_at_twice_the_fault_budget() {
+        // Repetition chains have exactly one nonempty detector-free set: all d events.
+        // Test d=2t and d=2t+1 for both one- and two-fault correction.
+        for max_faults in 1..=2 {
+            for distance in [2 * max_faults, 2 * max_faults + 1] {
+                let effects: Vec<_> = (0..distance)
+                    .map(|index| {
+                        let detectors = (0..distance - 1)
+                            .filter(|&check| index == check || index == check + 1)
+                            .map(|check| u32::try_from(check).unwrap())
+                            .collect();
+                        let observables = if index == 0 { vec![0] } else { vec![] };
+                        (detectors, observables)
+                    })
+                    .collect();
+                assert_eq!(
+                    decoder_exists(&effects, max_faults),
+                    distance > 2 * max_faults
+                );
+                assert_decoder_existence_matches_searches(&effects, max_faults);
+            }
+        }
+    }
+
     fn observable_slice(dem: &DetectorErrorModel, observable: u32) -> DetectorErrorModel {
         let (mechanisms, _coordinates) = dem.to_mechanisms();
         let mut sliced = DetectorErrorModel::new();
@@ -795,6 +922,9 @@ mod tests {
             }
 
             let dem = dem_from_effects(&effects);
+            for max_faults in 0..=MAX_MECHANISMS / 2 {
+                assert_decoder_existence_matches_searches(&effects, max_faults);
+            }
             let exhaustive = exhaustive_fault_distance(&dem, MAX_MECHANISMS);
             let connected = connected_cluster_fault_distance(&dem, MAX_MECHANISMS);
 

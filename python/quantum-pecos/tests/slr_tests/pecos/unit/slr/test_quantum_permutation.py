@@ -117,8 +117,8 @@ def test_permutation_with_bell_circuit_qir() -> None:
         Permute([m[0], n[0]], [n[0], m[0]]),
         qubit.H(a[0]),
         qubit.CX(a[0], a[1]),
-        qubit.Measure(a[0]) > m[0],
-        qubit.Measure(a[1]) > m[1],
+        qubit.MeasureZ(a[0]) > m[0],
+        qubit.MeasureZ(a[1]) > m[1],
     )
 
     qir = SlrConverter(prog).qir()
@@ -166,8 +166,8 @@ def test_comprehensive_qir_verification() -> None:
         qubit.Y(a[1]),  # -> b[1] = q3
         qubit.Z(b[1]),  # -> a[1] = q1
         qubit.CX(a[0], b[1]),  # a[0]->b[0]=q2, b[1]->a[1]=q1
-        qubit.Measure(a[0]) > m[0],  # a[0]->b[0]=q2
-        qubit.Measure(b[1]) > n[0],  # b[1]->a[1]=q1
+        qubit.MeasureZ(a[0]) > m[0],  # a[0]->b[0]=q2
+        qubit.MeasureZ(b[1]) > n[0],  # b[1]->a[1]=q1
     )
 
     qir = SlrConverter(prog).qir()
@@ -296,7 +296,10 @@ def test_permute_realized_quantum_circuit() -> None:
     b = QReg("b", 2)
     elem = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute([a[0], b[0]], [b[0], a[0]]), qubit.Y(a[0]), qubit.Z(b[0]))
     # a=0,1 b=2,3. After a[0]<->b[0]: Y(a[0])->q2, Z(b[0])->q0.
-    expected = "QuantumCircuit([{'H': {0}}, {'X': {2}}, {'Y': {2}}, {'Z': {0}}])"
+    expected = (
+        "QuantumCircuit(params={'cvar_spec': {}, 'qvars': {0: ('a', 0), 1: ('a', 1), 2: ('b', 0), 3: ('b', 1)}, "
+        "'qvar_spec': {'a': 2, 'b': 2}}, ticks=[{'H': {0}}, {'X': {2}}, {'Y': {2}}, {'Z': {0}}])"
+    )
     assert str(SlrConverter(elem).quantum_circuit()) == expected
 
     a = QReg("a", 2)

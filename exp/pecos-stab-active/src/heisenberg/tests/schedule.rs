@@ -11,7 +11,7 @@ use PauliKindForDecomp::{X, Z};
 
 fn rx_pair() -> HeisenbergProgram {
     let mut circuit = TickCircuit::new();
-    circuit.tick().rx(Angle64::from_radians(0.37), &[0, 1]);
+    circuit.tick().rx(pecos_core::radians!(0.37), &[0, 1]);
     circuit.tick().mz(&[0, 1]);
     HeisenbergProgram::compile(&circuit).unwrap()
 }
@@ -27,9 +27,9 @@ fn t_layer() -> HeisenbergProgram {
 
 fn tie_fixture() -> HeisenbergProgram {
     let mut circuit = TickCircuit::new();
-    circuit.tick().rx(Angle64::from_radians(0.37), &[0]);
+    circuit.tick().rx(pecos_core::radians!(0.37), &[0]);
     circuit.tick().mz(&[0]);
-    circuit.tick().rz(Angle64::from_radians(0.29), &[1]);
+    circuit.tick().rz(pecos_core::radians!(0.29), &[1]);
     HeisenbergProgram::compile(&circuit).unwrap()
 }
 
@@ -181,13 +181,13 @@ fn acceptance_prefers_lower_work_at_equal_peak() {
             rotation(
                 1,
                 &[(0, X)],
-                Angle64::from_radians(0.37),
+                pecos_core::radians!(0.37),
                 AffineSign::default(),
             ),
             rotation(
                 1,
                 &[(0, Z)],
-                Angle64::from_radians(0.29),
+                pecos_core::radians!(0.29),
                 AffineSign::default(),
             ),
             measurement(1, &[(0, Z)], 0),
@@ -208,7 +208,7 @@ fn acceptance_prefers_lower_work_at_equal_peak() {
 
 #[test]
 fn classification_uses_live_replay_state() {
-    let a = Angle64::from_radians(0.37);
+    let a = pecos_core::radians!(0.37);
     let program = manual(
         2,
         vec![
@@ -229,7 +229,7 @@ fn classification_uses_live_replay_state() {
 
 #[test]
 fn acceptance_rejects_higher_work_at_equal_peak() {
-    let a = Angle64::from_radians(0.37);
+    let a = pecos_core::radians!(0.37);
     let program = manual(
         2,
         vec![
@@ -237,7 +237,7 @@ fn acceptance_rejects_higher_work_at_equal_peak() {
             rotation(
                 2,
                 &[(0, X), (1, X)],
-                Angle64::from_radians(0.29),
+                pecos_core::radians!(0.29),
                 AffineSign::default(),
             ),
             measurement(2, &[(0, Z)], 0),
@@ -245,7 +245,7 @@ fn acceptance_rejects_higher_work_at_equal_peak() {
             rotation(
                 2,
                 &[(0, Z), (1, Z)],
-                Angle64::from_radians(0.41),
+                pecos_core::radians!(0.41),
                 AffineSign::default(),
             ),
         ],
@@ -314,7 +314,7 @@ fn both_infeasible_return_given_error() {
 
 #[test]
 fn r2_hidden_reset_precedes_active_reference() {
-    let a = Angle64::from_radians(0.37);
+    let a = pecos_core::radians!(0.37);
     let mut circuit = TickCircuit::new();
     circuit.tick().h(&[0, 1]);
     circuit.tick().cx(&[(0, 1)]);
@@ -428,7 +428,7 @@ fn empty_program_and_platform_width_work() {
                 rotation(
                     limit,
                     &[(q, X)],
-                    Angle64::from_radians(0.37),
+                    pecos_core::radians!(0.37),
                     AffineSign::default(),
                 )
             })

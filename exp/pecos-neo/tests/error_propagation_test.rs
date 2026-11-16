@@ -124,7 +124,9 @@ fn sequential_classical_error_is_returned() {
 
 #[test]
 fn sequential_quantum_error_is_returned() {
-    let circuit = CommandBuilder::new().rz(&[0], 0.3).build();
+    let circuit = CommandBuilder::new()
+        .rz(&[0], pecos_core::radians!(0.3))
+        .build();
     let error = sim_neo(circuit)
         .quantum(sparse_stab())
         .sampling(monte_carlo(1))
@@ -167,7 +169,7 @@ fn startup_error_is_returned_on_every_run() {
 #[test]
 fn event_handler_gate_error_is_returned() {
     let injected_gate = CommandBuilder::new()
-        .rz(&[0], 0.3)
+        .rz(&[0], pecos_core::radians!(0.3))
         .build()
         .iter()
         .next()
@@ -189,28 +191,40 @@ fn event_handler_gate_error_is_returned() {
 #[test]
 #[should_panic(expected = "Importance sampling cannot execute static circuit gate RZ")]
 fn importance_sampling_rejects_non_clifford_circuit_at_build() {
-    let _ = sim_neo(CommandBuilder::new().rz(&[0], 0.3).build())
-        .quantum(sparse_stab())
-        .sampling(importance_sampling(1))
-        .build();
+    let _ = sim_neo(
+        CommandBuilder::new()
+            .rz(&[0], pecos_core::radians!(0.3))
+            .build(),
+    )
+    .quantum(sparse_stab())
+    .sampling(importance_sampling(1))
+    .build();
 }
 
 #[test]
 #[should_panic(expected = "Path enumeration cannot execute static circuit gate RZ")]
 fn path_enumeration_rejects_non_clifford_circuit_at_build() {
-    let _ = sim_neo(CommandBuilder::new().rz(&[0], 0.3).build())
-        .quantum(sparse_stab())
-        .sampling(path_enumeration(1))
-        .build();
+    let _ = sim_neo(
+        CommandBuilder::new()
+            .rz(&[0], pecos_core::radians!(0.3))
+            .build(),
+    )
+    .quantum(sparse_stab())
+    .sampling(path_enumeration(1))
+    .build();
 }
 
 #[test]
 #[should_panic(expected = "Subset simulation cannot execute static circuit gate RZ")]
 fn subset_simulation_rejects_non_clifford_circuit_at_build() {
-    let _ = sim_neo(CommandBuilder::new().rz(&[0], 0.3).build())
-        .quantum(sparse_stab())
-        .sampling(subset_simulation(1).score(|_| 0.0).failure(|_| false))
-        .build();
+    let _ = sim_neo(
+        CommandBuilder::new()
+            .rz(&[0], pecos_core::radians!(0.3))
+            .build(),
+    )
+    .quantum(sparse_stab())
+    .sampling(subset_simulation(1).score(|_| 0.0).failure(|_| false))
+    .build();
 }
 
 #[test]

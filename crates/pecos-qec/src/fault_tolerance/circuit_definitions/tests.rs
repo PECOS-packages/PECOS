@@ -1,4 +1,5 @@
 use super::*;
+use pecos_core::PauliString;
 use pecos_quantum::Gate;
 
 fn emission() -> [Option<MeasId>; 2] {
@@ -23,7 +24,6 @@ fn detector(ids: &[usize]) -> AnnotationDefinition {
         kind: DefinitionKind::Detector { coords: vec![] },
         measurement_ids: ids.iter().copied().map(MeasId::from_raw).collect(),
         label: None,
-        pauli: None,
     }
 }
 
@@ -184,7 +184,12 @@ fn malformed_metadata() {
 
 #[test]
 fn non_string_attributes() {
-    for attribute in ["detectors", "observables", "num_measurements"] {
+    for attribute in [
+        "detectors",
+        "observables",
+        "num_measurements",
+        "measurement_classes",
+    ] {
         let mut circuit = stamped();
         circuit.set_meta(attribute, Attribute::Int(2));
         assert!(
@@ -199,7 +204,7 @@ fn non_string_attributes() {
 
 #[test]
 fn invalid_measurement_count() {
-    for value in ["two", "-1", "184467440737095516160"] {
+    for value in ["", "two", "-1", "184467440737095516160"] {
         let mut circuit = stamped();
         circuit.set_meta("num_measurements", Attribute::String(value.into()));
         assert!(matches!(
@@ -211,6 +216,17 @@ fn invalid_measurement_count() {
             Err(DefinitionError::InvalidMeasurementCount { .. })
         ));
     }
+}
+
+#[test]
+fn invalid_measurement_count_states_the_limit() {
+    let value = "184467440737095516160".to_owned();
+    let message = DefinitionError::InvalidMeasurementCount {
+        value: value.clone(),
+    }
+    .to_string();
+    assert!(message.contains(&usize::MAX.to_string()), "{message}");
+    assert!(message.contains(&value), "{message}");
 }
 
 #[test]
@@ -252,7 +268,6 @@ fn empty_metadata() {
         // id17 is at position 0; id9 at position 1, regardless of empty attributes.
         assert_eq!(result.detectors[0].measurements, vec![0]);
         assert_eq!(result.observables[0].measurements, vec![1]);
-        assert_eq!(result.observables[0].pauli, None);
     }
 }
 
@@ -287,7 +302,6 @@ fn interleaved_annotations() {
         vec![(0, vec![1]), (1, vec![0])]
     );
     assert_eq!(result.detectors[0].coords, None);
-    assert_eq!(result.observables[0].pauli, Some(PauliString::zs(&[1])));
     assert_eq!(
         definitions_from_dag_circuit(&DagCircuit::try_from(&circuit).unwrap()).unwrap(),
         result
@@ -307,6 +321,7 @@ fn merged_fields() {
     assert_eq!(
         result.detectors[0],
         ResolvedDetector {
+            fault_sector: None,
             id: 0,
             coords: Some(vec![1.0, 2.0, 3.0]),
             label: Some("check".into()),
@@ -318,9 +333,7 @@ fn merged_fields() {
     assert_eq!(result.detectors[0].coords, Some(vec![4.0, 5.0]));
     assert_eq!(result.detectors[0].label.as_deref(), Some("check"));
     annotation.kind = DefinitionKind::Observable;
-    annotation.pauli = Some(PauliString::zs(&[0]));
     let result = resolve_definitions(None, Some(json), &[annotation], &emission()).unwrap();
-    assert_eq!(result.observables[0].pauli, Some(PauliString::zs(&[0])));
     assert_eq!(result.observables[0].label.as_deref(), Some("check"));
     assert_eq!(result.observables[0].measurements, vec![0, 1, 1]);
 }
@@ -384,14 +397,12 @@ fn metadata_only_observables() {
                 reference: None,
                 id: 3,
                 label: None,
-                pauli: None,
                 measurements: vec![0]
             },
             ResolvedObservable {
                 reference: None,
                 id: 9,
                 label: Some("last".into()),
-                pauli: None,
                 measurements: vec![1]
             }
         ]
@@ -569,7 +580,7 @@ fn with_ids(mut gate: Gate, ids: &[usize]) -> Gate {
 
 #[test]
 fn only_record_consuming_measurements_take_positions() {
-    // MZ, MPZ and MeasureFree each consume a record; MeasureLeaked does not,
+    // MZ, MPZ and MeasureFree each consume a record; MeasureZLeaked does not,
     // even when it carries a supplied id. Hand-derived emission: ids 10, 12, 13.
     let mut circuit = TickCircuit::new();
     circuit
@@ -578,7 +589,7 @@ fn only_record_consuming_measurements_take_positions() {
         .unwrap();
     circuit
         .tick()
-        .try_add_gate(with_ids(Gate::measure_leaked(&[1]), &[11]))
+        .try_add_gate(with_ids(Gate::measure_z_leaked(&[1]), &[11]))
         .unwrap();
     circuit
         .tick()

@@ -433,19 +433,16 @@ pub fn parse_classical_operation(pair: Pair<Rule>) -> Result<Option<Operation>, 
     if inner_parts.len() >= 2 {
         let target_pair = &inner_parts[0];
         let target: String;
-        let is_indexed: bool;
         let index: Option<usize>;
 
         match target_pair.as_rule() {
             Rule::bit_id => {
                 let (reg_name, bit_idx) = parse_indexed_id(target_pair)?;
                 target = reg_name;
-                is_indexed = true;
                 index = Some(bit_idx);
             }
             Rule::identifier => {
                 target = target_pair.as_str().to_string();
-                is_indexed = false;
                 index = None;
             }
             _ => {
@@ -467,7 +464,6 @@ pub fn parse_classical_operation(pair: Pair<Rule>) -> Result<Option<Operation>, 
 
         return Ok(Some(Operation::ClassicalAssignment {
             target,
-            is_indexed,
             index,
             expression,
         }));

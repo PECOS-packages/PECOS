@@ -18,7 +18,7 @@
 //! (`gpu-sims`, `cuquantum`) are enabled.
 
 use criterion::{BenchmarkId, Criterion, measurement::Measurement};
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVecAoS, StateVecSoA,
     StateVecSoA32,
@@ -43,7 +43,7 @@ fn pecos_circuit<S: CliffordGateable + ArbitraryRotationGateable>(
     for _layer in 0..num_layers {
         for q in 0..num_qubits {
             sim.h(&[QubitId(q)]);
-            sim.rz(Angle64::from_radians(0.1), &[QubitId(q)]);
+            sim.rz(pecos_core::radians!(0.1), &[QubitId(q)]);
         }
         for q in 0..num_qubits - 1 {
             sim.cx(&[(QubitId(q), QubitId(q + 1))]);
@@ -560,7 +560,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits {
-                    sim.rz(Angle64::from_radians(0.1), &[QubitId(q)]);
+                    sim.rz(pecos_core::radians!(0.1), &[QubitId(q)]);
                 }
             }
             black_box(());
@@ -573,7 +573,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits {
-                    sim.rz(Angle64::from_radians(0.1), &[QubitId(q)]);
+                    sim.rz(pecos_core::radians!(0.1), &[QubitId(q)]);
                 }
             }
             black_box(());
@@ -585,7 +585,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits {
-                    sim.rz(Angle64::from_radians(0.1), &[QubitId(q)]);
+                    sim.rz(pecos_core::radians!(0.1), &[QubitId(q)]);
                 }
             }
             black_box(());
@@ -598,7 +598,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits {
-                    sim.rz(Angle64::from_radians(0.1), &[QubitId(q)]);
+                    sim.rz(pecos_core::radians!(0.1), &[QubitId(q)]);
                 }
             }
             black_box(());
@@ -610,7 +610,7 @@ fn bench_native_individual_gates<M: Measurement>(c: &mut Criterion<M>) {
         b.iter(|| {
             for _ in 0..iters {
                 for q in 0..num_qubits {
-                    sim.rz(Angle64::from_radians(0.1), &[QubitId(q)]);
+                    sim.rz(pecos_core::radians!(0.1), &[QubitId(q)]);
                 }
             }
             black_box(());

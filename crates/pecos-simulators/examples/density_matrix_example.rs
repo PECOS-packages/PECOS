@@ -1,6 +1,5 @@
 use pecos_core::Angle64;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DensityMatrix, QubitId, qid};
-use std::f64::consts::PI;
 
 fn main() {
     println!("Density Matrix Simulator Example");
@@ -40,7 +39,7 @@ fn main() {
 
     // Non-Clifford gates (rotations)
     let mut rotated = DensityMatrix::new(1);
-    rotated.rx(Angle64::from_radians(PI / 4.0), &qid(0));
+    rotated.rx(Angle64::from_turn_ratio(1, 8), &qid(0));
     println!("\nState after Rx(π/4):");
     println!("{rotated}");
 

@@ -1,4 +1,4 @@
-use pecos_core::{Angle64, QubitId};
+use pecos_core::QubitId;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StabVec};
 use std::time::Instant;
 
@@ -19,7 +19,7 @@ fn main() {
         .unwrap_or(2);
     let nq = data_q + ancilla_q;
 
-    let theta = Angle64::from_radians(0.3);
+    let theta = pecos_core::radians!(0.3);
     let mut sim = StabVec::new_with_seed(nq, 42);
 
     // Initialize

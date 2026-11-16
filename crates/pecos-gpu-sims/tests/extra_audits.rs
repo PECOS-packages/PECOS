@@ -349,7 +349,7 @@ fn apply_instr_f32(sim: &mut GpuStateVec32, instr: Instr) {
             sim.h(&[QubitId(q)]);
         }
         Instr::Rz(q, t) => {
-            sim.rz(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Instr::Cx(a, b) => {
             sim.cx(&[(QubitId(a), QubitId(b))]);
@@ -358,7 +358,10 @@ fn apply_instr_f32(sim: &mut GpuStateVec32, instr: Instr) {
             sim.cz(&[(QubitId(a), QubitId(b))]);
         }
         Instr::Rzz(a, b, t) => {
-            sim.rzz(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+            sim.rzz(
+                Angle64::try_from_radians(t).unwrap(),
+                &[(QubitId(a), QubitId(b))],
+            );
         }
     }
 }
@@ -369,7 +372,7 @@ fn apply_instr_f64(sim: &mut GpuStateVec64, instr: Instr) {
             sim.h(&[QubitId(q)]);
         }
         Instr::Rz(q, t) => {
-            sim.rz(Angle64::from_radians(t), &[QubitId(q)]);
+            sim.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
         }
         Instr::Cx(a, b) => {
             sim.cx(&[(QubitId(a), QubitId(b))]);
@@ -378,7 +381,10 @@ fn apply_instr_f64(sim: &mut GpuStateVec64, instr: Instr) {
             sim.cz(&[(QubitId(a), QubitId(b))]);
         }
         Instr::Rzz(a, b, t) => {
-            sim.rzz(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+            sim.rzz(
+                Angle64::try_from_radians(t).unwrap(),
+                &[(QubitId(a), QubitId(b))],
+            );
         }
     }
 }
@@ -404,7 +410,7 @@ fn fusion_replay_matches_cpu() {
                 cpu.h(&[QubitId(q)]);
             }
             Instr::Rz(q, t) => {
-                cpu.rz(Angle64::from_radians(t), &[QubitId(q)]);
+                cpu.rz(Angle64::try_from_radians(t).unwrap(), &[QubitId(q)]);
             }
             Instr::Cx(a, b) => {
                 cpu.cx(&[(QubitId(a), QubitId(b))]);
@@ -413,7 +419,10 @@ fn fusion_replay_matches_cpu() {
                 cpu.cz(&[(QubitId(a), QubitId(b))]);
             }
             Instr::Rzz(a, b, t) => {
-                cpu.rzz(Angle64::from_radians(t), &[(QubitId(a), QubitId(b))]);
+                cpu.rzz(
+                    Angle64::try_from_radians(t).unwrap(),
+                    &[(QubitId(a), QubitId(b))],
+                );
             }
         }
     }

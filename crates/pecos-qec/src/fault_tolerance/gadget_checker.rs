@@ -1007,7 +1007,7 @@ impl<'a> GadgetChecker<'a> {
         let qubits: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
         let (z_flips, x_flips) = match gate.gate_type {
             GateType::MX => get_syndrome_flips(prop, &[], &qubits),
-            GateType::MZ | GateType::MeasureFree | GateType::MPZ | GateType::MeasureLeaked => {
+            GateType::MZ | GateType::MeasureFree | GateType::MPZ | GateType::MeasureZLeaked => {
                 get_syndrome_flips(prop, &qubits, &[])
             }
             _ => return,

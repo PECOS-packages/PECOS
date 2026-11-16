@@ -16,25 +16,29 @@ fn program(angles: Value, args: Value) -> Value {
     program
 }
 
+// Independently rounded exact Fraction(f64 radians) / Fraction(f64 TAU) * 2^64,
+// ties away from zero, wrapped to u64. The degree conversion changes theta by
+// one ulp; all three unit spellings give the same f64 phi.
+const THETA_RAD: Angle64 = Angle64::new(16_303_544_006_313_690_689);
+const THETA_DEG: Angle64 = Angle64::new(16_303_544_006_313_690_363);
+const PHI: Angle64 = Angle64::new(1_203_715_106_345_620_478);
+
 #[test]
 fn rxyxy2q_json_units_and_execution() {
     let theta = -0.73_f64;
     let phi = 0.41_f64;
-    let expected = Gate::rxyxy2q(
-        Angle64::from_radians(theta),
-        Angle64::from_radians(phi),
-        &[(2, 0)],
-    );
-    for (unit, values) in [
-        ("rad", [theta, phi]),
-        ("deg", [theta.to_degrees(), phi.to_degrees()]),
+    for (unit, values, expected_theta) in [
+        ("rad", [theta, phi], THETA_RAD),
+        ("deg", [theta.to_degrees(), phi.to_degrees()], THETA_DEG),
         (
             "pi",
             [theta / std::f64::consts::PI, phi / std::f64::consts::PI],
+            THETA_RAD,
         ),
     ] {
         let json = program(json!([values, unit]), json!([[["q", 2], ["q", 0]]]));
-        let ast: PHIRProgram = serde_json::from_value(json.clone()).unwrap();
+        let source = json.to_string();
+        let ast: PHIRProgram = serde_json::from_str(&source).unwrap();
         let Operation::QuantumOp {
             qop,
             angles: Some(angles),
@@ -47,6 +51,8 @@ fn rxyxy2q_json_units_and_execution() {
         assert_eq!(qop, "RXYXY2Q");
         assert!((angles[0] - theta).abs() < 1e-14);
         assert!((angles[1] - phi).abs() < 1e-14);
+        // Require the engines and transport to preserve the sent angles exactly.
+        let expected = Gate::rxyxy2q(expected_theta, PHI, &[(2, 0)]);
         let mut processor = OperationProcessor::new();
         processor.add_quantum_variable("q", 3).unwrap();
         let (name, qubits, angles) = processor
@@ -65,7 +71,7 @@ fn rxyxy2q_json_units_and_execution() {
             engine.generate_commands().unwrap().quantum_ops().unwrap(),
             std::slice::from_ref(&expected)
         );
-        let module = phir_json_to_module(&json.to_string()).unwrap();
+        let module = phir_json_to_module(&source).unwrap();
         let mut engine = PhirEngine::new(module).unwrap();
         assert_eq!(
             engine.generate_commands().unwrap().quantum_ops().unwrap(),
@@ -78,7 +84,13 @@ fn rxyxy2q_json_units_and_execution() {
 fn rxyxy2q_json_rejects_wrong_counts() {
     for values in [json!([]), json!([-0.73]), json!([-0.73, 0.41, 0.2])] {
         let json = program(json!([values, "rad"]), json!([[["q", 2], ["q", 0]]]));
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
     }
     for args in [
@@ -87,7 +99,13 @@ fn rxyxy2q_json_rejects_wrong_counts() {
         json!([[["q", 2], ["q", 0], ["q", 1]]]),
     ] {
         let json = program(json!([[-0.73, 0.41], "rad"]), args);
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
     }
     let processor = OperationProcessor::new();
@@ -103,11 +121,15 @@ fn rxyxy2q_json_rejects_wrong_counts() {
 
 #[test]
 fn rxyxy2q_json_preserves_multiple_pairs() {
-    let json = program(
+    let mut json = program(
         serde_json::json!([[-0.73, 0.41], "rad"]),
-        serde_json::json!([[["q", 2], ["q", 0]], [["q", 0], ["q", 1]]]),
+        serde_json::json!([[["q", 2], ["q", 0]], [["q", 3], ["q", 1]]]),
     );
-    let module = phir_json_to_module(&json.to_string()).unwrap();
+    json["ops"][0]["size"] = serde_json::json!(4);
+    let source = json.to_string();
+    let theta = THETA_RAD;
+    let phi = PHI;
+    let module = phir_json_to_module(&source).unwrap();
     let mut function = pecos_phir::phir::Function::new(
         "main",
         pecos_phir::types::FunctionType {
@@ -152,15 +174,9 @@ fn rxyxy2q_json_preserves_multiple_pairs() {
             .all(|instruction| !instruction.results.is_empty())
     );
     let mut engine = PhirEngine::new(module).unwrap();
-    let expected: Vec<_> = [(2, 0), (0, 1)]
+    let expected: Vec<_> = [(2, 0), (3, 1)]
         .into_iter()
-        .map(|pair| {
-            Gate::rxyxy2q(
-                Angle64::from_radians(-0.73),
-                Angle64::from_radians(0.41),
-                &[pair],
-            )
-        })
+        .map(|pair| Gate::rxyxy2q(theta, phi, &[pair]))
         .collect();
     assert_eq!(
         engine.generate_commands().unwrap().quantum_ops().unwrap(),
@@ -176,7 +192,13 @@ fn rxyxy2q_json_rejects_mixed_or_flat_grouping() {
     ] {
         let mut json = program(json!([[-0.73, 0.41], "rad"]), args.clone());
         json["ops"][0]["size"] = json!(4);
-        assert!(serde_json::from_value::<PHIRProgram>(json.clone()).is_err());
+        // The AST decodes structure and angles; execution validates gate signatures.
+        assert!(
+            PhirJsonEngine::from_json(&json.to_string())
+                .unwrap()
+                .generate_commands()
+                .is_err()
+        );
         assert!(phir_json_to_module(&json.to_string()).is_err());
         let args: Vec<pecos_phir_json::v0_1::ast::QubitArg> = serde_json::from_value(args).unwrap();
         let mut processor = OperationProcessor::new();

@@ -1100,12 +1100,13 @@ impl<'a> DemSamplerBuilder<'a> {
         self
     }
 
-    /// Set uniform noise (same probability for all gate types, including idle).
+    /// Set uniform gate, preparation, and measurement noise.
+    ///
+    /// Idle noise stays off, as in [`NoiseConfig::uniform`]; enable it with
+    /// [`Self::with_idle_noise`].
     #[must_use]
     pub fn with_uniform_noise(self, p: f64) -> Self {
-        let mut s = self.with_noise(p, p, p, p);
-        s.noise.p_idle = p;
-        s
+        self.with_noise(p, p, p, p)
     }
 
     /// Set idle gate noise rate.
@@ -1337,7 +1338,7 @@ impl<'a> DemSamplerBuilder<'a> {
         let tracked_pauli_labels: Vec<Option<String>> = circuit
             .annotations()
             .iter()
-            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli))
+            .filter(|a| matches!(a.kind, AnnotationKind::TrackedPauli { .. }))
             .map(|a| a.label.clone())
             .collect();
         if !tracked_pauli_labels.is_empty() {
@@ -1734,7 +1735,6 @@ mod tests {
         dag.pz(&[0]);
         dag.mz(&[0]);
         dag.add_annotation(pecos_quantum::PauliAnnotation {
-            pauli: pecos_core::PauliString::zs(&[0usize]),
             kind: pecos_quantum::AnnotationKind::Observable {
                 measurement_ids: vec![pecos_core::MeasId::from_raw(99)],
             },
@@ -1785,6 +1785,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -1807,6 +1808,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -1830,6 +1832,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2335,6 +2338,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2374,6 +2378,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2393,6 +2398,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 
@@ -2421,6 +2427,7 @@ mod tests {
         let im = InfluenceBuilder::new(&circuit)
             .unwrap()
             .with_z(&[0, 1, 2])
+            .unwrap()
             .build()
             .expect("circuit is replayable");
 

@@ -14,6 +14,7 @@ fn bench_scale(num_qubits: usize, prob: f64, iterations: usize) {
 
     let channel = CompositeChannel::new("test", pauli())
         .with_probability(prob)
+        .expect("fixed benchmark and example noise parameters satisfy their probability and time bounds")
         .with_filter(CompositeEventFilter::SingleQubitGate);
 
     let event = NoiseEvent::AfterGate {
@@ -21,6 +22,8 @@ fn bench_scale(num_qubits: usize, prob: f64, iterations: usize) {
         qubits: &qubits,
         angles: &angles,
         gate_id: None,
+        group_size: pecos_neo::noise::gate_group_size(GateType::H.quantum_arity(), qubits.len()),
+        leaked_suppressed: &[],
     };
 
     let mut ctx = NoiseContext::new();

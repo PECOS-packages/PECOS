@@ -14,12 +14,12 @@
 //!
 //! This module provides [`IndexSet`], a trait that abstracts over different set
 //! implementations for storing `usize` indices. It enables generic implementations
-//! of stabilizer simulators that can use either [`BitSet`](crate::BitSet) or
-//! [`VecSet<usize>`](crate::VecSet) as the underlying storage.
+//! of stabilizer simulators with interchangeable index storage.
 //!
 //! # Implementations
 //!
-//! - [`BitSet`](crate::BitSet): O(1) toggle operations, efficient for large circuits
+//! - [`AdaptiveIndexSet`](crate::AdaptiveIndexSet): default for `SparseStab`, adaptive dense/sparse storage
+//! - [`BitSet`](crate::BitSet): dense words with O(1) toggle operations
 //! - [`VecSet<usize>`](crate::VecSet): Lower overhead for small sets, better iteration
 //!
 //! # Example
@@ -44,8 +44,7 @@ use core::fmt::Debug;
 /// A trait for set operations on `usize` indices.
 ///
 /// Common interface for set types used in stabilizer
-/// simulation, abstracting over the differences between [`BitSet`](crate::BitSet)
-/// and [`VecSet<usize>`](crate::VecSet).
+/// simulation, including adaptive, dense-word and vector storage.
 ///
 /// # Key Operations
 ///
@@ -61,11 +60,11 @@ pub trait IndexSet: Clone + Default + Debug {
     /// Create a new empty set.
     fn new() -> Self;
 
-    /// Create a set with capacity for at least `max_index` indices.
+    /// Create an empty set with an index-domain capacity hint.
     ///
-    /// For [`BitSet`](crate::BitSet), this pre-allocates storage to avoid
-    /// resizing during operations. For other implementations, this may
-    /// just create an empty set.
+    /// `max_index` is an exclusive index bound, not an element count.
+    /// Implementations may preallocate or ignore the hint; adaptive storage
+    /// ignores it so a large domain does not force a dense allocation.
     #[must_use]
     fn with_capacity(max_index: usize) -> Self {
         let _ = max_index;
@@ -91,18 +90,16 @@ pub trait IndexSet: Clone + Default + Debug {
     /// simulation, where we need to XOR single elements into sets.
     fn toggle(&mut self, index: usize);
 
-    /// Toggle an index without bounds checking.
+    /// Toggle an index, optionally using implementation-specific capacity knowledge.
     ///
-    /// For [`BitSet`](crate::BitSet), this skips the capacity check for maximum
-    /// performance. The caller must ensure the set was created with sufficient
-    /// capacity via `with_capacity(max_index)` where `max_index > index`.
+    /// The default delegates to `toggle`. Implementations that omit growth checks
+    /// require the index to fit their allocated domain, for example after
+    /// `with_capacity(max_index)` with `index < max_index` on `BitSet`.
+    /// A capacity hint alone does not guarantee allocation for every set type.
     ///
-    /// For other implementations, this is equivalent to `toggle()`.
-    ///
-    /// # Safety
-    /// This is not marked `unsafe` because the worst case is a panic (bounds check
-    /// failure) rather than undefined behavior. However, callers should ensure
-    /// capacity requirements are met.
+    /// # Panics
+    /// May panic when an implementation's capacity or index-domain requirements
+    /// are not met. This safe method must never cause undefined behavior.
     #[inline]
     fn toggle_unchecked(&mut self, index: usize) {
         self.toggle(index);
@@ -113,7 +110,7 @@ pub trait IndexSet: Clone + Default + Debug {
     /// Elements present in exactly one of the two sets will be in the result.
     fn xor_assign(&mut self, other: &Self);
 
-    /// Iterate over indices in the set.
+    /// Iterate over indices in the set, in unspecified order.
     fn iter(&self) -> Self::Iter<'_>;
 
     /// Check if the set is empty.
@@ -125,10 +122,10 @@ pub trait IndexSet: Clone + Default + Debug {
     /// Remove all elements from the set.
     fn clear(&mut self);
 
-    /// Take the contents of this set, leaving it empty but with capacity preserved.
+    /// Take the contents of this set, leaving it empty; may preserve capacity.
     ///
-    /// Unlike `std::mem::take`, this preserves the allocated capacity of the source
-    /// set for implementations that have capacity (like [`BitSet`](crate::BitSet)).
+    /// Implementations may preserve the allocated capacity of the source set
+    /// (like [`BitSet`](crate::BitSet)) or release it.
     ///
     /// The default implementation uses `std::mem::take` which does not preserve capacity.
     #[must_use]

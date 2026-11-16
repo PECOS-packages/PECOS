@@ -10,7 +10,7 @@ cover.
 import pytest
 from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
 
@@ -28,10 +28,10 @@ class TestPartialConsumption:
                 self.ancilla = ancilla
                 self.syndrome = syndrome
                 self.ops = [
-                    Measure(ancilla[0]) > syndrome[0],
-                    Measure(ancilla[1]) > syndrome[1],
-                    Measure(ancilla[2]) > syndrome[2],
-                    Measure(ancilla[3]) > syndrome[3],
+                    MeasureZ(ancilla[0]) > syndrome[0],
+                    MeasureZ(ancilla[1]) > syndrome[1],
+                    MeasureZ(ancilla[2]) > syndrome[2],
+                    MeasureZ(ancilla[3]) > syndrome[3],
                 ]
 
         prog = Main(
@@ -43,7 +43,7 @@ class TestPartialConsumption:
             qubit.CX(data[0], ancilla[0]),
             MeasureAncillas(data, ancilla, syndrome),
             qubit.X(data[0]),
-            Measure(data) > data_result,
+            MeasureZ(data) > data_result,
             Return(syndrome, data_result),
         )
         assert_ast_guppy_compiles(prog)
@@ -57,9 +57,9 @@ class TestPartialConsumption:
                 self.qubits = qubits
                 self.results = results
                 self.ops = [
-                    Measure(qubits[0]) > results[0],
-                    Measure(qubits[1]) > results[1],
-                    Measure(qubits[2]) > results[2],
+                    MeasureZ(qubits[0]) > results[0],
+                    MeasureZ(qubits[1]) > results[1],
+                    MeasureZ(qubits[2]) > results[2],
                 ]
 
         prog = Main(
@@ -70,9 +70,9 @@ class TestPartialConsumption:
             qubit.CX(q[0], q[1]),
             MeasureFirstHalf(q, c_first),
             qubit.H(q[3]),
-            Measure(q[3]) > c_second[0],
-            Measure(q[4]) > c_second[1],
-            Measure(q[5]) > c_second[2],
+            MeasureZ(q[3]) > c_second[0],
+            MeasureZ(q[4]) > c_second[1],
+            MeasureZ(q[5]) > c_second[2],
             Return(c_first, c_second),
         )
         assert_ast_guppy_compiles(prog)
@@ -91,7 +91,7 @@ class TestPartialConsumption:
                     qubit.CX(data[0], ancilla[0]),
                     qubit.CX(data[1], ancilla[0]),
                     qubit.H(ancilla[0]),
-                    Measure(ancilla[0]) > syndrome[0],
+                    MeasureZ(ancilla[0]) > syndrome[0],
                 ]
 
         prog = Main(
@@ -101,7 +101,7 @@ class TestPartialConsumption:
             final := CReg("final", 2),
             StabilizerMeasurement(data, ancilla, syndrome),
             qubit.Z(data[0]),
-            Measure(data) > final,
+            MeasureZ(data) > final,
             Return(syndrome, final),
         )
         assert_ast_guppy_compiles(prog)
@@ -115,7 +115,7 @@ class TestPartialConsumption:
                 self.q = q
                 self.c = c
                 self.ops = [
-                    Measure(q[0]) > c[0],
+                    MeasureZ(q[0]) > c[0],
                 ]
 
         prog = Main(
@@ -132,9 +132,9 @@ class TestPartialConsumption:
             q := QReg("q", 3),
             c := CReg("c", 3),
             # Individual measurements
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
-            Measure(q[2]) > c[2],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
+            MeasureZ(q[2]) > c[2],
             Return(c),
         )
 
@@ -159,7 +159,7 @@ class TestEdgeCases:
             q := QReg("q", 2),
             c := CReg("c", 2),
             DoNothing(q),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
         assert_ast_guppy_compiles(prog)

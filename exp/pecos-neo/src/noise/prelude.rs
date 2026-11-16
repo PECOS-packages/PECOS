@@ -75,6 +75,6 @@ pub use super::patterns::{
 // --- Validation ---
 
 pub use super::validation::{
-    ValidationError, ValidationResult, clamp_probability, is_probability_one, is_probability_zero,
+    ValidationError, ValidationResult, is_probability_one, is_probability_zero,
     validate_probability, validate_rate, validate_weights,
 };

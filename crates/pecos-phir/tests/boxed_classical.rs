@@ -59,6 +59,12 @@ fn boxed_phir_rejects_quantum_commands() {
     let mut module = Module::new("boxed_quantum");
     let mut block = Block::entry();
     block.add_instruction(Instruction::new(
+        Operation::Classical(ClassicalOp::ConstInt(0)),
+        vec![],
+        vec![SSAValue::new(0)],
+        vec![Type::Int(IntWidth::I64)],
+    ));
+    block.add_instruction(Instruction::new(
         Operation::Quantum(QuantumOp::H),
         vec![SSAValue { id: 0, version: 0 }],
         vec![],

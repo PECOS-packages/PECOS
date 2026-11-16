@@ -147,7 +147,7 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::CSdg => "CSdg",
         GateType::MX => "MX",
         GateType::MZ => "MZ",
-        GateType::MeasureLeaked => "MZ_L",
+        GateType::MeasureZLeaked => "MZ_L",
         GateType::MeasureFree => "MF",
         GateType::MPZ => "MPZ",
         GateType::PX => "PX",
@@ -309,7 +309,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
         // No clear single-axis color: idle, alloc/free, multi-qubit, custom
         GateType::Idle
         | GateType::I
-        | GateType::MeasureLeaked
+        | GateType::MeasureZLeaked
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::QAlloc
@@ -340,7 +340,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_family(gate_type: GateType) -> GateFamily {
     match gate_type {
-        GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {
+        GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree | GateType::MPZ => {
             GateFamily::Measurement
         }
         GateType::PZ | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
@@ -502,7 +502,7 @@ fn decompose_gate(
         // circuit record allocator does not include it in its predicate.
         let show_id = style.show_measurement_ids
             && (gate.gate_type.consumes_measurement_record()
-                || gate.gate_type == GateType::MeasureLeaked);
+                || gate.gate_type == GateType::MeasureZLeaked);
         for (position, &q) in qubits.iter().enumerate() {
             if let Some(&row) = qubit_to_row.get(&q) {
                 let label = if show_id {
@@ -862,7 +862,7 @@ mod tests {
             (GateType::MZ, "MZ"),
             (GateType::MPZ, "MPZ"),
             (GateType::MeasureFree, "MF"),
-            (GateType::MeasureLeaked, "MZ_L"),
+            (GateType::MeasureZLeaked, "MZ_L"),
         ] {
             let mut circuit = crate::TickCircuit::new();
             let mut gate = Gate::simple(gt, vec![QubitId(8), QubitId(2)]);
@@ -891,7 +891,7 @@ mod tests {
             GateType::MZ,
             GateType::MPZ,
             GateType::MeasureFree,
-            GateType::MeasureLeaked,
+            GateType::MeasureZLeaked,
         ] {
             for ids in [vec![], vec![7], vec![7, 9, 11]] {
                 let mut gate = Gate::simple(gt, vec![QubitId(8), QubitId(2)]);

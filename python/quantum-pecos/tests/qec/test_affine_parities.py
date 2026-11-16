@@ -200,3 +200,16 @@ def test_native_legacy_ids_and_prefixes_preserve_signs(aliased, prefixed, consta
     assert converted.num_measurements == 1 + constant
     detector = next(op for op in converted if op.name == "DETECTOR")
     assert len(detector.targets_copy()) == 1 + constant
+
+
+@pytest.mark.parametrize("cls", [Detector, Observable])
+def test_inferred_definition_xor_preserves_selector_and_defaults(cls):
+    original = cls.inferred("derived", element=2, id=3, metadata={"label": "named"})
+    toggled = original ^ 1
+    assert not original.constant
+    assert toggled.constant
+    assert toggled.inferred_output == original.inferred_output
+    assert toggled.refs == ()
+    assert toggled.id == 3
+    assert toggled.metadata == {"label": "named"}
+    assert toggled ^ 1 == original

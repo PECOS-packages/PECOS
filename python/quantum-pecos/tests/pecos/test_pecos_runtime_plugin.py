@@ -153,7 +153,7 @@ def test_schedule_comparison_retains_native_configuration_and_batching(runtime: 
     comparison = plan.compare_guppy_schedules(runtime=timed, seed=17)
     report = comparison.to_dict()
     assert report["runtime_profile"]["native_gates"] == ["rxy", "rz", "rzz"]
-    assert report["runtime_profile"]["defer_measurements"]
+    assert report["runtime_profile"]["native_future_protocol"]
     # Serial: 2*5 reset + 3*10 X + 2*20 readout. With batch size 2,
     # preparations share 5 ns; ASAP also packs two disjoint Xs into 10 ns.
     ref, asap = (80, 80) if runtime.max_batch_size == 1 else (75, 65)

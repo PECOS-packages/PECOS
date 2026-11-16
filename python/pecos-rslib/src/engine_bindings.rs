@@ -17,7 +17,6 @@
 
 use crate::byte_message_bindings::PyByteMessage;
 use crate::prelude::*;
-use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 
@@ -60,7 +59,7 @@ pub trait PyEngineCommon: PyEngineWrapper {
     /// Reset the engine state
     fn py_reset(&mut self) -> PyResult<()> {
         self.inner_mut().reset().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to reset engine in Python bindings: {e}"))
+            crate::errors::simulation_error(e, "Failed to reset engine in Python bindings")
         })
     }
 
@@ -70,9 +69,7 @@ pub trait PyEngineCommon: PyEngineWrapper {
             .inner_mut()
             .process(message.clone_inner())
             .map_err(|e| {
-                PyRuntimeError::new_err(format!(
-                    "Failed to process message in Python bindings: {e}"
-                ))
+                crate::errors::simulation_error(e, "Failed to process message in Python bindings")
             })?;
 
         Ok(PyByteMessage::from_byte_message(result))

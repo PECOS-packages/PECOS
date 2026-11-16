@@ -365,14 +365,14 @@ fn test_user_guide_gates_rust_23() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
 
 let mut sim = StateVec::new(5);
 let q = QubitId(0);
 let (q0, q1) = (QubitId(0), QubitId(1));
-let theta = Angle64::from_radians(PI / 4.0);
+let theta = Angle64::from_turn_ratio(1, 8);
 
 }
 
@@ -387,9 +387,9 @@ fn test_user_guide_gates_rust_24() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.rx(theta, &[q]);
 
 }
@@ -405,9 +405,9 @@ fn test_user_guide_gates_rust_25() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.ry(theta, &[q]);
 
 }
@@ -423,9 +423,9 @@ fn test_user_guide_gates_rust_26() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.rz(theta, &[q]);
 
 }
@@ -441,9 +441,9 @@ fn test_user_guide_gates_rust_27() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.t(&[q]);
 sim.tdg(&[q]);  // Adjoint (T†)
 
@@ -460,9 +460,9 @@ fn test_user_guide_gates_rust_28() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.u(theta, phi, lam, &[q]);
 
 }
@@ -478,9 +478,9 @@ fn test_user_guide_gates_rust_29() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.rxy1q(theta, phi, &[q]);
 
 }
@@ -496,9 +496,9 @@ fn test_user_guide_gates_rust_30() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.rxx(theta, &[(q1, q2)]);
 
 }
@@ -514,9 +514,9 @@ fn test_user_guide_gates_rust_31() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.ryy(theta, &[(q1, q2)]);
 
 }
@@ -532,9 +532,9 @@ fn test_user_guide_gates_rust_32() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.rzz(theta, &[(q1, q2)]);
 
 }
@@ -550,9 +550,9 @@ fn test_user_guide_gates_rust_33() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.rxyxy2q(theta, phi, &[(q1, q2)]);
 
 }
@@ -568,9 +568,9 @@ fn test_user_guide_gates_rust_34() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     let results = sim.mz(&[q]);
 // results[0].outcome: true if |1⟩, false if |0⟩
 // results[0].is_deterministic: true if already in eigenstate
@@ -588,9 +588,9 @@ fn test_user_guide_gates_rust_35() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     let results = sim.mx(&[q]);   // Measure +X
 let results = sim.mnx(&[q]);  // Measure -X
 
@@ -607,9 +607,9 @@ fn test_user_guide_gates_rust_36() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     let results = sim.my(&[q]);   // Measure +Y
 let results = sim.mny(&[q]);  // Measure -Y
 
@@ -626,9 +626,9 @@ fn test_user_guide_gates_rust_37() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.pz(&[q]);   // Prepare |0⟩ (eigenstate of +Z)
 sim.pnz(&[q]);  // Prepare |1⟩ (eigenstate of -Z)
 
@@ -645,9 +645,9 @@ fn test_user_guide_gates_rust_38() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.px(&[q]);   // Prepare |+⟩ = (|0⟩ + |1⟩)/√2
 sim.pnx(&[q]);  // Prepare |-⟩ = (|0⟩ - |1⟩)/√2
 
@@ -664,9 +664,9 @@ fn test_user_guide_gates_rust_39() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.py(&[q]);   // Prepare |+i⟩ = (|0⟩ + i|1⟩)/√2
 sim.pny(&[q]);  // Prepare |-i⟩ = (|0⟩ - i|1⟩)/√2
 
@@ -683,9 +683,9 @@ fn test_user_guide_gates_rust_40() {
     let q0 = QubitId(0);
     let q1 = QubitId(1);
     let q2 = QubitId(2);
-    let theta = Angle64::from_radians(PI / 4.0);
-    let phi = Angle64::from_radians(PI / 8.0);
-    let lam = Angle64::from_radians(PI / 6.0);
+    let theta = Angle64::from_turn_ratio(1, 8);
+    let phi = Angle64::from_turn_ratio(1, 16);
+    let lam = pecos_core::radians!(PI / 6.0);
     sim.mpz(&[q]);   // Measure Z, prepare |0⟩
 sim.mpnz(&[q]);  // Measure -Z, prepare |1⟩
 sim.mpx(&[q]);   // Measure X, prepare |+⟩

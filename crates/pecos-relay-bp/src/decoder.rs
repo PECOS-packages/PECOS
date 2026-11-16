@@ -1,11 +1,10 @@
 //! Relay BP and min-sum BP decoder implementations
 
 use crate::config::{MinSumConfig, RelayConfig};
-use crate::convert;
-use crate::errors::{RelayBpError, Result};
+use crate::errors::{RelayBpError, Result, native_message};
 use ndarray::{Array1, ArrayView1, ArrayView2};
-use relay_bp::decoder::Decoder as RelayBpDecoderTrait;
-use std::sync::Arc;
+use pecos_bp::{BpGraph, RelayBp};
+use pecos_decoder_core::DecoderError;
 
 /// Decoding result from Relay BP / min-sum BP
 #[derive(Debug, Clone)]
@@ -20,17 +19,16 @@ pub struct DecodingResult {
 
 /// Relay BP ensemble decoder
 ///
-/// Wraps `relay_bp::bp::relay::RelayDecoder<f64>`, which combines multiple
-/// min-sum BP legs with disordered memory strengths for improved convergence
-/// on qLDPC codes. Its relay RNG advances across decodes, so a reused decoder's
-/// per-shot outcomes depend on decode history. A seed reproduces the same full
-/// shot sequence, not each syndrome independently.
+/// A thin facade over PECOS native memory-BP. Results are a deterministic
+/// function of (seed, syndrome): decode order, batch splitting and worker
+/// count cannot change them.
 pub struct RelayBpDecoder {
-    inner: relay_bp::bp::relay::RelayDecoder<f64>,
+    inner: RelayBp,
+    syndrome: Vec<u8>,
     num_checks: usize,
     num_bits: usize,
-    min_sum_config: MinSumConfig,
-    relay_config: RelayConfig,
+    alpha: Option<f64>,
+    seed: u64,
 }
 
 impl RelayBpDecoder {
@@ -39,33 +37,24 @@ impl RelayBpDecoder {
     /// # Errors
     ///
     /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid
-    /// or an explicit gamma row is malformed. Returns
-    /// [`RelayBpError::Configuration`] if the gamma interval is invalid.
+    /// or the error priors are invalid. Returns
+    /// [`RelayBpError::Configuration`] if tuning parameters or explicit gammas are invalid.
     pub fn new(
         check_matrix: &ArrayView2<u8>,
-        min_sum_config: &MinSumConfig,
+        error_priors: &[f64],
         relay_config: &RelayConfig,
     ) -> Result<Self> {
-        min_sum_config.validate()?;
-        let num_checks = check_matrix.nrows();
-        let num_bits = check_matrix.ncols();
-
-        let sparse_matrix = convert::check_matrix_to_relay(check_matrix)?;
-        let ms_config = min_sum_config.to_min_sum_config();
-        let relay_cfg = relay_config.to_relay_config(num_bits)?;
-
-        let inner = relay_bp::bp::relay::RelayDecoder::new(
-            sparse_matrix,
-            Arc::new(ms_config),
-            Arc::new(relay_cfg),
-        );
-
+        let graph = BpGraph::from_dense_check_matrix(*check_matrix, error_priors)
+            .map_err(|error| RelayBpError::InvalidMatrix(native_message(error)))?;
+        let inner = RelayBp::new(graph, relay_config.to_native(check_matrix.ncols())?)
+            .map_err(|error| RelayBpError::Configuration(native_message(error)))?;
         Ok(Self {
             inner,
-            num_checks,
-            num_bits,
-            min_sum_config: min_sum_config.clone(),
-            relay_config: relay_config.clone(),
+            syndrome: Vec::with_capacity(check_matrix.nrows()),
+            num_checks: check_matrix.nrows(),
+            num_bits: check_matrix.ncols(),
+            alpha: relay_config.alpha,
+            seed: relay_config.seed,
         })
     }
 
@@ -80,24 +69,14 @@ impl RelayBpDecoder {
     /// # Errors
     ///
     /// Returns [`RelayBpError::InvalidSyndrome`] if the syndrome length doesn't
-    /// match the number of checks.
+    /// match the number of checks, or an entry is not binary.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<DecodingResult> {
-        if syndrome.len() != self.num_checks {
-            return Err(RelayBpError::InvalidSyndrome(format!(
-                "Syndrome length {} doesn't match number of checks {}",
-                syndrome.len(),
-                self.num_checks
-            )));
-        }
-
-        let relay_syndrome = convert::syndrome_to_relay(syndrome);
-        let result = self.inner.decode_detailed(relay_syndrome.view());
-
-        Ok(DecodingResult {
-            decoding: convert::relay_array1_to_pecos(&result.decoding),
-            converged: result.success,
-            iterations: result.iterations,
-        })
+        copy_syndrome(syndrome, self.num_checks, &mut self.syndrome)?;
+        let seed = syndrome_seed(self.seed, &self.syndrome);
+        self.inner
+            .decode(&self.syndrome, seed)
+            .map(result)
+            .map_err(decode_error)
     }
 
     /// Get the number of checks (rows in parity check matrix)
@@ -112,34 +91,30 @@ impl RelayBpDecoder {
         self.num_bits
     }
 
-    /// Get the maximum number of BP iterations.
-    #[must_use]
-    pub fn max_iter(&self) -> usize {
-        self.min_sum_config.max_iter
-    }
-
-    /// Get the optional min-sum scaling factor.
+    /// Get the optional min-sum scaling factor; `Some(0.0)` selects dynamic scaling.
     #[must_use]
     pub fn alpha(&self) -> Option<f64> {
-        self.min_sum_config.alpha
+        self.alpha
     }
 
     /// Get the random seed used for relay parameter sampling.
     #[must_use]
     pub fn seed(&self) -> u64 {
-        self.relay_config.seed
+        self.seed
     }
 }
 
 /// Min-sum BP decoder
 ///
-/// Wraps `relay_bp::bp::min_sum::MinSumBPDecoder<f64>`, providing plain
-/// min-sum belief propagation without the relay ensemble.
+/// Runs one PECOS native memory-BP leg. With gamma0=None this is plain
+/// min-sum belief propagation without memory or relay legs.
 pub struct MinSumBpDecoder {
-    inner: relay_bp::bp::min_sum::MinSumBPDecoder<f64>,
+    inner: RelayBp,
+    syndrome: Vec<u8>,
     num_checks: usize,
     num_bits: usize,
-    config: MinSumConfig,
+    alpha: Option<f64>,
+    max_iter: usize,
 }
 
 impl MinSumBpDecoder {
@@ -147,22 +122,21 @@ impl MinSumBpDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid.
+    /// Returns [`RelayBpError::InvalidMatrix`] for an invalid matrix or error priors,
+    /// or [`RelayBpError::Configuration`] for invalid tuning parameters (including
+    /// zero `max_iter`).
     pub fn new(check_matrix: &ArrayView2<u8>, config: &MinSumConfig) -> Result<Self> {
-        config.validate()?;
-        let num_checks = check_matrix.nrows();
-        let num_bits = check_matrix.ncols();
-
-        let sparse_matrix = convert::check_matrix_to_relay(check_matrix)?;
-        let ms_config = config.to_min_sum_config();
-
-        let inner = relay_bp::bp::min_sum::MinSumBPDecoder::new(sparse_matrix, Arc::new(ms_config));
-
+        let graph = BpGraph::from_dense_check_matrix(*check_matrix, &config.error_priors)
+            .map_err(|error| RelayBpError::InvalidMatrix(native_message(error)))?;
+        let inner = RelayBp::new(graph, config.to_native()?)
+            .map_err(|error| RelayBpError::Configuration(native_message(error)))?;
         Ok(Self {
             inner,
-            num_checks,
-            num_bits,
-            config: config.clone(),
+            syndrome: Vec::with_capacity(check_matrix.nrows()),
+            num_checks: check_matrix.nrows(),
+            num_bits: check_matrix.ncols(),
+            alpha: config.alpha,
+            max_iter: config.max_iter,
         })
     }
 
@@ -177,24 +151,13 @@ impl MinSumBpDecoder {
     /// # Errors
     ///
     /// Returns [`RelayBpError::InvalidSyndrome`] if the syndrome length doesn't
-    /// match the number of checks.
+    /// match the number of checks, or an entry is not binary.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<DecodingResult> {
-        if syndrome.len() != self.num_checks {
-            return Err(RelayBpError::InvalidSyndrome(format!(
-                "Syndrome length {} doesn't match number of checks {}",
-                syndrome.len(),
-                self.num_checks
-            )));
-        }
-
-        let relay_syndrome = convert::syndrome_to_relay(syndrome);
-        let result = self.inner.decode_detailed(relay_syndrome.view());
-
-        Ok(DecodingResult {
-            decoding: convert::relay_array1_to_pecos(&result.decoding),
-            converged: result.success,
-            iterations: result.iterations,
-        })
+        copy_syndrome(syndrome, self.num_checks, &mut self.syndrome)?;
+        self.inner
+            .decode(&self.syndrome, 0)
+            .map(result)
+            .map_err(decode_error)
     }
 
     /// Get the number of checks (rows in parity check matrix)
@@ -212,113 +175,158 @@ impl MinSumBpDecoder {
     /// Get the maximum number of BP iterations.
     #[must_use]
     pub fn max_iter(&self) -> usize {
-        self.config.max_iter
+        self.max_iter
     }
 
-    /// Get the optional min-sum scaling factor.
+    /// Get the optional min-sum scaling factor; `Some(0.0)` selects dynamic scaling.
     #[must_use]
     pub fn alpha(&self) -> Option<f64> {
-        self.config.alpha
+        self.alpha
     }
+}
+
+fn result(outcome: pecos_bp::RelayOutcome) -> DecodingResult {
+    DecodingResult {
+        decoding: Array1::from(outcome.correction),
+        converged: outcome.converged,
+        iterations: outcome.total_iterations,
+    }
+}
+
+fn decode_error(error: DecoderError) -> RelayBpError {
+    match error {
+        DecoderError::InvalidSyndrome(message) => RelayBpError::InvalidSyndrome(message),
+        DecoderError::InvalidDimensions { expected, actual } => RelayBpError::InvalidSyndrome(
+            format!("syndrome length {actual} does not match check count {expected}"),
+        ),
+        error => RelayBpError::DecodingFailed(native_message(error)),
+    }
+}
+
+fn copy_syndrome(view: &ArrayView1<u8>, checks: usize, buffer: &mut Vec<u8>) -> Result<()> {
+    if view.len() != checks {
+        return Err(RelayBpError::InvalidSyndrome(format!(
+            "syndrome length {} does not match check count {checks}",
+            view.len()
+        )));
+    }
+    buffer.clear();
+    for (index, &value) in view.iter().enumerate() {
+        if value > 1 {
+            return Err(RelayBpError::InvalidSyndrome(format!(
+                "syndrome[{index}] must be binary, got {value}"
+            )));
+        }
+        buffer.push(value);
+    }
+    Ok(())
+}
+
+/// `SplitMix64` finalizer fold over the seed, length and little-endian bit words.
+fn syndrome_seed(seed: u64, syndrome: &[u8]) -> u64 {
+    fn mix(mut z: u64) -> u64 {
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    const G: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut h = mix(seed.wrapping_add(G));
+    h = mix(h ^ syndrome.len() as u64);
+    for chunk in syndrome.chunks(64) {
+        let word = chunk
+            .iter()
+            .enumerate()
+            .fold(0, |word, (bit, &value)| word | (u64::from(value) << bit));
+        h = mix(h.wrapping_add(G) ^ word);
+    }
+    h
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use ndarray::Array2;
+    use super::syndrome_seed;
 
-    fn repetition_code_matrix() -> Array2<u8> {
-        // H = [[1, 1, 0], [0, 1, 1]]
-        Array2::from_shape_vec((2, 3), vec![1, 1, 0, 0, 1, 1]).unwrap()
+    #[test]
+    fn facade_passes_the_syndrome_seed_to_random_relay_legs() {
+        use super::RelayBpDecoder;
+        use pecos_bp::{Alpha, BpGraph, RelayBp, Schedule, StopRule};
+        let matrix = ndarray::arr2(&[
+            [1, 0, 1, 0, 1, 0, 1],
+            [0, 1, 1, 0, 0, 1, 1],
+            [0, 0, 0, 1, 1, 1, 1],
+        ]);
+        let syndrome = ndarray::arr1(&[0, 1, 0]);
+        let seed = 31;
+        let mut facade = RelayBpDecoder::builder(&matrix.view())
+            .error_priors(&[0.05; 7])
+            .pre_iter(1)
+            .num_sets(3)
+            .set_max_iter(2)
+            .gamma0(Some(0.65))
+            .seed(seed)
+            .build()
+            .unwrap();
+        // Configure the native oracle independently of facade conversion.
+        let graph = BpGraph::from_dense_check_matrix(matrix.view(), &[0.05; 7]).unwrap();
+        let mut native = RelayBp::new(
+            graph,
+            pecos_bp::RelayConfig {
+                schedule: Schedule::Flooding,
+                alpha: Alpha::Constant(1.0),
+                gamma0: 0.65,
+                pre_iterations: 1,
+                num_legs: 3,
+                leg_iterations: 2,
+                gamma_range: (-0.24, 0.66),
+                stop_rule: StopRule::Converged(1),
+                explicit_gammas: None,
+            },
+        )
+        .unwrap();
+        let mixed = native
+            .decode(&[0, 1, 0], syndrome_seed(seed, &[0, 1, 0]))
+            .unwrap();
+        let raw = native.decode(&[0, 1, 0], seed).unwrap();
+        let actual = facade.decode(&syndrome.view()).unwrap();
+        assert_eq!(actual.decoding.to_vec(), mixed.correction);
+        assert_eq!(actual.converged, mixed.converged);
+        assert_eq!(actual.iterations, mixed.total_iterations);
+        assert!(actual.iterations > 1, "the shot must reach relay legs");
+        assert_ne!(mixed.correction, raw.correction);
+        assert!(mixed.converged);
+        assert!(!raw.converged);
     }
 
     #[test]
-    fn test_min_sum_decoder() {
-        let h = repetition_code_matrix();
-        let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
-
-        // Syndrome [1, 0] corresponds to error on first bit
-        let syndrome = Array1::from_vec(vec![1u8, 0]);
-        let result = decoder.decode(&syndrome.view()).unwrap();
-
-        assert_eq!(result.decoding.len(), 3);
-        assert!(result.converged);
+    fn syndrome_seed_golden_vectors() {
+        for (seed, syndrome, expected) in [
+            (0, vec![0], 0x85c6_1a30_0ec7_0fa1),
+            (0, vec![0, 0], 0x5b79_f476_df1f_fa2a),
+            (0, vec![1], 0xd0b1_009a_d9ae_d4b2),
+            (1, vec![1], 0x90be_2113_79f9_f704),
+            (0, vec![1; 63], 0x22f3_fa79_4c04_a8f0),
+            (0, vec![1; 64], 0x6fa9_c150_2903_aa2a),
+            (0, vec![1; 65], 0xb8d5_2b7d_a6e5_897a),
+            (
+                42,
+                (0..1008).map(|i| u8::from(i % 3 == 0)).collect(),
+                0xc1d5_4f77_7bc2_3df3,
+            ),
+        ] {
+            assert_eq!(syndrome_seed(seed, &syndrome), expected);
+        }
     }
 
     #[test]
-    fn test_alpha_validation_names_parameter() {
-        let h = repetition_code_matrix();
-        let mut config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        config.alpha = Some(f64::NAN);
-
-        let error = MinSumBpDecoder::new(&h.view(), &config)
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("alpha"));
-
-        config.alpha = Some(-0.1);
-        let error = MinSumBpDecoder::new(&h.view(), &config)
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("alpha"));
-
-        let error = RelayBpDecoder::new(&h.view(), &config, &RelayConfig::default())
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains("alpha"));
-    }
-
-    #[test]
-    fn test_relay_decoder() {
-        let h = repetition_code_matrix();
-        let ms_config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let relay_config = RelayConfig::default();
-        let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
-
-        let syndrome = Array1::from_vec(vec![1u8, 0]);
-        let result = decoder.decode(&syndrome.view()).unwrap();
-
-        assert_eq!(result.decoding.len(), 3);
-        assert!(result.converged);
-    }
-
-    #[test]
-    fn test_zero_syndrome() {
-        let h = repetition_code_matrix();
-        let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
-
-        let syndrome = Array1::from_vec(vec![0u8, 0]);
-        let result = decoder.decode(&syndrome.view()).unwrap();
-
-        assert_eq!(result.decoding.len(), 3);
-        assert!(result.converged);
-        // All zeros syndrome should produce all zeros decoding
-        assert!(result.decoding.iter().all(|&x| x == 0));
-    }
-
-    #[test]
-    fn test_invalid_syndrome_length() {
-        let h = repetition_code_matrix();
-        let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
-
-        let syndrome = Array1::from_vec(vec![1u8, 0, 1]);
-        let result = decoder.decode(&syndrome.view());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_check_and_bit_count() {
-        let h = repetition_code_matrix();
-        let config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
-        let decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
-
-        assert_eq!(decoder.check_count(), 2);
-        assert_eq!(decoder.bit_count(), 3);
+    fn syndrome_seed_uses_every_bit_length_and_seed() {
+        let mut syndrome = vec![0; 130];
+        let baseline = syndrome_seed(0, &syndrome);
+        for bit in 0..130 {
+            syndrome[bit] = 1;
+            assert_ne!(syndrome_seed(0, &syndrome), baseline, "bit {bit}");
+            syndrome[bit] = 0;
+        }
+        assert_ne!(syndrome_seed(0, &[0]), syndrome_seed(0, &[0, 0]));
+        assert_ne!(baseline, syndrome_seed(1, &syndrome));
     }
 }

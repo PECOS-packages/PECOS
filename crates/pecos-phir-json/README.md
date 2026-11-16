@@ -162,10 +162,27 @@ helper in `tests/common/phir_test_utils.rs`, which adds noise-model and worker o
 
 ### Quantum Operations
 
-- Single-qubit gates: `H`, `X`, `Y`, `Z`
-- Rotations: `RZ`, `R1XY`
-- Two-qubit gates: `CX` (CNOT), `SZZ` (ZZ interaction)
-- Measurement: `Measure`
+Z-basis measurement qops accept both `"Measure"` and `"MeasureZ"`. Parsing
+canonicalizes `"MeasureZ"` to the PHIR specification's `"Measure"`; execution,
+noise classification, and PHIR re-emission continue to use `"Measure"`.
+
+The native engine and JSON-to-module converter support every quantum operation
+and alias in [PHIR v0.1 Table II](specification/v0.1/spec.md#table-ii---quantum-operations):
+
+- Single-qubit gates: `I`, `X`, `Y`, `Z`, `H`, `SX`, `SXdg`, `SY`, `SYdg`,
+  `SZ` (`S`), `SZdg` (`Sdg`), `F`, `Fdg`, `T`, `Tdg`
+- Single-qubit rotations: `RX`, `RY`, `RZ`, `R1XY` (`U1q`)
+- Two-qubit gates: `CX` (`CNOT`), `CY`, `CZ`, `SXX`, `SXXdg`, `SYY`, `SYYdg`,
+  `SZZ` (`ZZ`, `ZZMax`), `SZZdg`, `SWAP`
+- Two-qubit rotations: `RXX`, `RYY`, `RZZ` (`ZZPhase`), `R2XXYYZZ` (`RXXYYZZ`)
+- Preparation and measurement: `Init`, `Measure`
+
+Each operation broadcasts in argument order over its qubits or pairs. Qubit IDs
+must be unique within an operation, and its angle count must match Table II.
+Angles use `rad`, `pi`, or `deg`; every broadcast target receives the same angles.
+Compatibility spellings `Prep`, `RXY1Q`, `RXXRYYRZZ` and the extensions `U` and
+`RXYXY2Q` are also available. Gates use the existing exact byte-message representation;
+backend support still determines which simulators can execute a given gate.
 
 ### Classical Operations
 
@@ -223,6 +240,117 @@ The conversion paths are:
 2. **Debug/Export**: PHIR Module → PHIR-RON (Rusty Object Notation for inspection)
 
 ### Converting PHIR-JSON to PHIR Module
+
+Broadcast quantum operations become one instruction per qubit or qubit pair,
+including preparations and measurements. Each instruction receives the same
+rotation angles; measurement destinations retain their argument order.
+The converter uses the native angle decoder (`rad`, `pi`, and `deg`).
+Two-qubit argument groups must contain exactly two qubits in the native engine,
+Rust and Python classical interpreters and converter. They share validation of
+group shapes, qubit uniqueness and gate signatures. RXYXY2Q requires paired
+arguments; its gate validation runs during execution/conversion, after structural
+AST decoding.
+
+JSON-to-module conversion supports register declarations, quantum operations
+and Result exports with whole-register names or indexed `[name, bit]` references.
+Result args and returns must have matching nonzero lengths. Each pair becomes a
+named Result instruction; copies retain their source-order values even when
+subsequent measurements overwrite a register. Indexed sources extract one bit;
+indexed destinations replace one bit
+without losing the others. Result cannot overwrite quantum registers or read
+unknown sources. Measurement destinations must be declared classical registers,
+and their bit indices must be below the declared size (excluding the sign bit).
+JSON-to-module conversion, which supports only straight-line programs, checks each
+measurement destination when it compiles. Native execution and both interpreters
+check destinations when the measurement runs. Every runner rejects a Measure with
+missing returns or different argument/return counts at load time. Each measured
+qubit needs an explicit destination; no register name is invented. Measurement
+writeback includes user registers beginning with `__`; exports control reporting.
+All classical storage types (`i8`–`i64`, `u8`–`u64`, and `bool`) support
+measurements. Declaration sizes use one shared Rust decoder: only an absent
+field means omitted. JSON null, negative, string, fractional and boolean size
+values are rejected with a named input error. Classical sizes are inferred when
+omitted; quantum declarations still require a positive size. Bool has one-bit
+backing storage: use size 1 or omit size; declarations with size greater than 1
+are rejected on every path. Assignment and
+ffcall destinations also require declared classical registers, with indexed
+writes below the declared size. Whole signed Result copies sign-extend to i64
+before destination-width masking, independently of the source backing type,
+matching `=`. Malformed Result entries report the offending JSON value; Python
+uses TypeError for wrong types and ValueError for invalid integer indices.
+Rust classifies these as `PecosError::Input`. The Python interpreter validates
+Result references, counts and destination types at load, including unexecuted
+branches, like native and the Rust interpreter. It caches execution-time
+reference decoding until the next init or full reset. Result arguments and returns
+are treated as immutable after first execution. Successful decoding holds each
+executed Result operation until the next init or full reset. Later shots do not
+repeat JSON/FFI validation. Measurement destinations are checked against declarations when results
+arrive. Shot resets do not repeat declaration checks. PyPHIR's classical-input
+validation does not serialize unrelated metadata in parsed Python programs.
+In the Python readers (PyPHIR and the Python interpreter), declaration fields
+that are not finite JSON scalars use a bounded non-string stand-in for named
+Rust diagnostics; int, str and float subclasses are normalized and accepted. Invalid declaration-name and size
+values are rendered with at most 80 characters, including an ellipsis.
+Exports use U32 through 32 bits and U64 for wider registers.
+Without `cvar_export`, the native engine and module converter report only Result
+destinations when any exist; otherwise they report every classical variable.
+Quantum registers are never reported, and classical names have no prefix filter.
+CPhase is not a PHIR v0.1 gate and must be lowered before emitting PHIR JSON.
+
+`cvar_export` selects the reported classical variables, optionally renaming them
+positionally with `to`. Every directive contributes to a static union, including
+directives in unexecuted branches in runners that support blocks. Values and
+widths come from the source registers at the end of the shot. With any directive
+present, even an empty `variables` list, only these outputs and every static Result
+destination are reported. Each Result destination appears in every shot, including
+shots where its Result does not execute. Its value is the destination's final value;
+all classical storage starts each shot at zero. Declared destinations retain their
+width and signedness regardless of source types. For a new destination, whole-register
+sources contribute their size and signedness and indexed sources contribute one bit.
+Its size is the largest contribution across the entire program. Whole-register
+copies retain their common source data type; differing whole-source data types
+use `u64` or `i64` storage according to signedness. Any indexed write to
+an undeclared destination uses unsigned 64-bit storage, with size at least
+`max(32, largest destination index + 1)`. Only conflicting signedness between
+whole-register sources of an undeclared destination is a load-time error; declare
+the destination to choose its type explicitly. Result-created names are hoisted
+at load just like declarations, even if their Result is in an unexecuted branch.
+Other operations may read or write them before that Result; reads see zero until
+something writes the name. Invalid sources, renames, conflicting output names,
+and the reserved `_width_` prefix are rejected at load time.
+Without a directive, native and module output is limited to the static Result
+destinations when any exist. HybridEngine retains its existing rule of reporting
+every classical variable plus Result destinations. With neither exports nor
+Results, all runners report every classical variable, including `measurement_`-
+prefixed names, and exclude quantum registers.
+A Result destination may also be exported under its own name; an alias of a
+different source cannot use that destination name. Declarations inside blocks
+require a program with `cvar_export`; otherwise move them to the top level.
+The module converter lowers exports through its end-of-program Result path.
+
+The converter rejects blocks such as `qparallel` and `if`, machine/meta operations,
+unsupported data/classical operations and unrecognized operations with a named
+error. Use the native PHIR-JSON engine for supported PHIR programs containing
+these constructs. Although the module IR has structural parallel and conditional
+forms, its current execution path does not execute
+those regions; the converter does not emit programs that would lose their work.
+PHIR comments carry no execution semantics and are ignored.
+
+The legacy Python `pecos_rslib.PhirJsonEngine` (also exported through
+`pecos.engines`) delegates command generation, register updates, exports, and
+execution state to this native engine. It no longer invokes a Python interpreter
+fallback or changes outcomes when pytest is installed. `process_program()` returns
+the next batch as command dictionaries. Supply every measurement outcome in order
+using `handle_measurement(0)` or `handle_measurement(1)` before requesting the next
+batch. `get_results()` and `results_dict` expose native results as u32 dictionaries;
+values outside that representation raise `ValueError` instead of being truncated.
+Use the simulation results API for wider values. The compatibility constructor
+`create_with_validation_disabled()` bypasses no native validation; neither
+constructor uses the Python schema validator.
+
+PyPHIR also interprets `rad` unchanged, `pi` as multiples of pi, and `deg` as
+multiples of pi/180. Unknown unit strings raise `ValueError`; nonstring units raise
+`TypeError`.
 
 ```rust
 use pecos_engines::PecosError;

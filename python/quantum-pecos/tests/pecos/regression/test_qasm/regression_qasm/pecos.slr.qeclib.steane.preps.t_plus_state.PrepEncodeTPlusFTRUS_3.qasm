@@ -38,26 +38,26 @@ cx q_test[3], q_test[0];
 reset a_test[0];
 reset a_test[1];
 h a_test[0];
-barrier ;
+barrier a_test, q_test;
 ch a_test[0], q_test[0];
-barrier ;
+barrier a_test;
 cx a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 ch a_test[0], q_test[1];
-barrier ;
+barrier a_test, q_test;
 ch a_test[0], q_test[2];
-barrier ;
+barrier a_test, q_test;
 ch a_test[0], q_test[3];
-barrier ;
+barrier a_test, q_test;
 ch a_test[0], q_test[4];
-barrier ;
+barrier a_test, q_test;
 ch a_test[0], q_test[5];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test;
 cx a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 ch a_test[0], q_test[6];
-barrier ;
+barrier a_test, q_test;
 h a_test[0];
 measure a_test[0] -> out_test[0];
 measure a_test[1] -> out_test[1];
@@ -77,9 +77,9 @@ cz a_test[1], q_test[5];
 // 6 -> 6
 cz a_test[2], q_test[2];
 // 7 -> 3
-barrier ;
+barrier a_test;
 cz a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 cx a_test[0], q_test[0];
 // 1 -> 1
 cz a_test[1], q_test[4];
@@ -92,9 +92,9 @@ cz a_test[1], q_test[2];
 // 7 -> 3
 cz a_test[2], q_test[6];
 // 4 -> 7
-barrier ;
+barrier a_test;
 cz a_test[0], a_test[2];
-barrier ;
+barrier a_test;
 cx a_test[0], q_test[2];
 // 7 -> 3
 cz a_test[1], q_test[1];
@@ -119,60 +119,60 @@ if(flags_test == 0) reset a_test[2];
 if(flags_test == 0) h a_test[0];
 if(flags_test == 0) h a_test[1];
 if(flags_test == 0) h a_test[2];
-barrier ;
+barrier a_test, q_test;
 if(flags_test == 0) cz a_test[0], q_test[3];
 // 5 -> 4
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cx a_test[1], q_test[5];
 // 6 -> 6
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cx a_test[2], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cz a_test[1], a_test[0];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cz a_test[0], q_test[0];
 // 1 -> 1
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cx a_test[1], q_test[4];
 // 2 -> 5
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cx a_test[2], q_test[3];
 // 5 -> 4
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cz a_test[0], q_test[1];
 // 3 -> 2
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cx a_test[1], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cx a_test[2], q_test[6];
 // 4 -> 7
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cz a_test[2], a_test[0];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cz a_test[0], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cx a_test[1], q_test[1];
 // 3 -> 2
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(flags_test == 0) cx a_test[2], q_test[5];
 // 6 -> 6
-barrier ;
+barrier a_test, q_test;
 if(flags_test == 0) h a_test[0];
 if(flags_test == 0) h a_test[1];
 if(flags_test == 0) h a_test[2];
@@ -224,26 +224,26 @@ if(reject_test[0] != 0) cx q_test[3], q_test[0];
 if(reject_test[0] != 0) reset a_test[0];
 if(reject_test[0] != 0) reset a_test[1];
 if(reject_test[0] != 0) h a_test[0];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[0];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cx a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[1];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[2];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[3];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[4];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[5];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test;
 if(reject_test[0] != 0) cx a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[6];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) h a_test[0];
 if(reject_test[0] != 0) measure a_test[0] -> out_test[0];
 if(reject_test[0] != 0) measure a_test[1] -> out_test[1];
@@ -263,9 +263,9 @@ if(reject_test[0] != 0) cz a_test[1], q_test[5];
 // 6 -> 6
 if(reject_test[0] != 0) cz a_test[2], q_test[2];
 // 7 -> 3
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cz a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cx a_test[0], q_test[0];
 // 1 -> 1
 if(reject_test[0] != 0) cz a_test[1], q_test[4];
@@ -278,9 +278,9 @@ if(reject_test[0] != 0) cz a_test[1], q_test[2];
 // 7 -> 3
 if(reject_test[0] != 0) cz a_test[2], q_test[6];
 // 4 -> 7
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cz a_test[0], a_test[2];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cx a_test[0], q_test[2];
 // 7 -> 3
 if(reject_test[0] != 0) cz a_test[1], q_test[1];
@@ -305,60 +305,60 @@ if(reject_test[0] != 0) reset a_test[2];
 if(reject_test[0] != 0) h a_test[0];
 if(reject_test[0] != 0) h a_test[1];
 if(reject_test[0] != 0) h a_test[2];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[0], q_test[3];
 // 5 -> 4
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[1], q_test[5];
 // 6 -> 6
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[2], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[1], a_test[0];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[0], q_test[0];
 // 1 -> 1
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[1], q_test[4];
 // 2 -> 5
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[2], q_test[3];
 // 5 -> 4
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[0], q_test[1];
 // 3 -> 2
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[1], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[2], q_test[6];
 // 4 -> 7
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[2], a_test[0];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[0], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[1], q_test[1];
 // 3 -> 2
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[2], q_test[5];
 // 6 -> 6
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) h a_test[0];
 if(reject_test[0] != 0) h a_test[1];
 if(reject_test[0] != 0) h a_test[2];
@@ -409,26 +409,26 @@ if(reject_test[0] != 0) cx q_test[3], q_test[0];
 if(reject_test[0] != 0) reset a_test[0];
 if(reject_test[0] != 0) reset a_test[1];
 if(reject_test[0] != 0) h a_test[0];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[0];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cx a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[1];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[2];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[3];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[4];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[5];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test;
 if(reject_test[0] != 0) cx a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) ch a_test[0], q_test[6];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) h a_test[0];
 if(reject_test[0] != 0) measure a_test[0] -> out_test[0];
 if(reject_test[0] != 0) measure a_test[1] -> out_test[1];
@@ -448,9 +448,9 @@ if(reject_test[0] != 0) cz a_test[1], q_test[5];
 // 6 -> 6
 if(reject_test[0] != 0) cz a_test[2], q_test[2];
 // 7 -> 3
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cz a_test[0], a_test[1];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cx a_test[0], q_test[0];
 // 1 -> 1
 if(reject_test[0] != 0) cz a_test[1], q_test[4];
@@ -463,9 +463,9 @@ if(reject_test[0] != 0) cz a_test[1], q_test[2];
 // 7 -> 3
 if(reject_test[0] != 0) cz a_test[2], q_test[6];
 // 4 -> 7
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cz a_test[0], a_test[2];
-barrier ;
+barrier a_test;
 if(reject_test[0] != 0) cx a_test[0], q_test[2];
 // 7 -> 3
 if(reject_test[0] != 0) cz a_test[1], q_test[1];
@@ -490,60 +490,60 @@ if(reject_test[0] != 0) reset a_test[2];
 if(reject_test[0] != 0) h a_test[0];
 if(reject_test[0] != 0) h a_test[1];
 if(reject_test[0] != 0) h a_test[2];
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[0], q_test[3];
 // 5 -> 4
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[1], q_test[5];
 // 6 -> 6
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[2], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[1], a_test[0];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[0], q_test[0];
 // 1 -> 1
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[1], q_test[4];
 // 2 -> 5
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[2], q_test[3];
 // 5 -> 4
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[0], q_test[1];
 // 3 -> 2
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[1], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[2], q_test[6];
 // 4 -> 7
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[2], a_test[0];
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cz a_test[0], q_test[2];
 // 7 -> 3
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[1], q_test[1];
 // 3 -> 2
-barrier ;
-barrier ;
+barrier a_test, q_test;
+barrier a_test, q_test;
 if(reject_test[0] != 0) cx a_test[2], q_test[5];
 // 6 -> 6
-barrier ;
+barrier a_test, q_test;
 if(reject_test[0] != 0) h a_test[0];
 if(reject_test[0] != 0) h a_test[1];
 if(reject_test[0] != 0) h a_test[2];

@@ -406,7 +406,6 @@ impl Poly1d {
 #[pyfunction]
 #[pyo3(signature = (f, xdata, ydata, p0, maxfev=None, xtol=None, ftol=None))]
 #[allow(clippy::type_complexity)] // Complex return type required for scipy compatibility
-#[allow(clippy::too_many_arguments)] // scipy.optimize.curve_fit has many parameters
 fn curve_fit<'py>(
     py: Python<'py>,
     f: Py<PyAny>,
@@ -456,7 +455,6 @@ fn curve_fit<'py>(
 
 /// Helper function for `curve_fit` with single array xdata.
 #[allow(clippy::type_complexity)] // Complex return type required for scipy compatibility
-#[allow(clippy::too_many_arguments)] // Matches scipy.optimize.curve_fit parameters
 fn curve_fit_array(
     py: Python<'_>,
     f: Py<PyAny>,
@@ -546,7 +544,6 @@ fn curve_fit_array(
 /// This handles the scipy behavior where xdata can be a tuple of arrays,
 /// and the function f receives tuples of x values.
 #[allow(clippy::type_complexity)] // Complex return type required for scipy compatibility
-#[allow(clippy::too_many_arguments)] // Matches scipy.optimize.curve_fit parameters
 #[allow(clippy::too_many_lines)] // Complex scipy compatibility logic required
 fn curve_fit_tuple<'py>(
     py: Python<'py>,

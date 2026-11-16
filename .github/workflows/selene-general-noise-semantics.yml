@@ -18,6 +18,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -C debuginfo=0
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   extended-semantics:
@@ -26,11 +29,12 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
+      # No harden-runner here: its audit agent grows to about 13.5 GB during the
+      # Selene semantic suite and exhausts the runner's memory. The worker then
+      # stops responding, so step timeouts never fire and the job log is lost.
+      # Measured on 2026-10-24: with v2.19.4, v2.22.2 or disable-file-monitoring
+      # the job ran out of memory; without the agent the suite passed with 11.5 GB
+      # still free (runs 40101278752, 40104083813, 40104086962, 40104090440).
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
@@ -51,11 +55,34 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           cache-bin: false
           prefix-key: v1-selene-general-noise-semantics
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+
+      # The sim() parity tests build PECOS packages that link LLVM.
+      - name: Install just
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just@1.59.0
+          fallback: none
+
+      - name: Identify the runner image for the LLVM cache key
+        # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+        # or ubuntu26) keeps a copy from one image from being restored onto another.
+        id: runner-image
+        shell: bash
+        run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
+
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        run: just ci-env
 
       - name: Build semantic-test plugins
         run: |
@@ -70,21 +97,31 @@ jobs:
             python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
           uv pip install --system \
             -e 'python/selene-plugins/pecos-selene-general-noise[test]' \
-            -e python/selene-plugins/pecos-selene-statevec
+            -e python/selene-plugins/pecos-selene-statevec \
+            -e python/pecos-rslib-llvm \
+            -e python/pecos-rslib \
+            -e python/quantum-pecos
 
       - name: Run extended semantic matrix
         # `set -o pipefail` is required: the default shell is `bash -e`, where the
         # exit status of a pipeline is `tee`'s, so a failing pytest would be reported
         # as a passing step and this lane could never go red.
         shell: bash
+        # A step timeout below the job's lets the always() steps below publish the
+        # log when the suite runs long; a job timeout cancels them and the log is lost.
+        # The suite takes about 4-6 minutes.
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           # The whole suite, not just `-m slow`: --require-full-noise-coverage fails
           # the session unless every required channel had a PASSING test, and the fast
           # cases carry evidence for several channels. The package's own addopts filter
           # is overridden so nothing is silently deselected.
+          # faulthandler_timeout dumps every thread's stack when one test runs past
+          # five minutes, so a stalled test names itself in the log.
           pytest python/selene-plugins/pecos-selene-general-noise/tests \
             --override-ini=addopts= --require-full-noise-coverage \
+            -o faulthandler_timeout=300 --durations=30 \
             -v --tb=short | tee general-noise-semantic-results.txt
 
       - name: Publish channel coverage summary

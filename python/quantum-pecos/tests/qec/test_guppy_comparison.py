@@ -83,8 +83,8 @@ def test_profile_snapshot_and_library_mutation_are_checked(tmp_path, monkeypatch
     arguments = ["--time", "10"]
     plugin = SimpleNamespace(library_file=library, get_init_args=lambda: arguments)
     plugin.native_gates = ["rxy", "rz", "rzz"]
-    plugin.defer_measurements = True
     plugin.library_search_dirs = [tmp_path]
+    plugin.clock_model = "shot_relative"
 
     def capture(_self, *, runtime, **_kwargs):
         from pecos._engine_builders import _configure_selene_runtime
@@ -99,8 +99,8 @@ def test_profile_snapshot_and_library_mutation_are_checked(tmp_path, monkeypatch
             assert direct[1] == frozen[1]
         called.append(runtime.get_init_args())
         assert runtime.native_gates == ("rxy", "rz", "rzz")
-        assert runtime.defer_measurements
         assert runtime.library_search_dirs == (str(tmp_path),)
+        assert runtime.clock_model == "shot_relative"
         arguments[-1] = "999"  # Changes to the original object must not change subsequent runs.
         plugin.native_gates.append("rpp")
         runtime.get_init_args().append("ignored")

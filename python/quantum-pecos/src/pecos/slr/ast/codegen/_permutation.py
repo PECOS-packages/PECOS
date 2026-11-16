@@ -9,10 +9,11 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Control-flow checks for codegens which implement Permute as a static relabel."""
+"""Reference parsing and control-flow checks for static Permute lowering."""
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import PermuteOp
@@ -21,6 +22,22 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from pecos.slr.ast.nodes import AstNode
+
+
+def parse_permute_ref(ref: str, backend: str) -> tuple[str, int] | None:
+    """Parse an indexed Permute ref, rejecting unresolved symbolic indices."""
+    match = re.fullmatch(r"(\w+)\[(.*)\]", ref)
+    if match is None:
+        return None
+    try:
+        index = int(match[2])
+    except ValueError as exc:
+        msg = (
+            f"{backend} codegen: Permute reference {ref!r} requires a static integer index; "
+            "loop-variable indices are not supported."
+        )
+        raise NotImplementedError(msg) from exc
+    return match[1], index
 
 
 def iter_permutes(node: AstNode) -> Iterator[PermuteOp]:

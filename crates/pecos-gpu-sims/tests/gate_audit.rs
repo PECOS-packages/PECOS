@@ -86,7 +86,7 @@ struct Case {
 }
 
 fn theta() -> Angle64 {
-    Angle64::from_radians(0.37)
+    pecos_core::radians!(0.37)
 }
 
 macro_rules! case_1q {

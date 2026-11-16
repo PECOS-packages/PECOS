@@ -30,6 +30,7 @@ import random
 
 import pytest
 import stim
+from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos.qec.surface.logical_circuit import (
     _TWO_PATCH_IDENTITY,
@@ -179,6 +180,18 @@ def test_algorithm_segments_keep_structured_boundary_correlations():
     )
 
 
+def _full_compile_with_composed_fault_sectors(builder: LogicalCircuitBuilder, **noise: float):
+    """Return the full-compile DEM after checking the cached composition keeps its detector labels."""
+    oracle, _, _ = builder._build_structured_dem(**noise)  # noqa: SLF001
+    cached = builder._build_structured_dem_from_cached_slices(**noise)  # noqa: SLF001
+    assert cached is not None
+    composed, _ = cached
+    labels = composed.detector_fault_sectors()
+    assert labels == oracle.detector_fault_sectors()
+    assert any(label is not None for _, label in labels)
+    return oracle
+
+
 def _detector_coordinates_in_id_order(dem_text: str) -> list[tuple[float, ...]]:
     coordinates = {}
     for line in dem_text.splitlines():
@@ -237,7 +250,8 @@ def test_memory_provider_reuses_bounded_slices_and_preserves_detector_order(monk
     builder.add_patch(patch, "A")
     builder.add_memory("A", 7, "Z")
 
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.001,
         p2=0.001,
         p_meas=0.001,
@@ -293,13 +307,14 @@ def test_single_round_memory_provider_reuses_bounded_slices(monkeypatch):
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "A", coord_offset=(-7.0, 5.0))
     builder.add_memory("A", 1, "X")
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.001,
         p2=0.002,
         p_meas=0.003,
         p_prep=0.004,
     )
-    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)) == oracle.to_string()
     after_first = _cached_surface_singleton_memory_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
@@ -351,13 +366,14 @@ def test_multi_patch_memory_provider_matches_full_compile(rounds, shapes, bases)
             coord_offset=(31.0 * patch_index - 9.0, 13.0 * patch_index + 2.0),
         )
     builder.add_memory(labels, rounds, dict(zip(labels, bases, strict=True)))
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.001,
         p2=0.002,
         p_meas=0.003,
         p_prep=0.004,
     )
-    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)) == oracle.to_string()
 
 
 def test_multi_patch_memory_provider_reuses_physical_family(monkeypatch):
@@ -451,13 +467,14 @@ def test_cached_memory_provider_matches_full_compile_across_geometries(dx, dz, b
     builder = LogicalCircuitBuilder()
     builder.add_patch(patch, "data", qubit_offset=7, coord_offset=(11.0, -4.0))
     builder.add_memory("data", rounds, basis)
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.002,
         p2=0.003,
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
 
 
 def test_logical_h_provider_reuses_bounded_slices(monkeypatch):
@@ -475,7 +492,8 @@ def test_logical_h_provider_reuses_bounded_slices(monkeypatch):
     builder.add_memory("A", 3, "Z")
     builder.add_transversal_h("A")
     builder.add_memory("A", 3, "X")
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.001,
         p2=0.002,
         p_meas=0.003,
@@ -547,13 +565,14 @@ def test_cached_logical_h_provider_matches_full_compile_across_families(
     builder.add_memory("data", before_rounds, initial_basis)
     builder.add_transversal_h("data")
     builder.add_memory("data", after_rounds, final_basis)
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.002,
         p2=0.003,
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
 
 
 @pytest.mark.parametrize(
@@ -578,13 +597,14 @@ def test_repeated_logical_h_provider_matches_full_compile(orientation, rounds, b
             builder.add_transversal_h("data")
         builder.add_memory("data", segment_rounds, basis)
 
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.002,
         p2=0.003,
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,
@@ -648,7 +668,8 @@ def test_logical_cx_provider_reuses_bounded_slices_and_routes_patch_coordinates(
     builder.add_memory(["control", "target"], 3, {"control": "Z", "target": "X"})
     builder.add_transversal_cx("control", "target")
     builder.add_memory(["control", "target"], 3, {"control": "X", "target": "Z"})
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.001,
         p2=0.002,
         p_meas=0.003,
@@ -770,13 +791,14 @@ def test_cached_logical_cx_provider_matches_full_compile_across_families(
     builder.add_memory(["control", "target"], before_rounds, initial)
     builder.add_transversal_cx("control", "target")
     builder.add_memory(["control", "target"], after_rounds, final)
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.002,
         p2=0.003,
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
 
 
 @pytest.mark.parametrize(
@@ -800,13 +822,14 @@ def test_repeated_logical_cx_provider_matches_full_compile(final_basis, rounds):
             {"control": final_basis, "target": final_basis},
         )
 
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.002,
         p2=0.003,
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,
@@ -924,13 +947,14 @@ def test_mixed_h_cx_provider_matches_full_compile(gate_names, rounds, initial_ba
             builder.add_transversal_cx("control", "target")
         builder.add_memory(labels, segment_rounds, dict(zip(labels, final_bases, strict=True)))
 
-    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+    oracle = _full_compile_with_composed_fault_sectors(
+        builder,
         p1=0.002,
         p2=0.003,
         p_meas=0.004,
         p_prep=0.005,
     )
-    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005)) == oracle.to_string()
     descriptor = builder.build_algorithm_descriptor(
         p1=0.002,
         p2=0.003,
@@ -1051,7 +1075,7 @@ def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatc
         raise AssertionError(message)
 
     monkeypatch.setattr(logical_circuit, "_cached_surface_mixed_dem_slices", reject_mixed_cache)
-    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    assert str(builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)) == oracle.to_string()
     assert "L0" in oracle.to_string()
     assert "L1" not in oracle.to_string()
 
@@ -1418,6 +1442,47 @@ def test_python_logical_decoders_reject_decision_points(decoder_type):
         match=r"descriptor contains feed-forward decision points.*issue #596",
     ):
         decoder_type(desc, **kwargs)
+
+
+@pytest.mark.parametrize("with_h", [False, True])
+@pytest.mark.parametrize("force_full_model", [False, True])
+def test_build_dem_returns_labelled_model(monkeypatch, with_h, force_full_model):
+    """The public model keeps the provider's text and detector labels."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 3, "Z")
+    if with_h:
+        builder.add_transversal_h("A")
+        builder.add_memory("A", 3, "X")
+    noise = {"p1": 0.001, "p2": 0.002, "p_meas": 0.003, "p_prep": 0.004}
+    oracle = _full_compile_with_composed_fault_sectors(builder, **noise)
+    if force_full_model:
+        monkeypatch.setattr(builder, "_build_structured_dem_from_cached_slices", lambda **_: None)
+    dem = builder.build_dem(**noise)
+    assert isinstance(dem, DetectorErrorModel)
+    assert str(dem) == oracle.to_string()
+    assert dem.detector_fault_sectors() == oracle.detector_fault_sectors()
+
+
+@pytest.mark.parametrize("with_h", [False, True])
+def test_build_dem_labels_reach_batch_projection(with_h):
+    """Graph decoding sees the model's labels, including through cached slices."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 3, "Z")
+    if with_h:
+        builder.add_transversal_h("A")
+        builder.add_memory("A", 3, "X")
+    noise = {"p1": 0.001, "p2": 0.002, "p_meas": 0.003, "p_prep": 0.004}
+    model = _full_compile_with_composed_fault_sectors(builder, **noise)
+    labels = model.detector_fault_sectors()
+    unset = sum(label is None for _, label in labels)
+    assert unset < len(labels)
+    batch = model.to_sampler().sample_batch(100, seed=42)
+    report = batch.decode(builder.build_dem(**noise), "pymatching").projection
+    assert report is not None
+    assert report.input_hyperedges > 0
+    assert report.unlabelled_detectors == unset
 
 
 if __name__ == "__main__":

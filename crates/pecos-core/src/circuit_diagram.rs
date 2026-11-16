@@ -1227,7 +1227,7 @@ impl CircuitDiagram {
         }
 
         // Layer 1: Qubit labels and horizontal wires.
-        for row in 0..num_rows {
+        for (row, label) in self.labels.iter().enumerate().take(num_rows) {
             let y = header_offset + ROW_SPACING * (row as f64 + 0.5);
             writeln!(
                 out,
@@ -1235,7 +1235,7 @@ impl CircuitDiagram {
                  text-anchor=\"end\" dominant-baseline=\"middle\" fill=\"#333\">{label}</text>",
                 x = label_margin - 6.0,
                 ty = y,
-                label = escape_svg_text(&self.labels[row]),
+                label = escape_svg_text(label),
             )
             .unwrap();
             writeln!(
@@ -1317,9 +1317,9 @@ impl CircuitDiagram {
 
         // Layer 3: Gate boxes, control dots, and crossing markers (on top of wires).
         for (col_idx, &cx) in col_cx.iter().enumerate().take(num_cols) {
-            for row in 0..num_rows {
+            for (row, &(ref cell, color)) in self.columns[col_idx].iter().enumerate().take(num_rows)
+            {
                 let cy = header_offset + ROW_SPACING * (row as f64 + 0.5);
-                let (ref cell, color) = self.columns[col_idx][row];
 
                 let operation = self.cell_operations.get(&(col_idx, row));
                 if let Some(id) = operation {
@@ -1565,7 +1565,7 @@ impl CircuitDiagram {
         }
 
         // Wires and labels.
-        for row in 0..num_rows {
+        for (row, label) in self.labels.iter().enumerate().take(num_rows) {
             let y = -(row as f64) * ROW_STEP;
             let x_start = -0.5;
             let x_end = x_cursor + 0.3;
@@ -1578,7 +1578,7 @@ impl CircuitDiagram {
                 out,
                 "  \\node[anchor=east, font=\\footnotesize\\ttfamily] at ({lx:.2},{y:.2}) {{{label}}};",
                 lx = x_start - 0.15,
-                label = escape_tikz_text(&self.labels[row]),
+                label = escape_tikz_text(label),
             )
             .unwrap();
         }
@@ -1609,8 +1609,8 @@ impl CircuitDiagram {
         // not a control dot.
         for (col_idx, &x) in column_x.iter().enumerate() {
             for row in 0..num_rows {
-                let y = -(row as f64) * ROW_STEP;
                 let (ref cell, color) = self.columns[col_idx][row];
+                let y = -(row as f64) * ROW_STEP;
                 // When style.color is false, use CellColor::None for all gates.
                 let effective = if style.color { color } else { CellColor::None };
                 let name = effective.tikz_name();
@@ -1751,11 +1751,10 @@ impl CircuitDiagram {
         writeln!(out, "  }}").unwrap();
 
         // Gate columns.
-        for col_idx in 0..num_cols {
+        for (col_idx, column) in self.columns.iter().enumerate().take(num_cols) {
             writeln!(out, "  // Column {col_idx}").unwrap();
             writeln!(out, "  {{ rank=same;").unwrap();
-            for row in 0..num_rows {
-                let (ref cell, color) = self.columns[col_idx][row];
+            for (row, &(ref cell, color)) in column.iter().enumerate().take(num_rows) {
                 let node_id = format!("r{row}c{col_idx}");
                 writeln!(out, "    {node_id} [group=wire{row}];").unwrap();
 

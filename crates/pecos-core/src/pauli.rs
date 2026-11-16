@@ -17,7 +17,7 @@ pub mod constructors;
 pub use constructors::{I, X, Xs, Y, Ys, Z, Zs};
 
 // Re-export key types so `use pecos_core::pauli::*` gives the full Pauli toolkit.
-pub use pauli_string::PauliString;
+pub use pauli_string::{PauliString, PauliWidthError};
 
 #[allow(clippy::module_name_repetitions)]
 pub mod pauli_bitmap;

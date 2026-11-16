@@ -142,7 +142,7 @@ def test_every_legacy_symbol_dispatches_like_the_fixed_reference(symbol: str, tr
 
 def test_zero_measurement_output_is_consistent_across_dispatch_paths() -> None:
     """Batch and per-location measurement paths both return explicit zeros."""
-    state = RustPauliProp(1)
+    state = RustPauliProp()
     assert state.bindings["measure Z"](state, 0) == 0
     assert state.bindings["measure X"](state, 0) == 0
 
@@ -155,9 +155,9 @@ def test_legacy_symbols_without_rust_meaning_are_rejected(symbol: str) -> None:
     with pytest.raises(KeyError, match=symbol):
         state.bindings[symbol]
     with pytest.raises(ValueError, match="Unsupported gate"):
-        RustPauliProp(2).run_gate(symbol, {0})
+        RustPauliProp().run_gate(symbol, {0})
     with pytest.raises(ValueError, match="Unsupported gate"):
-        RustPauliProp(2).run_gate(symbol, {0}, simulate_gate=False)
+        RustPauliProp().run_gate(symbol, {0}, simulate_gate=False)
 
 
 def test_clifford_rotations_lower_through_bindings() -> None:
@@ -230,11 +230,17 @@ def test_faults_property_is_a_snapshot_and_assignment_resets_phase() -> None:
     assert (state.sign, state.img) == (0, 0)
 
 
-def test_wrapper_pickle_round_trip_restores_bindings() -> None:
+@pytest.mark.parametrize("track_sign", [False, True])
+def test_wrapper_pickle_round_trip_restores_bindings(track_sign: bool) -> None:
     """Wrapper state and its dynamic binding surface survive pickling."""
-    state, _ = _seeded_states(("Y", "Z"), track_sign=True)
+    state, _ = _seeded_states(("Y", "Z"), track_sign=track_sign)
     state.flip_sign()
     restored = pickle.loads(pickle.dumps(state))
+
+    assert restored.num_qubits == state.num_qubits == 3
+    assert restored.get_str() == state.get_str()
+    assert restored.fault_str_operator() == state.fault_str_operator()
+    assert restored.fault_string() == state.fault_string()
 
     assert restored.faults == state.faults
     assert (restored.sign, restored.img) == (state.sign, state.img)

@@ -259,7 +259,7 @@ mod tests {
         let keep = SplitDecision::keep(EntityId(2));
         assert_eq!(keep.copies, 1);
 
-        let split = SplitDecision::split(EntityId(3), 4, SampleWeight::from_linear(0.25));
+        let split = SplitDecision::split(EntityId(3), 4, SampleWeight::from_linear(0.25).unwrap());
         assert_eq!(split.copies, 4);
     }
 

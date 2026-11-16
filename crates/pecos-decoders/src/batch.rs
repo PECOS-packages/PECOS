@@ -4,8 +4,10 @@ mod execution;
 mod sample;
 mod scoring;
 
+pub use execution::split_predictions;
 pub use execution::{
-    BatchDecodeError, DecodeOptions, DecodeResult, DecoderFactory, logical_error_rate,
+    BatchDecodeError, DecodeOptions, DecodeResult, DecoderFactory, PreparedModel,
+    logical_error_rate,
 };
 pub use sample::{SampleBatch, SampleBatchError, Shot};
 pub use scoring::{DecodeRangeResult, ShotDecodeError, decode_and_score_range};

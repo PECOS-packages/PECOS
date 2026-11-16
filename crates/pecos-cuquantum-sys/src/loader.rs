@@ -215,7 +215,7 @@ fn cuda_search_paths() -> Vec<PathBuf> {
             paths.push(PathBuf::from(&p).join("lib"));
         }
     }
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = std::env::home_dir() {
         // Check versioned dirs (cuda-12.6.3, cuda-12, etc.) then legacy unversioned
         let deps = home.join(".pecos/deps");
         if let Ok(entries) = std::fs::read_dir(&deps) {
@@ -242,7 +242,7 @@ fn cuquantum_search_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from(&p).join("lib64"));
         paths.push(PathBuf::from(&p).join("lib"));
     }
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = std::env::home_dir() {
         let deps = home.join(".pecos/deps");
         // Check versioned dirs (cuquantum-25.11.1.11, etc.) then legacy unversioned
         if let Ok(entries) = std::fs::read_dir(&deps) {
@@ -268,7 +268,7 @@ fn cuquantum_search_paths() -> Vec<PathBuf> {
 
 fn cutensor_search_paths() -> Vec<PathBuf> {
     let mut paths = vec![];
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = std::env::home_dir() {
         let deps = home.join(".pecos/deps");
         if let Ok(entries) = std::fs::read_dir(&deps) {
             for entry in entries.flatten() {

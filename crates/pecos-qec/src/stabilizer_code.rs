@@ -26,7 +26,7 @@
 //! assert_eq!(code.num_qubits(), 3);
 //! assert_eq!(code.num_logical_qubits(), 1);
 //! assert_eq!(code.code_parameters(), "[[3, 1]]");
-//! assert_eq!(code.distance(), Some(1));
+//! assert_eq!(code.distance().unwrap(), Some(1));
 //! ```
 
 use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
@@ -48,6 +48,7 @@ fn symplectic_vec_to_pauli(vec: &[u8], n: usize) -> PauliString {
         paulis.push((pauli, QubitId::new(q)));
     }
     PauliString::with_phase_and_paulis(QuarterPhase::PlusOne, paulis)
+        .expect("symplectic conversion emits one Pauli per qubit")
 }
 
 /// A stabilizer code: a [`PauliStabilizerGroup`] with an explicit qubit count.
@@ -132,14 +133,18 @@ impl StabilizerCode {
     ///
     /// // Repetition code [[3,1]]: logicals are X_L = XXX, Z_L = Z on any qubit
     /// let code = StabilizerCode::repetition(3);
-    /// let logicals = code.logical_operators();
+    /// let logicals = code.logical_operators().unwrap();
     /// // 2k = 2 independent logical directions (X_L and Z_L)
     /// assert_eq!(logicals.len(), 2);
     /// ```
-    #[must_use]
-    pub fn logical_operators(&self) -> Vec<PauliString> {
+    ///
+    /// # Errors
+    /// Returns an error if generator support exceeds the code width or the symplectic width is not representable.
+    pub fn logical_operators(
+        &self,
+    ) -> Result<Vec<PauliString>, pecos_quantum::SymplecticMatrixError> {
         let n = self.num_qubits;
-        let centralizer_basis = self.group.as_collection().centralizer_in(n);
+        let centralizer_basis = self.group.as_collection().centralizer_in(n)?;
 
         // Build the stabilizer symplectic matrix at the full num_qubits size,
         // since num_qubits may be larger than what the generators touch.
@@ -191,10 +196,10 @@ impl StabilizerCode {
                 .collect();
         }
 
-        logical_vecs
+        Ok(logical_vecs
             .iter()
             .map(|v| symplectic_vec_to_pauli(v, n))
-            .collect()
+            .collect())
     }
 
     /// Computes the code distance for small codes.
@@ -219,13 +224,15 @@ impl StabilizerCode {
     ///
     /// // Repetition code [[3,1,1]]: distance 1 (logical Z = Z on any single qubit)
     /// let code = StabilizerCode::repetition(3);
-    /// assert_eq!(code.distance(), Some(1));
+    /// assert_eq!(code.distance().unwrap(), Some(1));
     /// ```
-    #[must_use]
-    pub fn distance(&self) -> Option<usize> {
-        let logicals = self.logical_operators();
+    ///
+    /// # Errors
+    /// Returns an error if logical-operator discovery fails because the code width is invalid.
+    pub fn distance(&self) -> Result<Option<usize>, pecos_quantum::SymplecticMatrixError> {
+        let logicals = self.logical_operators()?;
         if logicals.is_empty() {
-            return None;
+            return Ok(None);
         }
 
         let n = self.num_qubits;
@@ -271,7 +278,7 @@ impl StabilizerCode {
             }
         }
 
-        Some(min_weight)
+        Ok(Some(min_weight))
     }
 
     /// Computes the syndrome of an error Pauli against the stabilizer generators.
@@ -343,7 +350,7 @@ impl StabilizerCode {
     /// let code = StabilizerCode::repetition(3);
     /// assert_eq!(code.group().rank(), 2);
     /// assert_eq!(code.num_logical_qubits(), 1);
-    /// assert_eq!(code.distance(), Some(1)); // Z-distance is 1
+    /// assert_eq!(code.distance().unwrap(), Some(1)); // Z-distance is 1
     /// ```
     #[must_use]
     pub fn repetition(n: usize) -> Self {
@@ -373,7 +380,7 @@ impl StabilizerCode {
     /// let code = StabilizerCode::steane();
     /// assert_eq!(code.group().rank(), 6);
     /// assert_eq!(code.num_logical_qubits(), 1);
-    /// assert_eq!(code.distance(), Some(3));
+    /// assert_eq!(code.distance().unwrap(), Some(3));
     /// ```
     #[must_use]
     pub fn steane() -> Self {
@@ -407,7 +414,7 @@ impl StabilizerCode {
     /// let code = StabilizerCode::five_qubit();
     /// assert_eq!(code.group().rank(), 4);
     /// assert_eq!(code.num_logical_qubits(), 1);
-    /// assert_eq!(code.distance(), Some(3));
+    /// assert_eq!(code.distance().unwrap(), Some(3));
     /// ```
     #[must_use]
     pub fn five_qubit() -> Self {
@@ -437,7 +444,7 @@ impl StabilizerCode {
     /// let code = StabilizerCode::shor();
     /// assert_eq!(code.group().rank(), 8);
     /// assert_eq!(code.num_logical_qubits(), 1);
-    /// assert_eq!(code.distance(), Some(3));
+    /// assert_eq!(code.distance().unwrap(), Some(3));
     /// ```
     #[must_use]
     pub fn shor() -> Self {
@@ -473,7 +480,7 @@ impl StabilizerCode {
     /// let code = StabilizerCode::four_two_two();
     /// assert_eq!(code.group().rank(), 2);
     /// assert_eq!(code.num_logical_qubits(), 2);
-    /// assert_eq!(code.distance(), Some(2));
+    /// assert_eq!(code.distance().unwrap(), Some(2));
     /// ```
     #[must_use]
     pub fn four_two_two() -> Self {
@@ -502,7 +509,7 @@ impl StabilizerCode {
     /// let code = StabilizerCode::toric(3);
     /// assert_eq!(code.num_qubits(), 18);        // 2 * 3^2
     /// assert_eq!(code.num_logical_qubits(), 2);  // torus encodes 2 logicals
-    /// assert_eq!(code.distance(), Some(3));
+    /// assert_eq!(code.distance().unwrap(), Some(3));
     /// ```
     #[must_use]
     pub fn toric(l: usize) -> Self {
@@ -672,21 +679,21 @@ mod tests {
     #[test]
     fn test_logical_operators_repetition_code() {
         let code = StabilizerCode::repetition(3);
-        let logicals = code.logical_operators();
+        let logicals = code.logical_operators().unwrap();
         assert_eq!(logicals.len(), 2);
     }
 
     #[test]
     fn test_logical_operators_steane_code() {
         let code = StabilizerCode::steane();
-        let logicals = code.logical_operators();
+        let logicals = code.logical_operators().unwrap();
         assert_eq!(logicals.len(), 2);
     }
 
     #[test]
     fn test_logical_operators_five_qubit_code() {
         let code = StabilizerCode::five_qubit();
-        let logicals = code.logical_operators();
+        let logicals = code.logical_operators().unwrap();
         assert_eq!(logicals.len(), 2);
         // Each logical should commute with all stabilizers
         for l in &logicals {
@@ -703,7 +710,7 @@ mod tests {
     #[test]
     fn test_logical_operators_commute_with_stabilizers() {
         let code = StabilizerCode::steane();
-        for l in code.logical_operators() {
+        for l in code.logical_operators().unwrap() {
             for s in code.group().iter() {
                 assert!(
                     l.commutes_with(s),
@@ -718,7 +725,7 @@ mod tests {
     #[test]
     fn test_logical_operators_anticommute_with_each_other() {
         let code = StabilizerCode::repetition(3);
-        let logicals = code.logical_operators();
+        let logicals = code.logical_operators().unwrap();
         assert_eq!(logicals.len(), 2);
         let mut found_anticommuting = false;
         for i in 0..logicals.len() {
@@ -735,7 +742,7 @@ mod tests {
     fn logical_operators_full_rank() {
         let code = StabilizerCode::from_group(PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap());
         assert_eq!(code.num_logical_qubits(), 0);
-        let logicals = code.logical_operators();
+        let logicals = code.logical_operators().unwrap();
         assert_eq!(logicals, []);
     }
 
@@ -746,25 +753,25 @@ mod tests {
     #[test]
     fn test_distance_repetition_code() {
         let code = StabilizerCode::repetition(3);
-        assert_eq!(code.distance(), Some(1));
+        assert_eq!(code.distance().unwrap(), Some(1));
     }
 
     #[test]
     fn test_distance_steane_code() {
         let code = StabilizerCode::steane();
-        assert_eq!(code.distance(), Some(3));
+        assert_eq!(code.distance().unwrap(), Some(3));
     }
 
     #[test]
     fn test_distance_no_logicals() {
         let code = StabilizerCode::from_group(PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap());
-        assert_eq!(code.distance(), None);
+        assert_eq!(code.distance().unwrap(), None);
     }
 
     #[test]
     fn test_distance_five_qubit_code() {
         let code = StabilizerCode::five_qubit();
-        assert_eq!(code.distance(), Some(3));
+        assert_eq!(code.distance().unwrap(), Some(3));
     }
 
     #[test]
@@ -773,14 +780,14 @@ mod tests {
             PauliStabilizerGroup::new(vec![Zs([0, 1]), Zs([1, 2]), Zs([0, 2])]).unwrap(),
         );
         assert!(!code.group().is_independent());
-        assert_eq!(code.distance(), Some(1));
+        assert_eq!(code.distance().unwrap(), Some(1));
     }
 
     #[test]
     fn test_distance_full_rank() {
         let code = StabilizerCode::from_group(PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap());
         assert_eq!(code.num_logical_qubits(), 0);
-        assert_eq!(code.distance(), None);
+        assert_eq!(code.distance().unwrap(), None);
     }
 
     // ========================================================================
@@ -801,12 +808,12 @@ mod tests {
     #[test]
     fn test_repetition_code_distance() {
         let code = StabilizerCode::repetition(3);
-        assert_eq!(code.distance(), Some(1));
+        assert_eq!(code.distance().unwrap(), Some(1));
 
         let code5 = StabilizerCode::repetition(5);
         assert_eq!(code5.group().rank(), 4);
         assert_eq!(code5.num_logical_qubits(), 1);
-        assert_eq!(code5.distance(), Some(1));
+        assert_eq!(code5.distance().unwrap(), Some(1));
     }
 
     #[test]
@@ -828,7 +835,7 @@ mod tests {
         assert_eq!(code.group().rank(), 6);
         assert_eq!(code.num_logical_qubits(), 1);
         assert_eq!(code.num_qubits(), 7);
-        assert_eq!(code.distance(), Some(3));
+        assert_eq!(code.distance().unwrap(), Some(3));
     }
 
     #[test]
@@ -837,7 +844,7 @@ mod tests {
         assert_eq!(code.group().rank(), 4);
         assert_eq!(code.num_logical_qubits(), 1);
         assert_eq!(code.num_qubits(), 5);
-        assert_eq!(code.distance(), Some(3));
+        assert_eq!(code.distance().unwrap(), Some(3));
     }
 
     #[test]
@@ -846,7 +853,7 @@ mod tests {
         assert_eq!(code.group().rank(), 8);
         assert_eq!(code.num_logical_qubits(), 1);
         assert_eq!(code.num_qubits(), 9);
-        assert_eq!(code.distance(), Some(3));
+        assert_eq!(code.distance().unwrap(), Some(3));
     }
 
     #[test]
@@ -855,7 +862,7 @@ mod tests {
         assert_eq!(code.num_qubits(), 4);
         assert_eq!(code.group().rank(), 2);
         assert_eq!(code.num_logical_qubits(), 2);
-        assert_eq!(code.distance(), Some(2));
+        assert_eq!(code.distance().unwrap(), Some(2));
     }
 
     #[test]
@@ -863,7 +870,7 @@ mod tests {
         let code = StabilizerCode::toric(2);
         assert_eq!(code.num_qubits(), 8);
         assert_eq!(code.num_logical_qubits(), 2);
-        assert_eq!(code.distance(), Some(2));
+        assert_eq!(code.distance().unwrap(), Some(2));
     }
 
     #[test]
@@ -871,7 +878,7 @@ mod tests {
         let code = StabilizerCode::toric(3);
         assert_eq!(code.num_qubits(), 18);
         assert_eq!(code.num_logical_qubits(), 2);
-        assert_eq!(code.distance(), Some(3));
+        assert_eq!(code.distance().unwrap(), Some(3));
     }
 
     #[test]
@@ -958,7 +965,7 @@ mod tests {
 
         assert_eq!(code.num_logical_qubits(), 2);
 
-        let logicals = code.logical_operators();
+        let logicals = code.logical_operators().unwrap();
         assert_eq!(logicals.len(), 4); // 2k = 4
         // All logicals should commute with the single stabilizer Z(0)
         for l in &logicals {
@@ -966,7 +973,7 @@ mod tests {
         }
 
         // Distance should be 1 (single-qubit X on qubit 0 is a logical)
-        assert_eq!(code.distance(), Some(1));
+        assert_eq!(code.distance().unwrap(), Some(1));
 
         // Compare: same stabilizer but inferred num_qubits = 1
         let group2 = PauliStabilizerGroup::new(vec![Z(0)]).unwrap();
@@ -974,8 +981,8 @@ mod tests {
 
         assert_eq!(code2.num_qubits(), 1);
         assert_eq!(code2.num_logical_qubits(), 0);
-        assert_eq!(code2.logical_operators(), []);
-        assert_eq!(code2.distance(), None);
+        assert_eq!(code2.logical_operators().unwrap(), []);
+        assert_eq!(code2.distance().unwrap(), None);
     }
 
     #[test]

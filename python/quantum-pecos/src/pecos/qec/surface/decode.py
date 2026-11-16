@@ -71,14 +71,20 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
+from pecos._value_provenance import known_provenance_traces
 from pecos.qec._idle_noise import _translate_structured_idle_noise
+from pecos.qec.measurement_layout import abstract_result_refs
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import stim
+    from pecos_rslib.qec import DetectorErrorModel
 
     from pecos import Array
     from pecos.decoders import DecoderSpec
+    from pecos.qec.measurement_layout import ResultRef
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -1058,7 +1064,7 @@ def _validate_surface_array_slot_provenance(
 ) -> None:
     """Compare collected-array IDs against any emitted per-element evidence."""
     unbound_final_slots: set[int] = set()
-    for trace in result_traces:
+    for trace in known_provenance_traces(result_traces):
         name = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")
@@ -1105,7 +1111,7 @@ def _index_surface_result_trace_ids(
     """Index runtime named-result provenance by tag name."""
     scalar_trace_ids: dict[str, list[int]] = {}
     array_trace_ids: dict[str, list[list[int]]] = {}
-    for trace in result_traces:
+    for trace in known_provenance_traces(result_traces):
         name = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")
@@ -1118,9 +1124,8 @@ def _index_surface_result_trace_ids(
                 # The aggregate tag below is validated against source order.
                 continue
             if not result_ids and name in {"init_synx", "init_synz", "synx", "synz"}:
-                # Per-measurement scalar tags are the authoritative syndrome
-                # provenance. The aggregate array is intentionally unbound
-                # when those scalar reads have already been consumed.
+                # Legacy traces may omit aggregate syndrome IDs. Their
+                # per-measurement scalar sidebands still supply the binding.
                 continue
             msg = (
                 f"runtime result tag {name!r} has {len(values)} value(s) but "
@@ -1144,54 +1149,36 @@ def _is_surface_sideband_result_tag(name: str) -> bool:
     return name.startswith(("pauli_mask:", "pauli_active:", "frame_mode:", "raw:"))
 
 
-def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[str, str] | tuple[str, str, int]]:
+def _surface_result_classifier() -> Callable[[str, Callable[[str], object]], ResultRef]:
+    """Create a surface label classifier with fresh per-round ordinal state."""
+    syndrome_measure_index_by_round: dict[int, int] = {}
+
+    def classify(label: str, meta: Callable[[str], object]) -> ResultRef:
+        if label.startswith(("sx", "sz")):
+            round_value = meta("syndrome_round")
+            if round_value is None:
+                msg = f"surface syndrome measurement {label!r} is missing syndrome_round metadata"
+                raise ValueError(msg)
+            round_index = int(round_value)
+            measurement_index = syndrome_measure_index_by_round.get(round_index, 0)
+            syndrome_measure_index_by_round[round_index] = measurement_index + 1
+            phase = "init:meas" if round_index < 0 else "meas"
+            return ("scalar", f"{label}:{phase}:{measurement_index}")
+        if label.startswith("final[") and label.endswith("]"):
+            return ("array", "final", int(label.removeprefix("final[").removesuffix("]")))
+        msg = f"surface measurement is missing a result-tag-compatible label: {label!r}"
+        raise ValueError(msg)
+
+    return classify
+
+
+def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[ResultRef]:
     """Return one result-tag reference per record, in shared-reader emission order.
 
     Each label (``sx..``/``sz..`` or ``final[i]``) names exactly one measurement,
     so a labelled measurement gate must measure a single qubit.
     """
-    refs: list[tuple[str, str] | tuple[str, str, int]] = []
-    measured_qubits: list[int] = []
-    syndrome_measure_index_by_round: dict[int, int] = {}
-    measurement_gate_types = {"MZ", "MX", "MPZ", "MeasureFree"}
-    for tick_index in range(abstract_tc.num_ticks()):
-        tick = abstract_tc.get_tick(tick_index)
-        if tick is None:
-            continue
-        for gate_index, gate in enumerate(tick.gate_batches()):
-            gate_type = str(getattr(gate, "gate_type", "")).rsplit(".", maxsplit=1)[-1]
-            if gate_type not in measurement_gate_types:
-                continue
-            qubits = list(gate.qubits)
-            measured_qubits.extend(qubits)
-            label = str(abstract_tc.get_gate_meta(tick_index, gate_index, "label") or "")
-            if len(qubits) != 1:
-                msg = (
-                    f"surface measurement label {label!r} names one measurement but its gate "
-                    f"measures {len(qubits)} qubits"
-                )
-                raise ValueError(msg)
-            if label.startswith(("sx", "sz")):
-                round_value = abstract_tc.get_gate_meta(tick_index, gate_index, "syndrome_round")
-                if round_value is None:
-                    msg = f"surface syndrome measurement {label!r} is missing syndrome_round metadata"
-                    raise ValueError(msg)
-                round_index = int(round_value)
-                measurement_index = syndrome_measure_index_by_round.get(round_index, 0)
-                syndrome_measure_index_by_round[round_index] = measurement_index + 1
-                phase = "init:meas" if round_index < 0 else "meas"
-                refs.append(("scalar", f"{label}:{phase}:{measurement_index}"))
-                continue
-            if label.startswith("final[") and label.endswith("]"):
-                refs.append(("array", "final", int(label.removeprefix("final[").removesuffix("]"))))
-                continue
-            msg = f"surface measurement is missing a result-tag-compatible label: {label!r}"
-            raise ValueError(msg)
-    emission_qubits = [qubit for qubit, _ in abstract_tc.measurement_emission()]
-    if len(refs) != len(emission_qubits) or measured_qubits != emission_qubits:
-        msg = "surface measurement result refs disagree with the shared reader's measurement emission"
-        raise ValueError(msg)
-    return refs
+    return abstract_result_refs(abstract_tc, _surface_result_classifier, family="surface")
 
 
 def _validate_result_tag_remap_against_traced_measurements(
@@ -1766,7 +1753,11 @@ def _surface_native_topology(
         # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
         # traced QIS emits parameterized Clifford rotations, while DEM
         # replacement-branch approximations operate on named Clifford gates.
-        normalize_traced_tick_circuit(tc, context="surface traced-QIS native topology")
+        normalize_traced_tick_circuit(
+            tc,
+            context="surface traced-QIS native topology",
+            simplify_single_qubit_clifford_chains=False,
+        )
     if include_idle_gates:
         # Insert idle gates only when the requested noise model includes a
         # dedicated idle channel. Otherwise inserted idle gates receive ordinary
@@ -1793,6 +1784,7 @@ def _surface_native_topology(
                 "id": detector["id"],
                 "records": records,
                 "label": detector["label"],
+                "fault_sector": detector["fault_sector"],
                 **({"coords": detector["coords"]} if detector["coords"] is not None else {}),
             }
             for detector, records in zip(definitions["detectors"], det_records, strict=True)
@@ -2142,10 +2134,14 @@ def generate_circuit_level_dem_from_builder(
             but it is not an exact raw DEM serialization.
         dem_decomposition: Which native graphlike projection to use when
             ``decompose_errors=True``. ``"source_graphlike"`` preserves the
-            source-informed decomposition and is preferred for graph matchers.
-            ``"terminal_graphlike"`` groups raw mechanisms first, then pairs
-            detector terminals by coordinate distance. It can invent nonphysical
-            components and decode less accurately despite consistent labels.
+            source-informed decomposition. ``"terminal_graphlike"`` groups raw
+            mechanisms first, then pairs detector terminals by coordinate
+            distance; it can invent nonphysical components. Which one decodes
+            better depends on how a DEM was built: in the memory experiments of
+            issue #1187 on this function (uniform noise, ``num_rounds`` equal to
+            the distance, default circuit options), terminal decoded as well as
+            or better than source with correlated PyMatching, so
+            ``surface_code_memory`` uses it for PyMatching-family decoders.
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, the native DEM is built
             from the same batched ancilla-reuse circuit family used by Guppy.
@@ -3744,10 +3740,15 @@ def surface_code_memory(
         basis: Memory basis, ``"Z"`` or ``"X"``.
         decoder_type: Typed decoder specification or legacy decoder string
             passed to ``SampleBatch.decode``. PyMatching-family decoders use
-            PECOS's coordinate-based terminal approximation in this helper.
-            For source-informed graph matching, build a DetectorErrorModel and
-            pass its ``to_string_source_graphlike_decomposed()`` output to
-            ``SampleBatch.decode``.
+            the terminal graphlike decomposition: in the memory experiments of
+            issue #1187 (uniform noise, ``rounds`` equal to ``distance``,
+            default circuit options) it decoded as well as or better than the
+            source-informed one with correlated PyMatching. Which decomposition
+            decodes better depends on how a DEM was built, so compare both on
+            DEMs from other paths. For the source-informed decomposition here,
+            call ``generate_circuit_level_dem_from_builder`` with
+            ``decompose_errors=True`` and
+            ``dem_decomposition="source_graphlike"``.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
@@ -4372,7 +4373,7 @@ def decode_native_samples(
     sampler: NativeSampler,
     num_shots: int,
     *,
-    dem: str | None = None,
+    dem: str | DetectorErrorModel | None = None,
     decoder_type: str | DecoderSpec = "pymatching",
     seed: int | None = None,
     pauli_masks: Any | None = None,
@@ -4381,13 +4382,17 @@ def decode_native_samples(
 
     ``decoder_type`` accepts a typed :class:`pecos.decoders.DecoderSpec` or a
     legacy decoder string. The de-masked records are decoded through the
-    unified ``SampleBatch.decode`` execution planner.
+    unified ``SampleBatch.decode`` execution planner. Pass a DetectorErrorModel
+    object to preserve fault-sector labels, or text with unlabelled detectors.
     """
     from pecos_rslib.qec import SampleBatch
 
-    dem_str = dem if dem is not None else sampler.dem_string
-    if dem_str is None:
-        msg = "decode_native_samples requires a DEM string; pass dem= or build the sampler with sampling_model='dem'"
+    decode_dem = dem if dem is not None else sampler.dem_string
+    if decode_dem is None:
+        msg = (
+            "decode_native_samples requires DEM text or a DetectorErrorModel; "
+            "pass dem= or build the sampler with sampling_model='dem'"
+        )
         raise ValueError(msg)
 
     masks_arr = _pauli_masks_as_int64(pauli_masks) if pauli_masks is not None else None
@@ -4411,7 +4416,7 @@ def decode_native_samples(
     uint64_mask = (1 << 64) - 1
     obs_masks = [sum(int(bit) << index for index, bit in enumerate(row)) & uint64_mask for row in obs_arr.tolist()]
     batch = SampleBatch(det_list, obs_masks, num_observables=obs_arr.shape[1])
-    return batch.decode(dem_str, decoder_type).num_errors
+    return batch.decode(decode_dem, decoder_type).num_errors
 
 
 def demask_pauli_frame_records(

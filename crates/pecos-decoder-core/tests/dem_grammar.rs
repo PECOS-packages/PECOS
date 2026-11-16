@@ -304,10 +304,13 @@ fn correlations_and_perturbation_use_tagged_instructions() {
 }
 
 #[test]
-fn perturbation_cannot_render_non_finite_probabilities() {
-    let error = pecos_decoder_core::perturbed::perturb_dem("error(0) D0", 1000.0, &mut || 0.001)
-        .unwrap_err();
-    assert!(error.to_string().contains("non-finite probability"));
+fn perturbation_preserves_zero_when_factor_overflows() {
+    let text =
+        pecos_decoder_core::perturbed::perturb_dem("error(0) D0", 1000.0, &mut || 0.001).unwrap();
+    assert_eq!(
+        tokenize(&text).unwrap()[0].args[0].to_bits(),
+        0.0_f64.to_bits()
+    );
 }
 
 #[test]

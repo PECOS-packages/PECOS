@@ -25,7 +25,14 @@ use crate::parser::{Program, QASMParser};
 ///
 /// Returns an error if parsing or conversion fails.
 pub fn qasm_to_phir_json(qasm_str: &str) -> Result<Value, String> {
-    let program = QASMParser::parse_str(qasm_str).map_err(|e| format!("QASM parse error: {e}"))?;
+    let config = crate::parser::ParseConfig {
+        expand_gates: false,
+        ..Default::default()
+    };
+    let mut program = QASMParser::parse_with_config(qasm_str, &config)
+        .map_err(|e| format!("QASM parse error: {e}"))?;
+    crate::parser::utils::expand_gates_for_export(&mut program)
+        .map_err(|e| format!("QASM expansion error: {e}"))?;
     program_to_phir_json(&program)
 }
 
@@ -56,6 +63,9 @@ fn classical_register_dtype(size: usize) -> Result<&'static str, String> {
 /// Returns an error if the program contains unsupported operations or a
 /// classical register is too large for a 64-bit backing type.
 pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
+    program
+        .validate_classical_references()
+        .map_err(|e| format!("QASM validation error: {e}"))?;
     let mut ops: Vec<Value> = Vec::new();
 
     // 1) Quantum register definitions
@@ -169,7 +179,8 @@ fn convert_op(
 
             let mut qop = json!({"qop": phir_name, "args": args});
             if !gate.angles.is_empty() {
-                let radians: Vec<f64> = gate.angles.iter().map(Angle64::to_radians).collect();
+                let radians: Vec<f64> =
+                    gate.angles.iter().map(Angle64::to_radians_signed).collect();
                 qop["angles"] = json!([radians, "rad"]);
             }
             ops.push(qop);
@@ -237,13 +248,12 @@ fn convert_op(
 
         Operation::ClassicalAssignment {
             target,
-            is_indexed,
             index,
             expression,
         } => {
             let expr = convert_expr(expression)?;
-            let returns = if *is_indexed {
-                json!([[target, index.unwrap_or(0)]])
+            let returns = if let Some(index) = index {
+                json!([[target, index]])
             } else {
                 json!([target])
             };
@@ -315,6 +325,9 @@ fn convert_expr(expr: &Expression) -> Result<Value, String> {
 
 /// Map a QASM gate name string to PHIR gate name.
 fn qasm_gate_to_phir(name: &str) -> Result<String, String> {
+    if let Some(native) = crate::parser::native_gates::parse_native_gate(name) {
+        return gate_type_to_phir(native);
+    }
     let phir = match name.to_lowercase().as_str() {
         "h" => "H",
         "x" => "X",

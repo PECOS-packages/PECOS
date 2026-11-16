@@ -63,7 +63,7 @@ from pecos.slr.qeclib.color488 import Color488Patch
 from pecos.slr.qeclib.generic.check import Check
 from pecos.slr.qeclib.generic.check_1flag import Check1Flag
 from pecos.slr.qeclib.generic.transversal import transversal_tq
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 from pecos.slr.qeclib.steane.steane_class import Steane
 from pecos.slr.qeclib.surface import (
     LatticeType,
@@ -113,7 +113,7 @@ def _bell() -> Block:
         c := CReg("c", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -125,7 +125,7 @@ def _ghz_three() -> Block:
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
         qb.CX(q[1], q[2]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -134,9 +134,9 @@ def _conditional_correction() -> Block:
     return Main(
         q := QReg("q", 2),
         c := CReg("c", 2),
-        Measure(q[0]) > c[0],
+        MeasureZ(q[0]) > c[0],
         If(c[0]).Then(qb.X(q[1])),
-        Measure(q[1]) > c[1],
+        MeasureZ(q[1]) > c[1],
         Return(c),
     )
 
@@ -145,7 +145,7 @@ def _repeat_idle() -> Block:
     return Main(
         q := QReg("q", 1),
         Repeat(3).block(qb.H(q[0]), qb.H(q[0])),
-        Measure(q[0]),
+        MeasureZ(q[0]),
     )
 
 
@@ -154,10 +154,10 @@ def _legacy_individual_measurements() -> Block:
     return Main(
         q := QReg("q", 4),
         c := CReg("c", 4),
-        Measure(q[0]) > c[0],
-        Measure(q[1]) > c[1],
-        Measure(q[2]) > c[2],
-        Measure(q[3]) > c[3],
+        MeasureZ(q[0]) > c[0],
+        MeasureZ(q[1]) > c[1],
+        MeasureZ(q[2]) > c[2],
+        MeasureZ(q[3]) > c[3],
         Return(c),
     )
 
@@ -172,8 +172,8 @@ def _legacy_multiple_qregs() -> Block:
         qb.H(q1[0]),
         qb.H(q2[0]),
         qb.CX(q1[0], q2[0]),
-        Measure(q1) > c1,
-        Measure(q2) > c2,
+        MeasureZ(q1) > c1,
+        MeasureZ(q2) > c2,
         Return(c1, c2),
     )
 
@@ -209,7 +209,7 @@ def _legacy_partial_consumption_with_block() -> Block:
             self.syndrome = syndrome
             self.ops = [
                 qb.CX(data[0], ancilla[0]),
-                Measure(ancilla) > syndrome,
+                MeasureZ(ancilla) > syndrome,
             ]
 
     return Main(
@@ -219,7 +219,7 @@ def _legacy_partial_consumption_with_block() -> Block:
         result := CReg("result", 2),
         MeasureAncillas(data, ancilla, syndrome),
         qb.H(data[0]),
-        Measure(data) > result,
+        MeasureZ(data) > result,
         Return(syndrome, result),
     )
 
@@ -245,7 +245,7 @@ def _legacy_function_with_returns() -> Block:
         q := QReg("q", 2),
         c := CReg("c", 2),
         ProcessQubits(q),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -264,7 +264,7 @@ def _legacy_nested_blocks() -> Block:
             self.q = q
             self.c = c
             self.ops = [
-                Measure(q[0]) > c[0],
+                MeasureZ(q[0]) > c[0],
             ]
 
     class OuterBlock(Block):
@@ -276,7 +276,7 @@ def _legacy_nested_blocks() -> Block:
                 qb.H(q[0]),
                 InnerBlock(q, c),
                 qb.H(q[1]),
-                Measure(q[1]) > c[1],
+                MeasureZ(q[1]) > c[1],
             ]
 
     return Main(
@@ -327,11 +327,11 @@ def _examples_surface_d3_z_1round() -> Block:
     ops.extend(qb.H(x_anc[i]) for i in range(num_x))
     ops.append(Barrier())
 
-    ops.extend(Measure(x_anc[i]) for i in range(num_x))
-    ops.extend(Measure(z_anc[i]) for i in range(num_z))
+    ops.extend(MeasureZ(x_anc[i]) for i in range(num_x))
+    ops.extend(MeasureZ(z_anc[i]) for i in range(num_z))
     ops.append(Barrier())
 
-    ops.extend(Measure(data[i]) for i in range(geom.num_data))
+    ops.extend(MeasureZ(data[i]) for i in range(geom.num_data))
 
     return Main(data, x_anc, z_anc, *ops)
 
@@ -376,13 +376,13 @@ def _examples_surface_d3_x_1round() -> Block:
     ops.extend(qb.H(x_anc[i]) for i in range(num_x))
     ops.append(Barrier())
 
-    ops.extend(Measure(x_anc[i]) for i in range(num_x))
-    ops.extend(Measure(z_anc[i]) for i in range(num_z))
+    ops.extend(MeasureZ(x_anc[i]) for i in range(num_x))
+    ops.extend(MeasureZ(z_anc[i]) for i in range(num_z))
     ops.append(Barrier())
 
     ops.extend(qb.H(data[i]) for i in range(geom.num_data))
     ops.append(Barrier())
-    ops.extend(Measure(data[i]) for i in range(geom.num_data))
+    ops.extend(MeasureZ(data[i]) for i in range(geom.num_data))
 
     return Main(data, x_anc, z_anc, *ops)
 
@@ -411,7 +411,7 @@ def _examples_parallel_bell_pairs() -> Block:
                 qb.CX(q[4], q[5]),
             ),
         ),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -430,7 +430,7 @@ def _examples_measure_register_to_creg() -> Block:
         qb.CX(q[0], q[1]),
         qb.H(q[2]),
         qb.CX(q[2], q[3]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -462,8 +462,8 @@ def _qeclib_generic_transversal_cx() -> Block:
         b := QReg("b", 3),
         c := CReg("c", 6),
         transversal_tq(qb.CX, a, b),
-        Measure(a) > c[0:3],
-        Measure(b) > c[3:6],
+        MeasureZ(a) > c[0:3],
+        MeasureZ(b) > c[3:6],
         Return(c),
     )
 
@@ -539,7 +539,7 @@ def _docs_for_static_indexing() -> Block:
         For("i", 0, 3).Do(
             qb.H(q[0]),
         ),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -556,7 +556,7 @@ def _docs_flat_parallel_h_gates() -> Block:
             qb.H(q[2]),
             qb.H(q[3]),
         ),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -572,7 +572,7 @@ def _docs_repeat_state_preserving() -> Block:
         Repeat(3).block(
             qb.H(q[0]),
         ),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -589,7 +589,7 @@ def _docs_while_loop_v2_defer() -> Block:
         c := CReg("c", 1),
         While(c[0] == 0).Do(
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
         ),
         Return(c),
     )
@@ -608,7 +608,7 @@ def _docs_for_loopvar_symbolic_v2_defer() -> Block:
         For(i, range(4)).Do(
             qb.H(q[i]),
         ),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -620,7 +620,7 @@ def _docs_prep_basis_x() -> Block:
         q := QReg("q", 1),
         c := CReg("c", 1),
         qb.PX(q[0]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -637,7 +637,7 @@ def _docs_rotation_rx_probe() -> Block:
         q := QReg("q", 1),
         c := CReg("c", 1),
         qb.RX(rad(0.5), q[0]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -647,7 +647,7 @@ def _docs_inline_measure_creg() -> Block:
     final = CReg("final", 2)
     return Main(
         q := QReg("q", 2),
-        Measure(q) > final,
+        MeasureZ(q) > final,
         Return(final),
     )
 
@@ -669,15 +669,15 @@ def _docs_surface_syndrome_block18() -> Block:
             qb.CX(ancilla[0], data[0]),
             qb.CX(ancilla[0], data[1]),
             qb.H(ancilla[0]),
-            Measure(ancilla[0]) > syn[0],
+            MeasureZ(ancilla[0]) > syn[0],
         ),
         Block(
             qb.PZ(ancilla[1]),
             qb.CX(data[0], ancilla[1]),
             qb.CX(data[3], ancilla[1]),
-            Measure(ancilla[1]) > syn[1],
+            MeasureZ(ancilla[1]) > syn[1],
         ),
-        Measure(data) > CReg("final", num_data),
+        MeasureZ(data) > CReg("final", num_data),
         Return(syn),
     )
 

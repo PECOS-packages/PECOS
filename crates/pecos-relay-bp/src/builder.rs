@@ -5,10 +5,8 @@ use crate::decoder::{MinSumBpDecoder, RelayBpDecoder};
 use crate::errors::Result;
 use ndarray::ArrayView2;
 
-/// Default `gamma0` for the relay ensemble. It enables memory-BP for the entire
-/// ensemble: the pre-relay leg uses it directly and relay legs draw per-leg
-/// strengths only when it is set. `None` disables memory entirely and makes
-/// relay ensembling ineffective.
+/// Default leg-zero memory strength. Relay legs use sampled or explicit strengths.
+/// Setting gamma0 to None makes only leg zero memoryless.
 pub const DEFAULT_GAMMA0: f64 = 0.65;
 
 /// Builder for `RelayBpDecoder`
@@ -23,7 +21,6 @@ pub const DEFAULT_GAMMA0: f64 = 0.65;
 /// let check_matrix = arr2(&[[1u8, 1, 0], [0, 1, 1]]);
 /// let decoder = RelayBpDecoder::builder(&check_matrix.view())
 ///     .error_priors(&[0.1, 0.1, 0.1])
-///     .max_iter(200)
 ///     .pre_iter(80)
 ///     .num_sets(300)
 ///     .seed(42)
@@ -34,7 +31,6 @@ pub const DEFAULT_GAMMA0: f64 = 0.65;
 pub struct RelayBpBuilder<'a> {
     check_matrix: ArrayView2<'a, u8>,
     error_priors: Option<Vec<f64>>,
-    max_iter: usize,
     alpha: Option<f64>,
     alpha_iteration_scaling_factor: f64,
     gamma0: Option<f64>,
@@ -55,16 +51,9 @@ impl<'a> RelayBpBuilder<'a> {
         Self {
             check_matrix: *check_matrix,
             error_priors: None,
-            max_iter: 200,
-            alpha: None,
-            alpha_iteration_scaling_factor: 1.0,
-            // `gamma0` enables memory-BP for the entire relay ensemble: the
-            // pre-relay leg uses it directly and relay legs draw per-leg
-            // strengths only when it is set. `None` disables memory entirely
-            // and makes relay ensembling ineffective. Measured on the BB144
-            // gross-code circuit DEM at p=0.003: 99/1000 logical failures with
-            // `None` vs 1/1000 with 0.65.
-            gamma0: Some(DEFAULT_GAMMA0),
+            alpha: relay_defaults.alpha,
+            alpha_iteration_scaling_factor: relay_defaults.alpha_iteration_scaling_factor,
+            gamma0: relay_defaults.gamma0,
             pre_iter: relay_defaults.pre_iter,
             num_sets: relay_defaults.num_sets,
             set_max_iter: relay_defaults.set_max_iter,
@@ -82,14 +71,7 @@ impl<'a> RelayBpBuilder<'a> {
         self
     }
 
-    /// Set maximum BP iterations (default: 200)
-    #[must_use]
-    pub fn max_iter(mut self, max_iter: usize) -> Self {
-        self.max_iter = max_iter;
-        self
-    }
-
-    /// Set min-sum scaling factor
+    /// Set min-sum scaling: None means unit scaling; Some(0.0) selects dynamic scaling.
     #[must_use]
     pub fn alpha(mut self, alpha: Option<f64>) -> Self {
         self.alpha = alpha;
@@ -103,10 +85,8 @@ impl<'a> RelayBpBuilder<'a> {
         self
     }
 
-    /// Enable memory-BP for the entire relay ensemble (default: `Some(0.65)`).
-    /// The pre-relay leg uses this directly and relay legs draw per-leg strengths
-    /// only when it is set; `None` disables memory entirely and makes relay
-    /// ensembling ineffective. The optimal value is graph-dependent.
+    /// Set leg-zero memory strength (default: Some(0.65)).
+    /// None makes leg zero memoryless; relay legs keep their own memory strengths.
     #[must_use]
     pub fn gamma0(mut self, gamma0: Option<f64>) -> Self {
         self.gamma0 = gamma0;
@@ -160,10 +140,8 @@ impl<'a> RelayBpBuilder<'a> {
         self
     }
 
-    /// Set the run-level random seed for relay strengths (default: 0).
-    /// The RNG advances across decodes, so reused-decoder outcomes depend on
-    /// decode history; equal seeds reproduce only the same full shot sequence,
-    /// not an individual syndrome independently.
+    /// Set the seed (default: 0). Results are a deterministic function of
+    /// (seed, syndrome), independent of decode order, batch splitting or workers.
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
@@ -174,24 +152,20 @@ impl<'a> RelayBpBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RelayBpError::Configuration`] if error priors are not set or
-    /// the gamma distribution interval is invalid.
-    /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid
-    /// or an explicit gamma row does not match its column count.
+    /// Returns [`RelayBpError::Configuration`] for missing priors or invalid
+    /// tuning parameters, iteration budgets, stopping criterion or explicit gammas.
+    /// Returns [`RelayBpError::InvalidMatrix`] for an invalid matrix or priors.
     pub fn build(self) -> Result<RelayBpDecoder> {
         let error_priors = self.error_priors.ok_or_else(|| {
-            crate::errors::RelayBpError::Configuration("error_priors must be set".to_string())
+            crate::errors::RelayBpError::Configuration(
+                "error_priors must be set, got None".to_string(),
+            )
         })?;
 
-        let ms_config = MinSumConfig {
-            error_priors,
-            max_iter: self.max_iter,
+        let relay_config = RelayConfig {
             alpha: self.alpha,
             alpha_iteration_scaling_factor: self.alpha_iteration_scaling_factor,
             gamma0: self.gamma0,
-        };
-
-        let relay_config = RelayConfig {
             pre_iter: self.pre_iter,
             num_sets: self.num_sets,
             set_max_iter: self.set_max_iter,
@@ -201,7 +175,7 @@ impl<'a> RelayBpBuilder<'a> {
             seed: self.seed,
         };
 
-        RelayBpDecoder::new(&self.check_matrix, &ms_config, &relay_config)
+        RelayBpDecoder::new(&self.check_matrix, &error_priors, &relay_config)
     }
 }
 
@@ -260,7 +234,7 @@ impl<'a> MinSumBpBuilder<'a> {
         self
     }
 
-    /// Set min-sum scaling factor
+    /// Set min-sum scaling: None means unit scaling; Some(0.0) selects dynamic scaling.
     #[must_use]
     pub fn alpha(mut self, alpha: Option<f64>) -> Self {
         self.alpha = alpha;
@@ -285,11 +259,14 @@ impl<'a> MinSumBpBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RelayBpError::Configuration`] if error priors are not set.
-    /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid.
+    /// Returns [`RelayBpError::Configuration`] for missing priors or invalid
+    /// tuning parameters, including zero `max_iter`.
+    /// Returns [`RelayBpError::InvalidMatrix`] for an invalid matrix or priors.
     pub fn build(self) -> Result<MinSumBpDecoder> {
         let error_priors = self.error_priors.ok_or_else(|| {
-            crate::errors::RelayBpError::Configuration("error_priors must be set".to_string())
+            crate::errors::RelayBpError::Configuration(
+                "error_priors must be set, got None".to_string(),
+            )
         })?;
 
         let config = MinSumConfig {

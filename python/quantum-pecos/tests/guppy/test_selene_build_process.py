@@ -120,7 +120,15 @@ class TestSeleneBuildProcess:
             bitcode_files = list(build_dir.rglob("*.bc"))
             assert bitcode_files, "HUGR build should produce LLVM bitcode"
             for bitcode_file in bitcode_files:
-                assert bitcode_file.read_bytes().startswith(b"BC\xc0\xde"), f"Invalid LLVM bitcode: {bitcode_file}"
+                bitcode = bitcode_file.read_bytes()
+                # LLVM supports both raw bitcode and the wrapper emitted on macOS.
+                if bitcode.startswith(b"\xde\xc0\x17\x0b"):
+                    assert len(bitcode) >= 16, f"Truncated LLVM wrapper: {bitcode_file}"
+                    offset = int.from_bytes(bitcode[8:12], "little")
+                    size = int.from_bytes(bitcode[12:16], "little")
+                    assert 16 <= offset <= offset + size <= len(bitcode), f"Invalid LLVM wrapper: {bitcode_file}"
+                    bitcode = bitcode[offset : offset + size]
+                assert bitcode.startswith(b"BC\xc0\xde"), f"Invalid LLVM bitcode: {bitcode_file}"
 
     def test_qis_program_with_sim_api(self) -> None:
         """Test QIS programs using the sim() API.

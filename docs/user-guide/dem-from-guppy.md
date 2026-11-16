@@ -70,7 +70,7 @@ def rep_code_round() -> None:
     result("s0", measure(a0).read())
     result("s1", measure(a1).read())
     # Deferred tagging: bind now, tag later -- the tag->measurement
-    # binding follows dataflow, not source order.
+    # binding follows direct measurement reads in the executed lowered QIS.
     m0 = measure(d0).read()
     m1 = measure(d1).read()
     m2 = measure(d2).read()
@@ -121,13 +121,13 @@ same measurements):
 - `"meas_ids": [0, 4]` — stable stamped `MeasId`s, resolved against the
   traced circuit, robust to measurement reordering.
 - `"result_tags": ["s0", "m1"]` — Guppy `result(tag, ...)` names, recovered
-  structurally from the compiled HUGR in Python. The tag→measurement binding follows
-  **dataflow, not syntax**: `m = measure(q).read()` followed later by
-  `result("tag", m)` is fully supported, in any order. Restrictions: the
-  tagged value must be a raw scalar measurement (computed, constant, and
-  array-valued results are rejected), and programs with runtime loops must
-  use `records`/`meas_ids` instead (each loop body has one static measure
-  op in the HUGR, not one per iteration — `result_tags` fails loudly).
+  from the lowered QIS program that is executed. Direct scalar measurement reads
+  are supported; other tagged values remain unresolved. Measurement and print
+  calls must be unconditional on returning paths and off every cycle. Generic
+  branching and loop programs are rejected by the HUGR control-flow check;
+  generator-certified programs bypass that check, but their tags still require
+  lowered-program certification. Use `records`/`meas_ids` when tags cannot be
+  certified.
 
 A practical split: `result_tags` for small straight-line programs,
 `records`/`meas_ids` for round-looped QEC programs.
@@ -153,7 +153,6 @@ from pecos.guppy_gen import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
-from pecos_rslib.decoders import PyMatchingDecoder
 
 # The abstract surface builder provides the detector/observable metadata.
 patch = SurfacePatch.create(distance=3)
@@ -180,10 +179,10 @@ sampler = dem.to_sampler()
 batch = sampler.sample_batch(1000, 0)
 assert batch.num_shots == 1000
 
-decoder = PyMatchingDecoder.from_dem(dem.to_string_decomposed())
+decoder = dem.build_decoder("pymatching")
 errors = 0
 for shot in range(batch.num_shots):
-    predicted = decoder.decode_syndrome(batch.get_syndrome(shot)).observable_flips[0]
+    predicted = decoder.decode_syndrome(batch.get_syndrome(shot))[0]
     actual = batch.get_observable_flips(shot)[0]
     errors += predicted != actual
 print(f"logical error rate: {errors / batch.num_shots:.4f}")
@@ -486,9 +485,10 @@ idle-family rate, especially for the nonlinear sine-squared law.
 The default Selene runtime does not emit idle gates. These parameters and
 `t1`/`t2` therefore have no locations to attach to unless the runtime supplies
 scheduled idles or you insert them explicitly. `from_guppy` raises
-`ValueError` when an idle-noise rate is supplied but the final traced circuit
-contains no `Idle` gates; it does not silently build a DEM without the
-requested noise.
+`ValueError`, naming the offending parameters, when a nonzero idle-noise rate
+or `t1`/`t2` is supplied but the final traced circuit contains no `Idle` gates;
+it does not silently build a DEM without the requested noise. Zero rates are
+accepted, so a rate sweep may start at zero.
 
 Both `DetectorErrorModel.from_guppy` and `build_dem_from_guppy` accept two
 passes for controlling those locations:
@@ -561,14 +561,113 @@ else:
     raise AssertionError("idle noise without Idle gates should fail")
 ```
 
-Runtime-emitted idle durations are replayed as nanosecond `TimeUnits`.
-Inserted idles instead carry the duration passed to
-`idle_after_2q_duration`, which must be finite and positive. Linear and
-sine-law idle rates are per time unit. For example, uniform linear idle noise
-uses `(p_idle_linear / 3) * duration` per Pauli axis, clamped to the probability
-range. The low-level coefficient-style quadratic rates multiply `duration**2`
-and therefore scale as inverse time squared. T1 and T2 values must use the same
-units as the idle duration.
+### Rates, probabilities, and time units
+
+An idle rate is not a per-gate probability. The duration comes from an explicit
+`Idle` gate, either emitted by the selected runtime or inserted with
+`idle_after_2q_duration` (builder spelling: `.with_idle_after_2q(duration)`).
+Insertion adds an idle on both operands after each two-qubit gate; it does not
+configure that gate's physical duration or model spectator waiting times.
+
+For a Z-only channel, the laws are:
+
+| Family | Parameter | Probability over duration `t` | Parameter units |
+| --- | --- | --- | --- |
+| Linear | `p_idle_linear` | `r * t` | inverse time |
+| Sine-squared | `p_idle_sin_squared` | `sin(s * t)**2` | radians per time |
+| Coefficient quadratic (low-level DEM only) | `p_idle_z_quadratic_rate` | `q * t**2` | inverse time squared |
+
+The linear probability must be valid; an out-of-range channel is rejected.
+For a uniform linear model, each Pauli axis receives `r * t / 3`.
+
+**Simulation and traced DEM construction currently use different time units.**
+The Selene general-noise plugin converts runtime timestamps to seconds. Traced
+DEM circuits instead store idle durations as whole nanosecond `TimeUnits`; a
+nonzero runtime gap shorter than 1 ns is replayed as 1 ns. Neither API converts
+the supplied noise parameters for the other. For a physical configuration
+expressed in seconds, convert it with `NoiseParameters.for_runtime_idle_time_units()`
+before building a DEM from runtime-emitted idles. The method returns a copy
+with these values:
+
+| Physical parameter | Value for nanosecond DEM durations |
+| --- | --- |
+| Linear rate `r_per_second` | `r_per_second * 1e-9` |
+| Sine rate `s_per_second` | `s_per_second * 1e-9` |
+| Coefficient-quadratic rate `q_per_second_squared` | `q_per_second_squared * 1e-18` |
+| Relaxation/dephasing time `t_seconds` | `t_seconds * 1e9` |
+
+For example, a linear X rate of 1000 per second over a 1000 ns gap gives
+probability 0.001. Here an inserted idle of 1000 stands for that gap in the
+nanosecond units the runtime replay uses. Copying the per-second rate without
+conversion would request probability 1000 per idle, which is rejected:
+
+<!--test-name: dem_idle_time_unit_conversion-->
+```python
+from math import isclose
+
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import cx, measure, qubit
+
+from pecos import NoiseParameters
+from pecos.qec import DetectorErrorModel
+
+
+@guppy
+def idle_units_demo() -> None:
+    q0, q1 = qubit(), qubit()
+    cx(q0, q1)
+    result("m0", measure(q0).read())
+    result("m1", measure(q1).read())
+
+
+per_second = NoiseParameters().with_p_idle_linear(1000.0, {"X": 1.0})
+per_nanosecond = per_second.for_runtime_idle_time_units()
+
+common = {
+    "num_qubits": 2,
+    "detectors_json": '[{"id": "D0", "result_tags": ["m0"]}]',
+    "observables_json": '[{"id": "L0", "result_tags": ["m1"]}]',
+    "idle_after_2q_duration": 1000.0,
+    "seed": 0,
+}
+
+dem = DetectorErrorModel.from_guppy(idle_units_demo, noise=per_nanosecond, **common)
+probabilities = [
+    float(line.split("(", 1)[1].split(")", 1)[0]) for line in dem.to_string().splitlines() if line.startswith("error(")
+]
+assert len(probabilities) == 2
+assert all(isclose(p, 0.001) for p in probabilities)
+
+try:
+    DetectorErrorModel.from_guppy(idle_units_demo, noise=per_second, **common)
+except ValueError:
+    pass
+else:
+    raise AssertionError("an unconverted per-second rate should be rejected")
+```
+
+Inserted idles carry the positive duration supplied by the caller. A normalized
+convention such as `.with_idle_after_2q(1.0)` instead uses one unit per inserted
+idle. If that unit represents a physical duration `tau_seconds`, use linear
+rate `r_per_second * tau_seconds`, sine rate `s_per_second * tau_seconds`, or
+coefficient-quadratic rate `q_per_second_squared * tau_seconds**2`. T1/T2 must
+then be divided by `tau_seconds`. The same method performs this conversion with
+`for_runtime_idle_time_units(time_units_per_second=1 / tau_seconds)`. Do not
+multiply by the physical duration again when applying noise to those
+unit-duration idles.
+
+A scale factor applied to idle rates therefore needs a stated meaning and unit.
+It could convert a physical rate to a normalized-duration coefficient, or scale
+the noise strength; the API cannot infer which. Do not mix retained runtime
+idles in nanoseconds with inserted idles in another unit. By default, idle
+insertion strips runtime idles first.
+
+The legacy engine quadratic-to-sine migration above is a separate conversion
+from this time-unit conversion. In particular, the DEM's coefficient-quadratic
+rate cannot be converted to an exactly equivalent sine-squared law at all
+durations by multiplying by pi. When copying rates from another noise model,
+first match that model's probability formula, then convert units.
 
 ## Exporting the DEM as Stim Text
 
@@ -580,10 +679,12 @@ error model. The export itself has no extra dependency.
 `dem.to_string_decomposed()` uses decomposition components attached to the
 original fault source, writing `^`-separated components when that provenance
 is available. It preserves residual hyperedges when a true hyperedge has no
-source-attached decomposition. For graph matchers, prefer
-`dem.to_string_source_graphlike_decomposed()`: it uses source provenance to
-choose graphlike components. Any residual hyperedges still require a decoder
-that supports them.
+source-attached decomposition. These explicit renderers remain useful for
+exports to external tools such as Stim or external Tesseract, which consume
+text rather than PECOS objects. `dem.to_string_source_graphlike_decomposed()`
+uses source provenance to choose components; residual hyperedges require an
+external decoder that supports them. For PECOS graph specs, pass the raw object
+to `batch.decode(dem, spec)` or `dem.build_decoder(spec)` instead.
 
 `dem.to_string_terminal_graphlike_decomposed()` is a coordinate-based
 approximation. It invents graphlike components that need not be physical error
@@ -683,7 +784,7 @@ stim.DetectorErrorModel(dem.to_string_source_graphlike_decomposed())
 
 ## Decoding: PyMatching, Tesseract, and BP-OSD
 
-A sampled `SampleBatch` provides the uniform `batch.decode(dem_text, spec)`
+A sampled `SampleBatch` provides the uniform `batch.decode(dem, spec)`
 interface. Typed specs make choices such as correlated versus uncorrelated
 PyMatching explicit. Passing the same batch to each decoder compares them on
 identical shots rather than on three independently sampled experiments.
@@ -719,14 +820,14 @@ dem = DetectorErrorModel.from_guppy(
 batch = dem.to_sampler().sample_batch(1000, 0)
 error_counts = {
     "pymatching": batch.decode(
-        dem.to_string_source_graphlike_decomposed(),
+        dem,
         pymatching(correlated=True),
     ).num_errors,
     "tesseract": batch.decode(
-        dem.to_string_source_graphlike_decomposed(),
+        dem,
         tesseract_spec(preset="fast"),
     ).num_errors,
-    "bp_osd": batch.decode(dem.to_string(), bp_osd_spec()).num_errors,
+    "bp_osd": batch.decode(dem, bp_osd_spec()).num_errors,
 }
 assert all(0 <= count <= batch.num_shots for count in error_counts.values())
 print(error_counts)
@@ -743,14 +844,21 @@ bp_osd_result = bp_osd.decode_syndrome(syndrome)
 assert bp_osd_result.observable_flips.mask >= 0
 ```
 
-For direct PyMatching construction, use the
-`PyMatchingDecoder.from_dem(...)` pattern in the
-[surface-memory example](#surface-code-memory-dem). That DEM's source-attached
-decomposition is already graph-like. Prefer the source-informed graphlike
-decomposition for matching decoders, checking that no residual hyperedges remain.
-Tesseract and BP-OSD can consume the
-raw hyperedge DEM directly; the batch comparison above uses the established
-source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
+For direct construction with a graph spec, use `dem.build_decoder("pymatching")`
+as in the [surface-memory example](#surface-code-memory-dem). Graph specs project
+the raw model themselves and preserve fault-sector labels from the object.
+Both the built decoder and batch results expose `.projection`, with counts and
+input indices of any omitted faults. `None` means no projection was needed or a
+composition without a shared policy projected inside its members, with no shared
+report. Irreducible
+faults raise by default. Opt into `pymatching(correlated=True, irreducible="drop")` (legacy string
+`"pymatching:irreducible=drop"`) only when removing those faults from the decoder
+model is intended. Sampling continues to use the original model.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
+PECOS's built-in Tesseract and BP-OSD specs accept the raw object directly.
+The direct backend `from_dem` constructors above remain text-only.
 
 ## Limitations
 
@@ -761,8 +869,10 @@ source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
   branch — wrong and seed-dependent. Guppy programs whose compiled HUGR
   contains branching or looping control flow therefore raise `ValueError`
   before tracing; built-in generators such as `make_surface_code` and
-  `make_surface_memory` cross this boundary through a trusted program-bound
-  layout certificate.
+  `make_surface_memory` cross this boundary through a program-bound layout
+  certificate. Every layout slot must agree with independent runtime provenance
+  or compiled scalar analysis. If both are available they must agree, and a
+  slot with neither rejects the build.
   Statically-scheduled gates after measurements (every QEC round has them)
   are fine; genuinely conditioned gates are not.
 - **Clifford circuits only.** Traced operations must normalize to named
@@ -781,6 +891,9 @@ source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
   `strip_traced_idles` removes runtime-provided `Idle` gates. Passing
   idle-noise parameters without any final `Idle` gates raises `ValueError`; see
   [Idle Noise](#idle-noise).
+- **Idle rates are per DEM time unit.** Runtime idles replay in nanoseconds,
+  while the Selene general-noise plugin applies rates per second; see
+  [rates, probabilities, and time units](#rates-probabilities-and-time-units).
 - **Hand-authored tracked-Pauli observables are rejected** in
   `observables_json`; tracked Paulis come from circuit annotations only.
 

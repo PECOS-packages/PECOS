@@ -20,6 +20,26 @@
 
 use crate::Gate;
 use crate::byte_message::{ByteMessage, ByteMessageBuilder};
+use pecos_core::errors::PecosError;
+
+// Preserve the raw input message for the legacy panicking noise APIs.
+#[track_caller]
+pub(super) fn panic_on_noise_error(error: PecosError) -> ! {
+    match error {
+        PecosError::Input(message) => panic!("{message}"),
+        error => panic!("{error}"),
+    }
+}
+
+/// Validate a probability, returning its bare diagnostic for deferred builder errors.
+pub(super) fn ensure_probability_in_range(probability: f64, name: &str) -> Result<(), String> {
+    if !(0.0..=1.0).contains(&probability) {
+        return Err(format!(
+            "{name} must be between 0.0 and 1.0, got {probability}; supply a finite probability in 0.0..=1.0"
+        ));
+    }
+    Ok(())
+}
 
 /// Helper trait for validating probability values
 pub trait ProbabilityValidator {
@@ -30,26 +50,17 @@ pub trait ProbabilityValidator {
     ///
     /// # Panics
     /// Panics if the probability is not between 0.0 and 1.0
-    fn validate_probability(probability: f64) {
-        assert!(
-            (0.0..=1.0).contains(&probability),
-            "Probability must be between 0.0 and 1.0"
-        );
+    fn validate_probability(probability: f64, name: &str) {
+        Self::try_validate_probability(probability, name)
+            .unwrap_or_else(|error| panic_on_noise_error(error));
     }
 
-    /// Validate a named probability
+    /// Validate a probability without panicking.
     ///
-    /// # Arguments
-    /// * `probability` - The probability value to validate
-    /// * `name` - Name of the probability for error message
-    ///
-    /// # Panics
-    /// Panics if the probability is not between 0.0 and 1.0
-    fn validate_named_probability(probability: f64, name: &str) {
-        assert!(
-            (0.0..=1.0).contains(&probability),
-            "Probability {name} must be between 0.0 and 1.0, but was {probability}"
-        );
+    /// # Errors
+    /// Returns `PecosError::Input` if the probability is outside [0, 1], including NaN.
+    fn try_validate_probability(probability: f64, name: &str) -> Result<(), PecosError> {
+        ensure_probability_in_range(probability, name).map_err(PecosError::Input)
     }
 }
 

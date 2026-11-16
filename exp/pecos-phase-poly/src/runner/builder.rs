@@ -123,6 +123,9 @@ fn validate_gate(gate: Batch<'_>, tick: usize) -> Result<Operation, CompileError
         | GateType::Tdg
         | GateType::CX
         | GateType::CZ
+        | GateType::CS
+        | GateType::CSdg
+        | GateType::CCZ
         | GateType::RZ
         | GateType::RZZ
         | GateType::SZZ
@@ -151,7 +154,7 @@ fn validate_gate(gate: Batch<'_>, tick: usize) -> Result<Operation, CompileError
     match kind {
         GateType::RZ | GateType::RZZ => {
             let power = (0_u8..8)
-                .find(|&k| gate.angles[0] == Angle64::from_turns(f64::from(k) / 8.0))
+                .find(|&k| gate.angles[0] == Angle64::from_turn_ratio(i64::from(k), 8))
                 .ok_or_else(|| error(gate, tick, "angle must be an exact multiple of pi/4"))?;
             Ok(if kind == GateType::RZ {
                 Operation::Phase(power)
@@ -212,7 +215,7 @@ pub fn compile(circuit: &TickCircuit) -> Result<Program, CompileError> {
                 measurement_ids, ..
             } => (measurement_ids, &mut detectors),
             AnnotationKind::Observable { measurement_ids } => (measurement_ids, &mut observables),
-            AnnotationKind::TrackedPauli => continue,
+            AnnotationKind::TrackedPauli { .. } => continue,
         };
         destination.push(
             measurements
@@ -251,6 +254,48 @@ mod tests {
                 assert!(matches!(
                     validate_gate(Batch { gate: &gate, index: 0 }, 0),
                     Ok(Operation::Gate(actual)) if actual == kind
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn controlled_diagonal_batch_shapes() {
+        for kind in [GateType::CS, GateType::CSdg, GateType::CCZ] {
+            let arity = kind.quantum_arity();
+            let qubits: Vec<_> = (0..2 * arity).map(QubitId).collect();
+            let valid = Gate::simple(kind, qubits);
+            for len in [arity, 2 * arity] {
+                let mut gate = valid.clone();
+                gate.qubits.truncate(len);
+                assert!(
+                    validate_gate(
+                        Batch {
+                            gate: &gate,
+                            index: 0
+                        },
+                        0
+                    )
+                    .is_ok()
+                );
+            }
+            let mut bad = vec![Gate::simple(kind, vec![])];
+            let mut incomplete = valid.clone();
+            incomplete.qubits.pop();
+            bad.push(incomplete);
+            let mut angled = valid.clone();
+            angled.angles.push(Angle64::ZERO);
+            bad.push(angled);
+            for duplicate in [1, arity] {
+                let mut gate = valid.clone();
+                gate.qubits[duplicate] = gate.qubits[0];
+                bad.push(gate);
+            }
+            for gate in bad {
+                assert!(matches!(
+                    validate_gate(Batch { gate: &gate, index: 3 }, 5),
+                    Err(CompileError::Gate { tick: 5, batch: 3, reason, .. })
+                        if reason == "invalid angle count or qubit batch"
                 ));
             }
         }

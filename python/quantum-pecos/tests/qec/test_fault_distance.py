@@ -12,6 +12,8 @@
 
 """Python coverage for detector-error-model fault distance."""
 
+from itertools import combinations
+
 import pytest
 
 
@@ -214,3 +216,99 @@ def test_graphlike_fault_distance_reports_hyperedge_count() -> None:
 
     with pytest.raises(ValueError, match=r"found 1 hyperedge mechanism\(s\)"):
         dem.graphlike_fault_distance()
+
+
+def _repetition_extraction_circuit(distance: int):
+    """Extract adjacent Z parities, then destructively measure the data."""
+    from pecos.quantum import TickCircuit
+
+    num_qubits = 2 * distance - 1
+    circuit = TickCircuit()
+    circuit.tick().pz(list(range(num_qubits)))
+    for check in range(distance - 1):
+        ancilla = distance + check
+        circuit.tick().cx([(check, ancilla)])
+        circuit.tick().cx([(check + 1, ancilla)])
+    circuit.tick().mz(list(range(num_qubits)))
+    for check in range(distance - 1):
+        circuit.add_detector(records=[check - num_qubits, check + 1 - num_qubits])
+    for check in range(distance - 1):
+        circuit.add_detector(
+            records=[distance + check - num_qubits, check - num_qubits, check + 1 - num_qubits],
+        )
+    circuit.add_observable(records=[-num_qubits])
+    return circuit
+
+
+def _simulate_preparation_faults(distance: int, faults: tuple[int, ...]) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Inject faults into a state vector, without the DEM or Pauli fault propagator."""
+    from pecos_rslib import StateVec
+
+    num_qubits = 2 * distance - 1
+    state = StateVec(num_qubits, seed=0)
+    for qubit in range(num_qubits):
+        state.run_1q_gate("PZ", qubit)
+    for qubit in faults:
+        state.run_1q_gate("X", qubit)
+    for check in range(distance - 1):
+        state.run_2q_gate("CX", (check, distance + check), None)
+        state.run_2q_gate("CX", (check + 1, distance + check), None)
+    measurements = [state.run_1q_gate("MZ", qubit) for qubit in range(num_qubits)]
+    parities = tuple(measurements[check] ^ measurements[check + 1] for check in range(distance - 1))
+    consistency = tuple(measurements[distance + check] ^ parities[check] for check in range(distance - 1))
+    return parities + consistency, (measurements[0],)
+
+
+@pytest.mark.parametrize("distance", [2, 3, 4, 5])
+def test_circuit_dem_correctability_matches_explicit_statevector_faults(distance: int) -> None:
+    """Check d=2t versus d=2t+1 using physical fault sets and a syndrome lookup table.
+
+    Only preparations are noisy: each faulty location injects one X after PZ.
+    These are independent binary events, so physical fault counts and DEM event
+    counts have the same meaning. Enumerate all sets through weight two, including
+    the empty set; never infer the oracle's logical effects from DEM mechanisms.
+    """
+    from pecos.qec import DetectorErrorModel, DistanceProblem
+
+    num_qubits = 2 * distance - 1
+    dem = DetectorErrorModel.from_circuit(
+        _repetition_extraction_circuit(distance),
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.01,
+    )
+    outcomes = [
+        (weight, _simulate_preparation_faults(distance, faults))
+        for weight in range(3)
+        for faults in combinations(range(num_qubits), weight)
+    ]
+    assert outcomes[0] == (0, ((0,) * (2 * (distance - 1)), (0,)))
+
+    # Pin the individual effects too: an incorrect CNOT propagation must not pass
+    # merely because the resulting DEM happens to have the same minimum distance.
+    simulated_effects = {
+        (tuple(i for i, bit in enumerate(detectors) if bit), tuple(i for i, bit in enumerate(observables) if bit))
+        for weight, (detectors, observables) in outcomes
+        if weight == 1
+    }
+    dem_effects = {
+        (tuple(effect["detectors"]), tuple(effect["observables"])) for effect in dem.contribution_effect_summaries()
+    }
+    assert dem_effects == simulated_effects
+
+    problem = DistanceProblem.from_dem(dem)
+    graphlike = dem.graphlike_fault_distance()
+    assert graphlike is not None
+    assert graphlike.distance == distance
+    for max_faults in range(3):
+        decoder = {}
+        unambiguous = True
+        for weight, (detectors, observables) in outcomes:
+            if weight <= max_faults and decoder.setdefault(detectors, observables) != observables:
+                unambiguous = False
+        assert unambiguous == (distance > 2 * max_faults)
+        assert (graphlike.distance > 2 * max_faults) == unambiguous
+        assert (dem.connected_cluster_fault_distance(2 * max_faults) is None) == unambiguous
+        assert (dem.exhaustive_fault_distance(2 * max_faults) is None) == unambiguous
+        assert (problem.certified_distance(2 * max_faults) is None) == unambiguous

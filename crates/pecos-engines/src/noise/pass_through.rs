@@ -132,7 +132,7 @@ impl PassThroughNoiseModelBuilder {
 }
 
 impl crate::noise::IntoNoiseModel for PassThroughNoiseModelBuilder {
-    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
-        Box::new(self.build())
+    fn into_noise_model(self) -> Result<Box<dyn crate::noise::NoiseModel>, PecosError> {
+        Ok(Box::new(self.build()))
     }
 }

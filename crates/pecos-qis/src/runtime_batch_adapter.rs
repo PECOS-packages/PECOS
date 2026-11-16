@@ -4,7 +4,10 @@
 //! measurement routing. No private runtime protocol is built into this boundary.
 
 use crate::runtime::{Result, RuntimeError};
-use crate::scheduled::{MAX_OPERATIONS, MAX_PAYLOAD_BYTES, RuntimeScheduledOp};
+use crate::scheduled::{MAX_PAYLOAD_BYTES, RuntimeScheduledOp};
+
+/// Maximum source or normalized operations admitted by a runtime batch adapter.
+pub const MAX_ADAPTER_OPERATIONS: usize = 4096;
 
 /// Original native output, in emission order, before idle insertion.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -79,7 +82,7 @@ fn validate_operations(
     capacity: usize,
     source: bool,
 ) -> Result<()> {
-    if operations.len() > MAX_OPERATIONS {
+    if operations.len() > MAX_ADAPTER_OPERATIONS {
         return Err(invalid("operation expansion limit exceeded"));
     }
     let mut payload = 0usize;

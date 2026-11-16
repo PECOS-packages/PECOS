@@ -173,7 +173,8 @@ fn lowered_crz_pi_runs_through_byte_message_dispatch() {
         std::f64::consts::PI,
         0usize.into(),
         1usize.into(),
-    );
+    )
+    .unwrap();
 
     // With the control in |1>, the correct lowering applies the full RZ(pi)
     // to the target. This probe distinguishes the RZZ sign deterministically.
@@ -205,7 +206,8 @@ fn lowered_crz_non_clifford_fails_through_byte_message_dispatch() {
         std::f64::consts::PI / 3.0,
         0usize.into(),
         1usize.into(),
-    );
+    )
+    .unwrap();
     let message = expect_sparse_stab_error(2, |builder| {
         builder.add_gate_commands(&lowered);
         builder.mz(&[0, 1]);
@@ -457,7 +459,7 @@ fn u_non_clifford_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(1, |b| {
         // theta=0.123 is not Clifford
         b.u(
-            Angle64::from_radians(0.123),
+            pecos_core::radians!(0.123),
             Angle64::ZERO,
             Angle64::ZERO,
             &[0],
@@ -478,7 +480,7 @@ fn u_mixed_non_clifford_lambda_fails() {
         b.u(
             Angle64::ZERO,
             Angle64::ZERO,
-            Angle64::from_radians(0.5),
+            pecos_core::radians!(0.5),
             &[0],
         );
         b.mz(&[0]);
@@ -491,7 +493,7 @@ fn u_mixed_non_clifford_lambda_fails() {
 #[test]
 fn rz_non_clifford_angle_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(1, |b| {
-        b.rz(Angle64::from_radians(0.123), &[0]);
+        b.rz(pecos_core::radians!(0.123), &[0]);
         b.mz(&[0]);
     });
     assert!(msg.contains("RZ"), "error should name the gate: {msg}");
@@ -504,7 +506,7 @@ fn rz_non_clifford_angle_fails_with_useful_message() {
 #[test]
 fn rx_non_clifford_angle_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(1, |b| {
-        b.rx(Angle64::from_radians(0.5), &[0]);
+        b.rx(pecos_core::radians!(0.5), &[0]);
         b.mz(&[0]);
     });
     assert!(msg.contains("RX"), "error should name the gate: {msg}");
@@ -517,7 +519,7 @@ fn rx_non_clifford_angle_fails_with_useful_message() {
 #[test]
 fn ry_non_clifford_angle_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(1, |b| {
-        b.ry(Angle64::from_radians(0.5), &[0]);
+        b.ry(pecos_core::radians!(0.5), &[0]);
         b.mz(&[0]);
     });
     assert!(msg.contains("RY"), "error should name the gate: {msg}");
@@ -530,7 +532,7 @@ fn ry_non_clifford_angle_fails_with_useful_message() {
 #[test]
 fn rzz_non_clifford_angle_fails_with_useful_message() {
     let msg = expect_sparse_stab_error(2, |b| {
-        b.rzz(Angle64::from_radians(0.5), &[(0, 1)]);
+        b.rzz(pecos_core::radians!(0.5), &[(0, 1)]);
         b.mz(&[0, 1]);
     });
     assert!(msg.contains("RZZ"), "error should name the gate: {msg}");
@@ -544,7 +546,7 @@ fn rzz_non_clifford_angle_fails_with_useful_message() {
 fn rxy1q_non_clifford_angle_fails_with_useful_message() {
     // Non-Clifford theta
     let msg = expect_sparse_stab_error(1, |b| {
-        b.rxy1q(Angle64::from_radians(0.123), Angle64::ZERO, &[0]);
+        b.rxy1q(pecos_core::radians!(0.123), Angle64::ZERO, &[0]);
         b.mz(&[0]);
     });
     assert!(msg.contains("RXY1Q"), "error should name the gate: {msg}");
@@ -899,7 +901,7 @@ fn rxxryyrzz_inverse_clifford_on_sparse_stab() {
 fn rxxryyrzz_non_clifford_fails_on_sparse_stab() {
     let msg = expect_sparse_stab_error(2, |b| {
         let gate = Gate::rxxryyrzz(
-            Angle64::from_radians(0.5),
+            pecos_core::radians!(0.5),
             Angle64::ZERO,
             Angle64::ZERO,
             &[(0usize, 1usize)],
@@ -1019,7 +1021,7 @@ fn u2q_clifford_interaction_with_single_qubit_gates() {
 #[test]
 fn u2q_non_clifford_fails_on_sparse_stab() {
     let zero = [Angle64::ZERO; 3];
-    let non_clifford = [Angle64::from_radians(0.5), Angle64::ZERO, Angle64::ZERO];
+    let non_clifford = [pecos_core::radians!(0.5), Angle64::ZERO, Angle64::ZERO];
     let msg = expect_sparse_stab_error(2, |b| {
         let gate = Gate::u2q([zero; 2], non_clifford, [zero; 2], &[(0usize, 1usize)]);
         b.add_gate_command(&gate);

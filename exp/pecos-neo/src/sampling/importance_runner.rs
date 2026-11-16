@@ -32,6 +32,7 @@
 //! ## Example
 //!
 //! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::sampling::ImportanceSamplingRunner;
 //! use pecos_neo::sampling::weight::WeightedStatistics;
 //! use pecos_neo::prelude::*;
@@ -41,8 +42,8 @@
 //!
 //! // True error rate: 0.001, boost by 10x for proposal
 //! let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-//!     .with_single_qubit_boost(0.001, 10.0)
-//!     .with_two_qubit_boost(0.01, 5.0)
+//!     .with_single_qubit_boost(0.001, 10.0)?
+//!     .with_two_qubit_boost(0.01, 5.0)?
 //!     .with_seed(42);
 //!
 //! let mut stats = WeightedStatistics::new();
@@ -54,10 +55,13 @@
 //! }
 //!
 //! println!("Estimated logical error rate: {}", stats.mean());
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::command::{CommandQueue, GateCommand, GateType};
-use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
+use crate::noise::validation::{ValidationError, ValidationResult, validate_probability};
+use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse, partition_gate_qubits};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::sampling::importance::ImportanceConfig;
 use crate::sampling::weight::SampleWeight;
@@ -67,6 +71,8 @@ use pecos_random::PecosRng;
 use pecos_simulators::{CliffordGateable, ForcedMeasurement};
 use rand::RngExt;
 use rand_core::SeedableRng;
+use smallvec::SmallVec;
+use std::borrow::Cow;
 
 /// Configuration for biasing measurement outcomes.
 ///
@@ -83,39 +89,53 @@ use rand_core::SeedableRng;
 /// use pecos_neo::sampling::OutcomeBiasConfig;
 ///
 /// // Bias toward outcome 1 with 80% probability (for exploring rare branches)
-/// let config = OutcomeBiasConfig::bias_toward_one(0.8);
+/// let config = OutcomeBiasConfig::bias_toward_one(0.8).unwrap();
 ///
 /// // Or bias toward outcome 0 with 90% probability
-/// let config = OutcomeBiasConfig::bias_toward_zero(0.9);
+/// let config = OutcomeBiasConfig::bias_toward_zero(0.9).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct OutcomeBiasConfig {
     /// Probability of choosing outcome 1 in the proposal distribution.
     /// 0.5 = no bias (true distribution), 1.0 = always 1, 0.0 = always 0.
-    pub p_one_proposal: f64,
+    p_one_proposal: f64,
 }
 
 impl OutcomeBiasConfig {
+    /// Return the configured `p_one_proposal`.
+    #[must_use]
+    pub fn p_one_proposal(&self) -> f64 {
+        self.p_one_proposal
+    }
+
     /// Create a config that biases toward outcome 1.
     ///
     /// # Arguments
     /// * `p` - Probability of choosing outcome 1 in proposal (0.5 = no bias)
-    #[must_use]
-    pub fn bias_toward_one(p: f64) -> Self {
-        Self {
-            p_one_proposal: p.clamp(0.01, 0.99), // Avoid 0/1 to prevent infinite weights
+    ///
+    /// # Errors
+    /// Returns an error unless both proposal outcome probabilities are strictly between 0 and 1.
+    pub fn bias_toward_one(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        if p <= 0.0 || p >= 1.0 {
+            return Err(ValidationError::new(
+                "p",
+                "proposal probability must be strictly between 0 and 1",
+            ));
         }
+        Ok(Self { p_one_proposal: p })
     }
 
     /// Create a config that biases toward outcome 0.
     ///
     /// # Arguments
     /// * `p` - Probability of choosing outcome 0 in proposal (0.5 = no bias)
-    #[must_use]
-    pub fn bias_toward_zero(p: f64) -> Self {
-        Self {
-            p_one_proposal: (1.0 - p).clamp(0.01, 0.99),
-        }
+    ///
+    /// # Errors
+    /// Returns an error unless both proposal outcome probabilities are strictly between 0 and 1.
+    pub fn bias_toward_zero(p: f64) -> ValidationResult<Self> {
+        validate_probability(p, "p")?;
+        Self::bias_toward_one(1.0 - p)
     }
 
     /// Sample an outcome from the proposal distribution.
@@ -181,7 +201,7 @@ pub struct ImportanceSampledShot {
 /// use pecos_simulators::SparseStab;
 ///
 /// let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
+///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8).unwrap())
 ///     .with_seed(42);
 /// ```
 ///
@@ -286,24 +306,42 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// # Arguments
     /// * `p_true` - True error probability
     /// * `boost_factor` - How much to multiply the error rate for the proposal
-    #[must_use]
-    pub fn with_single_qubit_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.single_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_single_qubit_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.single_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure importance sampling for two-qubit gates.
-    #[must_use]
-    pub fn with_two_qubit_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.two_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_two_qubit_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.two_qubit_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure importance sampling for measurement errors.
-    #[must_use]
-    pub fn with_measurement_boost(mut self, p_true: f64, boost_factor: f64) -> Self {
-        self.measurement_config = Some(ImportanceConfig::with_boost(p_true, boost_factor));
-        self
+    ///
+    /// # Errors
+    /// Returns an error naming an invalid probability or sampling weight and its remedy.
+    pub fn with_measurement_boost(
+        mut self,
+        p_true: f64,
+        boost_factor: f64,
+    ) -> ValidationResult<Self> {
+        self.measurement_config = Some(ImportanceConfig::with_boost(p_true, boost_factor)?);
+        Ok(self)
     }
 
     /// Configure biasing of measurement outcomes for branch exploration.
@@ -320,7 +358,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     ///
     /// // Bias toward measuring 1 (80% of the time for non-deterministic measurements)
     /// let runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-    ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
+    ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8).unwrap())
     ///     .with_seed(42);
     /// ```
     ///
@@ -424,24 +462,39 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
 
     /// Execute a single command with importance-weighted noise.
     fn execute_command(&mut self, command: &GateCommand) -> Result<(), ImportanceSamplingError> {
-        let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
-
-        // Check for gate skip (e.g., due to leakage)
-        if self.emit_before_gate(command) {
+        let skipped = self.emit_before_gate(command);
+        let surviving = partition_gate_qubits(
+            &command.qubits,
+            crate::noise::gate_group_size(command.gate_type.quantum_arity(), command.qubits.len()),
+            &skipped,
+            None,
+        )
+        .executed;
+        if !command.qubits.is_empty() && surviving.is_empty() {
             return Ok(());
         }
+        let mut filtered;
+        let command = match surviving {
+            Cow::Borrowed(_) => command,
+            Cow::Owned(qubits) => {
+                filtered = command.clone();
+                filtered.qubits = qubits.into_iter().collect();
+                &filtered
+            }
+        };
+        let qubits = command.qubits.as_slice();
 
         // Execute the gate
         match command.gate_type {
             // Preparation
             GateType::PZ | GateType::QAlloc => {
-                self.simulator.pz(&qubits);
-                self.emit_after_preparation(&qubits);
+                self.simulator.pz(qubits);
+                self.emit_after_preparation(command.gate_type, qubits);
             }
 
             // Measurement
             GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
-                let results = self.simulator.mz(&qubits);
+                let results = self.simulator.mz(qubits);
                 let mut outcomes: Vec<bool> = results.iter().map(|r| r.outcome).collect();
 
                 // Apply importance-sampled measurement errors
@@ -625,7 +678,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     }
 
     /// Emit a before-gate noise event (for leakage handling, etc.).
-    fn emit_before_gate(&mut self, command: &GateCommand) -> bool {
+    fn emit_before_gate(&mut self, command: &GateCommand) -> SmallVec<[QubitId; 4]> {
         if let Some(ref mut noise) = self.noise {
             // Use helper constructor for zero-allocation access
             let event = NoiseEvent::before_gate(
@@ -634,17 +687,17 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
                 command.angles(),
             );
             let response = noise.emit(&event, &mut self.rng);
-            let should_skip = response.should_skip_gate();
+            let skipped = response.skipped_qubits();
             self.apply_noise_response(response);
-            return should_skip;
+            return skipped;
         }
-        false
+        SmallVec::new()
     }
 
     /// Emit an after-preparation noise event.
-    fn emit_after_preparation(&mut self, qubits: &[QubitId]) {
+    fn emit_after_preparation(&mut self, gate_type: GateType, qubits: &[QubitId]) {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::AfterPreparation { qubits };
+            let event = NoiseEvent::AfterPreparation { gate_type, qubits };
             let response = noise.emit(&event, &mut self.rng);
             self.apply_noise_response(response);
         }
@@ -654,7 +707,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     fn apply_noise_response(&mut self, response: NoiseResponse) {
         match response {
             NoiseResponse::None
-            | NoiseResponse::SkipGate
+            | NoiseResponse::SkipGate(_)
             | NoiseResponse::MarkLeaked(_)
             | NoiseResponse::MarkUnleaked(_) => {}
 
@@ -921,7 +974,7 @@ where
     ///
     /// let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
     /// let mut runner = ImportanceSamplingRunner::new(SparseStab::new(7))
-    ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
+    ///     .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8).unwrap())
     ///     .with_seed(42);
     ///
     /// // This will bias non-deterministic measurements toward outcome 1
@@ -987,24 +1040,39 @@ where
         &mut self,
         command: &GateCommand,
     ) -> Result<(), ImportanceSamplingError> {
-        let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
-
-        // Check for gate skip (e.g., due to leakage)
-        if self.emit_before_gate(command) {
+        let skipped = self.emit_before_gate(command);
+        let surviving = partition_gate_qubits(
+            &command.qubits,
+            crate::noise::gate_group_size(command.gate_type.quantum_arity(), command.qubits.len()),
+            &skipped,
+            None,
+        )
+        .executed;
+        if !command.qubits.is_empty() && surviving.is_empty() {
             return Ok(());
         }
+        let mut filtered;
+        let command = match surviving {
+            Cow::Borrowed(_) => command,
+            Cow::Owned(qubits) => {
+                filtered = command.clone();
+                filtered.qubits = qubits.into_iter().collect();
+                &filtered
+            }
+        };
+        let qubits = command.qubits.as_slice();
 
         // Execute the gate
         match command.gate_type {
             // Preparation
             GateType::PZ | GateType::QAlloc => {
-                self.simulator.pz(&qubits);
-                self.emit_after_preparation(&qubits);
+                self.simulator.pz(qubits);
+                self.emit_after_preparation(command.gate_type, qubits);
             }
 
             // Measurement with outcome biasing
             GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
-                for &qubit in &qubits {
+                for &qubit in qubits {
                     let (outcome, is_deterministic) = self.measure_biased(qubit.index());
 
                     // Apply importance-sampled measurement errors (bit flips)
@@ -1075,6 +1143,170 @@ mod tests {
     use crate::sampling::weight::WeightedStatistics;
     use pecos_simulators::SparseStab;
 
+    #[test]
+    fn test_importance_leakage_skip_is_pair_local() {
+        for biased in [false, true] {
+            let mut noise =
+                ComposableNoiseModel::new().add_channel(crate::noise::LeakageChannel::new());
+            noise.context_mut().mark_leaked(QubitId(0));
+            let commands = CommandBuilder::new()
+                .pz(&[0, 1, 2, 3])
+                .x(&[2])
+                .gate(GateCommand::new(
+                    GateType::CX,
+                    smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+                ))
+                .mz(&[2, 3])
+                .build();
+            let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(4, 42))
+                .with_noise(noise)
+                .with_two_qubit_boost(0.0, 1.0)
+                .unwrap()
+                .with_seed(42);
+            let shot = if biased {
+                runner.try_run_shot_biased(&commands)
+            } else {
+                runner.try_run_shot(&commands)
+            }
+            .unwrap();
+            assert_eq!(shot.outcomes.get_bit(QubitId(2)), Some(true));
+            assert_eq!(shot.outcomes.get_bit(QubitId(3)), Some(true));
+        }
+    }
+
+    #[derive(Clone)]
+    struct SkipOperands {
+        gate_type: GateType,
+        skipped: SmallVec<[QubitId; 4]>,
+    }
+
+    impl NoiseChannel for SkipOperands {
+        fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+            matches!(event, NoiseEvent::BeforeGate { gate_type, .. } if *gate_type == self.gate_type)
+        }
+
+        fn apply(
+            &self,
+            _event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            NoiseResponse::SkipGate(self.skipped.clone())
+        }
+
+        fn name(&self) -> &'static str {
+            "SkipOperands"
+        }
+
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[test]
+    fn test_importance_skip_preparation_and_measurement_operands() {
+        for biased in [false, true] {
+            let noise = ComposableNoiseModel::new()
+                .add_channel(SkipOperands {
+                    gate_type: GateType::PZ,
+                    skipped: smallvec::smallvec![QubitId(0)],
+                })
+                .add_channel(SkipOperands {
+                    gate_type: GateType::MZ,
+                    skipped: smallvec::smallvec![QubitId(1)],
+                });
+            let mut runner =
+                ImportanceSamplingRunner::new(SparseStab::with_seed(2, 42)).with_noise(noise);
+            let commands = CommandBuilder::new()
+                .x(&[0, 1])
+                .gate(GateCommand::new(
+                    GateType::PZ,
+                    smallvec::smallvec![QubitId(0), QubitId(1)],
+                ))
+                .gate(GateCommand::new(
+                    GateType::MZ,
+                    smallvec::smallvec![QubitId(0), QubitId(1)],
+                ))
+                .build();
+            let shot = if biased {
+                runner.try_run_shot_biased(&commands)
+            } else {
+                runner.try_run_shot(&commands)
+            }
+            .unwrap();
+            assert_eq!(shot.outcomes.len(), 1);
+            assert_eq!(shot.outcomes.get_bit(QubitId(0)), Some(true));
+            assert_eq!(shot.outcomes.get_bit(QubitId(1)), None);
+            assert!(!runner.simulator.mz(&[QubitId(1)])[0].outcome);
+        }
+    }
+
+    #[test]
+    fn test_importance_noise_uses_only_surviving_operands() {
+        for biased in [false, true] {
+            for skip_all in [false, true] {
+                for x_basis in [false, true] {
+                    let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+                    let mut state = SparseStab::with_seed(4, 42);
+                    if x_basis {
+                        state.h(&qubits);
+                    }
+                    let skipped = if skip_all {
+                        smallvec::smallvec![QubitId(0), QubitId(2)]
+                    } else {
+                        smallvec::smallvec![QubitId(0)]
+                    };
+                    let noise = ComposableNoiseModel::new().add_channel(SkipOperands {
+                        gate_type: GateType::CX,
+                        skipped,
+                    });
+                    let mut runner = ImportanceSamplingRunner::new(state.clone())
+                        .with_noise(noise)
+                        .with_two_qubit_boost(0.25, 4.0)
+                        .unwrap()
+                        .with_seed(42);
+                    let commands = CommandBuilder::new()
+                        .gate(GateCommand::new(
+                            GateType::CX,
+                            smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+                        ))
+                        .build();
+                    if biased {
+                        runner.try_run_shot_biased(&commands)
+                    } else {
+                        runner.try_run_shot(&commands)
+                    }
+                    .unwrap();
+                    // Compare against identical sampled noise on the surviving pair.
+                    let mut expected = ImportanceSamplingRunner::new(state)
+                        .with_two_qubit_boost(0.25, 4.0)
+                        .unwrap()
+                        .with_seed(42);
+                    let expected_commands = if skip_all {
+                        CommandBuilder::new().build()
+                    } else {
+                        CommandBuilder::new().cx(&[(2, 3)]).build()
+                    };
+                    expected.try_run_shot(&expected_commands).unwrap();
+                    assert_eq!(
+                        runner.weight.log_weight().to_bits(),
+                        expected.weight.log_weight().to_bits()
+                    );
+                    if x_basis {
+                        runner.simulator.h(&qubits);
+                        expected.simulator.h(&qubits);
+                    }
+                    let actual = runner.simulator.mz(&qubits);
+                    let expected = expected.simulator.mz(&qubits);
+                    for (actual, expected) in actual.iter().zip(&expected) {
+                        assert!(actual.is_deterministic && expected.is_deterministic);
+                        assert_eq!(actual.outcome, expected.outcome);
+                    }
+                }
+            }
+        }
+    }
+
     #[derive(Clone)]
     struct AfterPreparationGateChannel(GateType);
 
@@ -1089,7 +1321,7 @@ mod tests {
             _ctx: &mut NoiseContext,
             _rng: &mut PecosRng,
         ) -> NoiseResponse {
-            let NoiseEvent::AfterPreparation { qubits } = event else {
+            let NoiseEvent::AfterPreparation { qubits, .. } = event else {
                 return NoiseResponse::None;
             };
             NoiseResponse::inject_gate(GateCommand::new(self.0, smallvec::smallvec![qubits[0]]))
@@ -1118,7 +1350,7 @@ mod tests {
             _ctx: &mut NoiseContext,
             rng: &mut PecosRng,
         ) -> NoiseResponse {
-            let NoiseEvent::AfterPreparation { qubits } = event else {
+            let NoiseEvent::AfterPreparation { qubits, .. } = event else {
                 return NoiseResponse::None;
             };
             let gate_type = match rng.random_range(0..3) {
@@ -1180,7 +1412,7 @@ mod tests {
                 GateCommand::with_angles(
                     gate_type,
                     qubits,
-                    vec![pecos_core::Angle64::from_radians(0.3); angle_arity],
+                    vec![pecos_core::radians!(0.3); angle_arity],
                 ),
             ),
         ]
@@ -1242,6 +1474,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_single_qubit_boost(0.001, 10.0)
+            .unwrap()
             .with_seed(42);
 
         let result = runner.run_shot(&commands);
@@ -1292,8 +1525,10 @@ mod tests {
     fn coherent_idle_is_rejected_by_importance_runner_during_configuration() {
         let noise = crate::noise::GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(0.25)
+            .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).with_noise(noise);
@@ -1390,6 +1625,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 12345))
             .with_single_qubit_boost(true_rate, boost)
+            .unwrap()
             .with_seed(12345);
 
         let mut stats = WeightedStatistics::new();
@@ -1423,6 +1659,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(2, 42))
             .with_two_qubit_boost(0.01, 5.0)
+            .unwrap()
             .with_seed(42);
 
         let result = runner.run_shot(&commands);
@@ -1435,6 +1672,7 @@ mod tests {
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
             .with_measurement_boost(0.001, 100.0)
+            .unwrap()
             .with_seed(42);
 
         // Run many shots to see measurement flips
@@ -1461,23 +1699,27 @@ mod tests {
 
     #[test]
     fn test_outcome_bias_config() {
-        let config = OutcomeBiasConfig::bias_toward_one(0.8);
+        let config = OutcomeBiasConfig::bias_toward_one(0.8).unwrap();
         assert!((config.p_one_proposal - 0.8).abs() < 1e-10);
 
-        let config = OutcomeBiasConfig::bias_toward_zero(0.9);
+        let config = OutcomeBiasConfig::bias_toward_zero(0.9).unwrap();
         assert!((config.p_one_proposal - 0.1).abs() < 1e-10);
 
-        // Test clamping
-        let config = OutcomeBiasConfig::bias_toward_one(1.0);
-        assert!(config.p_one_proposal < 1.0, "Should be clamped below 1.0");
-
-        let config = OutcomeBiasConfig::bias_toward_one(0.0);
-        assert!(config.p_one_proposal > 0.0, "Should be clamped above 0.0");
+        for p in [f64::NAN, -0.1, 1.1, 0.0, 1.0] {
+            assert_eq!(
+                OutcomeBiasConfig::bias_toward_one(p).err().unwrap().field,
+                "p"
+            );
+            assert_eq!(
+                OutcomeBiasConfig::bias_toward_zero(p).err().unwrap().field,
+                "p"
+            );
+        }
     }
 
     #[test]
     fn test_outcome_bias_sample() {
-        let config = OutcomeBiasConfig::bias_toward_one(0.9);
+        let config = OutcomeBiasConfig::bias_toward_one(0.9).unwrap();
         let mut rng = PecosRng::seed_from_u64(42);
 
         let mut ones = 0;
@@ -1531,7 +1773,7 @@ mod tests {
 
         for seed in 0..num_shots {
             let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
-                .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8))
+                .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.8).unwrap())
                 .with_seed(seed);
 
             let result = runner.run_shot_biased(&commands);
@@ -1575,7 +1817,7 @@ mod tests {
         let mut ones = 0;
         for seed in 0..num_shots {
             let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, seed))
-                .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.9))
+                .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.9).unwrap())
                 .with_seed(seed);
 
             let result = runner.run_shot_biased(&commands);
@@ -1603,7 +1845,7 @@ mod tests {
             .build();
 
         let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42))
-            .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.99))
+            .with_outcome_bias(OutcomeBiasConfig::bias_toward_one(0.99).unwrap())
             .with_seed(42);
 
         // Should always get 0 regardless of bias (deterministic measurement)

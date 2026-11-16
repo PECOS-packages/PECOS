@@ -28,19 +28,22 @@
 //! This builder lets you work at whatever level of abstraction you need:
 //!
 //! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use pecos_neo::noise::prelude::*;
 //!
 //! // Simple: just set error rates
 //! let simple = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)
 //!     .with_measurement_error(0.02)
-//!     .build();
+//!     .build()?;
 //!
 //! // Mixed: combine both approaches
 //! let mixed = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)  // Simple base rates
 //!     .with_channel(LeakageChannel::new())  // Add custom channel
-//!     .build();
+//!     .build()?;
+//! # Ok(())
+//! # }
 //! ```
 
 #[cfg(feature = "composite-noise")]
@@ -60,6 +63,10 @@ use super::{
     SingleQubitEmissionWeights, TwoQubitEmissionWeights, TwoQubitPauliWeights,
 };
 use crate::command::GateType;
+use crate::noise::validation::{
+    ValidationResult, validate_angle_rate, validate_duration, validate_rate as checked_rate,
+    validate_scaled_angle_rate,
+};
 use pecos_core::TimeScale;
 
 /// Unified builder for constructing noise models.
@@ -75,22 +82,28 @@ use pecos_core::TimeScale;
 /// ## Simple depolarizing noise
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::prelude::*;
 ///
 /// let model = NoiseModelBuilder::new()
 ///     .with_depolarizing(0.001, 0.01)  // p1=0.001, p2=0.01
-///     .build();
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// ## Adding existing channels
 ///
 /// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use pecos_neo::noise::prelude::*;
 ///
-/// let custom = SingleQubitChannel::depolarizing(0.001);
+/// let custom = SingleQubitChannel::depolarizing(0.001)?;
 /// let model = NoiseModelBuilder::new()
 ///     .with_channel(custom)
-///     .build();
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 #[allow(clippy::struct_excessive_bools)]
 pub struct NoiseModelBuilder {
@@ -253,10 +266,13 @@ impl NoiseModelBuilder {
     ///
     /// A duration of zero disables these sites. Nonzero sites receive all
     /// configured linear and quadratic idle mechanisms.
-    #[must_use]
-    pub fn with_idle_after_2q(mut self, duration: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    pub fn with_idle_after_2q(mut self, duration: f64) -> ValidationResult<Self> {
+        validate_duration(duration, "duration")?;
         self.idle_after_2q = duration;
-        self
+        Ok(self)
     }
 
     /// Set symmetric measurement error probability.
@@ -300,7 +316,11 @@ impl NoiseModelBuilder {
         self
     }
 
-    /// Set seepage probability for single-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
+    ///
+    /// The per-qubit marginal rate is `p1 * emission_ratio * seepage`, with
+    /// angle scaling included in `p1` where configured. Leakage scale does not
+    /// enter this product.
     #[must_use]
     pub fn with_p1_seepage(mut self, prob: f64) -> Self {
         self.p1_seepage_prob = prob;
@@ -314,7 +334,11 @@ impl NoiseModelBuilder {
         self
     }
 
-    /// Set seepage probability for two-qubit gates.
+    /// Set seepage probability conditional on an emission fault on a leaked qubit.
+    ///
+    /// The per-qubit marginal rate is `p2 * emission_ratio * seepage`, with
+    /// angle scaling included in `p2` where configured. Leakage scale does not
+    /// enter this product.
     #[must_use]
     pub fn with_p2_seepage(mut self, prob: f64) -> Self {
         self.p2_seepage_prob = prob;
@@ -322,33 +346,67 @@ impl NoiseModelBuilder {
     }
 
     /// Set Pauli weights for single-qubit errors.
-    #[must_use]
-    pub fn with_p1_pauli_weights(mut self, weights: PauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p1_pauli_weights(mut self, weights: PauliWeights) -> ValidationResult<Self> {
+        weights.validate()?;
         self.p1_pauli_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Set Pauli weights for two-qubit errors.
-    #[must_use]
-    pub fn with_p2_pauli_weights(mut self, weights: TwoQubitPauliWeights) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn with_p2_pauli_weights(
+        mut self,
+        weights: TwoQubitPauliWeights,
+    ) -> ValidationResult<Self> {
+        weights.validate()?;
         self.p2_pauli_weights = weights;
-        self
+        Ok(self)
     }
 
     /// Set idle noise parameters.
-    #[must_use]
-    pub fn with_idle_noise(mut self, linear_rate: f64, quadratic_rate: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_idle_noise(
+        mut self,
+        linear_rate: f64,
+        quadratic_rate: f64,
+    ) -> ValidationResult<Self> {
+        checked_rate(linear_rate, "linear_rate")?;
+        validate_angle_rate(quadratic_rate, "quadratic_rate")?;
         self.p_idle_linear_rate = linear_rate;
+        validate_scaled_angle_rate(
+            quadratic_rate,
+            self.p_idle_coherent_factor,
+            "quadratic_rate",
+            "factor",
+        )?;
         self.p_idle_quadratic_rate = quadratic_rate;
-        self
+        Ok(self)
     }
 
     /// Enable coherent idle noise.
-    #[must_use]
-    pub fn with_coherent_idle(mut self, factor: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for non-finite or negative rates, factors, or durations.
+    /// Rejects a rate/scale product above `MAX_ANGLE_RATE` to keep duration-scaled angles finite.
+    pub fn with_coherent_idle(mut self, factor: f64) -> ValidationResult<Self> {
+        checked_rate(factor, "factor")?;
         self.p_idle_coherent = true;
+        validate_scaled_angle_rate(
+            self.p_idle_quadratic_rate,
+            factor,
+            "quadratic_rate",
+            "factor",
+        )?;
         self.p_idle_coherent_factor = factor;
-        self
+        Ok(self)
     }
 
     /// Set time scale for physical time interpretation.
@@ -359,6 +417,12 @@ impl NoiseModelBuilder {
     }
 
     /// Mark specific gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gate(mut self, gate_type: GateType) -> Self {
         self.noiseless_gates.push(gate_type);
@@ -366,6 +430,12 @@ impl NoiseModelBuilder {
     }
 
     /// Mark multiple gate types as noiseless.
+    ///
+    /// Suppresses faults from these operations, including preparation, readout,
+    /// crosstalk and idle-after-two-qubit noise. Leakage suppression, preparation
+    /// clearing and lifecycle tracking still run. Scheduled idle is unaffected.
+    /// Custom channels must honor the setting; a fault primitive attached to a
+    /// `BeforeGate` composite still runs because that event decides suppression.
     #[must_use]
     pub fn with_noiseless_gates(mut self, gate_types: impl IntoIterator<Item = GateType>) -> Self {
         self.noiseless_gates.extend(gate_types);
@@ -383,14 +453,17 @@ impl NoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::prelude::*;
     ///
     /// let model = NoiseModelBuilder::new()
     ///     .with_single_qubit_noise(seq![
     ///         skip_if_leaked(),
-    ///         prob(0.001, when_leaked(seep(), pauli())),
+    ///         prob(0.001, when_leaked(seep(), pauli()))?,
     ///     ])
-    ///     .build();
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     #[cfg(feature = "composite-noise")]
@@ -442,16 +515,19 @@ impl NoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::prelude::*;
     ///
     /// let model = NoiseModelBuilder::new()
     ///     .with_custom_channel(
     ///         CompositeChannelBuilder::any_gate("custom_noise", seq![
     ///             skip_if_leaked(),
-    ///             prob(0.05, pauli()),
+    ///             prob(0.05, pauli())?,
     ///         ])
     ///     )
-    ///     .build();
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     #[cfg(feature = "composite-noise")]
@@ -474,13 +550,16 @@ impl NoiseModelBuilder {
     /// # Example
     ///
     /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use pecos_neo::noise::prelude::*;
     ///
     /// let leakage = LeakageChannel::new();
     /// let model = NoiseModelBuilder::new()
     ///     .with_depolarizing(0.001, 0.01)
     ///     .with_channel(leakage)
-    ///     .build();
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_channel<C: NoiseChannel + 'static>(mut self, channel: C) -> Self {
@@ -500,8 +579,39 @@ impl NoiseModelBuilder {
     // ========================================================================
 
     /// Build the noise model.
-    #[must_use]
-    pub fn build(self) -> ComposableNoiseModel {
+    ///
+    /// # Errors
+    /// Returns an error for invalid noise parameters.
+    pub fn build(self) -> ValidationResult<ComposableNoiseModel> {
+        crate::noise::validation::validate_probability(self.p_prep, "p_prep")?;
+        crate::noise::validation::validate_probability(
+            self.p_prep_leak_ratio,
+            "p_prep_leak_ratio",
+        )?;
+        crate::noise::validation::validate_probability(self.p1, "p1")?;
+        crate::noise::validation::validate_probability(
+            self.p1_emission_ratio,
+            "p1_emission_ratio",
+        )?;
+        crate::noise::validation::validate_probability(self.p1_seepage_prob, "p1_seepage_prob")?;
+        crate::noise::validation::validate_probability(self.p2, "p2")?;
+        self.p2_angle_scaling.validate_for_probability(self.p2)?;
+        crate::noise::validation::validate_probability(
+            self.p2_emission_ratio,
+            "p2_emission_ratio",
+        )?;
+        crate::noise::validation::validate_probability(self.p2_seepage_prob, "p2_seepage_prob")?;
+        crate::noise::validation::validate_probability(self.p_meas_0, "p_meas_0")?;
+        crate::noise::validation::validate_probability(self.p_meas_1, "p_meas_1")?;
+        crate::noise::validation::validate_probability(
+            self.p_meas_crosstalk_global,
+            "p_meas_crosstalk_global",
+        )?;
+        crate::noise::validation::validate_probability(
+            self.p_meas_crosstalk_local,
+            "p_meas_crosstalk_local",
+        )?;
+        crate::noise::validation::validate_probability(self.leakage_scale, "leakage_scale")?;
         let mut model = ComposableNoiseModel::new().add_plugin(&CorePlugin);
 
         // Set time scale if provided
@@ -522,7 +632,7 @@ impl NoiseModelBuilder {
                 self.p1_emission_ratio,
                 self.p1_emission_weights,
                 self.p1_seepage_prob,
-            );
+            )?;
             model = model.add_channel(channel);
         }
 
@@ -535,22 +645,22 @@ impl NoiseModelBuilder {
                 self.p2_emission_ratio,
                 self.p2_emission_weights,
                 self.p2_seepage_prob,
-            );
+            )?;
             model = model.add_channel(channel);
         }
 
         // Add measurement channel (unless overridden)
         if !self.measurement_override && (self.p_meas_0 > 0.0 || self.p_meas_1 > 0.0) {
-            let channel = MeasurementChannel::asymmetric(self.p_meas_0, self.p_meas_1);
+            let channel = MeasurementChannel::asymmetric(self.p_meas_0, self.p_meas_1)?;
             model = model.add_channel(channel);
 
             // Add measurement crosstalk if configured
             if self.p_meas_crosstalk_global > 0.0 || self.p_meas_crosstalk_local > 0.0 {
                 let mut crosstalk = CrosstalkChannel::new()
-                    .with_global_rate(self.p_meas_crosstalk_global)
-                    .with_local_rate(self.p_meas_crosstalk_local);
+                    .with_global_rate(self.p_meas_crosstalk_global)?
+                    .with_local_rate(self.p_meas_crosstalk_local)?;
                 if let Some(transitions) = self.p_meas_crosstalk_transitions {
-                    crosstalk = crosstalk.with_transitions(transitions);
+                    crosstalk = crosstalk.with_transitions(transitions)?;
                 }
                 model = model.add_channel(crosstalk);
             }
@@ -558,9 +668,9 @@ impl NoiseModelBuilder {
 
         // Add preparation channel (unless overridden)
         if !self.preparation_override && self.p_prep > 0.0 {
-            let mut channel = PreparationChannel::new(self.p_prep);
+            let mut channel = PreparationChannel::new(self.p_prep)?;
             if self.p_prep_leak_ratio > 0.0 {
-                channel = channel.with_leakage(self.p_prep_leak_ratio);
+                channel = channel.with_leakage(self.p_prep_leak_ratio)?;
             }
             model = model.add_channel(channel);
         }
@@ -588,18 +698,15 @@ impl NoiseModelBuilder {
             );
         }
 
-        // Add leakage channel (if scale differs from default of 1.0)
-        if (self.leakage_scale - 1.0).abs() > f64::EPSILON {
-            let channel = LeakageChannel::new().with_scale(self.leakage_scale);
-            model = model.add_channel(channel);
-        }
+        // Always suppress gates on leaked operands, including custom leakage.
+        model = model.add_channel(LeakageChannel::new().with_scale(self.leakage_scale)?);
 
         // Add all custom channels
         for channel in self.custom_channels {
             model = model.add_boxed_channel(channel);
         }
 
-        model
+        Ok(model)
     }
 }
 
@@ -627,7 +734,10 @@ mod tests {
 
     #[test]
     fn test_simple_depolarizing() {
-        let model = NoiseModelBuilder::new().with_depolarizing(0.1, 0.2).build();
+        let model = NoiseModelBuilder::new()
+            .with_depolarizing(0.1, 0.2)
+            .build()
+            .unwrap();
 
         // Verify channels are added
         assert!(model.channel_count() >= 2);
@@ -636,8 +746,9 @@ mod tests {
     #[test]
     fn test_composed_single_qubit() {
         let model = NoiseModelBuilder::new()
-            .with_single_qubit_noise(prob(0.1, pauli()))
-            .build();
+            .with_single_qubit_noise(prob(0.1, pauli()).unwrap())
+            .build()
+            .unwrap();
 
         assert!(model.channel_count() >= 1);
     }
@@ -646,9 +757,10 @@ mod tests {
     fn test_mixed_configuration() {
         let model = NoiseModelBuilder::new()
             .with_p2(0.01)
-            .with_single_qubit_noise(seq![skip_if_leaked(), prob(0.001, pauli())])
+            .with_single_qubit_noise(seq![skip_if_leaked(), prob(0.001, pauli()).unwrap()])
             .with_measurement_error(0.02)
-            .build();
+            .build()
+            .unwrap();
 
         // Should have: 2Q channel, custom 1Q channel, measurement channel, leakage
         assert!(model.channel_count() >= 3);
@@ -656,8 +768,11 @@ mod tests {
 
     #[test]
     fn test_add_channel() {
-        let custom = SingleQubitChannel::depolarizing(0.01);
-        let model = NoiseModelBuilder::new().with_channel(custom).build();
+        let custom = SingleQubitChannel::depolarizing(0.01).unwrap();
+        let model = NoiseModelBuilder::new()
+            .with_channel(custom)
+            .build()
+            .unwrap();
 
         assert!(model.channel_count() >= 1);
     }
@@ -666,9 +781,12 @@ mod tests {
     fn after_2q_builder_routes_quadratic_noise_without_a_two_qubit_channel() {
         let mut model = NoiseModelBuilder::new()
             .with_idle_noise(0.0, std::f64::consts::PI)
+            .unwrap()
             .with_idle_after_2q(1.0)
-            .build();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -676,6 +794,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(47)));
 
@@ -687,16 +807,21 @@ mod tests {
     fn idle_builder_routes_weights_and_quadratic_rate_in_coherent_mode() {
         let mut builder = NoiseModelBuilder::new()
             .with_idle_noise(1.0, 0.75)
+            .unwrap()
             .with_coherent_idle(1.0)
-            .with_idle_after_2q(2.0);
-        builder.p_idle_linear_weights = crate::noise::PauliWeights::custom(1.0, 0.0, 0.0);
-        let mut model = builder.build();
+            .unwrap()
+            .with_idle_after_2q(2.0)
+            .unwrap();
+        builder.p_idle_linear_weights = crate::noise::PauliWeights::custom(1.0, 0.0, 0.0).unwrap();
+        let mut model = builder.build().unwrap();
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(53)));
@@ -719,15 +844,19 @@ mod tests {
     fn idle_builder_routes_the_incoherent_conversion_factor() {
         let mut builder = NoiseModelBuilder::new()
             .with_idle_noise(0.0, std::f64::consts::FRAC_PI_2)
-            .with_idle_after_2q(1.0);
+            .unwrap()
+            .with_idle_after_2q(1.0)
+            .unwrap();
         builder.p_idle_coherent_factor = 2.0;
-        let mut model = builder.build();
+        let mut model = builder.build().unwrap();
         let qubits = std::array::from_fn::<_, 16, _>(QubitId);
         let event = NoiseEvent::AfterGate {
             gate_type: GateType::CX,
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         let gates = collect_gates(model.emit(&event, &mut PecosRng::seed_from_u64(59)));
@@ -736,8 +865,12 @@ mod tests {
 
     #[test]
     fn after_2q_duration_alone_still_builds_the_idle_policy_channel() {
-        let mut model = NoiseModelBuilder::new().with_idle_after_2q(1.0).build();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+        let mut model = NoiseModelBuilder::new()
+            .with_idle_after_2q(1.0)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0), QubitId(1)];
         let event = NoiseEvent::AfterGate {
@@ -745,6 +878,8 @@ mod tests {
             qubits: &qubits,
             angles: &[],
             gate_id: None,
+            group_size: crate::noise::gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
         assert!(
             model
@@ -757,8 +892,10 @@ mod tests {
     fn quadratic_only_configuration_builds_the_idle_channel() {
         let mut model = NoiseModelBuilder::new()
             .with_idle_noise(0.0, std::f64::consts::PI)
-            .build();
-        assert_eq!(model.channel_names(), ["IdleChannel"]);
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(model.channel_names(), ["IdleChannel", "LeakageChannel"]);
 
         let qubits = [QubitId(0)];
         let event = NoiseEvent::IdleTime {
@@ -787,7 +924,7 @@ mod tests {
         let mut state = SparseStab::with_seed(1, 42);
         let mut simple_errors = 0;
         for seed in 0..shots {
-            let model = NoiseModelBuilder::new().with_p1(p1).build();
+            let model = NoiseModelBuilder::new().with_p1(p1).build().unwrap();
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);
@@ -802,8 +939,9 @@ mod tests {
         let mut composed_errors = 0;
         for seed in 0..shots {
             let model = NoiseModelBuilder::new()
-                .with_single_qubit_noise(prob(p1, pauli()))
-                .build();
+                .with_single_qubit_noise(prob(p1, pauli()).unwrap())
+                .build()
+                .unwrap();
             let mut runner = CircuitRunner::<SparseStab>::new()
                 .with_noise(model)
                 .with_seed(seed);

@@ -175,8 +175,32 @@ impl ByteMessage {
         let batch_header =
             *bytemuck::from_bytes::<BatchHeader>(&self.as_bytes()[0..size_of::<BatchHeader>()]);
 
-        if !batch_header.is_valid() {
-            return Err(PecosError::Input("Invalid batch header".to_string()));
+        if batch_header.magic != super::protocol::BATCH_MAGIC {
+            return Err(PecosError::Input(format!(
+                "Invalid batch magic {:#x}; use a ByteMessage builder with magic {:#x}",
+                batch_header.magic,
+                super::protocol::BATCH_MAGIC
+            )));
+        }
+        if batch_header.version != super::protocol::PROTOCOL_VERSION {
+            let remedy = match batch_header.version {
+                super::protocol::SCHEDULED_FRAME_VERSION
+                | super::protocol::SCHEDULED_EVENT_VERSION => {
+                    "scheduled versions 6 and 7 need the scheduled-idle path, not an ordinary batch consumer"
+                }
+                5 => {
+                    "version 5 batches used a one-byte qubit count; rebuild them with the current encoder (changing only the version byte is incorrect)"
+                }
+                1 | 3 | 4 => {
+                    "rebuild legacy f64-angle batches with the current encoder for the ordinary or scheduled path"
+                }
+                _ => "encode an ordinary batch with the current ByteMessage builder",
+            };
+            return Err(PecosError::Input(format!(
+                "Invalid ordinary batch version {}; expected version {}; {remedy}",
+                batch_header.version,
+                super::protocol::PROTOCOL_VERSION
+            )));
         }
 
         Ok(batch_header)
@@ -365,15 +389,17 @@ impl ByteMessage {
     fn validate_qubit_indices_size(
         payload: &[u8],
         qubits_offset: usize,
-        qubits_size: usize,
-    ) -> Result<(), PecosError> {
-        let minimum_size = qubits_offset + qubits_size;
-        if payload.len() < minimum_size {
-            return Err(PecosError::Input(
-                "Quantum gate message payload too small for qubit indices".to_string(),
-            ));
-        }
-        Ok(())
+        num_qubits: usize,
+    ) -> Result<usize, PecosError> {
+        num_qubits
+            .checked_mul(size_of::<u32>())
+            .and_then(|size| qubits_offset.checked_add(size))
+            .filter(|&end| end <= payload.len())
+            .ok_or_else(|| {
+                PecosError::Input(
+                    "Quantum gate message payload too small for qubit indices".to_string(),
+                )
+            })
     }
 
     /// Parse qubit indices from the payload and convert to `QubitIds` directly
@@ -398,10 +424,10 @@ impl ByteMessage {
         params_offset: usize,
         gate_type: GateType,
         param_count: usize,
-    ) -> Result<(GateAngles, GateParams), PecosError> {
+    ) -> (GateAngles, GateParams) {
         let trace_enabled = log::log_enabled!(Level::Trace);
         if param_count == 0 {
-            return Ok((GateAngles::new(), GateParams::new()));
+            return (GateAngles::new(), GateParams::new());
         }
 
         if trace_enabled {
@@ -417,17 +443,20 @@ impl ByteMessage {
         let mut params = GateParams::with_capacity(param_count.saturating_sub(angle_count));
         for i in 0..param_count {
             let param_offset = params_offset + i * size_of::<f64>();
-            let param = Self::parse_f64_param(payload, param_offset);
-            if trace_enabled {
-                trace!("parse_gate_parameters: Parameter {i} at offset {param_offset}: {param}");
-            }
             if i < angle_count {
-                if !param.is_finite() {
-                    return Err(PecosError::Input("gate angle must be finite".into()));
+                let fraction =
+                    u64::from_le_bytes(Self::parse_parameter_bytes(payload, param_offset));
+                angles.push(Angle64::new(fraction));
+                if trace_enabled {
+                    trace!(
+                        "parse_gate_parameters: Angle {i} at offset {param_offset}: fraction {fraction}"
+                    );
                 }
-                angles.push(Angle64::from_radians(param));
             } else {
-                params.push(param);
+                params.push(f64::from_le_bytes(Self::parse_parameter_bytes(
+                    payload,
+                    param_offset,
+                )));
             }
         }
 
@@ -440,7 +469,7 @@ impl ByteMessage {
             );
         }
 
-        Ok((angles, params))
+        (angles, params)
     }
 
     /// Validate that the payload has exactly the parameter bytes required by the gate.
@@ -454,7 +483,7 @@ impl ByteMessage {
         if gate_type == GateType::Custom {
             if !received_size.is_multiple_of(size_of::<f64>()) {
                 return Err(PecosError::Input(format!(
-                    "Gate Custom received {received_size} parameter bytes, which is not a whole number of f64 parameters"
+                    "Gate Custom received {received_size} parameter bytes, which is not a whole number of u64 angle fractions"
                 )));
             }
             return Ok(received_size / size_of::<f64>());
@@ -469,16 +498,11 @@ impl ByteMessage {
         Ok(gate_type.classical_arity())
     }
 
-    /// Parse an f64 parameter from the payload
-    fn parse_f64_param(payload: &[u8], offset: usize) -> f64 {
-        let param_bytes = &payload[offset..offset + size_of::<f64>()];
-        // Performance critical path during simulation - slice to array conversion should never fail
-        // when we already verified the buffer size (8 bytes for f64)
-        f64::from_le_bytes(
-            param_bytes[..8]
-                .try_into()
-                .expect("Byte buffer has incorrect length for f64 conversion"),
-        )
+    /// Read one validated eight-byte angle or classical parameter word
+    fn parse_parameter_bytes(payload: &[u8], offset: usize) -> [u8; 8] {
+        payload[offset..offset + 8]
+            .try_into()
+            .expect("validate_params_size checked the complete eight-byte parameter word")
     }
 
     /// Parse a quantum gate message payload to `Gate`
@@ -505,15 +529,12 @@ impl ByteMessage {
         }
 
         // Calculate sizes
-        let qubits_byte_size = num_qubits * size_of::<u32>();
         let qubits_offset = size_of::<GateHeader>();
-
-        Self::validate_qubit_indices_size(payload, qubits_offset, qubits_byte_size)?;
+        let params_offset = Self::validate_qubit_indices_size(payload, qubits_offset, num_qubits)?;
 
         // Parse qubit indices directly to QubitId
         let qubits = Self::parse_qubit_indices(payload, qubits_offset, num_qubits);
 
-        let params_offset = qubits_offset + qubits_byte_size;
         let required_params_size = gate_type.classical_arity() * size_of::<f64>();
         let param_count =
             Self::validate_params_size(payload, params_offset, required_params_size, gate_type)?;
@@ -523,10 +544,11 @@ impl ByteMessage {
         }
 
         // Parse parameters if present
-        // The wire format stores all classical parameters as f64, with angles first (in radians)
+        // Leading angle words are exact little-endian u64 fractions; remaining
+        // classical parameter words are little-endian f64 values.
         let (angles, params) = if has_params || (gate_type == GateType::Custom && param_count > 0) {
             let parsed =
-                Self::parse_gate_parameters(payload, params_offset, gate_type, param_count)?;
+                Self::parse_gate_parameters(payload, params_offset, gate_type, param_count);
             if trace_enabled {
                 trace!(
                     "parse_gate_command: Parsed parameters: angles={:?}, params={:?}",
@@ -677,6 +699,22 @@ mod tests {
     }
 
     #[test]
+    fn angle_words_precede_unchanged_classical_parameters() {
+        // No native gate currently mixes angles and non-angle parameters. Test
+        // the shared word decoder directly so future mixed gates keep the layout.
+        for fraction in [0, 1, u64::MAX] {
+            for param in [0.0_f64, -0.0, 1.25, f64::MAX, f64::INFINITY, f64::NAN] {
+                let mut payload = Vec::from(fraction.to_le_bytes());
+                payload.extend_from_slice(&param.to_le_bytes());
+                let (angles, params) =
+                    ByteMessage::parse_gate_parameters(&payload, 0, GateType::RZ, 2);
+                assert_eq!(angles.as_slice(), &[Angle64::new(fraction)]);
+                assert_eq!(params[0].to_bits(), param.to_bits());
+            }
+        }
+    }
+
+    #[test]
     fn strict_unaligned_payload_headers() {
         let mut storage = [0_u64; 2];
         let bytes = bytemuck::cast_slice_mut::<u64, u8>(&mut storage);
@@ -711,14 +749,49 @@ mod tests {
         bytes[0] = 0;
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
-            "Invalid batch header",
+            "Invalid batch magic 0x50454300; use a ByteMessage builder with magic 0x50454353",
         );
         bytes = ByteMessage::create_empty().into_bytes();
         bytes[4] = 255;
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
-            "Invalid batch header",
+            "Invalid ordinary batch version 255; expected version 8; encode an ordinary batch with the current ByteMessage builder",
         );
+    }
+
+    #[test]
+    fn version_five_requires_reencoding() {
+        // Version 5 H on qubit 0: four-byte gate header and one qubit index.
+        let mut bytes = vec![
+            83, 67, 69, 80, 5, 0, 0, 0, 1, 0, 0, 0, 32, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0,
+        ];
+        bytes.extend_from_slice(&[GateType::H as u8, 1, 0, 0]);
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        assert_input(
+            ByteMessage::new(&bytes).quantum_ops(),
+            "Invalid ordinary batch version 5; expected version 8; version 5 batches used a one-byte qubit count; rebuild them with the current encoder (changing only the version byte is incorrect)",
+        );
+        let dump = crate::byte_message::debug::dump_batch_raw(&bytes);
+        assert!(dump.contains("one-byte qubit count"));
+        assert!(dump.contains("rebuild them with the current encoder"));
+        assert!(dump.contains("changing only the version byte is incorrect"));
+    }
+
+    #[test]
+    fn truncated_qubit_lists_return_input_errors() {
+        for count in [2, 300, u32::MAX / 4, u32::MAX] {
+            let mut bytes = ByteMessage::builder().h(&[0]).build().into_bytes();
+            let count_offset = size_of::<BatchHeader>()
+                + size_of::<MessageHeader>()
+                + std::mem::offset_of!(GateHeader, num_qubits);
+            patch_word(&mut bytes, count_offset, count);
+            assert_input(
+                ByteMessage::new(&bytes).quantum_ops(),
+                "Quantum gate message payload too small for qubit indices",
+            );
+            let dump = crate::byte_message::debug::dump_batch_raw(&bytes);
+            assert!(dump.contains(&format!("declares {count} qubits")));
+        }
     }
 
     #[test]
@@ -744,7 +817,11 @@ mod tests {
     #[test]
     fn strict_later_header() {
         let mut bytes = ByteMessage::builder().h(&[0]).x(&[1]).build().into_bytes();
-        bytes.truncate(36);
+        let second_header = size_of::<BatchHeader>()
+            + size_of::<MessageHeader>()
+            + size_of::<GateHeader>()
+            + size_of::<u32>();
+        bytes.truncate(second_header + size_of::<MessageHeader>() - 1);
         let message = patched_message(bytes);
         assert_input(
             message.quantum_ops(),
@@ -765,7 +842,14 @@ mod tests {
     #[test]
     fn strict_payload_bounds() {
         let mut bytes = ByteMessage::builder().h(&[0]).build().into_bytes();
-        patch_word(&mut bytes, 20, 9);
+        let payload_size_offset =
+            size_of::<BatchHeader>() + std::mem::offset_of!(MessageHeader, payload_size);
+        let oversized_payload = size_of::<GateHeader>() + size_of::<u32>() + 1;
+        patch_word(
+            &mut bytes,
+            payload_size_offset,
+            u32::try_from(oversized_payload).unwrap(),
+        );
         assert_input(
             ByteMessage::new(&bytes).quantum_ops(),
             "Message 0: payload extends beyond buffer",
@@ -989,8 +1073,8 @@ mod tests {
         let mut payload = Vec::new();
         payload.extend_from_slice(bytemuck::bytes_of(&header));
         payload.extend_from_slice(&0_u32.to_le_bytes());
-        payload.extend_from_slice(&0.5_f64.to_le_bytes());
-        payload.extend_from_slice(&0.25_f64.to_le_bytes());
+        payload.extend_from_slice(&pecos_core::radians!(0.5).fraction().to_le_bytes());
+        payload.extend_from_slice(&pecos_core::radians!(0.25).fraction().to_le_bytes());
 
         let mut builder = ByteMessageBuilder::new();
         builder.add_message(MessageType::Gate, &payload, MessageFlags::NONE);
@@ -1035,7 +1119,7 @@ mod tests {
     fn quantum_ops_round_trips_custom_gate_angles() {
         let original = Gate::new(
             GateType::Custom,
-            vec![Angle64::from_radians(0.5), Angle64::from_radians(0.25)],
+            vec![pecos_core::radians!(0.5), pecos_core::radians!(0.25)],
             Vec::<f64>::new(),
             vec![QubitId(0), QubitId(1)],
         );

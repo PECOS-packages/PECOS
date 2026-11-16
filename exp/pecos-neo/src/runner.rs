@@ -51,10 +51,14 @@
 
 use crate::command::{CommandQueue, GateCommand, GateType, SignalStore};
 use crate::extensible::{
-    AdaptedOp, AdaptedSequence, GateDefinitions, GateId, MeasBasis, PrepBasis, ResultId,
+    AdaptedOp, AdaptedSequence, DEFAULT_MAX_DECOMPOSITION_DEPTH, GateDefinitions, GateId,
+    GroupInstantiationError, MeasBasis, PrepBasis, ResultId, instantiate_per_group, operand_groups,
 };
 use crate::noise::context::NoiseContext;
-use crate::noise::{ComposableNoiseModel, NoiseEvent, NoiseResponse};
+use crate::noise::{
+    ComposableNoiseModel, GateQubitPartition, NoiseEvent, NoiseResponse, gate_group_size,
+    partition_gate_qubits,
+};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
@@ -68,12 +72,12 @@ use std::sync::Arc;
 
 /// Convert a flat qubit slice to a vector of pairs.
 fn flat_to_pairs(qubits: &[QubitId]) -> SmallVec<[(QubitId, QubitId); 4]> {
-    qubits
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| (c[0], c[1]))
-        .collect()
+    let (pairs, remainder) = qubits.as_chunks::<2>();
+    assert!(
+        remainder.is_empty(),
+        "validated gate operands must contain complete pairs"
+    );
+    pairs.iter().map(|c| (c[0], c[1])).collect()
 }
 
 // --- Signal Handler Infrastructure ---
@@ -165,8 +169,10 @@ impl SignalHandlerRegistry {
 pub struct DispatchContext<'a> {
     /// Gate type (for gate events).
     pub gate_type: GateType,
-    /// Qubits involved.
+    /// Qubits involved; executed groups only for after-gate handlers.
     pub qubits: &'a [QubitId],
+    /// Groups suppressed while leaked; empty except for after-gate handlers.
+    pub leaked_suppressed: &'a [QubitId],
     /// Angle parameters (for parameterized gates).
     pub angles: &'a [Angle64],
     /// Gate ID (for extensible gate identification).
@@ -287,7 +293,12 @@ impl EventHandlers {
 
     // --- Gate event handler registration ---
 
-    /// Register a handler called before each gate is applied.
+    /// Register a handler called before each gate in queue execution.
+    ///
+    /// `NoiseResponse::SkipGate(qubits)` suppresses operand groups containing a
+    /// listed qubit. Non-operands have no effect; list all operands to skip all groups.
+    /// Leakage marks update the noise context before noise dispatch and suppression;
+    /// they require a noise model. Adapted execution does not call this hook.
     #[must_use]
     pub fn on_before_gate(
         mut self,
@@ -298,6 +309,9 @@ impl EventHandlers {
     }
 
     /// Register a before-gate handler with explicit priority.
+    ///
+    /// Handler leakage marks are applied before noise dispatch and suppression.
+    /// A leakage mark requires a noise model. Adapted execution does not call this hook.
     #[must_use]
     pub fn on_before_gate_with_priority(
         mut self,
@@ -312,7 +326,11 @@ impl EventHandlers {
         self
     }
 
-    /// Register a handler called after each gate is applied.
+    /// Register an after-gate handler for queue execution (not adapted execution).
+    ///
+    /// Fires when a command has at least one retained group, or empty operands.
+    /// `qubits` contains only executed groups and may be empty; groups skipped
+    /// while leaked are in `leaked_suppressed`. All-dropped commands do not fire.
     #[must_use]
     pub fn on_after_gate(
         mut self,
@@ -323,6 +341,8 @@ impl EventHandlers {
     }
 
     /// Register an after-gate handler with explicit priority.
+    ///
+    /// Uses the same retained-group split and queue-only dispatch as `on_after_gate`.
     #[must_use]
     pub fn on_after_gate_with_priority(
         mut self,
@@ -612,11 +632,39 @@ pub enum ExecutionError {
     },
     /// The command has invalid qubit support or payload.
     InvalidCommand(crate::command::GateCommandError),
-    /// A gate command carries an invalid number of target qubits.
+    /// A gate carries an invalid number of target qubits.
     QubitArity {
         gate: GateType,
         arity: usize,
         got: usize,
+    },
+    /// Any gate reported by ID carries a number of target qubits that is not
+    /// a nonzero multiple of its registered qubit arity. This check can run
+    /// before decomposition.
+    DecompositionQubitArity {
+        gate_id: GateId,
+        arity: usize,
+        got: usize,
+    },
+    /// A decomposition angle source refers to a missing input angle.
+    DecompositionAngleIndexOutOfRange {
+        gate_id: GateId,
+        index: usize,
+        angle_count: usize,
+    },
+    /// A gate reported by ID repeats qubits within one command.
+    DuplicateQubits { gate_id: GateId, qubits: Vec<usize> },
+    /// A decomposition operation refers to an operand index outside the
+    /// operand group it is instantiated over.
+    DecompositionIndexOutOfRange {
+        gate_id: GateId,
+        index: usize,
+        group_size: usize,
+    },
+    /// A handler returned a leakage mark without a noise model to store it.
+    HandlerLeakageWithoutNoise {
+        mark: &'static str,
+        qubits: Vec<QubitId>,
     },
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
@@ -650,6 +698,42 @@ impl std::fmt::Display for ExecutionError {
                 f,
                 "Gate {gate:?} received {got} targets, which is not a nonzero multiple of its \
                  qubit arity {arity}"
+            ),
+            Self::DecompositionQubitArity {
+                gate_id,
+                arity,
+                got,
+            } => write!(
+                f,
+                "Gate ID {} received {got} targets, which is not a nonzero \
+                 multiple of its registered qubit arity {arity}",
+                gate_id.0
+            ),
+            Self::DecompositionAngleIndexOutOfRange {
+                gate_id,
+                index,
+                angle_count,
+            } => write!(
+                f,
+                "Decomposition of gate {gate_id:?} uses angle index {index}, but only {angle_count} input angles were supplied"
+            ),
+            Self::DuplicateQubits { gate_id, qubits } => write!(
+                f,
+                "Gate {gate_id:?} requires distinct qubits; duplicated qubits: {qubits:?}"
+            ),
+            Self::DecompositionIndexOutOfRange {
+                gate_id,
+                index,
+                group_size,
+            } => write!(
+                f,
+                "Decomposition of gate ID {} uses operand index {index}, but each operand group \
+                 has {group_size} qubits; check the gate's registered arity",
+                gate_id.0
+            ),
+            Self::HandlerLeakageWithoutNoise { mark, qubits } => write!(
+                f,
+                "Handler returned {mark} for qubits {qubits:?} without leakage tracking; add a noise model"
             ),
             Self::MaxDecompositionDepthExceeded => {
                 write!(f, "Maximum decomposition depth exceeded")
@@ -813,7 +897,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             overrides: None,
             rotation_executor: None,
             results: Vec::new(),
-            max_decomp_depth: 10,
+            max_decomp_depth: DEFAULT_MAX_DECOMPOSITION_DEPTH,
             noise: None,
             signal_handlers: SignalHandlerRegistry::new(),
             gate_handlers: GateEventHandlers::new(),
@@ -1002,10 +1086,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
     // --- Gate event handler registration ---
 
-    /// Register a handler called before each gate is applied.
+    /// Register a handler called before each gate in queue execution.
     ///
     /// Handlers run in priority order (higher priority first, default 0).
-    /// Return `NoiseResponse::SkipGate` to prevent the gate from executing.
+    /// Return `NoiseResponse::SkipGate(qubits)` to suppress operand groups
+    /// containing any listed qubit. Non-operands have no effect; list all
+    /// operands to suppress the whole command. Leakage marks update the noise
+    /// context before noise dispatch and suppression; they require a noise model.
     pub fn on_before_gate(
         &mut self,
         handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
@@ -1015,6 +1102,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 
     /// Register a before-gate handler with explicit priority.
+    ///
+    /// Handler leakage marks are applied before noise dispatch and suppression.
+    /// A leakage mark requires a noise model. Adapted execution does not call this hook.
     pub fn on_before_gate_with_priority(
         &mut self,
         priority: i32,
@@ -1028,7 +1118,11 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         self
     }
 
-    /// Register a handler called after each gate is applied.
+    /// Register an after-gate handler for queue execution (not adapted execution).
+    ///
+    /// Fires when a command has at least one retained group, or empty operands.
+    /// `qubits` contains only executed groups and may be empty; groups skipped
+    /// while leaked are in `leaked_suppressed`. All-dropped commands do not fire.
     pub fn on_after_gate(
         &mut self,
         handler: impl Fn(&DispatchContext<'_>) -> NoiseResponse + Send + Sync + 'static,
@@ -1038,6 +1132,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 
     /// Register an after-gate handler with explicit priority.
+    ///
+    /// Uses the same retained-group split and queue-only dispatch as `on_after_gate`.
     pub fn on_after_gate_with_priority(
         &mut self,
         priority: i32,
@@ -1302,58 +1398,54 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             // All other gates: convert to GateId and use unified chain
             _ => {
                 let gate_id = command.gate_type.to_gate_id();
-                let skip = self.dispatch_before_gate_for_id(
+                let group_size = gate_group_size(command.gate_type.quantum_arity(), qubits.len());
+                let skipped = self.dispatch_before_gate_for_id(
                     sim,
                     gate_id,
                     command.gate_type,
                     qubits,
                     command.angles(),
+                    group_size,
                 )?;
-                if skip {
-                    // Still emit after-gate for channels that want to inject errors
-                    self.dispatch_after_gate_for_id(
-                        sim,
-                        gate_id,
-                        command.gate_type,
-                        qubits,
-                        command.angles(),
-                    )?;
-                    return Ok(());
+                let partition = self.partition_gate(qubits, group_size, &skipped);
+                let all_groups_skipped = !qubits.is_empty() && partition.executed.is_empty();
+                if !all_groups_skipped {
+                    let qubits = partition.executed.as_ref();
+                    // Execute through unified precedence chain. The automatic
+                    // Clifford-angle rotation step is a FALLBACK gated on the
+                    // gate having no user-registered decomposition, so an
+                    // explicit GateDefinitions decomposition wins at Clifford
+                    // angles too (see execute_gate for the rationale).
+                    let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
+                    let mut executed =
+                        self.try_execute_override(sim, gate_id, qubits, command.angles())
+                            || Self::try_execute_clifford(sim, gate_id, qubits)
+                            || self.rotation_executor.is_some_and(|executor| {
+                                executor(sim, gate_id, command.angles(), qubits)
+                            });
+                    if !executed && !self.definitions.has_decomposition(gate_id) {
+                        rotation_attempt = Self::try_execute_clifford_rotation(
+                            sim,
+                            gate_id,
+                            qubits,
+                            command.angles(),
+                        )?;
+                        executed = rotation_attempt == CliffordRotationAttempt::Executed;
+                    }
+
+                    if !executed {
+                        self.execute_via_decomposition(sim, gate_id, qubits, command.angles(), 0)
+                            .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
+                    }
                 }
 
-                // Execute through unified precedence chain. The automatic
-                // Clifford-angle rotation step is a FALLBACK gated on the
-                // gate having no user-registered decomposition, so an
-                // explicit GateDefinitions decomposition wins at Clifford
-                // angles too (see execute_gate for the rationale).
-                let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
-                let mut executed =
-                    self.try_execute_override(sim, gate_id, qubits, command.angles())
-                        || Self::try_execute_clifford(sim, gate_id, qubits)
-                        || self.rotation_executor.is_some_and(|executor| {
-                            executor(sim, gate_id, command.angles(), qubits)
-                        });
-                if !executed && !self.definitions.has_decomposition(gate_id) {
-                    rotation_attempt = Self::try_execute_clifford_rotation(
-                        sim,
-                        gate_id,
-                        qubits,
-                        command.angles(),
-                    )?;
-                    executed = rotation_attempt == CliffordRotationAttempt::Executed;
-                }
-
-                if !executed {
-                    self.execute_via_decomposition(sim, gate_id, qubits, command.angles(), 0)
-                        .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
-                }
-
-                self.dispatch_after_gate_for_id(
+                self.finish_gate(
                     sim,
                     gate_id,
-                    command.gate_type,
-                    qubits,
+                    &partition,
                     command.angles(),
+                    command.gate_type,
+                    true,
                 )?;
             }
         }
@@ -1502,7 +1594,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// Execute a gate using the unified precedence chain:
     /// overrides -> Clifford -> rotation -> decomposition.
     ///
-    /// Before and after the gate, noise events and user handlers are dispatched.
+    /// Before and after the gate, noise model events are dispatched.
     fn execute_gate(
         &mut self,
         sim: &mut S,
@@ -1511,41 +1603,192 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         angles: &[Angle64],
         depth: usize,
     ) -> Result<(), ExecutionError> {
+        // Validate before noise or overrides can mutate the simulator.
         if let Some(gate_type) = gate_id.try_to_gate_type() {
             validate_angle_arity(gate_type, angles)?;
         }
-        // Emit before-gate noise event
-        let skip = self.emit_before_gate(sim, gate_id, qubits, angles)?;
-        if skip {
-            return Ok(());
+        if let Some(arity) = self.definitions.quantum_arity(gate_id).map(usize::from)
+            && arity > 0
+            && !qubits.len().is_multiple_of(arity)
+        {
+            return Err(match gate_id.try_to_gate_type() {
+                Some(gate) => ExecutionError::QubitArity {
+                    gate,
+                    arity,
+                    got: qubits.len(),
+                },
+                None => ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity,
+                    got: qubits.len(),
+                },
+            });
         }
-
-        // Try execution in order of precedence. The automatic
-        // Clifford-angle rotation step is a FALLBACK: it fires only when
-        // the gate has no user-registered decomposition, so an explicit
-        // GateDefinitions decomposition wins at Clifford angles too
-        // (registering a decomposition is an explicit user choice, like
-        // GateOverrides, and must not be silently bypassed).
-        let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
-        let mut executed = self.try_execute_override(sim, gate_id, qubits, angles)
-            || Self::try_execute_clifford(sim, gate_id, qubits)
-            || self
-                .rotation_executor
-                .is_some_and(|executor| executor(sim, gate_id, angles, qubits));
-        if !executed && !self.definitions.has_decomposition(gate_id) {
-            rotation_attempt = Self::try_execute_clifford_rotation(sim, gate_id, qubits, angles)?;
-            executed = rotation_attempt == CliffordRotationAttempt::Executed;
+        if qubits.len() > 1 {
+            let duplicates = pecos_core::duplicate_qubits(qubits.iter().map(|q| q.0));
+            if !duplicates.is_empty() {
+                return Err(match gate_id.try_to_gate_type() {
+                    Some(gate_type) => ExecutionError::InvalidCommand(
+                        crate::command::GateCommandError::InvalidGate {
+                            gate_type,
+                            message: format!(
+                                "Gate {gate_type:?} requires distinct qubits within one gate command; duplicated qubits: {duplicates:?}"
+                            ),
+                        },
+                    ),
+                    None => ExecutionError::DuplicateQubits {
+                        gate_id,
+                        qubits: duplicates,
+                    },
+                });
+            }
         }
+        // Grouping preserves the existing empty-operand execution behavior.
+        let group_size = self.gate_group_size(gate_id, qubits);
+        let skipped = self.emit_before_gate(sim, gate_id, qubits, angles, group_size)?;
+        let partition = self.partition_gate(qubits, group_size, &skipped);
+        let all_groups_skipped = !qubits.is_empty() && partition.executed.is_empty();
+        if !all_groups_skipped {
+            let qubits = partition.executed.as_ref();
 
-        if !executed {
-            self.execute_via_decomposition(sim, gate_id, qubits, angles, depth)
-                .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
+            // Try execution in order of precedence. The automatic
+            // Clifford-angle rotation step is a FALLBACK: it fires only when
+            // the gate has no user-registered decomposition, so an explicit
+            // GateDefinitions decomposition wins at Clifford angles too
+            // (registering a decomposition is an explicit user choice, like
+            // GateOverrides, and must not be silently bypassed).
+            let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
+            let mut executed = self.try_execute_override(sim, gate_id, qubits, angles)
+                || Self::try_execute_clifford(sim, gate_id, qubits)
+                || self
+                    .rotation_executor
+                    .is_some_and(|executor| executor(sim, gate_id, angles, qubits));
+            if !executed && !self.definitions.has_decomposition(gate_id) {
+                rotation_attempt =
+                    Self::try_execute_clifford_rotation(sim, gate_id, qubits, angles)?;
+                executed = rotation_attempt == CliffordRotationAttempt::Executed;
+            }
+
+            if !executed {
+                self.execute_via_decomposition(sim, gate_id, qubits, angles, depth)
+                    .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
+            }
         }
 
         // Emit after-gate noise event
-        self.emit_after_gate(sim, gate_id, qubits, angles)?;
+        self.finish_gate(
+            sim,
+            gate_id,
+            &partition,
+            angles,
+            gate_id.try_to_gate_type().unwrap_or(GateType::I),
+            false,
+        )?;
 
         Ok(())
+    }
+
+    fn gate_group_size(&self, gate_id: GateId, qubits: &[QubitId]) -> std::num::NonZeroUsize {
+        gate_group_size(
+            self.definitions
+                .quantum_arity(gate_id)
+                .map_or(0, usize::from),
+            qubits.len(),
+        )
+    }
+
+    fn partition_gate<'a>(
+        &self,
+        qubits: &'a [QubitId],
+        group_size: std::num::NonZeroUsize,
+        skipped: &[QubitId],
+    ) -> GateQubitPartition<'a> {
+        partition_gate_qubits(
+            qubits,
+            group_size,
+            skipped,
+            self.noise.as_ref().map(ComposableNoiseModel::context),
+        )
+    }
+
+    fn finish_gate(
+        &mut self,
+        sim: &mut S,
+        gate_id: GateId,
+        partition: &GateQubitPartition<'_>,
+        angles: &[Angle64],
+        gate_type: GateType,
+        dispatch_handlers: bool,
+    ) -> Result<(), ExecutionError> {
+        if !partition.emit_after_gate {
+            return Ok(());
+        }
+        let event = NoiseEvent::AfterGate {
+            gate_type,
+            gate_id: Some(gate_id),
+            qubits: &partition.executed,
+            leaked_suppressed: &partition.leaked_suppressed,
+            angles,
+            group_size: partition.group_size,
+        };
+        let noise_response = self.noise.as_mut().map_or(NoiseResponse::None, |noise| {
+            noise.emit(&event, &mut self.rng)
+        });
+        let response = if dispatch_handlers && !self.gate_handlers.after_gate.is_empty() {
+            let ctx = DispatchContext {
+                gate_type,
+                gate_id: Some(gate_id),
+                qubits: &partition.executed,
+                leaked_suppressed: &partition.leaked_suppressed,
+                angles,
+                outcomes: None,
+                duration: None,
+                noise_context: self.noise.as_ref().map(ComposableNoiseModel::context),
+            };
+            let user_response = GateEventHandlers::dispatch(&self.gate_handlers.after_gate, &ctx);
+            let user_response = self.apply_handler_state_changes(user_response)?;
+            noise_response.combine(user_response)
+        } else {
+            noise_response
+        };
+        self.apply_noise_response(sim, response)
+    }
+
+    /// Apply only handler marks; emit has already applied noise-model marks.
+    fn apply_handler_state_changes(
+        &mut self,
+        response: NoiseResponse,
+    ) -> Result<NoiseResponse, ExecutionError> {
+        fn require_noise(response: &NoiseResponse) -> Result<(), ExecutionError> {
+            match response {
+                NoiseResponse::MarkLeaked(qubits) => {
+                    Err(ExecutionError::HandlerLeakageWithoutNoise {
+                        mark: "MarkLeaked",
+                        qubits: qubits.to_vec(),
+                    })
+                }
+                NoiseResponse::MarkUnleaked(qubits) => {
+                    Err(ExecutionError::HandlerLeakageWithoutNoise {
+                        mark: "MarkUnleaked",
+                        qubits: qubits.to_vec(),
+                    })
+                }
+                NoiseResponse::Multiple(responses) => {
+                    for response in responses {
+                        require_noise(response)?;
+                    }
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
+        }
+        if let Some(noise) = self.noise.as_mut() {
+            let observed = noise.apply_state_changes_with_observers(&response, &mut self.rng);
+            Ok(response.combine(observed))
+        } else {
+            require_noise(&response)?;
+            Ok(response)
+        }
     }
 
     /// Try to execute a gate via registered overrides.
@@ -1759,6 +2002,10 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 
     /// Execute a gate via decomposition from `GateDefinitions`.
+    ///
+    /// The decomposition is instantiated once per operand group, sized by the
+    /// gate's registered qubit arity. Without a positive registered arity, the
+    /// whole operand slice is one group.
     fn execute_via_decomposition(
         &mut self,
         sim: &mut S,
@@ -1767,15 +2014,43 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         angles: &[Angle64],
         depth: usize,
     ) -> Result<(), ExecutionError> {
+        if depth > self.max_decomp_depth {
+            return Err(ExecutionError::MaxDecompositionDepthExceeded);
+        }
+        let to_execution_error = |error| match error {
+            GroupInstantiationError::QubitArity { arity, got } => {
+                ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity,
+                    got,
+                }
+            }
+            GroupInstantiationError::AngleIndexOutOfRange { index, angle_count } => {
+                ExecutionError::DecompositionAngleIndexOutOfRange {
+                    gate_id,
+                    index,
+                    angle_count,
+                }
+            }
+            GroupInstantiationError::IndexOutOfRange { index, group_size } => {
+                ExecutionError::DecompositionIndexOutOfRange {
+                    gate_id,
+                    index,
+                    group_size,
+                }
+            }
+        };
+
+        // Known positive arities have already rejected incomplete nonempty groups.
+        // Empty operands can still reach this check and are rejected for those
+        // arities; unknown/zero arity still instantiates the whole slice once.
+        let arity = self.definitions.quantum_arity(gate_id).map(usize::from);
+        let groups = operand_groups(qubits, arity).map_err(to_execution_error)?;
         let Some(decomp_entry) = self.definitions.decomposition(gate_id) else {
             return Err(ExecutionError::NoDecomposition { gate_id });
         };
-
-        let instantiated_ops: Vec<_> = decomp_entry
-            .decomposition
-            .expand()
-            .map(|op| op.instantiate(qubits, angles))
-            .collect();
+        let instantiated_ops = instantiate_per_group(&decomp_entry.decomposition, &groups, angles)
+            .map_err(to_execution_error)?;
 
         for inst in instantiated_ops {
             self.execute_gate(sim, inst.gate, &inst.qubits, &inst.angles, depth + 1)?;
@@ -1854,6 +2129,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// Build a `DispatchContext` for signal dispatch (no gate info).
     fn signal_context(&self) -> DispatchContext<'_> {
         DispatchContext {
+            leaked_suppressed: &[],
             gate_type: GateType::I,
             qubits: &[],
             angles: &[],
@@ -1867,6 +2143,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// Build a `DispatchContext` for a gate command.
     fn gate_context<'a>(&'a self, command: &'a GateCommand) -> DispatchContext<'a> {
         DispatchContext {
+            leaked_suppressed: &[],
             gate_type: command.gate_type,
             qubits: command.qubits.as_slice(),
             angles: command.angles(),
@@ -1877,8 +2154,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
     }
 
-    /// Dispatch before-gate event for a gate identified by `GateId` (used by both paths).
-    /// Returns `true` if the gate should be skipped.
+    /// Dispatch before-gate event for a gate identified by `GateId` (queue path).
+    /// Returns qubits whose operand groups should be skipped.
     fn dispatch_before_gate_for_id(
         &mut self,
         sim: &mut S,
@@ -1886,14 +2163,18 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_type: GateType,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) -> Result<bool, ExecutionError> {
+        group_size: std::num::NonZeroUsize,
+    ) -> Result<SmallVec<[QubitId; 4]>, ExecutionError> {
         // Fast path: no handlers registered, go directly to noise model
         if self.gate_handlers.before_gate.is_empty() {
-            return self.emit_before_gate_noise_for_id(sim, gate_id, gate_type, qubits, angles);
+            return self.emit_before_gate_noise_for_id(
+                sim, gate_id, gate_type, qubits, angles, group_size,
+            );
         }
 
         // 1. User before-gate handlers
         let ctx = DispatchContext {
+            leaked_suppressed: &[],
             gate_type,
             qubits,
             angles,
@@ -1903,51 +2184,17 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             noise_context: self.noise.as_ref().map(ComposableNoiseModel::context),
         };
         let user_response = GateEventHandlers::dispatch(&self.gate_handlers.before_gate, &ctx);
+        let user_response = self.apply_handler_state_changes(user_response)?;
 
         // 2. Noise model BeforeGate
         let noise_response =
-            self.emit_before_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles);
+            self.emit_before_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles, group_size);
 
         // 3. Combine
         let combined = user_response.combine(noise_response);
-        let should_skip = combined.should_skip_gate();
+        let skipped = combined.skipped_qubits();
         self.apply_noise_response(sim, combined)?;
-        Ok(should_skip)
-    }
-
-    /// Dispatch after-gate event for a gate identified by `GateId`.
-    fn dispatch_after_gate_for_id(
-        &mut self,
-        sim: &mut S,
-        gate_id: GateId,
-        gate_type: GateType,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> Result<(), ExecutionError> {
-        // Fast path
-        if self.gate_handlers.after_gate.is_empty() {
-            return self.emit_after_gate_noise_for_id(sim, gate_id, gate_type, qubits, angles);
-        }
-
-        // 1. Noise model AfterGate
-        let noise_response =
-            self.emit_after_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles);
-
-        // 2. User after-gate handlers
-        let ctx = DispatchContext {
-            gate_type,
-            qubits,
-            angles,
-            gate_id: Some(gate_id),
-            outcomes: None,
-            duration: None,
-            noise_context: self.noise.as_ref().map(ComposableNoiseModel::context),
-        };
-        let user_response = GateEventHandlers::dispatch(&self.gate_handlers.after_gate, &ctx);
-
-        // 3. Combine and apply
-        let combined = noise_response.combine(user_response);
-        self.apply_noise_response(sim, combined)
+        Ok(skipped)
     }
 
     /// Dispatch before-measurement event.
@@ -1960,13 +2207,14 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // Fast path
         if self.gate_handlers.before_measurement.is_empty() {
-            return self.emit_before_measurement_noise(sim, qubits);
+            return self.emit_before_measurement_noise(sim, command.gate_type, qubits);
         }
 
         let ctx = self.gate_context(command);
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.before_measurement, &ctx);
-        let noise_response = self.emit_before_measurement_noise_raw(qubits);
+        let user_response = self.apply_handler_state_changes(user_response)?;
+        let noise_response = self.emit_before_measurement_noise_raw(command.gate_type, qubits);
         let combined = user_response.combine(noise_response);
         self.apply_noise_response(sim, combined)
     }
@@ -1982,11 +2230,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // Fast path
         if self.gate_handlers.after_measurement.is_empty() {
-            return self.emit_after_measurement_noise(sim, qubits, outcomes);
+            return self.emit_after_measurement_noise(sim, command.gate_type, qubits, outcomes);
         }
 
-        let noise_response = self.emit_after_measurement_noise_raw(qubits, outcomes);
+        let noise_response =
+            self.emit_after_measurement_noise_raw(command.gate_type, qubits, outcomes);
         let ctx = DispatchContext {
+            leaked_suppressed: &[],
             gate_type: command.gate_type,
             qubits,
             angles: command.angles(),
@@ -1997,6 +2247,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         };
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.after_measurement, &ctx);
+        let user_response = self.apply_handler_state_changes(user_response)?;
         let combined = noise_response.combine(user_response);
         self.apply_noise_response(sim, combined)
     }
@@ -2011,13 +2262,14 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // Fast path
         if self.gate_handlers.after_preparation.is_empty() {
-            return self.emit_after_preparation_noise(sim, qubits);
+            return self.emit_after_preparation_noise(sim, command.gate_type, qubits);
         }
 
-        let noise_response = self.emit_after_preparation_noise_raw(qubits);
+        let noise_response = self.emit_after_preparation_noise_raw(command.gate_type, qubits);
         let ctx = self.gate_context(command);
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.after_preparation, &ctx);
+        let user_response = self.apply_handler_state_changes(user_response)?;
         let combined = noise_response.combine(user_response);
         self.apply_noise_response(sim, combined)
     }
@@ -2038,6 +2290,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         let noise_response = self.emit_idle_noise_raw(qubits, duration);
         let ctx = DispatchContext {
+            leaked_suppressed: &[],
             gate_type: command.gate_type,
             qubits,
             angles: command.angles(),
@@ -2047,22 +2300,24 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             noise_context: self.noise.as_ref().map(ComposableNoiseModel::context),
         };
         let user_response = GateEventHandlers::dispatch(&self.gate_handlers.idle, &ctx);
+        let user_response = self.apply_handler_state_changes(user_response)?;
         let combined = noise_response.combine(user_response);
         self.apply_noise_response(sim, combined)
     }
 
     // --- Noise emission (AdaptedSequence path) ---
 
-    /// Emit before-gate to noise model (`AdaptedSequence` path). Returns `true` if gate should be skipped.
+    /// Emit before-gate to noise model (`AdaptedSequence` path). Returns skipped qubits.
     fn emit_before_gate(
         &mut self,
         sim: &mut S,
         gate_id: GateId,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) -> Result<bool, ExecutionError> {
+        group_size: std::num::NonZeroUsize,
+    ) -> Result<SmallVec<[QubitId; 4]>, ExecutionError> {
         let Some(ref mut noise) = self.noise else {
-            return Ok(false);
+            return Ok(SmallVec::new());
         };
 
         let gate_type = gate_id.try_to_gate_type().unwrap_or(GateType::I);
@@ -2071,41 +2326,18 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             qubits,
             angles,
             gate_id: Some(gate_id),
+            group_size,
         };
 
         let response = noise.emit(&event, &mut self.rng);
-        let should_skip = response.should_skip_gate();
+        let skipped = response.skipped_qubits();
         self.apply_noise_response(sim, response)?;
-        Ok(should_skip)
-    }
-
-    /// Emit after-gate to noise model (`AdaptedSequence` path).
-    fn emit_after_gate(
-        &mut self,
-        sim: &mut S,
-        gate_id: GateId,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> Result<(), ExecutionError> {
-        let Some(ref mut noise) = self.noise else {
-            return Ok(());
-        };
-
-        let gate_type = gate_id.try_to_gate_type().unwrap_or(GateType::I);
-        let event = NoiseEvent::AfterGate {
-            gate_type,
-            qubits,
-            angles,
-            gate_id: Some(gate_id),
-        };
-
-        let response = noise.emit(&event, &mut self.rng);
-        self.apply_noise_response(sim, response)
+        Ok(skipped)
     }
 
     // --- Noise emission (CommandQueue path) ---
 
-    /// Emit before-gate noise for a gate identified by `GateId`. Returns `true` if gate should be skipped.
+    /// Emit before-gate noise for a gate identified by `GateId`. Returns skipped qubits.
     fn emit_before_gate_noise_for_id(
         &mut self,
         sim: &mut S,
@@ -2113,11 +2345,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_type: GateType,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) -> Result<bool, ExecutionError> {
-        let response = self.emit_before_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles);
-        let should_skip = response.should_skip_gate();
+        group_size: std::num::NonZeroUsize,
+    ) -> Result<SmallVec<[QubitId; 4]>, ExecutionError> {
+        let response =
+            self.emit_before_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles, group_size);
+        let skipped = response.skipped_qubits();
         self.apply_noise_response(sim, response)?;
-        Ok(should_skip)
+        Ok(skipped)
     }
 
     fn emit_before_gate_noise_raw_for_id(
@@ -2126,6 +2360,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_type: GateType,
         qubits: &[QubitId],
         angles: &[Angle64],
+        group_size: std::num::NonZeroUsize,
     ) -> NoiseResponse {
         if let Some(ref mut noise) = self.noise {
             let event = NoiseEvent::BeforeGate {
@@ -2133,37 +2368,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 qubits,
                 angles,
                 gate_id: Some(gate_id),
-            };
-            return noise.emit(&event, &mut self.rng);
-        }
-        NoiseResponse::None
-    }
-
-    fn emit_after_gate_noise_for_id(
-        &mut self,
-        sim: &mut S,
-        gate_id: GateId,
-        gate_type: GateType,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> Result<(), ExecutionError> {
-        let response = self.emit_after_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles);
-        self.apply_noise_response(sim, response)
-    }
-
-    fn emit_after_gate_noise_raw_for_id(
-        &mut self,
-        gate_id: GateId,
-        gate_type: GateType,
-        qubits: &[QubitId],
-        angles: &[Angle64],
-    ) -> NoiseResponse {
-        if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::AfterGate {
-                gate_type,
-                qubits,
-                angles,
-                gate_id: Some(gate_id),
+                group_size,
             };
             return noise.emit(&event, &mut self.rng);
         }
@@ -2173,15 +2378,20 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     fn emit_before_measurement_noise(
         &mut self,
         sim: &mut S,
+        gate_type: GateType,
         qubits: &[QubitId],
     ) -> Result<(), ExecutionError> {
-        let response = self.emit_before_measurement_noise_raw(qubits);
+        let response = self.emit_before_measurement_noise_raw(gate_type, qubits);
         self.apply_noise_response(sim, response)
     }
 
-    fn emit_before_measurement_noise_raw(&mut self, qubits: &[QubitId]) -> NoiseResponse {
+    fn emit_before_measurement_noise_raw(
+        &mut self,
+        gate_type: GateType,
+        qubits: &[QubitId],
+    ) -> NoiseResponse {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::BeforeMeasurement { qubits };
+            let event = NoiseEvent::BeforeMeasurement { gate_type, qubits };
             return noise.emit(&event, &mut self.rng);
         }
         NoiseResponse::None
@@ -2190,20 +2400,26 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     fn emit_after_measurement_noise(
         &mut self,
         sim: &mut S,
+        gate_type: GateType,
         qubits: &[QubitId],
         outcomes: &[bool],
     ) -> Result<(), ExecutionError> {
-        let response = self.emit_after_measurement_noise_raw(qubits, outcomes);
+        let response = self.emit_after_measurement_noise_raw(gate_type, qubits, outcomes);
         self.apply_noise_response(sim, response)
     }
 
     fn emit_after_measurement_noise_raw(
         &mut self,
+        gate_type: GateType,
         qubits: &[QubitId],
         outcomes: &[bool],
     ) -> NoiseResponse {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::AfterMeasurement { qubits, outcomes };
+            let event = NoiseEvent::AfterMeasurement {
+                gate_type,
+                qubits,
+                outcomes,
+            };
             return noise.emit(&event, &mut self.rng);
         }
         NoiseResponse::None
@@ -2212,15 +2428,20 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     fn emit_after_preparation_noise(
         &mut self,
         sim: &mut S,
+        gate_type: GateType,
         qubits: &[QubitId],
     ) -> Result<(), ExecutionError> {
-        let response = self.emit_after_preparation_noise_raw(qubits);
+        let response = self.emit_after_preparation_noise_raw(gate_type, qubits);
         self.apply_noise_response(sim, response)
     }
 
-    fn emit_after_preparation_noise_raw(&mut self, qubits: &[QubitId]) -> NoiseResponse {
+    fn emit_after_preparation_noise_raw(
+        &mut self,
+        gate_type: GateType,
+        qubits: &[QubitId],
+    ) -> NoiseResponse {
         if let Some(ref mut noise) = self.noise {
-            let event = NoiseEvent::AfterPreparation { qubits };
+            let event = NoiseEvent::AfterPreparation { gate_type, qubits };
             return noise.emit(&event, &mut self.rng);
         }
         NoiseResponse::None
@@ -2279,6 +2500,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     let response = self
                         .signal_handlers
                         .call_response(cursor.type_id, data, &ctx);
+                    let response = self.apply_handler_state_changes(response)?;
                     if !response.is_none() {
                         self.apply_noise_response(sim, response)?;
                     }
@@ -2350,7 +2572,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     ) -> Result<(), ExecutionError> {
         match response {
             NoiseResponse::None
-            | NoiseResponse::SkipGate
+            | NoiseResponse::SkipGate(_)
             | NoiseResponse::MarkLeaked(_)
             | NoiseResponse::MarkUnleaked(_) => {}
 
@@ -2551,26 +2773,29 @@ where
                 sim.rzz(*angle, &pairs);
                 true
             }
-            // CCX (Toffoli) decomposition
-            GateType::CCX if qubits.len() >= 3 => {
-                let c1 = qubits[0];
-                let c2 = qubits[1];
-                let target = qubits[2];
-                sim.h(&[target]);
-                sim.cx(&[(c2, target)]);
-                sim.tdg(&[target]);
-                sim.cx(&[(c1, target)]);
-                sim.t(&[target]);
-                sim.cx(&[(c2, target)]);
-                sim.tdg(&[target]);
-                sim.cx(&[(c1, target)]);
-                sim.t(&[c2]);
-                sim.t(&[target]);
-                sim.h(&[target]);
-                sim.cx(&[(c1, c2)]);
-                sim.t(&[c1]);
-                sim.tdg(&[c2]);
-                sim.cx(&[(c1, c2)]);
+            // CCX (Toffoli) decomposition, applied to each (c1, c2, target) group
+            GateType::CCX => {
+                let (groups, remainder) = qubits.as_chunks::<3>();
+                if groups.is_empty() || !remainder.is_empty() {
+                    return false;
+                }
+                for &[c1, c2, target] in groups {
+                    sim.h(&[target]);
+                    sim.cx(&[(c2, target)]);
+                    sim.tdg(&[target]);
+                    sim.cx(&[(c1, target)]);
+                    sim.t(&[target]);
+                    sim.cx(&[(c2, target)]);
+                    sim.tdg(&[target]);
+                    sim.cx(&[(c1, target)]);
+                    sim.t(&[c2]);
+                    sim.t(&[target]);
+                    sim.h(&[target]);
+                    sim.cx(&[(c1, c2)]);
+                    sim.t(&[c1]);
+                    sim.tdg(&[c2]);
+                    sim.cx(&[(c1, c2)]);
+                }
                 true
             }
             _ => false,
@@ -2589,6 +2814,634 @@ mod tests {
     use pecos_core::clifford::Clifford;
     use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
     use pecos_simulators::{SparseStab, StateVec};
+
+    #[test]
+    fn test_queue_leakage_skip_is_pair_local() {
+        let mut noise =
+            ComposableNoiseModel::new().add_channel(crate::noise::LeakageChannel::new());
+        noise.context_mut().mark_leaked(QubitId(0));
+        let commands = CommandBuilder::new()
+            .pz(&[0, 1, 2, 3])
+            .x(&[2])
+            .gate(GateCommand::new(
+                GateType::CX,
+                smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+            ))
+            .mz(&[2, 3])
+            .build();
+        let mut state = SparseStab::with_seed(4, 42);
+        let outcomes = CircuitRunner::<SparseStab>::new()
+            .with_noise(noise)
+            .apply_circuit(&mut state, &commands)
+            .unwrap();
+        assert_eq!(outcomes.get_bit(QubitId(2)), Some(true));
+        assert_eq!(outcomes.get_bit(QubitId(3)), Some(true));
+    }
+
+    #[test]
+    fn test_queue_composite_leakage_skip_is_pair_local() {
+        use crate::noise::composite::prelude::{CompositeChannelBuilder, skip_if_leaked};
+
+        let mut noise = ComposableNoiseModel::new().add_channel(
+            CompositeChannelBuilder::before_gate("skip", skip_if_leaked()),
+        );
+        noise.context_mut().mark_leaked(QubitId(0));
+        let commands = CommandBuilder::new()
+            .pz(&[0, 1, 2, 3])
+            .x(&[2])
+            .gate(GateCommand::new(
+                GateType::CX,
+                smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+            ))
+            .mz(&[2, 3])
+            .build();
+        let mut state = SparseStab::with_seed(4, 42);
+        let outcomes = CircuitRunner::<SparseStab>::new()
+            .with_noise(noise)
+            .apply_circuit(&mut state, &commands)
+            .unwrap();
+        assert_eq!(outcomes.get_bit(QubitId(2)), Some(true));
+        assert_eq!(outcomes.get_bit(QubitId(3)), Some(true));
+    }
+
+    #[test]
+    fn test_queue_leakage_skip_is_single_operand_local() {
+        let mut noise =
+            ComposableNoiseModel::new().add_channel(crate::noise::LeakageChannel::new());
+        noise.context_mut().mark_leaked(QubitId(0));
+        let commands = CommandBuilder::new()
+            .pz(&[0, 1])
+            .gate(GateCommand::new(
+                GateType::X,
+                smallvec::smallvec![QubitId(0), QubitId(1)],
+            ))
+            .build();
+        let mut state = SparseStab::with_seed(2, 42);
+        CircuitRunner::<SparseStab>::new()
+            .with_noise(noise)
+            .apply_circuit(&mut state, &commands)
+            .unwrap();
+        let measured = state.mz(&[QubitId(0), QubitId(1)]);
+        assert!(!measured[0].outcome);
+        assert!(measured[1].outcome);
+    }
+
+    #[test]
+    fn test_adapted_leakage_skip_is_pair_local() {
+        let mut noise =
+            ComposableNoiseModel::new().add_channel(crate::noise::LeakageChannel::new());
+        noise.context_mut().mark_leaked(QubitId(0));
+        let circuit = OpBuilder::new()
+            .pz(QubitId(0))
+            .pz(QubitId(1))
+            .pz(QubitId(2))
+            .pz(QubitId(3))
+            .x(QubitId(2))
+            .gate(
+                gates::CX,
+                &[QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+                &[],
+            )
+            .mz(QubitId(3), ResultId(0))
+            .build();
+        let mut state = SparseStab::with_seed(4, 42);
+        let outcomes = CircuitRunner::<SparseStab>::new()
+            .with_noise(noise)
+            .apply_adapted_circuit(&mut state, &circuit)
+            .unwrap();
+        assert_eq!(outcomes.get_bit(QubitId(3)), Some(true));
+    }
+
+    #[test]
+    fn test_queue_handler_skip_operand_groups() {
+        for (skipped, expected) in [
+            (vec![], [true, true]),
+            (vec![QubitId(99)], [true, true]),
+            (vec![QubitId(2)], [true, false]),
+            ((0..4).map(QubitId).collect(), [false, false]),
+        ] {
+            let mut runner = CircuitRunner::<SparseStab>::new();
+            runner.on_before_gate(move |ctx| {
+                if ctx.gate_type == GateType::CX {
+                    NoiseResponse::SkipGate(skipped.iter().copied().collect())
+                } else {
+                    NoiseResponse::None
+                }
+            });
+            let commands = CommandBuilder::new()
+                .pz(&[0, 1, 2, 3])
+                .x(&[0, 2])
+                .gate(GateCommand::new(
+                    GateType::CX,
+                    smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+                ))
+                .mz(&[1, 3])
+                .build();
+            let mut state = SparseStab::with_seed(4, 42);
+            let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
+            assert_eq!(outcomes.get_bit(QubitId(1)), Some(expected[0]));
+            assert_eq!(outcomes.get_bit(QubitId(3)), Some(expected[1]));
+        }
+    }
+
+    #[test]
+    fn test_queue_skip_after_gate_filtered_slice() {
+        for with_noise in [false, true] {
+            for skip_all in [false, true] {
+                let skipped = if skip_all {
+                    smallvec::smallvec![QubitId(0), QubitId(2)]
+                } else {
+                    smallvec::smallvec![QubitId(0)]
+                };
+                let after = Arc::new(std::sync::Mutex::new(Vec::new()));
+                let handlers = Arc::new(std::sync::Mutex::new(Vec::new()));
+                let mut runner = CircuitRunner::<SparseStab>::new();
+                if with_noise {
+                    runner = runner.with_noise(ComposableNoiseModel::new().add_channel(
+                        GateSkipRecorder {
+                            skipped: SmallVec::new(),
+                            after: Arc::clone(&after),
+                        },
+                    ));
+                }
+                runner.on_before_gate(move |_| NoiseResponse::SkipGate(skipped.clone()));
+                let recorded = Arc::clone(&handlers);
+                runner.on_after_gate(move |ctx| {
+                    recorded.lock().unwrap().push(ctx.qubits.to_vec());
+                    NoiseResponse::None
+                });
+                let commands = CommandBuilder::new()
+                    .gate(GateCommand::new(
+                        GateType::CX,
+                        smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+                    ))
+                    .build();
+                runner
+                    .apply_circuit(&mut SparseStab::with_seed(4, 42), &commands)
+                    .unwrap();
+                let expected = if skip_all {
+                    vec![]
+                } else {
+                    vec![vec![QubitId(2), QubitId(3)]]
+                };
+                assert_eq!(*handlers.lock().unwrap(), expected);
+                if with_noise {
+                    assert_eq!(*after.lock().unwrap(), expected);
+                }
+            }
+        }
+    }
+
+    fn zz_emission_channel() -> crate::noise::two_qubit::TwoQubitChannel {
+        let mut weights = [0.0; 24];
+        weights[13] = 1.0; // ZZ in TWO_QUBIT_EMISSION_OPS.
+        crate::noise::two_qubit::TwoQubitChannel::depolarizing(1.0)
+            .unwrap()
+            .with_emission_weights(
+                1.0,
+                crate::noise::TwoQubitEmissionWeights::custom(weights).unwrap(),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn test_queue_healthy_skip_has_no_two_qubit_emission() {
+        let mut runner = CircuitRunner::<SparseStab>::new()
+            .with_noise(ComposableNoiseModel::new().add_channel(zz_emission_channel()));
+        runner.on_before_gate(|ctx| {
+            if ctx.gate_type == GateType::CX {
+                NoiseResponse::SkipGate(smallvec::smallvec![QubitId(0)])
+            } else {
+                NoiseResponse::None
+            }
+        });
+        let commands = CommandBuilder::new()
+            .pz(&[0, 1, 2, 3])
+            .x(&[0, 2])
+            .gate(GateCommand::new(
+                GateType::CX,
+                smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+            ))
+            .mz(&[0, 1, 2, 3])
+            .build();
+        let outcomes = runner
+            .apply_circuit(&mut SparseStab::with_seed(4, 42), &commands)
+            .unwrap();
+        // The skipped pair stays at 10; CX then its dagger and ZZ also leaves 10.
+        for (q, expected) in [true, false, true, false].into_iter().enumerate() {
+            assert_eq!(outcomes.get_bit(QubitId(q)), Some(expected));
+        }
+    }
+
+    #[test]
+    fn test_adapted_healthy_skip_has_no_two_qubit_emission() {
+        let noise = ComposableNoiseModel::new()
+            .add_channel(GateSkipRecorder {
+                skipped: smallvec::smallvec![QubitId(0)],
+                after: Arc::default(),
+            })
+            .add_channel(zz_emission_channel());
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        let mut state = SparseStab::with_seed(4, 42);
+        state.pz(&qubits);
+        state.x(&[QubitId(0), QubitId(2)]);
+        runner
+            .execute_gate(&mut state, gates::CX, &qubits, &[], 0)
+            .unwrap();
+        assert_eq!(
+            state
+                .mz(&qubits)
+                .iter()
+                .map(|r| r.outcome)
+                .collect::<Vec<_>>(),
+            [true, false, true, false]
+        );
+    }
+
+    #[test]
+    fn test_queue_healthy_skip_has_no_single_qubit_emission() {
+        let noise = ComposableNoiseModel::new().add_channel(
+            SingleQubitChannel::depolarizing(1.0)
+                .unwrap()
+                .with_emission_weights(
+                    1.0,
+                    crate::noise::SingleQubitEmissionWeights::custom(0.0, 0.0, 1.0, 0.0).unwrap(),
+                )
+                .unwrap(),
+        );
+        let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
+        runner.on_before_gate(|_| NoiseResponse::SkipGate(smallvec::smallvec![QubitId(0)]));
+        let commands = CommandBuilder::new()
+            .pz(&[0, 1])
+            .x(&[0, 1])
+            .mz(&[0, 1])
+            .build();
+        let outcomes = runner
+            .apply_circuit(&mut SparseStab::with_seed(2, 42), &commands)
+            .unwrap();
+        // q0 is untouched; q1 receives X, its dagger, then Z.
+        assert_eq!(outcomes.get_bit(QubitId(0)), Some(false));
+        assert_eq!(outcomes.get_bit(QubitId(1)), Some(false));
+    }
+
+    #[derive(Clone)]
+    struct GateSkipRecorder {
+        skipped: SmallVec<[QubitId; 4]>,
+        after: Arc<std::sync::Mutex<Vec<Vec<QubitId>>>>,
+    }
+
+    impl crate::noise::NoiseChannel for GateSkipRecorder {
+        fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+            matches!(
+                event,
+                NoiseEvent::BeforeGate { .. } | NoiseEvent::AfterGate { .. }
+            )
+        }
+
+        fn apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            match event {
+                NoiseEvent::BeforeGate { .. } => NoiseResponse::SkipGate(self.skipped.clone()),
+                NoiseEvent::AfterGate { qubits, .. } => {
+                    self.after.lock().unwrap().push(qubits.to_vec());
+                    NoiseResponse::None
+                }
+                _ => NoiseResponse::None,
+            }
+        }
+
+        fn name(&self) -> &'static str {
+            "GateSkipRecorder"
+        }
+
+        fn clone_box(&self) -> Box<dyn crate::noise::NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[test]
+    fn test_adapted_skip_after_gate_filtered_slice() {
+        for skipped in [
+            smallvec::smallvec![QubitId(0)],
+            smallvec::smallvec![QubitId(0), QubitId(2)],
+        ] {
+            let after = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let expected = if skipped.len() == 1 {
+                vec![vec![QubitId(2), QubitId(3)]]
+            } else {
+                vec![]
+            };
+            let noise = ComposableNoiseModel::new().add_channel(GateSkipRecorder {
+                skipped,
+                after: Arc::clone(&after),
+            });
+            let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
+            runner.on_before_gate(|_| panic!("queue handlers must not run on adapted gates"));
+            runner.on_after_gate(|_| panic!("queue handlers must not run on adapted gates"));
+            let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+            let circuit = OpBuilder::new().gate(gates::CX, &qubits, &[]).build();
+            runner
+                .apply_adapted_circuit(&mut SparseStab::with_seed(4, 42), &circuit)
+                .unwrap();
+            assert_eq!(*after.lock().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_execute_gate_custom_arity_and_whole_slice_fallback() {
+        for (arity, count, expected) in [
+            (Some(2), 4, vec![false, false, true, true]),
+            (Some(2), 3, vec![false, false, false]),
+            (Some(0), 4, vec![false; 4]),
+            (None, 4, vec![false; 4]),
+        ] {
+            let mut definitions = GateDefinitions::new();
+            let id = arity.map_or(GateId(1000), |arity| {
+                definitions.register(GateSpec::new("custom").with_quantum_arity(arity))
+            });
+            let after = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let noise = ComposableNoiseModel::new().add_channel(GateSkipRecorder {
+                skipped: smallvec::smallvec![QubitId(0)],
+                after: Arc::clone(&after),
+            });
+            let overrides =
+                GateOverrides::new().register(id, |sim: &mut SparseStab, angles, qubits| {
+                    assert_eq!(angles, &[Angle64::HALF_TURN]);
+                    sim.x(qubits);
+                    true
+                });
+            let mut runner = CircuitRunner::with_definitions(definitions)
+                .with_overrides(overrides)
+                .with_noise(noise);
+            let qubits: Vec<_> = (0..count).map(QubitId).collect();
+            let mut state = SparseStab::with_seed(count, 42);
+            let result = runner.execute_gate(&mut state, id, &qubits, &[Angle64::HALF_TURN], 0);
+            if arity == Some(2) && count == 3 {
+                assert!(matches!(
+                    result,
+                    Err(ExecutionError::DecompositionQubitArity {
+                        arity: 2,
+                        got: 3,
+                        ..
+                    })
+                ));
+            } else {
+                result.unwrap();
+            }
+            let expected_after = if arity == Some(2) && count == 4 {
+                vec![vec![QubitId(2), QubitId(3)]]
+            } else {
+                vec![]
+            };
+            assert_eq!(*after.lock().unwrap(), expected_after);
+            assert_eq!(
+                state
+                    .mz(&qubits)
+                    .iter()
+                    .map(|r| r.outcome)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[derive(Clone)]
+    struct LeakDuringDecomposition {
+        after: Arc<std::sync::Mutex<Vec<Vec<QubitId>>>>,
+    }
+
+    impl crate::noise::NoiseChannel for LeakDuringDecomposition {
+        fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+            matches!(
+                event,
+                NoiseEvent::BeforeGate { .. } | NoiseEvent::AfterGate { .. }
+            )
+        }
+
+        fn apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            match event {
+                NoiseEvent::BeforeGate {
+                    gate_type: GateType::RZZ,
+                    ..
+                } => NoiseResponse::SkipGate(smallvec::smallvec![QubitId(0)]),
+                NoiseEvent::AfterGate {
+                    gate_type: GateType::X,
+                    qubits,
+                    ..
+                } => {
+                    assert_eq!(*qubits, &[QubitId(2)]);
+                    NoiseResponse::MarkLeaked(smallvec::smallvec![QubitId(0)])
+                }
+                NoiseEvent::AfterGate {
+                    gate_type: GateType::RZZ,
+                    qubits,
+                    ..
+                } => {
+                    self.after.lock().unwrap().push(qubits.to_vec());
+                    NoiseResponse::None
+                }
+                _ => NoiseResponse::None,
+            }
+        }
+
+        fn name(&self) -> &'static str {
+            "LeakDuringDecomposition"
+        }
+
+        fn clone_box(&self) -> Box<dyn crate::noise::NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    fn check_skip_partition_precedes_child_leakage(adapted: bool) {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateSupportSet};
+
+        let mut definitions = GateDefinitions::new();
+        definitions.set_decomposition(
+            gates::RZZ,
+            DecompEntry {
+                requires: GateSupportSet::from_iter([gates::X]),
+                decomposition: Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(gates::X, 0)])),
+            },
+        );
+        let after = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let noise = ComposableNoiseModel::new().add_channel(LeakDuringDecomposition {
+            after: Arc::clone(&after),
+        });
+        let mut runner =
+            CircuitRunner::<SparseStab>::with_definitions(definitions).with_noise(noise);
+        let mut state = SparseStab::with_seed(4, 42);
+        let qubits = smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        if adapted {
+            runner
+                .execute_gate(&mut state, gates::RZZ, &qubits, &[Angle64::HALF_TURN], 0)
+                .unwrap();
+        } else {
+            runner
+                .execute_queue_command(
+                    &mut state,
+                    &GateCommand::with_angles(
+                        GateType::RZZ,
+                        qubits,
+                        smallvec::smallvec![Angle64::HALF_TURN],
+                    ),
+                )
+                .unwrap();
+        }
+        assert!(
+            runner
+                .noise
+                .as_ref()
+                .unwrap()
+                .context()
+                .is_leaked(QubitId(0))
+        );
+        assert!(state.mz(&[QubitId(2)])[0].outcome);
+        assert_eq!(*after.lock().unwrap(), vec![vec![QubitId(2), QubitId(3)]]);
+    }
+
+    #[test]
+    fn test_queue_skip_partition_precedes_child_leakage() {
+        check_skip_partition_precedes_child_leakage(false);
+    }
+
+    #[test]
+    fn test_adapted_skip_partition_precedes_child_leakage() {
+        check_skip_partition_precedes_child_leakage(true);
+    }
+
+    #[test]
+    fn test_leaked_suppressed_groups_receive_after_gate() {
+        // The leaked qubit is either the skipped qubit itself (what
+        // LeakageChannel produces) or its partner; both retain the group.
+        for adapted in [false, true] {
+            for skip_all in [false, true] {
+                for leaked_offset in [0, 1] {
+                    let after = Arc::new(std::sync::Mutex::new(Vec::new()));
+                    let mut noise = ComposableNoiseModel::new().add_channel(GateSkipRecorder {
+                        skipped: if skip_all {
+                            smallvec::smallvec![QubitId(0), QubitId(2)]
+                        } else {
+                            smallvec::smallvec![QubitId(0)]
+                        },
+                        after: Arc::clone(&after),
+                    });
+                    noise.context_mut().mark_leaked(QubitId(leaked_offset));
+                    if skip_all {
+                        noise.context_mut().mark_leaked(QubitId(2 + leaked_offset));
+                    }
+                    let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
+                    let mut state = SparseStab::with_seed(4, 42);
+                    let qubits =
+                        smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+                    if adapted {
+                        runner
+                            .execute_gate(&mut state, gates::CX, &qubits, &[], 0)
+                            .unwrap();
+                    } else {
+                        runner
+                            .execute_queue_command(
+                                &mut state,
+                                &GateCommand::new(GateType::CX, qubits),
+                            )
+                            .unwrap();
+                    }
+                    let expected: Vec<_> = if skip_all {
+                        vec![]
+                    } else {
+                        (2..4).map(QubitId).collect()
+                    };
+                    assert_eq!(
+                        *after.lock().unwrap(),
+                        vec![expected],
+                        "adapted={adapted} skip_all={skip_all} leaked_offset={leaked_offset}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_empty_operands_retain_after_gate_event() {
+        for adapted in [false, true] {
+            let after = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let noise = ComposableNoiseModel::new().add_channel(GateSkipRecorder {
+                skipped: smallvec::smallvec![QubitId(0)],
+                after: Arc::clone(&after),
+            });
+            let mut runner = CircuitRunner::<SparseStab>::new().with_noise(noise);
+            let handlers = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&handlers);
+            runner.on_after_gate(move |ctx| {
+                recorded.lock().unwrap().push(ctx.qubits.to_vec());
+                NoiseResponse::None
+            });
+            let mut state = SparseStab::with_seed(1, 42);
+            if adapted {
+                runner
+                    .execute_gate(&mut state, gates::X, &[], &[], 0)
+                    .unwrap();
+            } else {
+                runner
+                    .execute_queue_command(
+                        &mut state,
+                        &GateCommand::new(GateType::X, SmallVec::new()),
+                    )
+                    .unwrap();
+            }
+            assert_eq!(*after.lock().unwrap(), vec![Vec::<QubitId>::new()]);
+            assert_eq!(handlers.lock().unwrap().len(), usize::from(!adapted));
+        }
+    }
+
+    #[test]
+    fn test_partial_skip_preserves_rotation_angles_and_dispatch() {
+        for native in [false, true] {
+            for adapted in [false, true] {
+                let noise = ComposableNoiseModel::new().add_channel(GateSkipRecorder {
+                    skipped: smallvec::smallvec![QubitId(0)],
+                    after: Arc::default(),
+                });
+                let mut runner = if native {
+                    CircuitRunner::<StateVec>::rotations()
+                } else {
+                    CircuitRunner::<StateVec>::new()
+                }
+                .with_noise(noise);
+                let qubits = [QubitId(0), QubitId(1)];
+                let mut state = StateVec::with_seed(2, 42);
+                if adapted {
+                    runner
+                        .execute_gate(&mut state, gates::RX, &qubits, &[Angle64::HALF_TURN], 0)
+                        .unwrap();
+                } else {
+                    runner
+                        .execute_queue_command(
+                            &mut state,
+                            &GateCommand::with_angles(
+                                GateType::RX,
+                                smallvec::smallvec![qubits[0], qubits[1]],
+                                smallvec::smallvec![Angle64::HALF_TURN],
+                            ),
+                        )
+                        .unwrap();
+                }
+                let measured = state.mz(&qubits);
+                assert!(!measured[0].outcome);
+                assert!(measured[1].outcome);
+            }
+        }
+    }
 
     // --- Basic execution tests ---
 
@@ -2628,7 +3481,8 @@ mod tests {
     fn test_with_noise() {
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let noise = ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0));
+        let noise =
+            ComposableNoiseModel::new().add_channel(SingleQubitChannel::depolarizing(0.0).unwrap());
 
         let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2803,7 +3657,7 @@ mod tests {
             .mz(&[0])
             .build();
 
-        let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0));
+        let noise = ComposableNoiseModel::new().add_channel(IdleChannel::linear(1.0).unwrap());
 
         let mut state = SparseStab::with_seed(1, 42);
         let mut runner = CircuitRunner::<SparseStab>::new()
@@ -2818,8 +3672,10 @@ mod tests {
     fn coherent_idle_without_rotation_support_fails_during_configuration() {
         let noise = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);
@@ -2847,15 +3703,20 @@ mod tests {
                 "NoiseModelBuilder::with_coherent_idle(..)",
                 NoiseModelBuilder::new()
                     .with_idle_noise(0.0, 0.25)
+                    .unwrap()
                     .with_coherent_idle(1.0)
-                    .build(),
+                    .unwrap()
+                    .build()
+                    .unwrap(),
             ),
             (
                 "CompositeNoiseModelBuilder::with_p_idle_coherent(true)",
                 CompositeNoiseModelBuilder::new()
                     .with_p_idle_quadratic(0.25)
+                    .unwrap()
                     .with_p_idle_coherent(true)
-                    .build(),
+                    .build()
+                    .unwrap(),
             ),
             (
                 "IdleChannel::with_coherent_dephasing(true)",
@@ -2896,8 +3757,10 @@ mod tests {
             .build();
         let noise = GeneralNoiseModelBuilder::new()
             .with_p_idle_quadratic(std::f64::consts::PI)
+            .unwrap()
             .with_p_idle_coherent(true)
-            .build();
+            .build()
+            .unwrap();
 
         let mut state = StateVec::with_seed(1, 42);
         let mut runner = CircuitRunner::<StateVec>::rotations()
@@ -2916,7 +3779,7 @@ mod tests {
 
         let noise = ComposableNoiseModel::new().add_channel(CompositeChannelBuilder::idle(
             "coherent_idle",
-            prob(1.0, coherent_rz(0.25)),
+            prob(1.0, coherent_rz(0.25).unwrap()).unwrap(),
         ));
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = CircuitRunner::<SparseStab>::new().with_noise(noise);
@@ -3037,11 +3900,15 @@ mod tests {
 
         let gates = GateDefinitions::builder()
             .with_category_noise(GateCategory::SingleQubitUnitary, 0.0)
+            .unwrap()
             .with_category_noise(GateCategory::TwoQubitUnitary, 0.0)
+            .unwrap()
             .build_or_panic();
 
         let noise = ComposableNoiseModel::new().add_channel(
-            CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 0.0),
+            CategoryBasedChannel::new()
+                .with_category(GateCategory::SingleQubitUnitary, 0.0)
+                .unwrap(),
         );
 
         let commands = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
@@ -3068,7 +3935,9 @@ mod tests {
         );
 
         let noise = ComposableNoiseModel::new().add_channel(
-            CategoryBasedChannel::new().with_category(GateCategory::SingleQubitUnitary, 0.0),
+            CategoryBasedChannel::new()
+                .with_category(GateCategory::SingleQubitUnitary, 0.0)
+                .unwrap(),
         );
 
         let runner = CircuitRunner::<SparseStab>::with_definitions(gates).with_noise(noise);
@@ -3404,7 +4273,7 @@ mod tests {
         // decomposition.
         let circuit = crate::command::CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(0.123))
+            .rz(&[0], pecos_core::radians!(0.123))
             .mz(&[0])
             .build();
 
@@ -3439,8 +4308,8 @@ mod tests {
         assert_eq!(actual.stab_tableau(), expected.stab_tableau());
         assert_eq!(actual.destab_tableau(), expected.destab_tableau());
         for (theta, phi) in [
-            (Angle64::from_radians(0.3), Angle64::ZERO),
-            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123)),
+            (pecos_core::radians!(0.3), Angle64::ZERO),
+            (Angle64::QUARTER_TURN, pecos_core::radians!(0.123)),
         ] {
             let commands = CommandBuilder::new().rxyxy2q(&[(0, 1)], theta, phi).build();
             assert!(matches!(
@@ -3478,7 +4347,7 @@ mod tests {
 
     #[test]
     fn multi_angle_non_clifford_rotations_get_specific_error() {
-        let non_clifford = Angle64::from_radians(0.123);
+        let non_clifford = pecos_core::radians!(0.123);
         let commands = [
             GateCommand::with_angles(
                 GateType::RXY1Q,
@@ -3611,7 +4480,7 @@ mod tests {
 
         let circuit = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
+            .rz(&[0], Angle64::QUARTER_TURN)
             .mz(&[0])
             .build();
 
@@ -3630,7 +4499,7 @@ mod tests {
         // fast path executes RZ(pi/2) = S and |0> stays |0> (measure 0).
         let control = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
+            .rz(&[0], Angle64::QUARTER_TURN)
             .mz(&[0])
             .build();
         let mut state = SparseStab::with_seed(1, 42);
@@ -3641,6 +4510,253 @@ mod tests {
             !bit,
             "default RZ(pi/2) = S leaves |0> unchanged (measure 0)"
         );
+    }
+
+    #[test]
+    fn batched_command_applies_decomposition_to_every_operand_group() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+
+        let mut defs = GateDefinitions::new();
+        defs.set_decomposition(
+            gates::RZ,
+            DecompEntry {
+                requires: crate::extensible::GateSupportSet::from_iter([gates::X]),
+                decomposition: Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(gates::X, 0)])),
+            },
+        );
+        let circuit = CommandBuilder::new()
+            .pz(&[0, 1, 2])
+            .gate(GateCommand::with_angles(
+                GateType::RZ,
+                smallvec::smallvec![QubitId(0), QubitId(1), QubitId(2)],
+                smallvec::smallvec![Angle64::QUARTER_TURN],
+            ))
+            .mz(&[0, 1, 2])
+            .build();
+        let mut state = SparseStab::with_seed(3, 42);
+        let outcomes = CircuitRunner::<SparseStab>::with_definitions(defs)
+            .with_seed(42)
+            .apply_circuit(&mut state, &circuit)
+            .unwrap();
+        let bits: Vec<bool> = outcomes.iter().map(|r| r.outcome).collect();
+        assert_eq!(bits, vec![true, true, true]);
+    }
+
+    #[test]
+    fn execute_gate_decomposes_custom_gate_per_registered_arity() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+
+        // The decomposition acts on operand index 1 only, so each group's
+        // second qubit flips when the slice is grouped by arity.
+        let entry = || DecompEntry {
+            requires: crate::extensible::GateSupportSet::from_iter([gates::X]),
+            decomposition: Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(gates::X, 1)])),
+        };
+        for (arity, count, expected) in [
+            (Some(2), 4, Ok(vec![false, true, false, true])),
+            (Some(2), 3, Err(3)),
+            (None, 4, Ok(vec![false, true, false, false])),
+        ] {
+            let mut defs = GateDefinitions::new();
+            let id = arity.map_or(GateId(1000), |arity| {
+                defs.register(GateSpec::new("custom").with_quantum_arity(arity))
+            });
+            defs.set_decomposition(id, entry());
+            let mut runner = CircuitRunner::<SparseStab>::with_definitions(defs);
+            let qubits: Vec<_> = (0..count).map(QubitId).collect();
+            let mut state = SparseStab::with_seed(count, 42);
+            match (
+                runner.execute_gate(&mut state, id, &qubits, &[], 0),
+                expected,
+            ) {
+                (Ok(()), Ok(expected)) => {
+                    let bits: Vec<bool> = state.mz(&qubits).iter().map(|r| r.outcome).collect();
+                    assert_eq!(bits, expected);
+                }
+                (Err(error), Err(got)) => assert!(
+                    matches!(
+                        error,
+                        ExecutionError::DecompositionQubitArity { gate_id, arity: 2, got: g }
+                            if gate_id == id && g == got
+                    ),
+                    "{error}"
+                ),
+                (result, expected) => panic!("got {result:?}, expected {expected:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn rotation_executor_applies_ccx_to_every_group() {
+        let circuit = CommandBuilder::new()
+            .pz(&[0, 1, 2, 3, 4, 5])
+            .x(&[0, 1, 3, 4])
+            .gate(GateCommand::new(
+                GateType::CCX,
+                (0..6).map(QubitId).collect::<SmallVec<_>>(),
+            ))
+            .mz(&[2, 5])
+            .build();
+        let mut state = StateVec::with_seed(6, 42);
+        let outcomes = CircuitRunner::<StateVec>::rotations()
+            .apply_circuit(&mut state, &circuit)
+            .unwrap();
+        assert_eq!(outcomes.get_bit(QubitId(2)), Some(true));
+        assert_eq!(outcomes.get_bit(QubitId(5)), Some(true));
+    }
+
+    #[test]
+    fn decomposition_forwards_shared_angles_to_every_group() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+
+        let mut defs = GateDefinitions::new();
+        let id = defs.register(
+            GateSpec::new("custom_rx")
+                .with_quantum_arity(1)
+                .with_angle_arity(1),
+        );
+        defs.set_decomposition(
+            id,
+            DecompEntry {
+                requires: crate::extensible::GateSupportSet::from_iter([gates::RX]),
+                decomposition: Decomposition::Dynamic(Arc::new(vec![DecompOp::rotation(
+                    gates::RX,
+                    0,
+                    0,
+                )])),
+            },
+        );
+        let qubits: Vec<_> = (0..3).map(QubitId).collect();
+        for (angle, expected) in [(Angle64::HALF_TURN, true), (Angle64::ZERO, false)] {
+            let mut state = SparseStab::with_seed(3, 42);
+            CircuitRunner::<SparseStab>::with_definitions(defs.clone())
+                .execute_gate(&mut state, id, &qubits, &[angle], 0)
+                .unwrap();
+            let bits: Vec<bool> = state.mz(&qubits).iter().map(|r| r.outcome).collect();
+            assert_eq!(bits, vec![expected; 3], "angle {angle:?}");
+        }
+    }
+
+    #[test]
+    fn decomposition_edge_cases_fail_loudly_or_run_once() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static CHILD_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+        let entry = |ops: Vec<DecompOp>| DecompEntry {
+            requires: crate::extensible::GateSupportSet::new(),
+            decomposition: Decomposition::Dynamic(Arc::new(ops)),
+        };
+
+        // Without a registered arity, an empty operand slice is still one
+        // group, so an operand-free child runs exactly once.
+        let child = GateId(1001);
+        let parent = GateId(1000);
+        let mut defs = GateDefinitions::new();
+        defs.set_decomposition(
+            parent,
+            entry(vec![DecompOp {
+                gate: child,
+                qubit_indices: SmallVec::new(),
+                angles: SmallVec::new(),
+            }]),
+        );
+        let overrides = GateOverrides::new().register(child, |_sim: &mut SparseStab, _, _| {
+            CHILD_CALLS.fetch_add(1, Ordering::Relaxed);
+            true
+        });
+        let mut state = SparseStab::with_seed(1, 42);
+        CircuitRunner::with_definitions(defs)
+            .with_overrides(overrides)
+            .execute_gate(&mut state, parent, &[], &[], 0)
+            .unwrap();
+        assert_eq!(CHILD_CALLS.load(Ordering::Relaxed), 1);
+
+        // A decomposition index outside the registered group size is an error.
+        let mut defs = GateDefinitions::new();
+        let narrow = defs.register(GateSpec::new("narrow").with_quantum_arity(1));
+        defs.set_decomposition(narrow, entry(vec![DecompOp::gate1(gates::X, 1)]));
+        let mut state = SparseStab::with_seed(2, 42);
+        let error = CircuitRunner::with_definitions(defs)
+            .execute_gate(&mut state, narrow, &[QubitId(0), QubitId(1)], &[], 0)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExecutionError::DecompositionIndexOutOfRange {
+                    gate_id,
+                    index: 1,
+                    group_size: 1,
+                } if gate_id == narrow
+            ),
+            "{error}"
+        );
+
+        // With a registered arity, an empty operand slice is rejected rather
+        // than treated as zero groups.
+        let mut defs = GateDefinitions::new();
+        let paired = defs.register(GateSpec::new("paired").with_quantum_arity(2));
+        defs.set_decomposition(paired, entry(vec![DecompOp::gate2(gates::CX, 0, 1)]));
+        let mut state = SparseStab::with_seed(1, 42);
+        let error = CircuitRunner::with_definitions(defs)
+            .execute_gate(&mut state, paired, &[], &[], 0)
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExecutionError::DecompositionQubitArity {
+                    gate_id,
+                    arity: 2,
+                    got: 0,
+                } if gate_id == paired
+            ),
+            "{error}"
+        );
+
+        // A self-referential decomposition stops at the depth limit.
+        let mut defs = GateDefinitions::new();
+        let looping = defs.register(GateSpec::new("looping").with_quantum_arity(1));
+        defs.set_decomposition(looping, entry(vec![DecompOp::gate1(looping, 0)]));
+        let mut state = SparseStab::with_seed(1, 42);
+        let error = CircuitRunner::with_definitions(defs)
+            .execute_gate(&mut state, looping, &[QubitId(0)], &[], 0)
+            .unwrap_err();
+        assert!(
+            matches!(error, ExecutionError::MaxDecompositionDepthExceeded),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rotation_executor_rejects_incomplete_ccx_groups_before_acting() {
+        let mut state = StateVec::with_seed(4, 42);
+        state.x(&[QubitId(0), QubitId(1)]);
+        let qubits: Vec<_> = (0..4).map(QubitId).collect();
+        let result = CircuitRunner::<StateVec>::rotations().execute_gate(
+            &mut state,
+            gates::CCX,
+            &qubits,
+            &[],
+            0,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(ExecutionError::QubitArity {
+                    gate: GateType::CCX,
+                    arity: 3,
+                    got: 4,
+                })
+            ),
+            "{result:?}"
+        );
+        let bits: Vec<bool> = state.mz(&qubits).iter().map(|r| r.outcome).collect();
+        assert_eq!(bits, vec![true, true, false, false]);
     }
 
     // --- apply_gate (interpreter mode) tests ---
@@ -3896,3 +5012,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "runner_suppressed_tests.rs"]
+mod suppressed_tests;

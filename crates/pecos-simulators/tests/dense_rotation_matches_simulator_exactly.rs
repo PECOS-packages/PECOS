@@ -85,7 +85,7 @@ const ANGLES: [f64; 7] = [0.37, -0.37, 2.9, -2.9, PI, 1.5 * PI, -PI / 2.0];
 #[test]
 fn single_qubit_rotations_match_exactly() {
     for &rad in &ANGLES {
-        let a = Angle64::from_radians(rad);
+        let a = Angle64::try_from_radians(rad).unwrap();
         let q = [QubitId(0)];
         for (name, rt, apply) in [
             (
@@ -119,7 +119,7 @@ fn single_qubit_rotations_match_exactly() {
 #[test]
 fn two_qubit_rotations_match_exactly() {
     for &rad in &ANGLES {
-        let a = Angle64::from_radians(rad);
+        let a = Angle64::try_from_radians(rad).unwrap();
         let pair = [(QubitId(0), QubitId(1))];
         for (name, rt, apply) in [
             (
@@ -155,13 +155,16 @@ fn multi_angle_single_qubit_gates_match_exactly() {
     let q = [QubitId(0)];
     for &t in &ANGLES {
         for &p in &[0.0, 1.1, -1.1] {
-            let (theta, phi) = (Angle64::from_radians(t), Angle64::from_radians(p));
+            let (theta, phi) = (
+                Angle64::try_from_radians(t).unwrap(),
+                Angle64::try_from_radians(p).unwrap(),
+            );
             let dense = UnitaryRep::Gate(Unitary::RXY1Q { theta, phi }, smallvec![0usize]);
             assert_exactly_equal(&format!("RXY1Q({t:+.3}, {p:+.3})"), &dense, 1, &move |s| {
                 s.rxy1q(theta, phi, &q);
             });
             for &l in &[0.0, -0.7] {
-                let lambda = Angle64::from_radians(l);
+                let lambda = Angle64::try_from_radians(l).unwrap();
                 let dense = UnitaryRep::Gate(Unitary::U3 { theta, phi, lambda }, smallvec![0usize]);
                 assert_exactly_equal(
                     &format!("U({t:+.3}, {p:+.3}, {l:+.3})"),
@@ -322,7 +325,10 @@ fn trait_default_decompositions_match_the_dense_matrices_exactly() {
     // half turn, plus ordinary ones.
     for &p in &[-PI / 2.0, PI / 2.0, 0.0, PI, 0.67, -1.1] {
         for &t in &ANGLES {
-            let (theta, phi) = (Angle64::from_radians(t), Angle64::from_radians(p));
+            let (theta, phi) = (
+                Angle64::try_from_radians(t).unwrap(),
+                Angle64::try_from_radians(p).unwrap(),
+            );
             let dense = UnitaryRep::Gate(Unitary::RXY1Q { theta, phi }, smallvec![0usize]);
             assert_default_matches_dense(
                 &format!("default rxy1q({t:+.3}, {p:+.3})"),
@@ -332,7 +338,7 @@ fn trait_default_decompositions_match_the_dense_matrices_exactly() {
                     s.rxy1q(theta, phi, &q);
                 },
             );
-            let lambda = Angle64::from_radians(-0.7);
+            let lambda = pecos_core::radians!(-0.7);
             let dense = UnitaryRep::Gate(Unitary::U3 { theta, phi, lambda }, smallvec![0usize]);
             assert_default_matches_dense(
                 &format!("default u({t:+.3}, {p:+.3}, -0.7)"),
@@ -346,7 +352,7 @@ fn trait_default_decompositions_match_the_dense_matrices_exactly() {
     }
     let pair = [(QubitId(0), QubitId(1))];
     for &t in &ANGLES {
-        let theta = Angle64::from_radians(t);
+        let theta = Angle64::try_from_radians(t).unwrap();
         assert_default_matches_dense(
             &format!("default ry({t:+.3})"),
             &UnitaryRep::rotation(RotationType::RY, theta, smallvec![0usize]),

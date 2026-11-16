@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pecos_selene_statevec as statevec_module
 import pytest
-from general_noise_conformance import ConformanceExperiment, ExpectedDistribution
+from general_noise_conformance import ConformanceExperiment, ExpectedDistribution, OutcomeSample
 from guppylang import comptime, guppy
 from guppylang.std.angles import pi
 from guppylang.std.builtins import result
@@ -161,6 +161,54 @@ def repeated_measurement_crosstalk_probe(n_qubits: int, repetitions: int) -> Sel
 ZERO = ExpectedDistribution({(0,): 1.0})
 ONE = ExpectedDistribution({(1,): 1.0})
 ZERO_ZERO = ExpectedDistribution({(0, 0): 1.0})
+
+
+def test_identical_samples_are_statistically_equivalent() -> None:
+    """The two-sample helper accepts identical empirical distributions."""
+    sample = OutcomeSample(((0,), (1,)) * 256)
+    sample.assert_statistically_equivalent(sample)
+
+
+def test_disjoint_samples_are_not_statistically_equivalent() -> None:
+    """The two-sample helper rejects a clear distribution mismatch."""
+    zeros = OutcomeSample(((0,),) * 512)
+    ones = OutcomeSample(((1,),) * 512)
+    with pytest.raises(AssertionError, match="empirical distributions differ"):
+        zeros.assert_statistically_equivalent(ones)
+
+
+def _bernoulli_sample(ones: int, shots: int) -> OutcomeSample:
+    return OutcomeSample(((1,),) * ones + ((0,),) * (shots - ones))
+
+
+def test_statistical_equivalence_resolves_variance_scaled_differences() -> None:
+    """A six-point shift at 4096 shots is rejected; a Hoeffding bound would accept it."""
+    with pytest.raises(AssertionError, match="empirical distributions differ"):
+        _bernoulli_sample(1229, 4096).assert_statistically_equivalent(_bernoulli_sample(983, 4096))
+
+
+def test_statistical_equivalence_accepts_sampling_noise() -> None:
+    """A one-point shift at 4096 shots is within sampling noise."""
+    _bernoulli_sample(1229, 4096).assert_statistically_equivalent(_bernoulli_sample(1188, 4096))
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        pytest.param(OutcomeSample(((0, 1),)), id="mixed-width"),
+        pytest.param(OutcomeSample(((2,),)), id="non-boolean"),
+    ],
+)
+def test_statistical_equivalence_requires_boolean_outcomes_of_one_width(other: OutcomeSample) -> None:
+    """The Bonferroni family is only the Boolean outcomes of a single width."""
+    with pytest.raises(ValueError, match="Boolean outcomes of one width"):
+        OutcomeSample(((0,),)).assert_statistically_equivalent(other)
+
+
+def test_statistical_equivalence_requires_non_empty_samples() -> None:
+    """Empty samples cannot establish statistical equivalence."""
+    with pytest.raises(ValueError, match="two non-empty samples"):
+        OutcomeSample(()).assert_statistically_equivalent(OutcomeSample(((0,),)))
 
 
 @pytest.mark.parametrize(

@@ -29,9 +29,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 
+mod decoder_reads;
 pub mod ffi;
+mod provenance;
 mod random;
 mod selene;
+mod shot;
 
 #[cfg(test)]
 mod test_env;
@@ -86,6 +89,14 @@ pub struct ExecutionContext {
     pub cancel_requested: AtomicBool,
     /// Flag indicating dynamic execution mode is active
     pub dynamic_mode_active: AtomicBool,
+    /// Select the native Selene handle protocol for the Selene/Helios ABI.
+    native_selene_handles: AtomicBool,
+    /// Native future identity to dense source measurement provenance.
+    native_future_sources: Mutex<BTreeMap<u64, usize>>,
+    decoder_reads: Mutex<decoder_reads::DecoderReads>,
+    measurement_identities: Mutex<MeasurementIdentities>,
+    /// Sticky audit failure independent of optional per-output read attribution.
+    native_provenance_unknown: AtomicBool,
     /// The result ID that is being waited for
     pub waiting_for_result: AtomicU64,
     /// Mutex for signaling between worker and main thread
@@ -98,22 +109,77 @@ pub struct ExecutionContext {
     ///
     /// Ordinary measurements use 0/1. Leakage-aware measurements may also use 2.
     pub measurement_results: Mutex<Vec<Option<u64>>>,
+    /// Response to the one synchronous runtime request in flight. This has no
+    /// measurement ID and never grows the measurement vector.
+    runtime_response: Mutex<Option<u64>>,
     /// Result slots with a measurement queued or completed in this shot.
     measured_results: Mutex<BTreeSet<usize>>,
     /// Typed storage for named results from all `print_*` entry points.
     pub named_results: Mutex<BTreeMap<String, NamedResult>>,
     /// Runtime provenance for bool outputs and scalar integer 0/1 calls.
     pub named_result_traces: Mutex<Vec<NamedResultTrace>>,
-    /// Result IDs read since the last named output consumed them.
-    pub pending_result_reads: Mutex<Vec<usize>>,
+    /// Byte shadows and call frames, owned by this shot.
+    shadows: Mutex<provenance::Shadows>,
     /// First termination or output error; reset before the next program starts.
     pub program_error: Mutex<Option<ProgramError>>,
     /// Program-seeded classical RNG; absent until seeded in the current shot.
     program_rng: Mutex<Option<pecos_random::PCGRandom>>,
+    /// Host-assigned job-wide shot index, separate from all random seeds.
+    program_shot: AtomicU64,
+    /// Selene program time cursor; independent of runtime scheduling.
+    time_cursor: AtomicU64,
     /// Live libc allocations owned by this program execution, keyed by address.
-    pub program_allocations: Mutex<BTreeSet<usize>>,
+    pub program_allocations: Mutex<BTreeMap<usize, usize>>,
     /// Number of allocations actually freed for this context.
     pub program_allocation_frees: AtomicUsize,
+}
+
+/// Identify the shared operation/result ABI before the host accesses Rust data.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_qis_ffi_abi_version() -> u64 {
+    pecos_qis_ffi_types::QIS_FFI_ABI_VERSION
+}
+
+#[derive(Default)]
+struct MeasurementIdentities {
+    next_source: usize,
+    layout: pecos_qis_ffi_types::MeasurementLayout,
+}
+
+/// Allocate an occurrence ID independent of QIR slots and native handles.
+fn allocate_measurement_source(qir_slot: Option<usize>) -> Result<usize, String> {
+    let ctx = get_execution_context().ok_or("no execution context")?;
+    let mut identities = unsafe { &*ctx }
+        .measurement_identities
+        .lock()
+        .map_err(|_| "poisoned measurement identities")?;
+    let source = identities.next_source;
+    if source >= pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID {
+        return Err("measurement source IDs exhausted".into());
+    }
+    identities.next_source += 1;
+    if let Some(slot) = qir_slot {
+        identities.layout.qir_slots.insert(slot, source);
+    } else {
+        identities.layout.native_sources.insert(source);
+    }
+    Ok(source)
+}
+
+fn qir_measurement_source(slot: usize) -> Result<usize, String> {
+    if !uses_native_selene_handles() {
+        return Ok(slot);
+    }
+    let ctx = get_execution_context().ok_or("no execution context")?;
+    unsafe { &*ctx }
+        .measurement_identities
+        .lock()
+        .map_err(|_| "poisoned measurement identities")?
+        .layout
+        .qir_slots
+        .get(&slot)
+        .copied()
+        .ok_or_else(|| format!("QIR result slot {slot} was never measured"))
 }
 
 static LIVE_PROGRAM_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -149,6 +215,17 @@ pub extern "C" fn pecos_cleanup_program_allocations() {
     }
 }
 
+/// Source location supplied by the output ABI, independent of element count.
+#[derive(Clone, Copy)]
+enum OutputLocation {
+    Scalar,
+    Array {
+        address: usize,
+    },
+    /// Host storage API has values but no program-memory address.
+    UnavailableArray,
+}
+
 impl ExecutionContext {
     /// Create a new execution context with default state
     #[must_use]
@@ -156,18 +233,26 @@ impl ExecutionContext {
         Self {
             cancel_requested: AtomicBool::new(false),
             dynamic_mode_active: AtomicBool::new(false),
+            native_selene_handles: AtomicBool::new(false),
+            native_future_sources: Mutex::new(BTreeMap::new()),
+            decoder_reads: Mutex::new(decoder_reads::DecoderReads::default()),
+            measurement_identities: Mutex::new(MeasurementIdentities::default()),
+            native_provenance_unknown: AtomicBool::new(false),
             waiting_for_result: AtomicU64::new(u64::MAX),
             sync_state: Mutex::new(DynamicSyncState::default()),
             sync_condvar: Condvar::new(),
             pending_ops: Mutex::new(Vec::new()),
             measurement_results: Mutex::new(Vec::new()),
             measured_results: Mutex::new(BTreeSet::new()),
+            runtime_response: Mutex::new(None),
             named_results: Mutex::new(BTreeMap::new()),
             named_result_traces: Mutex::new(Vec::new()),
-            pending_result_reads: Mutex::new(Vec::new()),
+            shadows: Mutex::new(provenance::Shadows::default()),
             program_error: Mutex::new(None),
             program_rng: Mutex::new(None),
-            program_allocations: Mutex::new(BTreeSet::new()),
+            program_shot: AtomicU64::new(0),
+            time_cursor: AtomicU64::new(0),
+            program_allocations: Mutex::new(BTreeMap::new()),
             program_allocation_frees: AtomicUsize::new(0),
         }
     }
@@ -196,7 +281,23 @@ impl ExecutionContext {
         if let Ok(mut results) = self.measurement_results.lock() {
             results.clear();
         }
+        if let Ok(mut response) = self.runtime_response.lock() {
+            *response = None;
+        }
+        if let Ok(mut sources) = self.native_future_sources.lock() {
+            sources.clear();
+        }
+        if let Ok(mut identities) = self.measurement_identities.lock() {
+            *identities = MeasurementIdentities::default();
+        }
+        if let Ok(mut reads) = self.decoder_reads.lock() {
+            *reads = decoder_reads::DecoderReads::default();
+        }
+        self.native_provenance_unknown
+            .store(false, Ordering::SeqCst);
         self.reset_program_rng();
+        self.program_shot.store(0, Ordering::SeqCst);
+        self.time_cursor.store(0, Ordering::SeqCst);
         self.release_program_allocations();
         if let Ok(mut named) = self.named_results.lock() {
             named.clear();
@@ -204,8 +305,8 @@ impl ExecutionContext {
         if let Ok(mut traces) = self.named_result_traces.lock() {
             traces.clear();
         }
-        if let Ok(mut reads) = self.pending_result_reads.lock() {
-            reads.clear();
+        if let Ok(mut shadows) = self.shadows.lock() {
+            *shadows = provenance::Shadows::default();
         }
     }
 
@@ -225,7 +326,10 @@ impl ExecutionContext {
             };
             std::mem::take(&mut *allocations)
         };
-        for address in allocations {
+        for (address, size) in allocations {
+            if let Ok(mut shadows) = self.shadows.lock() {
+                shadows.clear_memory(address, size);
+            }
             unsafe { self.free_program_allocation(std::ptr::with_exposed_provenance_mut(address)) };
         }
     }
@@ -238,45 +342,21 @@ impl ExecutionContext {
         LIVE_PROGRAM_ALLOCATIONS.fetch_sub(1, Ordering::SeqCst);
     }
 
-    /// Record that program execution read a runtime measurement result.
-    pub fn record_result_read(&self, result_id: usize) {
-        if let Ok(mut reads) = self.pending_result_reads.lock() {
-            reads.push(result_id);
-        } else {
-            log::error!("ExecutionContext::record_result_read failed to acquire lock");
-        }
-    }
-
-    fn take_result_reads(&self, count: usize) -> Vec<usize> {
-        if count == 0 {
-            return Vec::new();
-        }
-        let Ok(mut reads) = self.pending_result_reads.lock() else {
-            log::error!("ExecutionContext::take_result_reads failed to acquire lock");
-            return Vec::new();
-        };
-        if reads.len() != count {
-            log::warn!(
-                "Named result output expected exactly {count} result read(s), but {} were recorded; refusing ambiguous provenance",
-                reads.len()
-            );
-            reads.clear();
-            return Vec::new();
-        }
-        reads.drain(..).collect()
-    }
-
-    fn store_named_result_trace(&self, name: &str, values: &[bool], result_ids: Vec<usize>) {
-        if let Ok(mut traces) = self.named_result_traces.lock() {
-            traces.push(NamedResultTrace {
-                name: name.to_string(),
-                values: values.to_vec(),
-                result_ids,
-            });
-        } else {
-            log::error!(
-                "ExecutionContext::store_named_result_trace failed to acquire lock for '{name}'"
-            );
+    /// Overwrite the last-read stash, including sourceless native reads.
+    pub fn stash_result_source(&self, source: Option<usize>) {
+        match self.shadows.lock() {
+            Ok(mut shadows) => {
+                shadows.seed = Some(
+                    source
+                        .filter(|&id| id < pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID)
+                        .map_or(pecos_qis_ffi_types::ValueProvenance::Unknown, |id| {
+                            pecos_qis_ffi_types::ValueProvenance::Measurement { id }
+                        }),
+                );
+            }
+            Err(_) => self.record_program_error(ProgramError::NamedResult(
+                "poisoned provenance stash".into(),
+            )),
         }
     }
 
@@ -294,9 +374,50 @@ impl ExecutionContext {
         }
     }
 
-    /// Append one call's values, consuming reads only for nonempty bool calls.
+    /// Append one call's values and capture explicit bool provenance when available.
     /// `is_scalar` describes the entry point, not the number of elements.
     pub fn store_named_result(&self, name: &str, values: NamedResult, is_scalar: bool) {
+        let location = if is_scalar {
+            OutputLocation::Scalar
+        } else {
+            OutputLocation::UnavailableArray
+        };
+        self.store_named_result_with_address(name, values, location);
+    }
+
+    // Each bool output consumes its binding before storage, validation or sticky-error
+    // return. Recover only the pending slot from a poisoned lock, never its shadows.
+    fn take_output_binding(&self) -> Result<Option<pecos_qis_ffi_types::ValueProvenance>, String> {
+        match self.shadows.lock() {
+            Ok(mut shadows) => Ok(shadows.binding.take()),
+            Err(error) => {
+                error.into_inner().binding.take();
+                Err("poisoned output shadow".into())
+            }
+        }
+    }
+
+    fn store_named_result_with_address(
+        &self,
+        name: &str,
+        values: NamedResult,
+        location: OutputLocation,
+    ) {
+        let is_bool_call = matches!(&values, NamedResult::Bool(_));
+        let binding = if is_bool_call {
+            match self.take_output_binding() {
+                Ok(binding) => binding,
+                Err(reason) => {
+                    self.record_program_error(ProgramError::NamedResult(format!(
+                        "{name}: {reason}"
+                    )));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let is_scalar = matches!(location, OutputLocation::Scalar);
         let Ok(error) = self.program_error.lock() else {
             return;
         };
@@ -309,9 +430,8 @@ impl ExecutionContext {
         // Integer arrays never trace, including one-element arrays; the old
         // integer detector convention had only scalar calls. Static certification
         // recognizes only real bool outputs.
-        // Only real bool calls drain reads; an empty bool array has no reads to
-        // drain and keeps an empty trace. Storage follows declared call types.
-        let is_bool_call = matches!(&values, NamedResult::Bool(_));
+        // Only real bool calls bind provenance. Empty bool arrays retain an
+        // empty trace. Storage follows declared call types.
         let bool_values = match &values {
             NamedResult::Bool(values) => Some(values.clone()),
             _ if values.is_empty() => None,
@@ -342,12 +462,65 @@ impl ExecutionContext {
             return;
         }
         if let Some(values) = bool_values {
-            let result_ids = if is_bool_call {
-                self.take_result_reads(values.len())
+            let captured = if is_bool_call {
+                self.shadows
+                    .lock()
+                    .map_err(|_| "poisoned output shadow".to_string())
+                    .and_then(|shadows| {
+                        let array = match location {
+                            OutputLocation::Scalar => None,
+                            OutputLocation::Array { address } => Some(address),
+                            OutputLocation::UnavailableArray if shadows.instrumented => {
+                                return Err(
+                                    "instrumented bool array output has no program-memory address"
+                                        .into(),
+                                );
+                            }
+                            OutputLocation::UnavailableArray => return Ok((None, None)),
+                        };
+                        shadows
+                            .output(binding, array, values.len())
+                            .map(|provenance| {
+                                let control =
+                                    provenance.as_ref().map(|_| shadows.control_dependent);
+                                (provenance, control)
+                            })
+                    })
             } else {
-                Vec::new()
+                Ok((None, None))
             };
-            self.store_named_result_trace(name, &values, result_ids);
+            let (provenance, control_dependent) = match captured {
+                Ok(value) => value,
+                Err(reason) => {
+                    self.record_program_error(ProgramError::NamedResult(format!(
+                        "{name}: {reason}"
+                    )));
+                    return;
+                }
+            };
+            let result_ids = provenance
+                .as_ref()
+                .and_then(|p| {
+                    p.iter()
+                        .map(|v| match v {
+                            pecos_qis_ffi_types::ValueProvenance::Measurement { id } => Some(*id),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .unwrap_or_default();
+            match self.named_result_traces.lock() {
+                Ok(mut traces) => traces.push(NamedResultTrace {
+                    name: name.to_string(),
+                    values,
+                    result_ids,
+                    provenance,
+                    control_dependent,
+                }),
+                Err(error) => self.record_program_error(ProgramError::NamedResult(format!(
+                    "Failed to trace named result '{name}': {error}"
+                ))),
+            }
         }
     }
 
@@ -358,7 +531,13 @@ impl ExecutionContext {
 
     /// Store a named result array (multiple bool values).
     pub fn store_named_array(&self, name: &str, values: &[bool]) {
-        self.store_named_result(name, NamedResult::Bool(values.to_vec()), false);
+        self.store_named_result_with_address(
+            name,
+            NamedResult::Bool(values.to_vec()),
+            OutputLocation::Array {
+                address: values.as_ptr() as usize,
+            },
+        );
     }
 
     /// Get all named results (returns a clone)
@@ -366,8 +545,7 @@ impl ExecutionContext {
     pub fn get_named_results(&self) -> BTreeMap<String, NamedResult> {
         self.named_results
             .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default()
+            .map_or_else(|_| BTreeMap::new(), |guard| guard.clone())
     }
 
     /// Get all named result provenance records (returns a clone)
@@ -375,8 +553,7 @@ impl ExecutionContext {
     pub fn get_named_result_traces(&self) -> Vec<NamedResultTrace> {
         self.named_result_traces
             .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default()
+            .map_or_else(|_| Vec::new(), |guard| guard.clone())
     }
 }
 
@@ -450,6 +627,41 @@ pub extern "C" fn pecos_get_program_error_json() -> *mut std::ffi::c_char {
         Ok(json) => json.into_raw(),
         Err(_) => std::ptr::null_mut(),
     }
+}
+
+/// Read a program error from an explicit context, without consulting thread-local state.
+/// Returns 0 on success (null output when absent), 1 for a null context,
+/// 2 for a poisoned lock, or 3 for serialization failure.
+/// Free the output with `pecos_free_named_results_json`.
+///
+/// # Safety
+/// A non-null context must remain live throughout the call. The output pointer
+/// must be non-null, valid and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_get_program_error_json_with_context(
+    ctx: *mut ExecutionContext,
+    output: *mut *mut std::ffi::c_char,
+) -> i32 {
+    // SAFETY: The caller provides writable output and a live context.
+    unsafe { *output = std::ptr::null_mut() };
+    let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+        return 1;
+    };
+    let Ok(error) = ctx.program_error.lock() else {
+        return 2;
+    };
+    let Some(error) = error.as_ref() else {
+        return 0;
+    };
+    let Ok(json) = serde_json::to_string(error) else {
+        return 3;
+    };
+    let Ok(json) = std::ffi::CString::new(json) else {
+        return 3;
+    };
+    // SAFETY: The caller provides writable output storage.
+    unsafe { *output = json.into_raw() };
+    0
 }
 
 /// Whether the current program terminated with a normal exit.
@@ -628,6 +840,30 @@ pub fn execute_pending_and_get_results() -> bool {
 
 // --- FFI functions for cross-library dynamic circuit coordination ---
 
+/// Select native Selene handles on an explicit execution context.
+///
+/// # Safety
+/// The non-null context must be live and not executing a program.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_set_native_selene_handles(
+    ctx: *mut ExecutionContext,
+    enabled: bool,
+) -> i32 {
+    let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+        return 1;
+    };
+    ctx.native_selene_handles.store(enabled, Ordering::SeqCst);
+    0
+}
+
+pub(crate) fn uses_native_selene_handles() -> bool {
+    get_execution_context().is_some_and(|ctx| {
+        unsafe { &*ctx }
+            .native_selene_handles
+            .load(Ordering::SeqCst)
+    })
+}
+
 /// Enable dynamic mode on an explicit context.
 ///
 /// Returns 0 on success, 1 for a null context, 2 for a poisoned lock.
@@ -726,10 +962,13 @@ pub unsafe extern "C" fn pecos_set_measurement_result_with_context(
     unsafe { pecos_set_measurement_outcome_with_context(ctx, result_id, u64::from(value)) }
 }
 
-/// Set measurement outcome on an explicit context.
+/// Set a runtime future value on an explicit context.
+///
+/// Integer futures retain all 64 bits. Physical outcome validation belongs to
+/// the simulator/runtime feedback path; Boolean reads validate their own type.
 ///
 /// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for an unrepresentable result ID or an outcome greater than 2.
+/// and 3 for an unrepresentable result ID.
 ///
 /// # Safety
 /// A non-null context must remain live throughout the call.
@@ -747,12 +986,16 @@ pub unsafe extern "C" fn pecos_set_measurement_outcome_with_context(
     let Ok(index) = usize::try_from(result_id) else {
         return 3;
     };
+    if index == pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID {
+        let Ok(mut response) = ctx.runtime_response.lock() else {
+            return 2;
+        };
+        *response = Some(value);
+        return 0;
+    }
     let Some(len) = index.checked_add(1) else {
         return 3;
     };
-    if value > 2 {
-        return 3;
-    }
     let Ok(mut results) = ctx.measurement_results.lock() else {
         return 2;
     };
@@ -889,7 +1132,8 @@ pub unsafe extern "C" fn pecos_get_named_results_json_with_context(
 /// Get named result traces json on an explicit context.
 ///
 /// Returns 0 on success, 1 for a null context, 2 for a poisoned lock,
-/// and 3 for invalid data or serialization failure. Empty results return null.
+/// 3 for invalid data or serialization failure, and 4 for unknown native future
+/// provenance. Empty results return null.
 /// Free the output with `pecos_free_named_results_json`.
 ///
 /// # Safety
@@ -908,6 +1152,9 @@ pub unsafe extern "C" fn pecos_get_named_result_traces_json_with_context(
     let Some(ctx) = (unsafe { ctx.as_ref() }) else {
         return 1;
     };
+    if ctx.native_provenance_unknown.load(Ordering::SeqCst) {
+        return 4;
+    }
     let Ok(values) = ctx.named_result_traces.lock() else {
         return 2;
     };
@@ -921,6 +1168,41 @@ pub unsafe extern "C" fn pecos_get_named_result_traces_json_with_context(
         return 3;
     };
     // SAFETY: The caller provides writable output storage.
+    unsafe {
+        *output = json.into_raw();
+    }
+    0
+}
+
+/// Export raw-result presentation aliases. Null output means the native
+/// source-identity protocol is disabled. Free with `pecos_free_named_results_json`.
+/// Returns 0 on success, 1 for a null context, 2 for a poisoned lock, 3 for serialization failure.
+///
+/// # Safety
+/// Context must remain live; output must be valid writable pointer storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_get_measurement_layout_json_with_context(
+    ctx: *mut ExecutionContext,
+    output: *mut *mut std::ffi::c_char,
+) -> i32 {
+    unsafe {
+        *output = std::ptr::null_mut();
+    }
+    let Some(ctx) = (unsafe { ctx.as_ref() }) else {
+        return 1;
+    };
+    if !ctx.native_selene_handles.load(Ordering::SeqCst) {
+        return 0;
+    }
+    let Ok(identities) = ctx.measurement_identities.lock() else {
+        return 2;
+    };
+    let Ok(json) = serde_json::to_string(&identities.layout) else {
+        return 3;
+    };
+    let Ok(json) = std::ffi::CString::new(json) else {
+        return 3;
+    };
     unsafe {
         *output = json.into_raw();
     }
@@ -1127,6 +1409,17 @@ pub fn wait_for_result_ready(result_id: u64) -> ResultWaitOutcome {
 /// Queue a result-producing operation and invalidate the worker-owned slot.
 /// All measurement entry points use this boundary, including Selene wrappers.
 fn queue_measurement(qubit: usize, result_id: usize, leaked: bool) {
+    let result_id = if uses_native_selene_handles() {
+        match allocate_measurement_source(Some(result_id)) {
+            Ok(source) => source,
+            Err(reason) => {
+                unsafe { ffi::fatal_ffi_input("QIR measurement identity", reason) };
+                return;
+            }
+        }
+    } else {
+        result_id
+    };
     if is_dynamic_mode_active()
         && let Some(ctx) = get_execution_context()
     {
@@ -1157,6 +1450,13 @@ fn lookup_measurement_outcome(result_id: u64) -> Result<Option<u64>, &'static st
     let index = usize::try_from(result_id).map_err(|_| "result ID does not fit in usize")?;
     // SAFETY: The registered context is live throughout execution.
     let ctx = unsafe { &*ctx };
+    if index == pecos_qis_ffi_types::RUNTIME_REQUEST_RESULT_ID {
+        return ctx
+            .runtime_response
+            .lock()
+            .map(|response| *response)
+            .map_err(|_| "poisoned runtime response");
+    }
     let measured = ctx
         .measured_results
         .lock()
@@ -1371,12 +1671,12 @@ pub extern "C" fn pecos_get_named_result_traces_json() -> *mut std::ffi::c_char 
 ///
 /// # Safety
 /// The pointer must have been allocated by `pecos_get_named_results_json`,
-/// `pecos_get_named_result_traces_json`, or `pecos_get_program_error_json`, and
-/// must not have been freed already.
+/// `pecos_get_named_result_traces_json`, `pecos_get_program_error_json`, or their
+/// explicit-context variants, and must not have been freed already.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_free_named_results_json(ptr: *mut std::ffi::c_char) {
     if !ptr.is_null() {
-        // SAFETY: All three JSON exports allocate with CString::into_raw.
+        // SAFETY: These JSON exports allocate with CString::into_raw.
         drop(unsafe { std::ffi::CString::from_raw(ptr) });
     }
 }
@@ -1388,6 +1688,64 @@ mod tests {
     use std::thread;
 
     const TEST_SYNC_TIMEOUT_MS: u64 = 5_000;
+
+    #[test]
+    fn explicit_program_error_reader_isolated_reset_and_null() {
+        let registered = setup_context();
+        let owned = pecos_create_execution_context();
+        // SAFETY: Both contexts and the output storage live until cleanup.
+        unsafe {
+            (*registered).record_program_error(ProgramError::Exit {
+                code: 9,
+                message: "wrong context".into(),
+            });
+            let mut json = std::ptr::dangling_mut();
+            assert_eq!(
+                pecos_get_program_error_json_with_context(std::ptr::null_mut(), &raw mut json),
+                1
+            );
+            assert!(json.is_null());
+            for code in [0, 1, 999] {
+                let expected = ProgramError::Exit {
+                    code,
+                    message: "done\0é".into(),
+                };
+                (*owned).record_program_error(expected.clone());
+                assert_eq!(
+                    pecos_get_program_error_json_with_context(owned, &raw mut json),
+                    0
+                );
+                let error: ProgramError =
+                    serde_json::from_slice(std::ffi::CStr::from_ptr(json).to_bytes()).unwrap();
+                pecos_free_named_results_json(json);
+                assert_eq!(error, expected);
+                (*owned).reset();
+                assert_eq!(
+                    pecos_get_program_error_json_with_context(owned, &raw mut json),
+                    0
+                );
+                assert!(json.is_null());
+            }
+            pecos_destroy_execution_context(owned);
+            teardown_context(registered);
+        }
+    }
+
+    #[test]
+    fn explicit_program_error_reader_reports_poison() {
+        let mut context = ExecutionContext::new();
+        let _ = std::panic::catch_unwind(|| {
+            let _lock = context.program_error.lock().unwrap();
+            panic!("poison diagnostic lock");
+        });
+        let mut json = std::ptr::dangling_mut();
+        // SAFETY: Context and writable output remain live during the call.
+        assert_eq!(
+            unsafe { pecos_get_program_error_json_with_context(&raw mut context, &raw mut json) },
+            2
+        );
+        assert!(json.is_null());
+    }
 
     /// Helper to create and register an execution context for tests
     fn setup_context() -> *mut ExecutionContext {
@@ -1464,6 +1822,8 @@ mod tests {
                     name: "answer".into(),
                     values: vec![true],
                     result_ids: vec![0],
+                    provenance: None,
+                    control_dependent: None,
                 });
             assert_eq!(
                 pecos_get_named_results_json_with_context(ctx, &raw mut json),

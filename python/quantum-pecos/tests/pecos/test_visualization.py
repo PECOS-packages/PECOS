@@ -168,7 +168,7 @@ def test_range_cannot_bypass_trace_validation():
         circuit_diagram_panels(trace, [])
 
 
-@pytest.mark.parametrize("gate_type", ["MZ", "MeasureLeaked"])
+@pytest.mark.parametrize("gate_type", ["MZ", "MeasureLeaked", "MeasureZLeaked"])
 def test_trace_measurement_labels_keep_source_identity(gate_type):
     from pecos.visualization import circuit_diagram_panels
 
@@ -177,7 +177,7 @@ def test_trace_measurement_labels_keep_source_identity(gate_type):
     original = copy.deepcopy(trace)
     diagram = circuit_diagram(trace, start=2, stop=3, show_measurement_ids=True)
     labels = list(ET.fromstring(str(diagram)).itertext())  # noqa: S314 - generated SVG
-    symbol = "MZ_L" if gate_type == "MeasureLeaked" else "MZ"
+    symbol = "MZ_L" if gate_type in {"MeasureLeaked", "MeasureZLeaked"} else "MZ"
     assert f"{symbol}[m7]" in labels
     panels = circuit_diagram_panels(trace, [("Readout", 2, 3)], format="tikz", show_measurement_ids=True)
     assert f"{symbol.replace('_', r'\_')}[m7]" in str(panels[0])
@@ -215,7 +215,8 @@ def test_visual_replay_preserves_native_measurements_and_metadata(kinds, differe
         circuit.compact_ticks()
         batches = list(circuit.gate_batches())
         assert [(g.gate_type.name, g.qubits, g.meas_ids) for _, g in batches] == [
-            (kind, [q], [mid]) for kind, q, mid in zip(kinds, [4, 1, 3], [42, 7, 20], strict=True)
+            ("MeasureZLeaked" if kind == "MeasureLeaked" else kind, [q], [mid])
+            for kind, q, mid in zip(kinds, [4, 1, 3], [42, 7, 20], strict=True)
         ]
         tick = circuit.get_tick(0)
         assert [tick.get_gate_attr(i, "round") for i in range(3)] == ([0, 1, 2] if different_metadata else [2, 2, 2])

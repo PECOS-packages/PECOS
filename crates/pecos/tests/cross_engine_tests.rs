@@ -262,3 +262,42 @@ fn three_way_x_measure() {
     assert!(phir_json.iter().all(|&v| v == 1));
     assert!(phir_engine.iter().all(|&v| v == 1));
 }
+
+#[test]
+fn phir_json_prebuilt_system_matches_python_composition() {
+    use pecos_engines::classical::ClassicalEngine;
+    use pecos_engines::hybrid::HybridEngineBuilder;
+    use pecos_engines::noise::{DepolarizingNoiseModel, NoiseModel, PassThroughNoiseModel};
+    use pecos_engines::quantum::SparseStabEngine;
+    use pecos_engines::{MonteCarloEngine, QuantumEngine, QuantumSystem, StateVecEngine};
+    use pecos_phir_json::v0_1::engine::PhirJsonEngine;
+
+    // Mirror run_phir_sim's Rust pipeline, including both Python backend choices
+    // and an explicit noise model, without loading an installed Python extension.
+    for state_vector in [false, true] {
+        for explicit_noise in [false, true] {
+            let classical = PhirJsonEngine::from_json(X_MEASURE_PHIR_JSON).unwrap();
+            let quantum: Box<dyn QuantumEngine> = if state_vector {
+                Box::new(StateVecEngine::new(classical.num_qubits()))
+            } else {
+                Box::new(SparseStabEngine::new(classical.num_qubits()))
+            };
+            let noise: Box<dyn NoiseModel> = if explicit_noise {
+                Box::new(DepolarizingNoiseModel::try_new_uniform(0.0).unwrap())
+            } else {
+                Box::new(PassThroughNoiseModel::new())
+            };
+            let hybrid = HybridEngineBuilder::new()
+                .with_classical_engine(Box::new(classical))
+                .with_quantum_system(QuantumSystem::new(noise, quantum))
+                .build();
+            let mut mc = MonteCarloEngine::builder()
+                .with_hybrid_engine(hybrid)
+                .with_seed(42)
+                .build();
+            for shot in mc.run(3).unwrap().shots {
+                assert_eq!(shot.data.get("c").and_then(Data::as_u32), Some(1));
+            }
+        }
+    }
+}

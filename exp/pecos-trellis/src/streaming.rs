@@ -19,6 +19,19 @@ use crate::{
 };
 use std::sync::Arc;
 
+/// Scheduling policy. Dependency-driven is the backward-compatible default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum StreamingMode {
+    #[default]
+    DependencyDriven,
+    /// ZIP-style persistent streaming, with `window_size - 1` rounds of lag.
+    /// Bounds include the terminal detector block, not only extraction rounds.
+    FixedLag {
+        detector_round_bounds: Vec<usize>,
+        window_size: usize,
+    },
+}
+
 /// Snapshot after processing all currently ready columns.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamingProgress {
@@ -33,9 +46,33 @@ pub struct StreamingProgress {
     pub committed_mask: ObsMask,
 }
 
+#[derive(Debug)]
+struct ScoringPrefixPlan {
+    known_count: usize,
+    start: usize,
+    ends: Vec<usize>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BoundedAdvance {
+    end: usize,
+    without_dropped_mass: bool,
+}
+
+impl ScoringPrefixPlan {
+    fn for_range(&self, known_count: usize, range: std::ops::Range<usize>) -> Option<&[usize]> {
+        if known_count != self.known_count {
+            return None;
+        }
+        let start = range.start.checked_sub(self.start)?;
+        let end = range.end.checked_sub(self.start)?;
+        self.ends.get(start..end)
+    }
+}
+
 /// Opt-in streaming decoder for detector blocks arriving in index order.
 ///
-/// On the same build and platform, a successful flush is bit-identical to batch
+/// In the default dependency-driven mode, a successful flush is bit-identical to batch
 /// [`TrellisDecoder::decode`], including result telemetry. Every committed logical
 /// bit equals the corresponding bit of that final prediction. Commitment requires
 /// unanimity of the retained frontier and no remaining column toggling that bit.
@@ -61,6 +98,12 @@ pub struct TrellisStreamingDecoder {
     committed_mask: Vec<u64>,
     pending_commitments: Vec<(usize, bool)>,
     failure: Option<BinaryFailure>,
+    mode: StreamingMode,
+    column_rounds: Vec<usize>,
+    scoring_prefix_plans: Vec<ScoringPrefixPlan>,
+    arrived_round: usize,
+    evidence_omitted: bool,
+    bounded_advance: Option<BoundedAdvance>,
 }
 
 impl TrellisStreamingDecoder {
@@ -139,13 +182,107 @@ impl TrellisStreamingDecoder {
             next_column: 0,
             pending_commitments: Vec::new(),
             failure: None,
+            mode: StreamingMode::DependencyDriven,
+            column_rounds: Vec::new(),
+            scoring_prefix_plans: Vec::new(),
+            arrived_round: 0,
+            evidence_omitted: false,
+            bounded_advance: None,
         };
         stream.reset();
         stream
     }
 
+    /// Select a schedule before starting a shot. Cached compact model and
+    /// prediction-only fast paths are reused. Fixed-lag changes finite-width
+    /// pruning and is not promised to equal batch/dependency-driven decoding.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` after shot processing has started or for
+    /// invalid bounds/window size. A failed selection preserves the old mode.
+    pub fn set_streaming_mode(&mut self, mode: StreamingMode) -> Result<(), DecoderError> {
+        self.ensure_no_bounded_advance()?;
+        if self.arrived_count != 0 || self.next_column != 0 || self.arrived_round != 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "reset before changing streaming mode".into(),
+            ));
+        }
+        let mut requirements = Vec::new();
+        let mut scoring_prefix_plans = Vec::new();
+        if let StreamingMode::FixedLag {
+            detector_round_bounds: bounds,
+            window_size,
+        } = &mode
+        {
+            if bounds.len() < 3
+                || bounds.first() != Some(&0)
+                || bounds.last() != Some(&self.model.num_detectors)
+                || bounds.windows(2).any(|pair| pair[0] > pair[1])
+                || *window_size < 2
+                || *window_size >= bounds.len()
+            {
+                return Err(DecoderError::InvalidConfiguration(
+                    "invalid fixed-lag bounds or window size".into(),
+                ));
+            }
+            let Kernel::Binary(columns) = &self.model.kernel else {
+                unreachable!("streaming constructors validate the binary kernel");
+            };
+            let row_round = |row: usize| bounds.partition_point(|&edge| edge <= row);
+            let mut next_release = bounds.len() - 1;
+            requirements.resize(columns.len(), next_release);
+            for (index, column) in columns.iter().enumerate().rev() {
+                if let Some(row) = set_bits(&column.detector_toggle).min() {
+                    next_release = row_round(row);
+                }
+                requirements[index] = next_release;
+            }
+            let mut prefix = 0;
+            for (required, column) in requirements.iter_mut().zip(columns) {
+                let closing = set_bits(&column.close_mask)
+                    .map(row_round)
+                    .max()
+                    .unwrap_or(0);
+                prefix = prefix.max((*required).max(closing));
+                *required = prefix;
+            }
+            // Cache only columns normally released at each arrival round. Each
+            // column contributes one end index, with no per-shot preparation.
+            let mut start = 0;
+            for (round, &known_count) in bounds.iter().enumerate() {
+                let target = if round == bounds.len() - 1 {
+                    round
+                } else {
+                    round.saturating_sub(window_size - 1)
+                };
+                let end = requirements.partition_point(|&release| release <= target);
+                let ends = columns[start..end]
+                    .iter()
+                    .map(|column| {
+                        column.suffix_compatibility.partition_point(|row| {
+                            row.word as usize * WORD_BITS + usize::from(row.bit) < known_count
+                        })
+                    })
+                    .collect();
+                scoring_prefix_plans.push(ScoringPrefixPlan {
+                    known_count,
+                    start,
+                    ends,
+                });
+                start = end;
+            }
+            debug_assert_eq!(start, columns.len());
+        }
+        self.scoring_prefix_plans = scoring_prefix_plans;
+        self.column_rounds = requirements;
+        self.mode = mode;
+        Ok(())
+    }
+
     /// Per-column lookahead in detector indices: readiness minus the column's
     /// highest toggled detector. A missing detector index is interpreted as -1.
+    /// This diagnostic describes the dependency-driven schedule only; fixed
+    /// lag is specified separately by its round bounds and window size.
     #[must_use]
     pub fn column_lookahead(&self) -> &[usize] {
         &self.lookahead
@@ -154,6 +291,8 @@ impl TrellisStreamingDecoder {
     /// Append the NEXT block of detector values. Every nonzero byte means fired.
     /// Only newly arrived detectors are checked against the forced contribution
     /// on rows untouched by probabilistic columns.
+    /// In fixed-lag mode this must be exactly the next configured round,
+    /// including an explicit empty slice for an empty detector round.
     ///
     /// # Errors
     /// Returns `InvalidDimensions` for overflow (without changing the shot), or
@@ -163,13 +302,33 @@ impl TrellisStreamingDecoder {
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
+        self.ensure_no_bounded_advance()?;
         let total = self.arrived_count.saturating_add(detectors.len());
+        if let StreamingMode::FixedLag {
+            detector_round_bounds: bounds,
+            ..
+        } = &self.mode
+            && (self.arrived_round + 1 >= bounds.len() || total != bounds[self.arrived_round + 1])
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "fixed-lag feed_prefix must contain exactly the next detector round".into(),
+            ));
+        }
         if total > self.model.num_detectors {
             return Err(DecoderError::InvalidDimensions {
                 expected: self.model.num_detectors,
                 actual: total,
             });
         }
+        self.append_detectors(detectors);
+        if matches!(self.mode, StreamingMode::FixedLag { .. }) {
+            self.arrived_round += 1;
+        }
+        self.failure.map_or(Ok(()), |failure| Err(failure.error()))
+    }
+
+    /// Record already validated detector values after the current prefix.
+    fn append_detectors(&mut self, detectors: &[u8]) {
         for (offset, &value) in detectors.iter().enumerate() {
             let detector = self.arrived_count + offset;
             let word = detector / WORD_BITS;
@@ -184,29 +343,49 @@ impl TrellisStreamingDecoder {
                 self.failure = Some(BinaryFailure::NoPath);
             }
         }
-        self.arrived_count = total;
-        self.failure.map_or(Ok(()), |failure| Err(failure.error()))
+        self.arrived_count += detectors.len();
     }
 
     /// Feed the whole syndrome in one block before any detectors have arrived.
+    ///
+    /// In fixed-lag mode this delivers every configured round at once, so no
+    /// column is processed with unknown outcomes and the decode matches batch.
+    /// Fixed lag changes results only when rounds are fed incrementally.
     ///
     /// # Errors
     /// Returns a stored failure first, then `InvalidDimensions` for a syndrome
     /// whose length differs from the model's detector count, then the errors of
     /// [`Self::feed_prefix`]: `InvalidDimensions` reporting the cumulative count
     /// when any detectors have already arrived, and `DecodingFailed` for an
-    /// inconsistent untouched detector.
+    /// inconsistent untouched detector. In fixed-lag mode, feeding after any
+    /// round has arrived returns `InvalidConfiguration`.
     pub fn feed_dense(&mut self, syndrome: &[u8]) -> Result<(), DecoderError> {
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
+        self.ensure_no_bounded_advance()?;
         if syndrome.len() != self.model.num_detectors {
             return Err(DecoderError::InvalidDimensions {
                 expected: self.model.num_detectors,
                 actual: syndrome.len(),
             });
         }
-        self.feed_prefix(syndrome)
+        if let StreamingMode::FixedLag {
+            detector_round_bounds,
+            ..
+        } = &self.mode
+        {
+            if self.arrived_round != 0 {
+                return Err(DecoderError::InvalidConfiguration(
+                    "feed_dense requires a fresh shot".into(),
+                ));
+            }
+            self.arrived_round = detector_round_bounds.len() - 1;
+            self.append_detectors(syndrome);
+            self.failure.map_or(Ok(()), |failure| Err(failure.error()))
+        } else {
+            self.feed_prefix(syndrome)
+        }
     }
 
     /// Process all ready columns, then check uncommitted logicals for unanimity.
@@ -216,15 +395,262 @@ impl TrellisStreamingDecoder {
     /// Returns the same no-path or internal error as the batch column walk.
     pub fn advance(&mut self) -> Result<StreamingProgress, DecoderError> {
         self.advance_prediction()?;
+        Ok(self.take_progress())
+    }
+
+    /// Process ready columns and report commitments without discarded-mass bookkeeping.
+    ///
+    /// The schedule, retained frontier, commitment snapshots, and work counts are
+    /// identical to [`Self::advance`]. Only the accumulated mass of discarded
+    /// states is omitted. Finish with [`Self::flush_without_dropped_mass`] to
+    /// obtain all retained logical masses, evidence, and runner-up confidence.
+    /// Its `dropped_log_mass` is unavailable and is reported as NaN.
+    ///
+    /// Like [`Self::advance_prediction_without_evidence`], this opts the current
+    /// shot out of full diagnostic mode: [`Self::advance`],
+    /// [`Self::advance_prediction`], [`Self::flush`], and
+    /// [`Self::flush_prediction`] require a reset afterward. Earlier full-mode
+    /// advances may be followed by this method. Reset restores the full API.
+    ///
+    /// # Errors
+    /// Returns the same no-path or internal error as [`Self::advance`].
+    pub fn advance_without_dropped_mass(&mut self) -> Result<StreamingProgress, DecoderError> {
+        self.advance_prediction_mode(crate::DecodeMode::PredictionOnly)?;
+        Ok(self.take_progress())
+    }
+
+    /// Begin a resumable dependency-driven advance at the current detector prefix.
+    ///
+    /// This captures exactly the target of [`Self::advance`], without doing column
+    /// work. Call [`Self::step_bounded_advance`] until
+    /// [`Self::bounded_columns_remaining`] is `Some(0)`, then call
+    /// [`Self::finish_bounded_advance`] for its identical commitment snapshot, or
+    /// [`Self::finish_bounded_flush`] for a fully fed shot's full terminal result.
+    /// Commitments are checked only at finish, preserving the unbounded callback's
+    /// check cadence and the order of `newly_committed`.
+    ///
+    /// Detectors, schedule, scoring inputs, and diagnostic mode cannot change
+    /// during the drain. Feed and unbounded processing methods reject that state.
+    /// Reset cancels the drain and starts a fresh shot. A column budget bounds
+    /// actual columns of DP work, not wall-clock time or total decision latency.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for `FixedLag`, reentry, or full diagnostics
+    /// after omitted bookkeeping; returns a stored decoding failure unchanged.
+    pub fn begin_bounded_advance(&mut self) -> Result<usize, DecoderError> {
+        self.begin_bounded_advance_mode(false)
+    }
+
+    /// Begin the same resumable advance without discarded-mass bookkeeping.
+    ///
+    /// All retained work and terminal output are unchanged. Only the terminal
+    /// `dropped_log_mass` is unavailable (NaN). This opts out of full diagnostic
+    /// mode until reset, as [`Self::advance_without_dropped_mass`] does.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::begin_bounded_advance`], except that
+    /// earlier omitted bookkeeping is allowed.
+    pub fn begin_bounded_advance_without_dropped_mass(&mut self) -> Result<usize, DecoderError> {
+        self.begin_bounded_advance_mode(true)
+    }
+
+    fn begin_bounded_advance_mode(
+        &mut self,
+        without_dropped_mass: bool,
+    ) -> Result<usize, DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+        self.ensure_no_bounded_advance()?;
+        if self.mode != StreamingMode::DependencyDriven {
+            return Err(DecoderError::InvalidConfiguration(
+                "bounded advance supports only dependency-driven streaming".into(),
+            ));
+        }
+        if !without_dropped_mass && self.evidence_omitted {
+            return Err(DecoderError::InvalidConfiguration(
+                "reset before requesting evidence after prediction-only streaming".into(),
+            ));
+        }
+        let end = self.ready.partition_point(|required| {
+            required.is_none_or(|detector| detector < self.arrived_count)
+        });
+        self.evidence_omitted |= without_dropped_mass;
+        self.bounded_advance = Some(BoundedAdvance {
+            end,
+            without_dropped_mass,
+        });
+        Ok(end - self.next_column)
+    }
+
+    /// Number of captured ready columns still to process, or `None` outside a drain.
+    #[must_use]
+    pub fn bounded_columns_remaining(&self) -> Option<usize> {
+        self.bounded_advance
+            .map(|advance| advance.end - self.next_column)
+    }
+
+    /// Process at most `max_columns` of real DP work in the captured advance.
+    ///
+    /// Returns cumulative columns processed and whether the captured target is
+    /// drained. Each column uses the unmodified scoring, merge, prune, mass-fold,
+    /// and telemetry path. Dependency-driven scoring has `known_count == None`,
+    /// unchanged across every substep. No commitments are scanned or reported
+    /// until finish. A drained step performs no column work and is idempotent.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a zero budget or missing begin, or the
+    /// same sticky no-path/internal failure as the unbounded column walk.
+    pub fn step_bounded_advance(
+        &mut self,
+        max_columns: usize,
+    ) -> Result<(usize, bool), DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+        if max_columns == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "bounded advance requires a positive column budget".into(),
+            ));
+        }
+        let advance = self.bounded_advance.ok_or_else(|| {
+            DecoderError::InvalidConfiguration("begin a bounded advance before stepping".into())
+        })?;
+        let end = self
+            .next_column
+            .saturating_add(max_columns)
+            .min(advance.end);
+        let mode = if advance.without_dropped_mass {
+            crate::DecodeMode::PredictionOnly
+        } else {
+            crate::DecodeMode::Full
+        };
+        if let Err(failure) = self.model.process_binary_range_with_prefixes(
+            &mut self.progress,
+            &self.observed,
+            &self.model.suffix_values,
+            self.next_column..end,
+            crate::PruneParams {
+                k: self.model.config.k,
+                delta: self.model.config.delta,
+            },
+            crate::BinaryRangeOptions {
+                mode,
+                known_count: None,
+            },
+            None,
+        ) {
+            self.failure = Some(failure);
+            return Err(failure.error());
+        }
+        self.next_column = end;
+        Ok((self.next_column, end == advance.end))
+    }
+
+    /// Finish a drained advance without doing any additional column work.
+    ///
+    /// Returns exactly the snapshot from the corresponding unbounded advance.
+    /// After this call the next detector prefix may be fed. For a terminal block,
+    /// [`Self::finish_bounded_flush`] can instead construct the retained result.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a missing or undrained begin, or a stored
+    /// decoding failure. An invalid finish leaves the pending drain unchanged.
+    pub fn finish_bounded_advance(&mut self) -> Result<StreamingProgress, DecoderError> {
+        self.ensure_bounded_advance_drained()?;
+        self.bounded_advance = None;
+        Ok(self.take_progress())
+    }
+
+    /// Finish a fully fed, drained terminal advance with the full retained result.
+    ///
+    /// This does no column work. Commitment checks and the terminal constructor
+    /// are identical to `flush`; only an explicitly omitted `dropped_log_mass`
+    /// is NaN. This invocation and the preceding step invocations have separate
+    /// costs; a column budget is not a terminal-construction time bound.
+    ///
+    /// # Errors
+    /// Returns a stored failure first, then the unbounded incomplete-shot error,
+    /// or `InvalidConfiguration` for a missing/undrained begin. No failed protocol
+    /// check consumes the drain or changes the frontier.
+    ///
+    /// # Panics
+    /// Panics if a complete drain has not processed every model column, or a
+    /// committed bit differs from the terminal prediction. Both indicate an
+    /// internal engine invariant violation.
+    pub fn finish_bounded_flush(&mut self) -> Result<TrellisResult, DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+        self.ensure_shot_complete()?;
+        let advance = self.ensure_bounded_advance_drained()?;
+        self.finish_bounded_advance()?;
+        Ok(self.terminal_result(advance.without_dropped_mass))
+    }
+
+    /// Check uncommitted logicals and report commitments found since the last snapshot.
+    fn take_progress(&mut self) -> StreamingProgress {
         self.check_commitments();
         let newly_committed = self.pending_commitments.clone();
         self.pending_commitments.clear();
-        Ok(StreamingProgress {
+        StreamingProgress {
             columns_processed: self.next_column,
             newly_committed,
             committed: ObsMask::from_words(&self.committed),
             committed_mask: ObsMask::from_words(&self.committed_mask),
-        })
+        }
+    }
+
+    /// Build the batch terminal result once every column has been processed.
+    ///
+    /// # Panics
+    /// Panics if any column remains unprocessed or a committed bit disagrees with
+    /// the final prediction; both indicate an engine invariant violation.
+    fn terminal_result(&self, omit_dropped_mass: bool) -> TrellisResult {
+        let Kernel::Binary(columns) = &self.model.kernel else {
+            unreachable!("streaming constructors validate the binary kernel");
+        };
+        assert_eq!(
+            self.next_column,
+            columns.len(),
+            "flush must process every column"
+        );
+        let mut result = TrellisModel::finish_binary(&self.progress, self.next_column, 0.0);
+        if omit_dropped_mass {
+            result.dropped_log_mass = f64::NAN;
+        }
+        for logical in set_bits(&self.committed_mask) {
+            let value = self.committed[logical / WORD_BITS] & (1_u64 << (logical % WORD_BITS)) != 0;
+            assert!(
+                result.predicted.get(logical) == value,
+                "committed logical bit {logical} differs from the terminal prediction"
+            );
+        }
+        result
+    }
+
+    fn ensure_bounded_advance_drained(&self) -> Result<BoundedAdvance, DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+        let advance = self.bounded_advance.ok_or_else(|| {
+            DecoderError::InvalidConfiguration("begin a bounded advance before finishing".into())
+        })?;
+        if advance.end != self.next_column {
+            return Err(DecoderError::InvalidConfiguration(
+                "drain every captured column before finishing the bounded advance".into(),
+            ));
+        }
+        Ok(advance)
+    }
+
+    fn ensure_no_bounded_advance(&self) -> Result<(), DecoderError> {
+        if self.bounded_advance.is_some() {
+            return Err(DecoderError::InvalidConfiguration(
+                "finish or reset the pending bounded advance before feeding or unbounded processing".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Process ready columns without constructing commitment snapshots.
@@ -237,13 +663,60 @@ impl TrellisStreamingDecoder {
     /// # Errors
     /// Returns the same no-path or internal error as [`Self::advance`].
     pub fn advance_prediction(&mut self) -> Result<usize, DecoderError> {
+        self.advance_prediction_mode(crate::DecodeMode::Full)
+    }
+
+    /// Prediction-only streaming without discarded-mass evidence telemetry.
+    /// Candidate scoring and retention are unchanged. Do not use full-result
+    /// evidence/diagnostics after this call; reset before returning to full mode.
+    ///
+    /// # Errors
+    /// Returns the same no-path or internal failure as [`Self::advance_prediction`].
+    pub fn advance_prediction_without_evidence(&mut self) -> Result<usize, DecoderError> {
+        self.advance_prediction_mode(crate::DecodeMode::PredictionOnly)
+    }
+
+    fn advance_prediction_mode(&mut self, mode: crate::DecodeMode) -> Result<usize, DecoderError> {
+        // A stored failure outranks protocol errors, as in feed and flush. A
+        // failed bounded step leaves its drain pending until reset.
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
-        let end = self
-            .ready
-            .partition_point(|required| required.is_none_or(|d| d < self.arrived_count));
-        if let Err(failure) = self.model.process_binary_range(
+        self.ensure_no_bounded_advance()?;
+        if mode == crate::DecodeMode::Full && self.evidence_omitted {
+            return Err(DecoderError::InvalidConfiguration(
+                "reset before requesting evidence after prediction-only streaming".into(),
+            ));
+        }
+        let (end, known_count) = match &self.mode {
+            StreamingMode::DependencyDriven => (
+                self.ready
+                    .partition_point(|required| required.is_none_or(|d| d < self.arrived_count)),
+                None,
+            ),
+            StreamingMode::FixedLag {
+                detector_round_bounds,
+                window_size,
+            } => {
+                let target = if self.arrived_round == detector_round_bounds.len() - 1 {
+                    self.arrived_round
+                } else {
+                    self.arrived_round.saturating_sub(window_size - 1)
+                };
+                (
+                    self.column_rounds.partition_point(|&round| round <= target),
+                    Some(self.arrived_count),
+                )
+            }
+        };
+        self.evidence_omitted |= mode == crate::DecodeMode::PredictionOnly;
+        // Delayed advances can include columns from earlier rounds. Use a plan
+        // only when both the range and the known detector count match exactly.
+        let prefix_ends = self
+            .scoring_prefix_plans
+            .get(self.arrived_round)
+            .and_then(|plan| plan.for_range(self.arrived_count, self.next_column..end));
+        if let Err(failure) = self.model.process_binary_range_with_prefixes(
             &mut self.progress,
             &self.observed,
             &self.model.suffix_values,
@@ -252,6 +725,8 @@ impl TrellisStreamingDecoder {
                 k: self.model.config.k,
                 delta: self.model.config.delta,
             },
+            crate::BinaryRangeOptions { mode, known_count },
+            prefix_ends,
         ) {
             self.failure = Some(failure);
             return Err(failure.error());
@@ -274,8 +749,9 @@ impl TrellisStreamingDecoder {
     /// Remaining commitments discovered here are visible through [`Self::committed`].
     ///
     /// # Errors
-    /// Returns `InvalidDimensions` until all detectors arrive, or the same no-path
-    /// or internal error as [`Self::advance`].
+    /// Returns `InvalidDimensions` until all detectors arrive, `InvalidConfiguration`
+    /// until every fixed-lag round arrives, or the same no-path or internal error
+    /// as [`Self::advance`].
     ///
     /// # Panics
     /// Panics if any column remains unprocessed or a committed bit disagrees with
@@ -285,30 +761,38 @@ impl TrellisStreamingDecoder {
             return Err(failure.error());
         }
 
-        if self.arrived_count != self.model.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.model.num_detectors,
-                actual: self.arrived_count,
-            });
-        }
+        self.ensure_shot_complete()?;
         self.advance()?;
-        let Kernel::Binary(columns) = &self.model.kernel else {
-            unreachable!("streaming constructors validate the binary kernel");
-        };
-        assert_eq!(
-            self.next_column,
-            columns.len(),
-            "flush must process every column"
-        );
-        let result = TrellisModel::finish_binary(&self.progress, self.next_column, 0.0);
-        for logical in set_bits(&self.committed_mask) {
-            let value = self.committed[logical / WORD_BITS] & (1_u64 << (logical % WORD_BITS)) != 0;
-            assert!(
-                result.predicted.get(logical) == value,
-                "committed logical bit {logical} differs from the terminal prediction"
-            );
+        Ok(self.terminal_result(false))
+    }
+
+    /// Finish a fully fed shot with complete retained results and no dropped mass.
+    ///
+    /// This uses the same column schedule and terminal-result construction as
+    /// [`Self::flush`]. Prediction, every retained logical mass, retained
+    /// `log_evidence`, runner-up gap, commitments, status, and counts are
+    /// unchanged on the same build and platform. Only `dropped_log_mass` is
+    /// unavailable and set to NaN; its discarded-state accumulation is skipped.
+    /// This is not a prediction-only terminal result.
+    ///
+    /// May follow full advances, [`Self::advance_without_dropped_mass`], or
+    /// [`Self::advance_prediction_without_evidence`]. Existing full-mode methods
+    /// still require a reset once discarded-mass bookkeeping has been omitted.
+    /// Flushing does not reset the shot, and repeated calls return the same result.
+    /// Remaining commitments are visible through [`Self::committed`].
+    ///
+    /// # Errors
+    /// Returns the same incomplete-shot, no-path, or internal errors as [`Self::flush`].
+    ///
+    /// # Panics
+    /// Panics on the same engine invariant violations as [`Self::flush`].
+    pub fn flush_without_dropped_mass(&mut self) -> Result<TrellisResult, DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
         }
-        Ok(result)
+        self.ensure_shot_complete()?;
+        self.advance_without_dropped_mass()?;
+        Ok(self.terminal_result(true))
     }
 
     /// Finish a fully fed shot and return only the predicted logical mask.
@@ -318,23 +802,32 @@ impl TrellisStreamingDecoder {
     /// build and platform.
     ///
     /// # Errors
-    /// Returns `InvalidDimensions` until all detectors arrive, or the same
-    /// no-path or internal error as [`Self::advance_prediction`].
+    /// Returns `InvalidDimensions` until all detectors arrive, `InvalidConfiguration`
+    /// until every fixed-lag round arrives, or the same no-path or internal error
+    /// as [`Self::advance_prediction`].
     ///
     /// # Panics
     /// Panics if the validated streaming model fails to process every column
     /// after the complete syndrome has arrived.
     pub fn flush_prediction(&mut self) -> Result<ObsMask, DecoderError> {
+        self.flush_prediction_mode(crate::DecodeMode::Full)
+    }
+
+    /// Terminal correction only, with discarded-mass telemetry disabled.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Self::flush_prediction`], with no-path or
+    /// internal failures from [`Self::advance_prediction_without_evidence`].
+    pub fn flush_prediction_without_evidence(&mut self) -> Result<ObsMask, DecoderError> {
+        self.flush_prediction_mode(crate::DecodeMode::PredictionOnly)
+    }
+
+    fn flush_prediction_mode(&mut self, mode: crate::DecodeMode) -> Result<ObsMask, DecoderError> {
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
-        if self.arrived_count != self.model.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.model.num_detectors,
-                actual: self.arrived_count,
-            });
-        }
-        self.advance_prediction()?;
+        self.ensure_shot_complete()?;
+        self.advance_prediction_mode(mode)?;
         let Kernel::Binary(columns) = &self.model.kernel else {
             unreachable!("streaming constructors validate the binary kernel");
         };
@@ -346,15 +839,41 @@ impl TrellisStreamingDecoder {
         Ok(TrellisModel::finish_binary_prediction(&self.progress))
     }
 
+    /// A shot is complete once every detector arrives. Fixed lag also requires
+    /// every configured round, including trailing empty rounds, because its
+    /// terminal release follows the final round.
+    fn ensure_shot_complete(&self) -> Result<(), DecoderError> {
+        if self.arrived_count != self.model.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.model.num_detectors,
+                actual: self.arrived_count,
+            });
+        }
+        if let StreamingMode::FixedLag {
+            detector_round_bounds,
+            ..
+        } = &self.mode
+            && self.arrived_round + 1 != detector_round_bounds.len()
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "fixed-lag flush requires every configured round, including empty rounds".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Begin another shot, reusing buffers and committing bits that never toggle.
     pub fn reset(&mut self) {
         self.arrived_count = 0;
+        self.arrived_round = 0;
         self.next_column = 0;
         self.observed.fill(0);
         self.committed.fill(0);
         self.committed_mask.fill(0);
         self.pending_commitments.clear();
         self.failure = None;
+        self.evidence_omitted = false;
+        self.bounded_advance = None;
         self.progress.reset(&self.model);
         self.check_commitments();
     }
@@ -398,4 +917,307 @@ fn validate_streaming_config(config: &TrellisConfig) -> Result<(), DecoderError>
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod fixed_lag_tests {
+    use super::*;
+    fn stream(bounds: Vec<usize>) -> TrellisStreamingDecoder {
+        stream_with(
+            "error(0.1) D0 D2 L0\nerror(0.2) D1\nerror(0.3) D2",
+            bounds,
+            2,
+        )
+    }
+    fn stream_with(dem: &str, bounds: Vec<usize>, window_size: usize) -> TrellisStreamingDecoder {
+        let mut decoder = TrellisStreamingDecoder::from_dem_str(
+            dem,
+            TrellisConfig {
+                k: 256,
+                delta: 14.0,
+                score_alpha: 0.8,
+                merge_indistinguishable: false,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        decoder
+            .set_streaming_mode(StreamingMode::FixedLag {
+                detector_round_bounds: bounds,
+                window_size,
+            })
+            .unwrap();
+        decoder
+    }
+    fn columns_after_each_round(
+        decoder: &mut TrellisStreamingDecoder,
+        rounds: &[&[u8]],
+    ) -> Vec<usize> {
+        rounds
+            .iter()
+            .map(|round| {
+                decoder.feed_prefix(round).unwrap();
+                decoder.advance_prediction().unwrap()
+            })
+            .collect()
+    }
+    #[test]
+    fn one_round_startup_and_terminal_flush() {
+        let mut decoder = stream(vec![0, 1, 2, 3]);
+        decoder.feed_prefix(&[1]).unwrap();
+        assert_eq!(decoder.advance_prediction().unwrap(), 0);
+        decoder.feed_prefix(&[0]).unwrap();
+        // Active D2 is not known yet, but D0 can close.
+        assert_eq!(decoder.advance_prediction().unwrap(), 1);
+        decoder.feed_prefix(&[1]).unwrap();
+        assert_eq!(decoder.advance_prediction().unwrap(), 3);
+        assert!(decoder.flush_prediction().unwrap().get(0));
+        decoder.reset();
+        decoder.feed_dense(&[0, 1, 0]).unwrap();
+        assert!(!decoder.flush_prediction().unwrap().get(0));
+    }
+    #[test]
+    fn repeated_empty_rounds_are_explicit_arrivals() {
+        let mut decoder = stream(vec![0, 0, 1, 2, 3]);
+        decoder.feed_prefix(&[]).unwrap();
+        assert_eq!(decoder.advance_prediction().unwrap(), 0);
+        decoder.feed_prefix(&[1]).unwrap();
+        assert_eq!(decoder.advance_prediction().unwrap(), 0);
+        decoder.feed_prefix(&[0]).unwrap();
+        assert_eq!(decoder.advance_prediction().unwrap(), 1);
+        decoder.feed_prefix(&[1]).unwrap();
+        assert!(decoder.flush_prediction().unwrap().get(0));
+    }
+    #[test]
+    fn invalid_bounds_and_partial_round_leave_shot_unchanged() {
+        let mut decoder = stream(vec![0, 1, 2, 3]);
+        assert!(decoder.feed_prefix(&[]).is_err());
+        assert_eq!(decoder.arrived_count, 0);
+        assert_eq!(decoder.arrived_round, 0);
+        assert!(
+            decoder
+                .set_streaming_mode(StreamingMode::FixedLag {
+                    detector_round_bounds: vec![0, 2, 1, 3],
+                    window_size: 2
+                })
+                .is_err()
+        );
+        decoder.feed_prefix(&[0]).unwrap();
+        assert!(
+            decoder
+                .set_streaming_mode(StreamingMode::DependencyDriven)
+                .is_err()
+        );
+    }
+    #[test]
+    fn flush_waits_for_trailing_empty_round() {
+        let mut decoder = stream(vec![0, 3, 3]);
+        decoder.feed_prefix(&[1, 0, 1]).unwrap();
+        assert!(decoder.flush().is_err());
+        assert!(decoder.flush_prediction().is_err());
+        assert!(decoder.flush_prediction_without_evidence().is_err());
+        decoder.feed_prefix(&[]).unwrap();
+        assert!(decoder.flush().unwrap().predicted.get(0));
+    }
+    #[test]
+    fn column_waits_for_the_round_of_its_last_closing_row() {
+        // The only column touching D2 closes it, two rounds after its first row.
+        let mut decoder = stream_with("error(0.1) D0 D2 L0\nerror(0.2) D1", vec![0, 1, 2, 3], 2);
+        assert_eq!(
+            columns_after_each_round(&mut decoder, &[&[1], &[0], &[1]]),
+            [0, 0, 2]
+        );
+        assert!(decoder.flush_prediction().unwrap().get(0));
+    }
+    #[test]
+    fn window_three_keeps_two_rounds_of_lookahead() {
+        // Round 1's column is released by round 3, before the terminal round.
+        let mut decoder = stream_with(
+            "error(0.1) D0 L0\nerror(0.1) D1\nerror(0.1) D2\nerror(0.1) D3",
+            vec![0, 1, 2, 3, 4],
+            3,
+        );
+        assert_eq!(
+            columns_after_each_round(&mut decoder, &[&[1], &[0], &[0], &[0]]),
+            [0, 0, 1, 4]
+        );
+    }
+    #[test]
+    fn a_late_closing_column_holds_back_every_later_column() {
+        // Release rounds before the prefix maximum are 1, 3, 1, 1: the second
+        // column closes D1 and D2, so no later column may run before round 3.
+        let mut decoder = stream_with(
+            "error(0.1) D0 L0\nerror(0.1) D0 D1 D2\nerror(0.2) D0\nerror(0.3) D0",
+            vec![0, 1, 2, 3],
+            2,
+        );
+        assert_eq!(
+            columns_after_each_round(&mut decoder, &[&[1], &[1], &[1]]),
+            [0, 1, 4]
+        );
+    }
+}
+
+#[cfg(test)]
+mod scoring_prefix_plan_tests {
+    use super::*;
+
+    fn model() -> SparseDem {
+        SparseDem {
+            mechanisms: (0_u32..24)
+                .map(|i| (0.03 + f64::from(i % 3) * 0.02, vec![i % 8], vec![i % 2]))
+                .collect(),
+            detector_coords: std::collections::BTreeMap::new(),
+            num_detectors: 8,
+            num_observables: 2,
+        }
+    }
+    fn compare(a: &TrellisStreamingDecoder, b: &TrellisStreamingDecoder) {
+        let a = &a.progress;
+        let b = &b.progress;
+        assert_eq!(a.frontier.parent.words, b.frontier.parent.words);
+        assert!(
+            a.frontier.parent.masses.iter().map(|m| m.to_bits()).eq(b
+                .frontier
+                .parent
+                .masses
+                .iter()
+                .map(|m| m.to_bits()))
+        );
+        assert_eq!(a.transitions, b.transitions);
+        assert_eq!(a.dropped_states, b.dropped_states);
+        assert_eq!(a.dropped_log_mass.to_bits(), b.dropped_log_mass.to_bits());
+        assert_eq!(a.k_capped, b.k_capped);
+        assert_eq!(a.delta_pruned, b.delta_pruned);
+        assert_eq!(a.peak_retained_states, b.peak_retained_states);
+    }
+    #[test]
+    fn cache_matches_fallback_with_delayed_and_repeated_advances() {
+        let dem = model();
+        for bounds in [vec![0, 2, 4, 6, 8], vec![0, 0, 2, 5, 8]] {
+            for window_size in [2, 3] {
+                for full in [false, true] {
+                    for schedule in [0, 1, 2] {
+                        let mode = StreamingMode::FixedLag {
+                            detector_round_bounds: bounds.clone(),
+                            window_size,
+                        };
+                        let mut a = TrellisStreamingDecoder::from_sparse_dem(
+                            &dem,
+                            TrellisConfig::default(),
+                        )
+                        .unwrap();
+                        let mut b = TrellisStreamingDecoder::from_sparse_dem(
+                            &dem,
+                            TrellisConfig::default(),
+                        )
+                        .unwrap();
+                        a.set_streaming_mode(mode.clone()).unwrap();
+                        b.set_streaming_mode(mode).unwrap();
+                        b.scoring_prefix_plans.clear();
+                        for bits in 0..256 {
+                            a.reset();
+                            b.reset();
+                            for round in 1..bounds.len() {
+                                let block: Vec<u8> = (bounds[round - 1]..bounds[round])
+                                    .map(|i| u8::from((bits >> i) & 1 != 0))
+                                    .collect();
+                                assert_eq!(
+                                    format!("{:?}", a.feed_prefix(&block)),
+                                    format!("{:?}", b.feed_prefix(&block))
+                                );
+                                if schedule == 0
+                                    || (schedule == 1 && round % 2 == 0)
+                                    || round == bounds.len() - 1
+                                {
+                                    for _ in 0..2 {
+                                        let mode = if full {
+                                            crate::DecodeMode::Full
+                                        } else {
+                                            crate::DecodeMode::PredictionOnly
+                                        };
+                                        assert_eq!(
+                                            format!("{:?}", a.advance_prediction_mode(mode)),
+                                            format!("{:?}", b.advance_prediction_mode(mode))
+                                        );
+                                        compare(&a, &b);
+                                    }
+                                }
+                            }
+                            let mode = if full {
+                                crate::DecodeMode::Full
+                            } else {
+                                crate::DecodeMode::PredictionOnly
+                            };
+                            assert_eq!(
+                                format!("{:?}", a.flush_prediction_mode(mode)),
+                                format!("{:?}", b.flush_prediction_mode(mode))
+                            );
+                            compare(&a, &b);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn plans_cover_columns_preserve_failed_mode_and_clear_on_dependency_mode() {
+        let mut a =
+            TrellisStreamingDecoder::from_sparse_dem(&model(), TrellisConfig::default()).unwrap();
+        a.set_streaming_mode(StreamingMode::FixedLag {
+            detector_round_bounds: vec![0, 2, 4, 6, 8],
+            window_size: 2,
+        })
+        .unwrap();
+        let Kernel::Binary(columns) = &a.model.kernel else {
+            panic!()
+        };
+        assert_eq!(
+            a.scoring_prefix_plans
+                .iter()
+                .map(|p| p.ends.len())
+                .sum::<usize>(),
+            columns.len()
+        );
+        for plan in &a.scoring_prefix_plans {
+            for (i, &end) in plan.ends.iter().enumerate() {
+                assert_eq!(
+                    end,
+                    columns[plan.start + i]
+                        .suffix_compatibility
+                        .partition_point(|row| row.word as usize * WORD_BITS
+                            + usize::from(row.bit)
+                            < plan.known_count)
+                );
+            }
+        }
+        let before = format!("{:?}", a.scoring_prefix_plans);
+        assert!(
+            a.set_streaming_mode(StreamingMode::FixedLag {
+                detector_round_bounds: vec![0, 8],
+                window_size: 2
+            })
+            .is_err()
+        );
+        assert_eq!(before, format!("{:?}", a.scoring_prefix_plans));
+        a.reset();
+        assert_eq!(before, format!("{:?}", a.scoring_prefix_plans));
+        a.set_streaming_mode(StreamingMode::DependencyDriven)
+            .unwrap();
+        assert!(a.scoring_prefix_plans.is_empty());
+    }
+    #[test]
+    fn mismatched_prefix_and_outside_plan_use_fallback() {
+        let plan = ScoringPrefixPlan {
+            known_count: 64,
+            start: 5,
+            ends: vec![1, 2, 3],
+        };
+        assert_eq!(plan.for_range(64, 5..8), Some(&[1, 2, 3][..]));
+        assert_eq!(plan.for_range(64, 6..7), Some(&[2][..]));
+        assert_eq!(plan.for_range(64, 8..8), Some(&[][..]));
+        assert_eq!(plan.for_range(63, 5..8), None);
+        assert_eq!(plan.for_range(64, 4..8), None);
+        assert_eq!(plan.for_range(64, 5..9), None);
+    }
 }

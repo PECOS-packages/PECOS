@@ -722,8 +722,13 @@ The example's `--include-lifetimes` flag saves the corresponding tagged source.
 Each window links a required reset label and a measured program result ID to
 the source preparation/readout moments and role history, including `RELABEL`.
 Runtime future IDs remain distinct from program result IDs. Gaps run from the
-end of preparation to the start of destructive readout, exclude gate intervals,
-and exclude gaps between successive uses of a site. Batch durations count once
+end of preparation to the start of destructive readout. Native Selene handles
+may be recycled: `allocation_occurrence` distinguishes successive allocations
+of a handle, and `source_qubit_kind="native_handle"` identifies that convention.
+Legacy QIR allocation IDs remain unique. Tagged provenance uses flat tracing;
+scheduled transport rejects source metadata rather than silently dropping it.
+The reported intervals exclude gate intervals
+and gaps between successive uses of a site. Batch durations count once
 per participating site. All normalized gate kinds and site operands must match
 the lowered emission sequence; this check does not compare rotation angles.
 Incomplete traces, missing or conflicting endpoint labels, adapters that change

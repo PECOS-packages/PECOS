@@ -1,0 +1,135 @@
+{
+  "source": "Berthusen et al., arXiv:2609.03194, appendix Table I (tab:codes); transcribed by script from the LaTeX source, 2026-10-17",
+  "conventions": "Pauli strings are dense, qubit 0 first. Stabilizer signs are all +1. Logical Y_j is i*X_j*Z_j (PECOS Y = iXZ). PECOS S = diag(1, i).",
+  "helix_10_2_3": {
+    "n": 10,
+    "k": 2,
+    "d": 3,
+    "stabilizers": [
+      "XIIXIIXXII",
+      "IXIIXIIXXI",
+      "XIXIIIIIXX",
+      "IXIXIXIIIX",
+      "IIXIXXXIII",
+      "IZZIIZIIZI",
+      "IIZZIIZIIZ",
+      "IIIZZZIZII",
+      "ZIIIZIZIZI",
+      "ZZIIIIIZIZ"
+    ],
+    "logicals": {
+      "X0": "IIXXIXIIII",
+      "X1": "XIIIIIXIIX",
+      "Z0": "IZIIZZIIII",
+      "Z1": "ZIIIIIIZZI"
+    },
+    "note": "10 listed rows, 2 redundant (rank 8)"
+  },
+  "c4_helix_20_2_6": {
+    "n": 20,
+    "k": 2,
+    "d": 6,
+    "stabilizers": [
+      "XXXXIIIIIIIIIIIIIIII",
+      "IIIIXXXXIIIIIIIIIIII",
+      "IIIIIIIIXXXXIIIIIIII",
+      "IIIIIIIIIIIIXXXXIIII",
+      "IIIIIIIIIIIIIIIIXXXX",
+      "XIIXIIXXIIXXXIIXIIII",
+      "IIIIXIIXXXIIIIXXXIIX",
+      "IXXIIIIIXIIXXXIIIIXX",
+      "IIXXIXXIIIIIIXXIXXII",
+      "XXIIXXIIIXXIIIIIIXXI",
+      "ZZZZIIIIIIIIIIIIIIII",
+      "IIIIZZZZIIIIIIIIIIII",
+      "IIIIIIIIZZZZIIIIIIII",
+      "IIIIIIIIIIIIZZZZIIII",
+      "IIIIIIIIIIIIIIIIZZZZ",
+      "ZIIZIIZZIIZZZIIZIIII",
+      "IIIIZIIZZZIIIIZZZIIZ",
+      "IZZIIIIIZIIZZZIIIIZZ",
+      "IIZZIZZIIIIIIZZIZZII",
+      "ZZIIZZIIIZZIIIIIIZZI"
+    ],
+    "logicals": {
+      "X0": "IIXXIIIIXIIXXIIXIIII",
+      "X1": "XIIXIIXXIIIIIIIIIIXX",
+      "Z0": "ZIIZIIZZIIIIIIIIIIZZ",
+      "Z1": "IIZZIIIIZIIZZIIZIIII"
+    },
+    "blocks": [
+      [
+        0,
+        1,
+        2,
+        3
+      ],
+      [
+        4,
+        5,
+        6,
+        7
+      ],
+      [
+        8,
+        9,
+        10,
+        11
+      ],
+      [
+        12,
+        13,
+        14,
+        15
+      ],
+      [
+        16,
+        17,
+        18,
+        19
+      ]
+    ],
+    "note": "C4 block checks first; 20 listed rows, 2 redundant (rank 18). X0 has the same support as Z1, not Z0.",
+    "signed_logical_images": {
+      "SWAP": {
+        "X0": "+X1",
+        "X1": "+X0",
+        "Z0": "+Z1",
+        "Z1": "+Z0"
+      },
+      "CNOT_SWAP": {
+        "X0": "+X0X1",
+        "X1": "+X0",
+        "Z0": "+Z1",
+        "Z1": "+Z0Z1"
+      },
+      "H_SWAP": {
+        "X0": "+Z1",
+        "X1": "+Z0",
+        "Z0": "+X1",
+        "Z1": "+X0"
+      },
+      "CZ": {
+        "X0": "+X0Z1",
+        "X1": "-Z0X1",
+        "Z0": "+Z0",
+        "Z1": "+Z1"
+      },
+      "S0S1": {
+        "X0": "-Y0",
+        "X1": "-Y1",
+        "Z0": "+Z0",
+        "Z1": "+Z1"
+      }
+    },
+    "signed_images_note": "Images are logical Paulis up to stabilizers, computed with CliffordRep from the physical circuits in time order. CNOT_SWAP = logical CNOT(0->1) then SWAP. CZ acts as CZ*Z1 and S0S1 as S0*S1*Z0*Z1 (residual Paulis).",
+    "automorphism_group_order": 36,
+    "sp4_order": 720,
+    "s0s1_count_distribution": {
+      "0": 36,
+      "1": 324,
+      "2": 324,
+      "3": 36
+    }
+  }
+}

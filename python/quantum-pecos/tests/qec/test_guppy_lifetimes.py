@@ -163,3 +163,44 @@ def test_zero_clocks_still_bind_without_claiming_measured_durations(case):
     assert report["normalized_window_gap_ns"] == 0
     assert report["timing_status"] == "zero_durations"
     assert not report["calibrated_durations_verified"]
+
+
+def test_native_requests_bind_recycled_handles_by_allocation_occurrence(case):
+    plan, evidence = case
+    chunk = evidence["operation_trace"][0]
+
+    def request(native):
+        return {"RuntimeRequest": {"request": {"Native": native}, "result_id": None}}
+
+    rewritten = []
+    for op in chunk["operations"]:
+        if not isinstance(op, dict):
+            rewritten.append(op)
+        elif "AllocateQubit" in op:
+            rewritten.append(request("Qalloc"))
+        elif "TraceMetadata" in op:
+            item = op["TraceMetadata"]
+            if item["qubit"] == 33:
+                item["qubit"] = 22
+                item["metadata"]["pecos_qec_allocation_id"] = "22"
+            rewritten.append(op)
+        elif "ReleaseQubit" in op:
+            q = op["ReleaseQubit"]["id"]
+            rewritten.append(request({"Qfree": 22 if q == 33 else q}))
+        elif "Reset" in op["Quantum"]:
+            q = op["Quantum"]["Reset"]
+            rewritten.append(request({"Reset": 22 if q == 33 else q}))
+        elif "Measure" in op["Quantum"]:
+            q, result = op["Quantum"]["Measure"]
+            rewritten.append(request({"Measure": {"qubit": 22 if q == 33 else q,
+                                                    "result_id": result, "leaked": False}}))
+        else:
+            rewritten.append(op)
+    chunk["operations"] = rewritten
+    for low in chunk["lowered_quantum_ops"]:
+        if low["metadata"].get("pecos_qec_allocation_id") == "33":
+            low["metadata"]["pecos_qec_allocation_id"] = "22"
+    report = bind_runtime_lifetime_windows(plan, evidence)
+    assert [w["program_qubit"] for w in report["windows"]] == [22, 11, 22]
+    assert [w["allocation_occurrence"] for w in report["windows"]] == [1, 1, 2]
+    assert all(w["source_qubit_kind"] == "native_handle" for w in report["windows"])

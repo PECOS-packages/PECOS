@@ -91,6 +91,7 @@ The Rust API provides access to a broader set of decoders:
 - PyMatching MWPM (feature: `pymatching`)
 - Tesseract (feature: `tesseract`)
 - Chromobius color code decoder (feature: `chromobius`)
+- Native Relay-BP and min-sum BP (feature: `relay-bp`)
 
 ## Installation and Setup
 
@@ -328,6 +329,37 @@ match decoder.decode(&syndrome.view()) {
 }
 ```
 
+## Native Relay-BP
+
+`relay_bp`, `RelayBpBuilder`, and `RelayBpDecoder` use PECOS's native Relay-BP
+kernel (`pecos-bp`), implementing Müller et al., [arXiv:2506.01779](https://arxiv.org/abs/2506.01779).
+For a fixed configuration, decoding is a deterministic function of `(seed, syndrome)`.
+Decode order, batch splitting and worker count cannot change a result; serial and
+parallel batch decoding are supported.
+
+Use `pre_iter` for leg zero and `set_max_iter` for each of the `num_sets` relay
+legs. Relay has no `max_iter` option, including `RelayBpDecoder.from_dem`;
+the generic `DemAwareDecoder.from_dem` rejects explicit `max_iter` for Relay.
+`gamma0=None` disables memory in leg zero only; relay legs keep their sampled
+memory. The Rust and Python `RelayBpBuilder` can construct a `RelayBpDecoder`
+with `num_sets=0` for a single leg (then `pre_iter` must be positive). The
+`relay_bp` spec factory requires positive `num_sets`.
+`alpha=None` means unit scaling, while `alpha=0.0` selects dynamic scaling;
+`alpha_iteration_scaling_factor` must always be finite and greater than zero.
+Stopping targets must be positive, so `stopping("n_conv_0")` is rejected.
+
+Python `RelayBpBuilder.explicit_gammas(rows)` sets one memory strength per bit:
+row 0 serves relay leg 1, and rows cycle; `None` restores sampling from
+`gamma_dist_interval(low, high)`. Both builder-created Python decoders provide
+`decode_batch(detection_events, num_shots)`, decoding sequentially with the GIL
+released. Pass `num_shots * check_count` row-major 0/1 bytes (for example,
+`numpy_array.astype(numpy.uint8).tobytes()`); the result is
+`num_shots * bit_count` row-major correction bytes.
+
+`MinSumBpBuilder` uses a single native memory-BP leg, keeps a positive `max_iter`,
+and has no memory when `gamma0=None`. Both families require binary matrices and
+syndromes and one finite probability in `[0, 1]` per matrix column.
+
 ## Performance Considerations
 
 1. **Algorithm Selection**:
@@ -372,13 +404,15 @@ assert result.num_errors == 0
 
 Frontier accepts raw DEMs, including hyperedges. `workers=None` selects the
 worker count automatically; `workers=1` runs sequentially. Parallel execution
-releases the Python GIL and preserves shot order. At most one Rust decoder per
-worker is alive at a time, so more workers and larger `k` increase memory use.
+releases the Python GIL and preserves shot order. Each active worker owns
+independent decoder scratch, so more workers and larger `k` increase memory use.
 `SampleBatch.decode(...)` builds exactly one decoder per worker;
 `DemSampler.decode(...)` builds one up front to check dimensions and then one per
 scheduled group of sampling chunks, which can be several times the worker count
-on a long run, so a model that is slow to construct pays that cost more than
-once per worker there.
+on a long run. Plain specifications rebuild the model for each decoder.
+Recovery-configured Frontier specifications prepare the trellis model and optional
+feasibility basis once per decode call, sharing them across all workers with
+independent scratch. This prepared state is released when the call finishes.
 
 Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
 `score_alpha`, `bp_score_iterations`, `column_order`, `merge_indistinguishable`,
@@ -387,6 +421,173 @@ Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
 column permutations are also accepted. Frontier remains experimental, and
 pruning can make predictions approximate. For per-shot logical masses, pruning
 status, and complementary gaps, use the direct experimental binding.
+
+### Strict, reporting, and always-answer Frontier calls
+
+The direct `FrontierDecoder.decode_syndrome`, `decode_from_defects`, and
+`decode_batch` methods share a Rust recovery implementation. They accept
+`on_no_path="raise"` (default), `"report"`, or `"fallback"`, and an optional
+`delta_max`. Invalid inputs, configuration errors, and engine faults still raise
+in every mode. Always-answer means a prediction is returned for a normal
+no-path outcome; it does not suppress programming errors.
+
+```python
+from pecos_rslib_exp import FrontierDecoder
+
+decoder = FrontierDecoder.from_dem(
+    "error(0.1) D0 D1 L0\n",
+    k=256,
+    delta=16,
+    fallback="feasible_then_zero",
+)
+
+# Strict: raise if no configured attempt finds a path.
+assert decoder.decode_syndrome([1, 1]).observable_flips.mask == 1
+
+# Reporting: retain successful shots and explicit no-path reports in order.
+outcomes = decoder.decode_batch(
+    [[0, 0], [1, 0], [1, 1]],
+    workers=2,
+    on_no_path="report",
+    delta_max=64,
+)
+assert [outcome.no_path for outcome in outcomes] == [False, True, False]
+assert outcomes[1].cause == "infeasible"
+
+# Always-answer: use the explicitly configured fallback after attempts fail.
+answer = decoder.decode_syndrome([1, 0], on_no_path="fallback", delta_max=64)
+assert answer.fallback_used
+assert answer.status == "fallback:zero"
+assert answer.syndrome_consistent is False
+```
+
+With `delta=16, delta_max=64`, attempts use 16, 32, then 64, stopping at the
+first success. A non-power-of-two maximum is included as the final cap. A zero
+base grows first to `min(1, delta_max)`. The maximum must be finite and at least
+the base delta; omitting it disables retries. K stays fixed. Attempts restart
+DP using one prepared model and one BP preparation per shot. Residual or
+infeasible failures skip remaining attempts because widening cannot help.
+`delta_max` bounds the pruning window, not wall-clock runtime.
+
+The returned types are distinct:
+
+- `FrontierResult`: a decoded prediction, `no_path=False`, `fallback_used=False`.
+  `deltas_tried`, `delta_used`, and `escalation_rungs_used` record recovery.
+  Transitions count all attempts; evidence and pruning diagnostics describe the
+  successful attempt, whose prediction can still be approximate.
+- `FrontierNoPath`: no prediction, `no_path=True`, `fallback_used=False`.
+  `cause` is `"residual"`, `"infeasible"`, or `"exhausted"`. Residual includes a
+  `detector` that cannot be changed; exhausted indicates failure after pruning,
+  which alone does not prove incompatibility. Reports expose `deltas_tried`,
+  total `transitions`, total `dropped_states`, and one-shot `bp_seconds`.
+- `FrontierFallback`: an explicit prediction, `no_path=True`, `fallback_used=True`.
+  `failure` retains the original no-path report. It has no likelihood or
+  confidence estimate. Its `observable_flips` can be nonzero.
+
+Configure `fallback="feasible_then_zero"` to prepare a reusable GF(2) solver for
+an independent binary DEM. It chooses a probability-ordered column basis and
+verifies the resulting fault explanation against the syndrome. A successful
+fallback has `status="fallback:feasible"`, `syndrome_consistent=True`, and
+`mechanism_indices` referring to the original DEM. This is a deterministic
+heuristic, not a maximum-likelihood or minimum-weight decoder. Preprocessing
+uses additional memory for the basis and witnesses. Direct `decode_batch` workers
+share this state; recovery-configured specifications also share it across all
+workers within each `SampleBatch.decode` or `DemSampler.decode` call.
+`build_seconds` reports Frontier construction only, excluding that preparation.
+
+If the DEM has no explanation, this policy returns zero observable flips with
+`status="fallback:zero"` and `syndrome_consistent=False`. An explicitly selected
+`fallback="zero"` always uses zero after no-path and reports consistency as
+`None` (unverified). Neither zero prediction is presented as a successful decode.
+Configuring a fallback does not activate it until `on_no_path="fallback"` is
+requested. Feasibility handles p=0/p=1 and joint `^` components, but is rejected
+for categorical `from_factors` models; those can use the explicit zero policy.
+
+Syndrome consistency does not imply logical identity. For the model
+`error(0.1) D0 L0`, a fired D0 requires logical mask 1; no identity-sector
+explanation exists. A DEM mechanism explanation is also not automatically a
+physical data-qubit Pauli correction. Record fallback and incompatible-shot
+rates alongside logical error rates. Do not silently drop undecoded shots from
+the denominator; always-answer predictions can be scored across all shots.
+
+Rust callers use `pecos_frontier::recovery::FrontierRecoveryDecoder` with
+`RecoveryOptions`, `NoPathAction`, and `FallbackPolicy`. The normal
+`FrontierDecoder` remains the strict parity-port engine. The shared
+`pecos_decoder_core::feasibility::DemFeasibility` utility can also be prepared
+and queried independently of Frontier.
+
+```rust
+use pecos_frontier::{FrontierConfig, SparseDem};
+use pecos_frontier::recovery::{
+    FallbackPolicy, FrontierRecoveryDecoder, FrontierRecoveryOutcome,
+    NoPathAction, RecoveryOptions,
+};
+
+let dem = SparseDem::from_dem_str("error(0.1) D0 D1 L0")?;
+let mut decoder = FrontierRecoveryDecoder::from_sparse_dem(
+    &dem,
+    FrontierConfig { k: 256, delta: 16.0, ..Default::default() },
+    Some(FallbackPolicy::FeasibleThenZero),
+)?;
+let outcome = decoder.decode(&[1, 0], RecoveryOptions {
+    delta_max: Some(64.0),
+    on_no_path: NoPathAction::Fallback,
+})?;
+assert!(matches!(outcome, FrontierRecoveryOutcome::Fallback {
+    syndrome_consistent: Some(false), ..
+}));
+```
+
+Rust `decode_batch` preserves per-shot `Result` values in input order. Python
+batch calls preserve normal no-path/fallback outcomes but still raise an indexed
+exception for other errors. Rust callers can also bind options using
+`decoder.with_options(options)?` to obtain an `ObservableDecoder` adapter for
+a shared batch `DecoderFactory` (with native batch dispatch disabled).
+`decode_outcome` preserves reports; prediction-only `decode_obs` returns an error
+when reporting supplies no mask. `FrontierCommitteeDecoder` remains strict.
+
+The `frontier(...)` specification accepts the same recovery controls for both
+`SampleBatch.decode` and `DemSampler.decode`:
+
+```python
+from pecos_rslib_exp import frontier
+from pecos_rslib.qec import SampleBatch
+
+dem = "error(0.1) D0 D1 D2 L0\n"
+# The middle syndrome is incompatible with this DEM and uses the zero fallback.
+batch = SampleBatch([[1, 1, 1], [1, 0, 0], [0, 0, 0]], [1, 1, 0])
+spec = frontier(
+    k=256,
+    delta=16,
+    delta_max=64,
+    on_no_path="fallback",
+    fallback="feasible_then_zero",
+)
+result = batch.decode(dem, spec, workers=4, predictions=True)
+print(result.num_errors, result.num_fallback, result.num_undecoded)
+fallback_errors = sum(r.logical_error for r in result.recovery if r.fallback_used)
+assert result.num_fallback == 1
+assert result.num_undecoded == 0
+assert result.num_errors == 1
+assert fallback_errors == 1
+```
+
+Every supplied prediction, including fallback, is compared against the shot's
+true logical observables. A syndrome-compatible fallback with the wrong logical
+mask counts as an error. `recovery` contains shot indices, actual `deltas_tried`,
+`fallback_used`, `syndrome_consistent`, `undecoded`, and `logical_error` for shots
+requiring retries, reporting, or fallback. These records are retained even when
+`predictions=False`, so fallback success can be measured separately.
+
+With `on_no_path="report"`, retained `predictions` contains `None` for undecoded
+shots. `num_scored` excludes those shots and `num_errors` counts mismatches among
+supplied predictions. The full-batch `logical_error_rate` (including timing
+stats) is NaN and `interval()` raises when any shot is undecoded; neither an
+identity placeholder nor an artificially reduced error rate is reported. Rust
+`DecodeResult` exposes `partial_predictions` in this case and leaves its
+complete `predictions` absent. Strict defaults and version-1 providers retain
+their existing behavior. Recovery specifications require both the standard and
+experimental Python extensions to support provider protocol version 2.
 
 ## Rust-backed BP-Trellis batch decoding
 
@@ -463,31 +664,92 @@ retry telemetry; the unified batch result returns predictions and aggregate scor
 
 ## Hyperedge models and matching decoders
 
-Matching-style decoders (PyMatching, Fusion Blossom and its perturbed
-correlated variant, PECOS UF, K-MWPM, belief matching, and `astar` -- though
-not `astar_full`, which consumes the full check matrix) represent a model as a
-graph whose edges touch at most two detectors. Given a model containing
-mechanisms that touch three or more, they reject it rather than silently
-ignoring those mechanisms:
+Graph decoder specs (PyMatching, Fusion Blossom and its perturbed correlated
+variant, PECOS UF, K-MWPM, non-hybrid belief matching, and `astar`) project raw
+hyperedges themselves. Projection uses disjoint components already present as
+standalone faults in the model, preserving probabilities and observable effects.
+A DetectorErrorModel object decodes its standard text plus its `fault_sector` labels.
+Those labels guide the choice of graphlike components.
+Use `batch.decode(dem, spec)` or `dem.build_decoder(spec)` to preserve them.
+Saving with `batch.save(path, dem=dem)` also preserves the object's labels in
+corpus format v2. `SampleBatch.load(path).decode(None, spec)` uses the stored
+text and labels. A labelled embedded model has object semantics, including
+provider refusal; passing `loaded.dem` explicitly decodes unlabelled text.
+All-null labels (including v1 corpora) retain text semantics and provider support.
+`loaded.dem_fault_sectors` returns a fresh, dense list of labels or `None` entries;
+batches without an embedded model return `None`. Corpus identity checks only text.
+Resaving with equal embedded text preserves labels, including with
+`allow_dem_mismatch=True`; different text writes all-null labels. An object
+always supplies its own labels. Saving never changes the source batch.
+Every save writes v2; new readers accept v1 and v2, while older installations
+reject v2 files. `loaded.format_version` reports the version actually loaded.
+Both results expose `.projection`. It is `None` when no projection was needed or
+when a composition without a shared policy projects inside its members and has
+no shared report. Text input has no fault-sector labels.
 
-```
-Invalid configuration: fusion_blossom needs a graphlike model, but this DEM has
-113 mechanism(s) touching three or more detectors. Decoding it here would
-silently ignore them. Pass a decomposed model
-(DetectorErrorModel.to_string_terminal_graphlike_decomposed() or
-to_string_source_graphlike_decomposed()), or use a decoder that accepts
-hyperedges such as bp_osd or tesseract.
-```
+Circuits can supply the string attribute `measurement_classes`: a JSON list with
+one entry per absolute measurement record in emission order. Each entry is `null`
+(unclassed), or an object with required `block`, `family`, and `round` keys.
+`block` is a non-empty opaque code-block name; `family` is a non-empty opaque base
+check-family name or `null` (classified but untyped); `round` is an integer global
+epoch and may be negative. Unknown object keys are ignored. For example:
+`[{"block":"memory","family":"X","round":-1}, null]`.
+The base family identifies the stabilizer register before logical frame changes:
+after a transversal H the register keeps its family although its physical
+measurement basis flips. Block and round are currently validated only.
 
-For graph matchers, prefer `DetectorErrorModel.to_string_source_graphlike_decomposed()`
-and check for residual hyperedges. It uses source provenance to choose components.
-The terminal projection mentioned in the diagnostic is a coordinate-based
-approximation: it invents components that need not be physical mechanisms and
-can decode less accurately even when their observable labels are consistent.
+With classes present, `circuit_definitions()` and DEM construction resolve each
+detector's references to absolute records, cancel even multiplicities, and derive
+the common family of the remaining records. Empty support, an unclassed or
+untyped remaining record, or differing families gives `None`. Cancelled records
+do not contribute.
+An explicit non-null detector `fault_sector` must equal the derived label,
+including when derivation gives `None`; disagreement is an error. An absent or
+null explicit label takes the derived value. Without classes, explicit labels
+pass through unchanged. Empty explicit labels remain invalid.
+The Rust and Python `DemBuilder.with_measurement_classes_json` manual route takes
+classes in influence-map record order, which need not be stamped measurement-ID
+order. The final measurement count must match the list length.
 
-Decode such a model with a decoder that represents hyperedges directly --
-`bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- or supply a
-decomposed projection (a model written with `^` separators passes: each component is graphlike). See
+The normal manual Python route is `DemBuilder(map).with_circuit_metadata(circuit)`:
+it copies detectors, observables, classes and the measurement count together.
+It copies attributes only, after checking them against the circuit: ids must be
+unique, references must resolve, and attributes must agree with any annotations on
+ids, measurements and labels. The influence map must hold the measurement records
+of `circuit.to_dag_circuit()`, so build it from that DAG. Use
+`DetectorErrorModel.from_circuit` for circuits defined by annotation alone.
+Resolved `circuit_definitions()` detector dictionaries carry the effective labels,
+including derived labels when explicit metadata is absent or null; disagreement
+fails during definition resolution. A caller passing only
+`with_detectors_json(circuit.get_meta("detectors"))` for a circuit whose labels
+come from classes gets a DEM with no labels and no error. Pass the circuit metadata
+instead, or supply the classes separately in the influence map's record order.
+
+The default `irreducible="refuse"` rejects faults that cannot be decomposed and
+reports their count and input indices. To remove those faults from the decoder's
+model explicitly, use `pymatching(correlated=True, irreducible="drop")` or the
+string `"pymatching:irreducible=drop"`. Sampling still uses the original model.
+Shots that fire a dropped fault can make some graph decoders fail on detectors
+left without edges ([#1266](https://github.com/PECOS-packages/PECOS/issues/1266)).
+Alternatively, use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()`.
+Effects with more than 12 detectors or reducible only with overlapping components
+are refused under either policy; `irreducible="drop"` does not apply to them.
+Use a hyperedge-capable decoder such as `bp_osd()` or `tesseract()` for these effects.
+
+Supplied `^` decompositions remain supported and are used verbatim when every
+component touches at most two detectors. Mixing them with raw hyperedges is an
+error. Hybrid belief matching still takes separate full and decomposed models.
+Windowed decoding projects the full model using the inner spec's policy before
+windowing; beam search still requires graphlike input in its phase-1 windows.
+A graph decoder in beam phase 2 projects the full residual model under Refuse.
+Drop is rejected in compositions without a shared projection report, including
+beam search and mixed graph/hypergraph ensembles. Every graph member must share
+the policy and the composition must resolve to a shared projection before Drop
+is allowed. Phase 2 may use a hyperedge-capable decoder selected through Rust
+`BeamSearchConfig.phase2` or `pecos_rslib.decoders.beamsearch(phase2=...)`;
+the beamsearch string grammar has no `phase2` key.
+
+See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
 BP-Trellis decoders, which additionally report a per-shot complementary gap,
 and for provenance-based decomposition of a hyperedge model into a graphlike

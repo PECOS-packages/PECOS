@@ -1,5 +1,6 @@
+use super::declarations::{DeclarationKind, declaration_kind, declaration_name, render_json_value};
 use pecos_core::errors::PecosError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
@@ -19,10 +20,53 @@ fn deserialize_program_operations<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Vec<Operation>, D::Error> {
     let ops = Vec::<Operation>::deserialize(deserializer)?;
     super::declarations::validate_operations(&ops).map_err(serde::de::Error::custom)?;
+    super::exports::collect(&ops).map_err(serde::de::Error::custom)?;
     Ok(ops)
 }
 
+/// Normalize measurement names at a raw JSON program boundary, without
+/// interpreting strings in metadata or classical expressions as operations.
+pub fn canonicalize_measurement_qops(program: &mut serde_json::Value) {
+    fn visit(ops: &mut [serde_json::Value]) {
+        for op in ops {
+            if let Some(serde_json::Value::String(qop)) = op.get_mut("qop") {
+                *qop = canonical_qop(qop).to_owned();
+            }
+            if op.get("block").is_some() {
+                for field in ["ops", "true_branch", "false_branch"] {
+                    if let Some(serde_json::Value::Array(children)) = op.get_mut(field) {
+                        visit(children);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(serde_json::Value::Array(ops)) = program.get_mut("ops") {
+        visit(ops);
+    }
+}
+
+fn canonical_qop(name: &str) -> &str {
+    match name {
+        "MeasureZ" => "Measure",
+        name => name,
+    }
+}
+
 impl PHIRProgram {
+    /// Decode a program after shared validation of classical JSON inputs.
+    ///
+    /// # Errors
+    /// Rejects invalid JSON, Result references, and declaration sizes.
+    pub fn from_json(json: &str) -> Result<Self, PecosError> {
+        let mut value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|error| PecosError::Input(format!("Failed to parse PHIR JSON: {error}")))?;
+        canonicalize_measurement_qops(&mut value);
+        super::classical_validation::validate_classical_inputs(&value)?;
+        serde_json::from_value(value)
+            .map_err(|error| PecosError::Input(format!("Failed to parse PHIR JSON: {error}")))
+    }
+
     /// Collect the names of all foreign functions invoked by `ffcall` classical
     /// operations anywhere in the program, including inside `if`/`sequence`
     /// blocks. Mirrors `PyPHIR.foreign_func_calls` and is used to fail fast when
@@ -124,6 +168,7 @@ pub enum Operation {
     DataExport {
         data: String,
         variables: Vec<String>,
+        to: Option<Vec<String>>,
     },
     /// Comment
     Comment { comment: String },
@@ -157,12 +202,25 @@ fn convert_angles(raw: &serde_json::Value) -> Result<Option<Vec<f64>>, String> {
     let unit = arr[1]
         .as_str()
         .ok_or("angles: second element must be a string")?;
-    match unit {
-        "rad" => Ok(Some(values)),
-        "deg" => Ok(Some(values.into_iter().map(|v| v * PI / 180.0).collect())),
-        "pi" => Ok(Some(values.into_iter().map(|v| v * PI).collect())),
-        _ => Err(format!("Unsupported angle unit: {unit}")),
-    }
+    let scale = match unit {
+        "rad" => 1.0,
+        "deg" => PI / 180.0,
+        "pi" => PI,
+        _ => {
+            return Err(format!(
+                "Unsupported angle unit: {unit}; use rad, deg, or pi"
+            ));
+        }
+    };
+    values
+        .into_iter()
+        .map(|value| {
+            let radians = value * scale;
+            pecos_core::Angle64::try_from_radians(radians).map_err(|error| error.to_string())?;
+            Ok(radians)
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map(Some)
 }
 
 /// Helper: extract optional metadata from a JSON object.
@@ -195,8 +253,14 @@ impl<'de> Deserialize<'de> for Operation {
             // QuantumOp
             let qop = qop_val
                 .as_str()
-                .ok_or_else(|| D::Error::custom("qop must be a string"))?
-                .to_string();
+                .ok_or_else(|| D::Error::custom("qop must be a string"))?;
+            // Accept the Z-basis spelling at the JSON boundary; downstream PHIR
+            // and re-emission retain the upstream specification's name.
+            let qop = canonical_qop(qop).to_string();
+            if qop == "Measure" {
+                super::classical_validation::validate_measure_json(&val)
+                    .map_err(D::Error::custom)?;
+            }
             let angles = obj
                 .get("angles")
                 .map_or(Ok(None), convert_angles)
@@ -209,9 +273,6 @@ impl<'de> Deserialize<'de> for Operation {
                 .get("returns")
                 .map_or(Ok(vec![]), |v| serde_json::from_value(v.clone()))
                 .map_err(|e| D::Error::custom(format!("returns: {e}")))?;
-            if qop == "RXYXY2Q" {
-                validate_rxyxy2q_args(angles.as_deref(), &args).map_err(D::Error::custom)?;
-            }
             let metadata = extract_metadata(obj);
             Ok(Operation::QuantumOp {
                 qop,
@@ -337,40 +398,67 @@ impl<'de> Deserialize<'de> for Operation {
                 .as_str()
                 .ok_or_else(|| D::Error::custom("data must be a string"))?
                 .to_string();
-            if obj.contains_key("variables") && data != "qvar_define" && data != "cvar_define" {
+            let kind = declaration_kind(&data);
+            if data == "cvar_export" {
+                let (variables, to) = super::exports::decode(&val).map_err(D::Error::custom)?;
+                Ok(Operation::DataExport {
+                    data,
+                    variables,
+                    to,
+                })
+            } else if obj.contains_key("variables") && kind.is_none() {
                 // DataExport
                 let variables: Vec<String> = serde_json::from_value(obj["variables"].clone())
                     .map_err(|e| D::Error::custom(format!("variables: {e}")))?;
-                Ok(Operation::DataExport { data, variables })
+                Ok(Operation::DataExport {
+                    data,
+                    variables,
+                    to: None,
+                })
             } else {
                 // VariableDefinition
-                let variable: String = obj
-                    .get("variable")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| D::Error::custom("missing variable"))?
-                    .to_string();
+                let variable = if kind.is_some() {
+                    declaration_name(&data, obj.get("variable")).map_err(D::Error::custom)?
+                } else {
+                    obj.get("variable")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            let bad = obj
+                                .get("variable")
+                                .map_or_else(|| "<missing>".to_owned(), render_json_value);
+                            let fix = if data == "cvar_export" {
+                                "supply the required variables array"
+                            } else {
+                                "use a string variable name"
+                            };
+                            D::Error::custom(format!(
+                                "Data directive '{data}' has invalid variable {bad}; {fix}"
+                            ))
+                        })?
+                }
+                .to_owned();
+                // Other data directives historically use classical VariableDefinition decoding.
+                let size_kind = kind.unwrap_or(DeclarationKind::Classical);
                 let data_type = obj
                     .get("data_type")
                     .map(|value| {
                         value.as_str().ok_or_else(|| {
                             D::Error::custom(format!(
-                                "Register '{variable}' has invalid data_type {value}"
+                                "Register '{variable}' has invalid data_type {}; use a string data_type", render_json_value(value)
                             ))
                         })
                     })
                     .transpose()?;
-                let raw_size = obj.get("size").and_then(serde_json::Value::as_u64);
-                let (data_type, size) = if data == "qvar_define" {
+                let raw_size = register_size(&variable, size_kind, obj.get("size"))
+                    .map_err(D::Error::custom)?;
+                let (data_type, size) = if kind == Some(DeclarationKind::Quantum) {
                     let (_, size) = validate_quantum_declaration(&variable, data_type, raw_size)
                         .map_err(D::Error::custom)?;
                     ("qubits".to_string(), Some(size))
                 } else {
                     let data_type =
                         data_type.ok_or_else(|| D::Error::custom("missing data_type"))?;
-                    (
-                        data_type.to_string(),
-                        raw_size.and_then(|n| usize::try_from(n).ok()),
-                    )
+                    (data_type.to_string(), raw_size)
                 };
                 Ok(Operation::VariableDefinition {
                     data,
@@ -389,7 +477,7 @@ impl<'de> Deserialize<'de> for Operation {
 }
 
 /// Represents an argument to a quantum operation
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum QubitArg {
     /// Single qubit (var, idx)
@@ -399,7 +487,7 @@ pub enum QubitArg {
 }
 
 /// Represents an argument to a classical operation
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum ArgItem {
     /// Indexed argument (var, idx)
@@ -415,7 +503,7 @@ pub enum ArgItem {
 }
 
 /// Represents a classical expression
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Expression {
     /// Operation with operator and arguments
@@ -425,9 +513,6 @@ pub enum Expression {
     /// Integer literal
     Integer(i64),
 }
-
-// Constants for internal register naming
-pub const MEASUREMENT_PREFIX: &str = "measurement_";
 
 /// Validate a v0.1 quantum declaration: the type is optional and size must be positive.
 /// Declaration registration enforces the program-wide unique-name rule separately.
@@ -473,17 +558,49 @@ pub(crate) fn declaration_size(
     }
 }
 
+/// Decode a declaration size; only an absent field means omitted.
+///
+/// Zero and register-width limits are checked by the declaration's owner.
+///
+/// # Errors
+/// Returns a named input error if the supplied value is not a non-negative integer.
+pub(crate) fn register_size(
+    variable: &str,
+    kind: DeclarationKind,
+    value: Option<&serde_json::Value>,
+) -> Result<Option<usize>, PecosError> {
+    let hint = match kind {
+        DeclarationKind::Quantum => "a positive integer size",
+        DeclarationKind::Classical => "a positive integer size that fits the data type",
+    };
+    match value {
+        None => Ok(None),
+        Some(value) => serde_json::from_value::<usize>(value.clone())
+            .map(Some)
+            .map_err(|_| {
+                PecosError::Input(format!(
+                    "Register '{variable}' has invalid size {}; use {hint}",
+                    render_json_value(value)
+                ))
+            }),
+    }
+}
+
 /// Infer variable size from data type when not explicitly provided.
 ///
 /// For types like "i32", "u64", extracts the bit width from the name. A signed
 /// type defaults to `N - 1` because a signed size-S register is an `i(S+1)`
 /// integer, so the full backing type `iN` holds `N - 1` data bits plus a sign
-/// bit. Unsigned types default to their full `N` bits. For "qubits", returns 0
+/// bit. Unsigned types default to their full `N` bits; bool defaults to 1.
+/// For "qubits", returns 0
 /// (size must be explicit).
 #[must_use]
 pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
     if let Some(s) = explicit_size {
         return s;
+    }
+    if data_type == "bool" {
+        return 1;
     }
     // Try to extract bit width from type name (e.g., "i32" -> 32, "u64" -> 64)
     let digits: String = data_type.chars().filter(char::is_ascii_digit).collect();
@@ -493,36 +610,6 @@ pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
     } else {
         width
     }
-}
-
-/// Validate a two-angle rotation's PHIR qubit argument grouping.
-pub(crate) fn validate_rxyxy2q_args(
-    angles: Option<&[f64]>,
-    args: &[QubitArg],
-) -> Result<(), String> {
-    let mut count = 0;
-    for arg in args {
-        match arg {
-            QubitArg::MultipleQubits(pair) if pair.len() == 2 => count += 2,
-            _ => {
-                return Err("RXYXY2Q requires exactly two qubits per pair".to_string());
-            }
-        }
-    }
-    validate_rxyxy2q(angles, count)
-}
-
-/// Validate the angles and complete qubit pairs of an RXYXY2Q operation.
-pub(crate) fn validate_rxyxy2q(angles: Option<&[f64]>, qubit_count: usize) -> Result<(), String> {
-    if angles.is_none_or(|angles| angles.len() != 2) {
-        return Err("RXYXY2Q requires exactly two angles (theta, phi)".to_string());
-    }
-    if qubit_count == 0 || !qubit_count.is_multiple_of(2) {
-        return Err(format!(
-            "RXYXY2Q requires complete qubit pairs, got {qubit_count} qubits"
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -596,10 +683,11 @@ mod tests {
             ]
         }"#;
         let program: PHIRProgram = serde_json::from_str(json).expect("should parse");
+        assert_eq!(program.ops.len(), 4);
 
         // All three should produce the same angle (pi/2)
-        for i in 1..=3 {
-            if let Operation::QuantumOp { angles, .. } = &program.ops[i] {
+        for (i, operation) in program.ops.iter().enumerate().take(4).skip(1) {
+            if let Operation::QuantumOp { angles, .. } = operation {
                 let a = angles.as_ref().unwrap();
                 assert!(
                     (a[0] - std::f64::consts::FRAC_PI_2).abs() < 1e-10,
@@ -644,10 +732,17 @@ mod tests {
     fn test_data_export() {
         let json = r#"{
             "format": "PHIR/JSON", "version": "0.1.0", "metadata": {},
-            "ops": [{"data": "cvar_export", "variables": ["m", "n"]}]
+            "ops": [
+                {"data":"cvar_define","data_type":"u32","variable":"m"},
+                {"data":"cvar_define","data_type":"u32","variable":"n"},
+                {"data": "cvar_export", "variables": ["m", "n"]}
+            ]
         }"#;
         let program: PHIRProgram = serde_json::from_str(json).expect("should parse");
-        if let Operation::DataExport { data, variables } = &program.ops[0] {
+        if let Operation::DataExport {
+            data, variables, ..
+        } = &program.ops[2]
+        {
             assert_eq!(data, "cvar_export");
             assert_eq!(variables, &["m", "n"]);
         } else {

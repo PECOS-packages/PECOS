@@ -39,17 +39,10 @@ _LLVM_SCRIPT = textwrap.dedent(
         raise AssertionError(f"import pecos loaded pecos_rslib_llvm eagerly: {loaded}")
 
     # Resolving the public lowering API must also leave the LLVM wheel unloaded.
-    from pecos.engines import compile_hugr_to_qis, get_compilation_backends
+    from pecos.compilation_pipeline import compile_hugr_to_qis
 
     if not callable(compile_hugr_to_qis):
         raise AssertionError("compile_hugr_to_qis did not resolve to a callable")
-    backends = get_compilation_backends()
-    compiler = backends["backends"]["selene-hugr-qis-compiler"]
-    if not compiler["available"] or not compiler["version"]:
-        raise AssertionError(f"unexpected compiler metadata: {backends!r}")
-    from pecos.compilation_pipeline import compile_hugr_to_qis as boundary
-    if compile_hugr_to_qis is not boundary:
-        raise AssertionError("engines.compile_hugr_to_qis must alias the boundary")
     loaded = sorted(name for name in sys.modules if "pecos_rslib_llvm" in name)
     if loaded:
         raise AssertionError(f"lowering API imported the LLVM wheel: {loaded}")

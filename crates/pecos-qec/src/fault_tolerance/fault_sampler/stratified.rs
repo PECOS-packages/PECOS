@@ -25,10 +25,12 @@
 //! Inactive locations must have a stored no-fault probability exactly one;
 //! hence their factors in the enumeration's no-fault product are neutral.
 
-use super::{FaultCatalog, FaultConfiguration, build_fault_configuration};
+use super::{
+    FaultCatalog, FaultConfiguration, NoFaultProducts, build_fault_configuration, parity_indices,
+};
 use pecos_random::{PecosRng, RngExt};
 use rand::distr::Open01;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Invalid input to fault-count sampling or estimation.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -133,7 +135,53 @@ pub struct FaultStratumCounts {
     pub failed: usize,
 }
 
-/// Probability estimates over sampled strata and plug-in standard errors.
+/// Exactly computed unconditional probabilities for one fault-count stratum.
+///
+/// Only [`FaultCatalog::exact_fault_stratum`] constructs these, so the
+/// probabilities are unconditional by construction and need no validation in
+/// [`StratifiedEstimate::from_counts_and_exact`]. They are stored as natural
+/// logarithms, so the estimator keeps strata whose probabilities underflow.
+#[derive(Clone, Copy, Debug)]
+pub struct ExactFaultStratum {
+    k: usize,
+    log_survival_probability: f64,
+    log_failure_probability: f64,
+}
+
+impl ExactFaultStratum {
+    /// Number of firing locations.
+    #[must_use]
+    pub fn k(&self) -> usize {
+        self.k
+    }
+
+    /// P(K=k and survival), already weighted by the fault-count mass; may underflow.
+    #[must_use]
+    pub fn survival_probability(&self) -> f64 {
+        self.log_survival_probability.exp()
+    }
+
+    /// P(K=k and survival and failure), already weighted by the fault-count mass;
+    /// may underflow.
+    #[must_use]
+    pub fn failure_probability(&self) -> f64 {
+        self.log_failure_probability.exp()
+    }
+
+    /// Natural logarithm of [`Self::survival_probability`], finite where it underflows.
+    #[must_use]
+    pub fn log_survival_probability(&self) -> f64 {
+        self.log_survival_probability
+    }
+
+    /// Natural logarithm of [`Self::failure_probability`], finite where it underflows.
+    #[must_use]
+    pub fn log_failure_probability(&self) -> f64 {
+        self.log_failure_probability
+    }
+}
+
+/// Probability estimates over exact and sampled strata and plug-in standard errors.
 ///
 /// With `a_k=F_k/N_k`, `b_k=S_k/N_k`, this reports `A=sum P_k a_k`,
 /// `B=sum P_k b_k`, and `R=A/B`. Variances of A and B sum independent
@@ -143,27 +191,29 @@ pub struct FaultStratumCounts {
 ///
 /// Probabilities and variances are accumulated in log space. Returned
 /// probabilities and standard errors may underflow to zero, but ratios use the
-/// log probabilities and remain defined whenever any sampled shot survives.
+/// log probabilities and remain defined whenever any sampled shot survives or
+/// any exact stratum has a finite log survival probability. Exact contributions add
+/// to A, B, and R, but contribute zero variance.
 ///
 /// V1 limitation: a stratum whose observed failure count is zero by chance
 /// contributes nothing to the estimated variance of A, so SE(A) can be
 /// understated when strata are undersampled. Its contribution to `v_k` for
-/// Var(R) is `R^2 b_k(1-b_k)`, not zero. If some sampled shots survive but none
-/// fail, R and the standard errors of A and R are exactly zero; that reflects
-/// the sample, not certainty.
+/// Var(R) is `R^2 b_k(1-b_k)`, not zero. If there is survival but neither
+/// exact nor sampled strata contribute failures, R and the standard errors of
+/// A and R are exactly zero; zero sampled failures do not imply certainty.
 #[derive(Clone, Debug)]
 pub struct StratifiedEstimate {
     /// Estimated survived-and-failed probability A.
     pub failure_probability: f64,
     /// Estimated survival probability B.
     pub survival_probability: f64,
-    /// Estimated conditional failure probability R; None only when no sampled shot survives.
+    /// Estimated conditional failure probability R; None when neither exact nor sampled strata have survival.
     pub failure_given_survival: Option<f64>,
     /// Plug-in standard error of A.
     pub failure_standard_error: f64,
     /// Plug-in standard error of B.
     pub survival_standard_error: f64,
-    /// Delta-method standard error of R; None only when no sampled shot survives.
+    /// Delta-method standard error of R; None when neither exact nor sampled strata have survival.
     pub ratio_standard_error: Option<f64>,
     /// Sum of PMF masses for unsampled strata within the supplied PMF.
     pub unsampled_mass: f64,
@@ -173,6 +223,9 @@ pub struct StratifiedEstimate {
 
 impl StratifiedEstimate {
     /// Combine counts with a PMF, without sampling or renormalizing omitted strata.
+    /// Equivalent to [`Self::from_counts_and_exact`] with no exact strata. In the
+    /// combined contract, exact unconditional probabilities enter A, B, and the
+    /// ratio R used in sampled variances, and have zero variance themselves.
     ///
     /// # Errors
     /// Returns an error for invalid counts, duplicate strata, or strata outside
@@ -180,6 +233,22 @@ impl StratifiedEstimate {
     pub fn from_counts(
         pmf: &FaultCountPmf,
         counts: &[FaultStratumCounts],
+    ) -> Result<Self, FaultCountError> {
+        Self::from_counts_and_exact(pmf, counts, &[])
+    }
+
+    /// Combine sampled counts and exact unconditional contributions in log space.
+    /// Exact strata contribute zero variance but enter the total ratio used in
+    /// every sampled stratum's covariance-aware ratio variance. Missing strata
+    /// retain their PMF weight in `unsampled_mass`; no renormalization is applied.
+    ///
+    /// # Errors
+    /// Rejects invalid counts and duplicate or outside-PMF strata across either
+    /// input list.
+    pub fn from_counts_and_exact(
+        pmf: &FaultCountPmf,
+        counts: &[FaultStratumCounts],
+        exact: &[ExactFaultStratum],
     ) -> Result<Self, FaultCountError> {
         let mut seen = BTreeSet::new();
         let (mut log_failure, mut log_survival) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
@@ -206,10 +275,21 @@ impl StratifiedEstimate {
             log_var_a = log_add(log_var_a, 2.0 * log_p + (a * (1.0 - a) / n).ln());
             log_var_b = log_add(log_var_b, 2.0 * log_p + (b * (1.0 - b) / n).ln());
         }
-        let ratio = counts
-            .iter()
-            .any(|count| count.survived > 0)
-            .then(|| (log_failure - log_survival).exp());
+        for stratum in exact {
+            if stratum.k >= pmf.log_masses.len() {
+                return Err(FaultCountError::StratumOutsidePmf { k: stratum.k });
+            }
+            if !seen.insert(stratum.k) {
+                return Err(FaultCountError::DuplicateStratum { k: stratum.k });
+            }
+            log_failure = log_add(log_failure, stratum.log_failure_probability);
+            log_survival = log_add(log_survival, stratum.log_survival_probability);
+        }
+        let ratio = (counts.iter().any(|count| count.survived > 0)
+            || exact
+                .iter()
+                .any(|stratum| stratum.log_survival_probability > f64::NEG_INFINITY))
+        .then(|| (log_failure - log_survival).exp());
         let ratio_se = ratio.map(|r| {
             let log_variance = counts
                 .iter()
@@ -253,6 +333,8 @@ struct Group {
 }
 
 struct FaultCountTable {
+    products: NoFaultProducts,
+    alternatives: Vec<Vec<(usize, f64)>>,
     groups: Vec<Group>,
     suffix: Vec<Vec<f64>>,
     log_no_fault: f64,
@@ -372,6 +454,20 @@ impl FaultCountTable {
             }
         }
         Ok(Self {
+            products: NoFaultProducts::new(catalog),
+            alternatives: catalog
+                .locations
+                .iter()
+                .map(|location| {
+                    location
+                        .faults
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, alternative)| alternative.absolute_probability > 0.0)
+                        .map(|(index, alternative)| (index, alternative.absolute_probability.ln()))
+                        .collect()
+                })
+                .collect(),
             groups,
             suffix,
             log_no_fault,
@@ -427,19 +523,9 @@ impl FaultCountTable {
         locations.sort_unstable();
         let alternatives = locations
             .iter()
-            .map(|&i| {
-                draw_log_weights(
-                    catalog.locations[i]
-                        .faults
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, alt)| alt.absolute_probability > 0.0)
-                        .map(|(a, alt)| (a, alt.absolute_probability.ln())),
-                    rng,
-                )
-            })
+            .map(|&i| draw_log_weights(self.alternatives[i].iter().copied(), rng))
             .collect();
-        build_fault_configuration(catalog, locations, alternatives)
+        build_fault_configuration(catalog, locations, alternatives, &self.products)
     }
 }
 
@@ -456,7 +542,149 @@ fn draw_log_weights(weights: impl Iterator<Item = (usize, f64)>, rng: &mut Pecos
         .0
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct Signature {
+    detectors: Vec<usize>,
+    observables: Vec<usize>,
+}
+
 impl FaultCatalog {
+    /// Exactly sum the surviving and the surviving-and-failing probabilities of
+    /// all configurations with exactly `k` firing locations.
+    ///
+    /// A configuration survives when it flips no detector and fails when it
+    /// also flips an observable, as in fault-count sampling. Three faults are
+    /// aggregated by detector and observable signatures; other counts enumerate
+    /// [`Self::fault_configurations`], which grows combinatorially with `k`.
+    ///
+    /// Both paths work in log space relative to the all-no-fault probability: a
+    /// configuration's log weight sums its alternatives' log probabilities minus
+    /// their locations' log no-fault probabilities, weights are accumulated by
+    /// log-sum-exp, and the common log no-fault factor is added at the end. A
+    /// stratum therefore keeps its mass when configuration probabilities or odds
+    /// products would overflow or underflow.
+    ///
+    /// # Errors
+    /// Uses the same probability and active-location validation as
+    /// [`Self::fault_count_pmf`] with a requested fault count of `k`.
+    pub fn exact_fault_stratum(&self, k: usize) -> Result<ExactFaultStratum, FaultCountError> {
+        if k == 3 {
+            return self.exact_three_fault_stratum();
+        }
+        let table = FaultCountTable::new(self, k)?;
+        let (mut log_survived, mut log_failed) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for configuration in self.fault_configurations(k) {
+            if configuration.affected_detectors.is_empty() {
+                let log_weight: f64 = configuration
+                    .location_indices
+                    .iter()
+                    .zip(&configuration.alternative_indices)
+                    .map(|(&location, &alternative)| {
+                        let location = &self.locations[location];
+                        location.faults[alternative].absolute_probability.ln()
+                            - location.no_fault_probability.ln()
+                    })
+                    .sum();
+                log_survived = log_add(log_survived, log_weight);
+                if !configuration.affected_observables.is_empty() {
+                    log_failed = log_add(log_failed, log_weight);
+                }
+            }
+        }
+        Ok(ExactFaultStratum {
+            k,
+            log_survival_probability: table.log_no_fault + log_survived,
+            log_failure_probability: table.log_no_fault + log_failed,
+        })
+    }
+
+    /// Exactly sum surviving and failing three-fault configurations by signatures.
+    ///
+    /// Locations are processed in order. Before a location is added, the pair
+    /// table contains only pairs from earlier, distinct locations. Matching a
+    /// third detector signature counts each unordered triple exactly once.
+    /// Observable signatures distinguish survival from survival with failure.
+    /// Log weights are alternative log probabilities minus the location's log
+    /// no-fault probability, accumulated by log-sum-exp; the common no-fault
+    /// factor is added at the end. All accumulations are positive sums, with no
+    /// subtraction of nearly equal survival and logical-clean probabilities.
+    /// Sorted signatures make summation order deterministic, independent of
+    /// hash-table randomization.
+    ///
+    /// With A active alternatives and S distinct single-fault signatures, work
+    /// is O(A S) pair insertions plus matching observable groups; storage is
+    /// O(S squared). Measurement and tracked-Pauli effects do not enter this score.
+    fn exact_three_fault_stratum(&self) -> Result<ExactFaultStratum, FaultCountError> {
+        let table = FaultCountTable::new(self, 3)?;
+        let mut singles: BTreeMap<(Vec<usize>, Vec<usize>), f64> = BTreeMap::new();
+        let mut pairs: HashMap<Vec<usize>, BTreeMap<Vec<usize>, f64>> = HashMap::new();
+        let (mut log_survived, mut log_failed) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for location in &self.locations {
+            let alternatives = location
+                .faults
+                .iter()
+                .filter(|alternative| alternative.absolute_probability > 0.0)
+                .map(|alternative| {
+                    (
+                        Signature {
+                            detectors: parity_indices(alternative.affected_detectors.clone()),
+                            observables: parity_indices(alternative.affected_observables.clone()),
+                        },
+                        alternative.absolute_probability.ln() - location.no_fault_probability.ln(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            // Finish triples before inserting any pair involving this location.
+            for (signature, log_weight) in &alternatives {
+                if let Some(observables) = pairs.get(&signature.detectors) {
+                    for (observable, log_pair_weight) in observables {
+                        let contribution = log_weight + log_pair_weight;
+                        log_survived = log_add(log_survived, contribution);
+                        if observable != &signature.observables {
+                            log_failed = log_add(log_failed, contribution);
+                        }
+                    }
+                }
+            }
+            for (signature, log_weight) in &alternatives {
+                for ((detectors, observables), log_single_weight) in &singles {
+                    let detector = parity_indices(
+                        detectors
+                            .iter()
+                            .chain(&signature.detectors)
+                            .copied()
+                            .collect(),
+                    );
+                    let observable = parity_indices(
+                        observables
+                            .iter()
+                            .chain(&signature.observables)
+                            .copied()
+                            .collect(),
+                    );
+                    let log_pair_weight = pairs
+                        .entry(detector)
+                        .or_default()
+                        .entry(observable)
+                        .or_insert(f64::NEG_INFINITY);
+                    *log_pair_weight = log_add(*log_pair_weight, log_weight + log_single_weight);
+                }
+            }
+            // Add single faults only after all pairs for this location are done.
+            for (signature, log_weight) in alternatives {
+                let log_single_weight = singles
+                    .entry((signature.detectors, signature.observables))
+                    .or_insert(f64::NEG_INFINITY);
+                *log_single_weight = log_add(*log_single_weight, log_weight);
+            }
+        }
+        Ok(ExactFaultStratum {
+            k: 3,
+            log_survival_probability: table.log_no_fault + log_survived,
+            log_failure_probability: table.log_no_fault + log_failed,
+        })
+    }
+
     /// Compute `P(K=k)` for `0..=max_k` and a Chernoff bound on `P(K>max_k)`.
     ///
     /// For `a=max_k+1 > mu=sum p_i`, the bound is

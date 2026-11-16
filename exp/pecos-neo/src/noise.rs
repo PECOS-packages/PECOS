@@ -32,7 +32,8 @@
 //! let simple = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)
 //!     .with_measurement_error(0.02)
-//!     .build();
+//!     .build()?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! Mixed approach (combine builder with custom channels):
@@ -40,11 +41,12 @@
 //! ```
 //! # use pecos_neo::noise::prelude::*;
 //! // Mixed: combine both approaches
-//! let custom_channel = MeasurementChannel::symmetric(0.02);
+//! let custom_channel = MeasurementChannel::symmetric(0.02)?;
 //! let mixed = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)
 //!     .with_channel(custom_channel)
-//!     .build();
+//!     .build()?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! # Architecture
@@ -84,7 +86,7 @@
 //!
 //! # Event Flow
 //!
-//! 1. `BeforeGate` - can skip the gate (for leaked qubits)
+//! 1. `BeforeGate` - can skip operand groups (for leaked qubits)
 //! 2. `AfterGate` - can inject Pauli errors
 //! 3. `AfterMeasurement` - can flip outcomes
 //! 4. `AfterPreparation` - can inject bit-flip errors
@@ -111,6 +113,7 @@ pub mod plugin;
 pub mod plugins;
 pub mod prelude;
 pub mod preparation;
+mod seepage;
 pub mod single_qubit;
 pub mod topology;
 pub mod two_qubit;
@@ -137,6 +140,7 @@ pub use preparation::PreparationChannel;
 pub use single_qubit::SingleQubitChannel;
 pub use two_qubit::{AngleScaling, TwoQubitChannel};
 
+use self::validation::{ValidationResult, validate_distribution, validate_probability};
 use crate::command::GateCommand;
 use crate::command::GateType;
 use crate::extensible::GateId;
@@ -144,6 +148,8 @@ use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
 use pecos_random::PecosRng;
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
+use std::borrow::Cow;
+use std::num::NonZeroUsize;
 
 macro_rules! declare_noise_event_kinds {
     ($($variant:ident),+ $(,)?) => {
@@ -239,11 +245,13 @@ impl EventKinds {
 pub enum NoiseEvent<'a> {
     /// Emitted before a gate is applied.
     ///
-    /// Channels can respond with `SkipGate` to prevent the gate from
-    /// being applied (e.g., for leaked qubits).
+    /// Channels can respond with `SkipGate(qubits)` to suppress operand groups
+    /// containing the listed qubits (e.g., leaked qubits).
     BeforeGate {
         gate_type: GateType,
         qubits: &'a [QubitId],
+        /// Operand-group size used for suppression and composite context, at least one.
+        group_size: NonZeroUsize,
         angles: &'a [Angle64],
         /// Optional gate ID for custom gate identification.
         /// This allows noise channels to apply per-custom-gate noise rates.
@@ -251,12 +259,21 @@ pub enum NoiseEvent<'a> {
         gate_id: Option<GateId>,
     },
 
-    /// Emitted after a gate is applied.
+    /// Emitted after a command with retained operand groups, or empty operands.
     ///
-    /// Channels can respond with `InjectGates` to add Pauli errors.
+    /// `qubits` contains executed groups only. `leaked_suppressed` contains
+    /// groups skipped while leaked immediately after before-gate dispatch.
+    /// Later leakage changes do not change either slice's membership.
+    /// Other skipped groups are dropped and receive no after-gate event work.
+    /// An all-suppressed command emits with empty `qubits`; an all-dropped,
+    /// originally non-empty command emits no event.
     AfterGate {
         gate_type: GateType,
         qubits: &'a [QubitId],
+        /// Operand-group size used for suppression and composite context, at least one.
+        group_size: NonZeroUsize,
+        /// Complete operand groups suppressed while leaked, in original order.
+        leaked_suppressed: &'a [QubitId],
         angles: &'a [Angle64],
         /// Optional gate ID for custom gate identification.
         /// This allows noise channels to apply per-custom-gate noise rates.
@@ -266,21 +283,33 @@ pub enum NoiseEvent<'a> {
 
     /// Emitted before measurement.
     ///
-    /// Used for pre-measurement effects like leaked qubit handling.
-    BeforeMeasurement { qubits: &'a [QubitId] },
+    /// Used for physical state-flip faults before readout. The gate type identifies
+    /// the scheduled operation for noiseless selection.
+    BeforeMeasurement {
+        gate_type: GateType,
+        qubits: &'a [QubitId],
+    },
 
     /// Emitted after measurement results are available.
     ///
     /// Channels can respond with `FlipOutcomes` to apply readout errors.
+    /// `gate_type` is the scheduled operation, so noiseless `MZ` and `MeasureLeaked`
+    /// declarations are distinct.
     AfterMeasurement {
+        gate_type: GateType,
         qubits: &'a [QubitId],
         outcomes: &'a [bool],
     },
 
     /// Emitted after state preparation.
     ///
-    /// Channels can respond with bit-flip errors or leakage.
-    AfterPreparation { qubits: &'a [QubitId] },
+    /// Channels can respond with bit-flip errors or leakage. `gate_type` is the
+    /// scheduled operation, so noiseless `PZ` and `QAlloc` declarations are distinct.
+    /// Preparation still clears prior leakage and updates lifecycle when noiseless.
+    AfterPreparation {
+        gate_type: GateType,
+        qubits: &'a [QubitId],
+    },
 
     /// Emitted for idle time on qubits.
     ///
@@ -387,6 +416,7 @@ impl<'a> NoiseEvent<'a> {
             qubits,
             angles,
             gate_id: Some(gate_type.to_gate_id()),
+            group_size: gate_group_size(gate_type.quantum_arity(), qubits.len()),
         }
     }
 
@@ -406,6 +436,7 @@ impl<'a> NoiseEvent<'a> {
             qubits,
             angles,
             gate_id: Some(gate_id),
+            group_size: gate_group_size(gate_type.quantum_arity(), qubits.len()),
         }
     }
 
@@ -421,6 +452,8 @@ impl<'a> NoiseEvent<'a> {
             qubits,
             angles,
             gate_id: Some(gate_type.to_gate_id()),
+            group_size: gate_group_size(gate_type.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         }
     }
 
@@ -440,6 +473,8 @@ impl<'a> NoiseEvent<'a> {
             qubits,
             angles,
             gate_id: Some(gate_id),
+            group_size: gate_group_size(gate_type.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         }
     }
 
@@ -457,23 +492,52 @@ impl<'a> NoiseEvent<'a> {
         }
     }
 
-    /// Get the qubits involved in this event (if qubit-specific).
+    /// Get the event qubits; on `AfterGate`, these are executed groups only.
     ///
     /// Returns an empty slice for circuit-level events like `BeforeCircuit`
     /// and `AfterCircuit`.
     #[must_use]
-    pub fn qubits(&self) -> &[QubitId] {
+    pub fn qubits(&self) -> &'a [QubitId] {
         match self {
             Self::BeforeGate { qubits, .. }
             | Self::AfterGate { qubits, .. }
-            | Self::BeforeMeasurement { qubits }
+            | Self::BeforeMeasurement { qubits, .. }
             | Self::AfterMeasurement { qubits, .. }
-            | Self::AfterPreparation { qubits }
+            | Self::AfterPreparation { qubits, .. }
             | Self::IdleTime { qubits, .. }
             | Self::AfterReset { qubits }
             | Self::BetweenLayers { qubits, .. } => qubits,
             Self::BeforeCircuit { .. } | Self::AfterCircuit { .. } | Self::Signal { .. } => &[],
         }
+    }
+
+    /// Operand groups retained only because they contained a leaked qubit.
+    /// Returns an empty slice for every event except `AfterGate`.
+    #[must_use]
+    pub fn leaked_suppressed(&self) -> &'a [QubitId] {
+        match self {
+            Self::AfterGate {
+                leaked_suppressed, ..
+            } => leaked_suppressed,
+            _ => &[],
+        }
+    }
+
+    /// Get executed and leaked-suppressed operands for gate-associated effects.
+    ///
+    /// Borrows the ordinary event slice when there are no suppressed groups.
+    #[must_use]
+    pub fn gated_qubits(&self) -> Cow<'a, [QubitId]> {
+        if let Self::AfterGate {
+            qubits,
+            leaked_suppressed,
+            ..
+        } = self
+            && !leaked_suppressed.is_empty()
+        {
+            return Cow::Owned([*qubits, *leaked_suppressed].concat());
+        }
+        Cow::Borrowed(self.qubits())
     }
 
     /// Get the angles for this event (if applicable).
@@ -579,14 +643,17 @@ impl<'a> NoiseEvent<'a> {
     /// - Measurement: marks qubits as inactive
     /// - Reset: marks qubits as prepared (clears leakage)
     ///
-    /// This is called by the composer before dispatching to channels,
-    /// ensuring state tracking happens regardless of which channels are added.
+    /// The composer does not call this itself. `CorePlugin`'s event handlers
+    /// call it for `AfterPreparation` and `AfterMeasurement` events, so this
+    /// state is tracked independently of the channels added only when
+    /// `CorePlugin` is registered. `NoiseModelBuilder`,
+    /// `GeneralNoiseModelBuilder` and `CompositeNoiseModelBuilder` register it.
     ///
     /// Note: This is separate from noise effects (which channels handle).
     /// Events have inherent meaning independent of noise.
     pub fn apply_state_updates(&self, ctx: &mut NoiseContext) {
         match self {
-            Self::AfterPreparation { qubits } | Self::AfterReset { qubits } => {
+            Self::AfterPreparation { qubits, .. } | Self::AfterReset { qubits } => {
                 for &qubit in *qubits {
                     ctx.mark_prepared(qubit);
                 }
@@ -627,11 +694,19 @@ pub enum NoiseResponse {
     /// inject 0-2 gates, so the heap allocation cost is acceptable.
     InjectGates(Box<SmallVec<[GateCommand; 4]>>),
 
-    /// Skip the current gate entirely.
+    /// Suppress each operand group of the current gate containing a listed qubit.
     ///
-    /// Used when a gate acts on a leaked qubit - the gate should not
-    /// be applied to the quantum state.
-    SkipGate,
+    /// Qubits outside the current gate's operands have no effect. To suppress
+    /// the whole command, list all of its operands.
+    ///
+    /// A suppressed group that contains no leaked qubit at the skip decision
+    /// is treated as a gate that did not run: it receives no after-gate effects,
+    /// including gate error, idle-after-two-qubit-gate noise, and acting as a
+    /// crosstalk source. Its qubits can still be crosstalk targets of the groups that
+    /// ran. A channel that skips a group and wants other noise on it must
+    /// apply that noise itself. Groups containing a leaked qubit at that decision
+    /// are instead retained in `AfterGate::leaked_suppressed`, never in `qubits`.
+    SkipGate(SmallVec<[QubitId; 4]>),
 
     /// Flip measurement outcomes for specific qubits.
     FlipOutcomes(SmallVec<[QubitId; 4]>),
@@ -639,7 +714,10 @@ pub enum NoiseResponse {
     /// Mark qubits as leaked (left computational subspace).
     MarkLeaked(SmallVec<[QubitId; 4]>),
 
-    /// Mark qubits as returned from leakage (seepage).
+    /// Clear the leakage flags only, preserving the qubits' simulator state.
+    ///
+    /// For physical seepage that also discards the state, use
+    /// composite `seep()` (requires the `composite-noise` feature).
     MarkUnleaked(SmallVec<[QubitId; 4]>),
 
     /// Mark measurement outcomes as coming from leaked qubits.
@@ -727,14 +805,17 @@ impl NoiseResponse {
         matches!(self, Self::None)
     }
 
-    /// Check if this response requests skipping the gate.
+    /// Get the union of qubits whose operand groups should be skipped.
     #[must_use]
-    pub fn should_skip_gate(&self) -> bool {
-        match self {
-            Self::SkipGate => true,
-            Self::Multiple(responses) => responses.iter().any(Self::should_skip_gate),
-            _ => false,
-        }
+    pub fn skipped_qubits(&self) -> SmallVec<[QubitId; 4]> {
+        let mut qubits = match self {
+            Self::SkipGate(qubits) => qubits.clone(),
+            Self::Multiple(responses) => responses.iter().flat_map(Self::skipped_qubits).collect(),
+            _ => SmallVec::new(),
+        };
+        qubits.sort_unstable();
+        qubits.dedup();
+        qubits
     }
 
     /// Get qubits that have leaked measurements (should return 2).
@@ -751,11 +832,66 @@ impl NoiseResponse {
     }
 }
 
+/// Decide the operand-group size shared by gate event producers.
+///
+/// A positive arity dividing non-empty operands defines a batch. Otherwise
+/// the whole slice is one group, with size one for empty operands.
+#[must_use]
+pub fn gate_group_size(arity: usize, len: usize) -> NonZeroUsize {
+    match (NonZeroUsize::new(arity), NonZeroUsize::new(len)) {
+        (Some(arity), Some(len)) if len.get().is_multiple_of(arity.get()) => arity,
+        (_, Some(len)) => len,
+        (_, None) => NonZeroUsize::MIN,
+    }
+}
+
+/// Operand membership fixed immediately after before-gate dispatch.
+pub(crate) struct GateQubitPartition<'a> {
+    pub group_size: NonZeroUsize,
+    pub executed: Cow<'a, [QubitId]>,
+    pub leaked_suppressed: Cow<'a, [QubitId]>,
+    pub emit_after_gate: bool,
+}
+
+/// Partition complete groups, borrowing unchanged operands without allocation.
+pub(crate) fn partition_gate_qubits<'a>(
+    qubits: &'a [QubitId],
+    group_size: NonZeroUsize,
+    skipped: &[QubitId],
+    context: Option<&NoiseContext>,
+) -> GateQubitPartition<'a> {
+    if skipped.is_empty() || !qubits.iter().any(|q| skipped.contains(q)) {
+        return GateQubitPartition {
+            group_size,
+            executed: Cow::Borrowed(qubits),
+            leaked_suppressed: Cow::Borrowed(&[]),
+            emit_after_gate: true,
+        };
+    }
+    let mut executed = Vec::new();
+    let mut leaked_suppressed = Vec::new();
+    for group in qubits.chunks(group_size.get()) {
+        if !group.iter().any(|q| skipped.contains(q)) {
+            executed.extend_from_slice(group);
+        } else if context.is_some_and(|ctx| ctx.any_leaked(group)) {
+            leaked_suppressed.extend_from_slice(group);
+        }
+    }
+    GateQubitPartition {
+        group_size,
+        emit_after_gate: !executed.is_empty() || !leaked_suppressed.is_empty(),
+        executed: Cow::Owned(executed),
+        leaked_suppressed: Cow::Owned(leaked_suppressed),
+    }
+}
+
 /// Trait for noise channels that respond to events.
 ///
 /// Each noise channel handles a specific type of noise (e.g., single-qubit depolarizing,
 /// measurement errors, leakage). The composer combines multiple channels to form
-/// a complete noise model.
+/// a complete noise model. On `AfterGate`, `event.qubits()` contains executed
+/// groups only. Channels implementing seepage or gate-associated idle/crosstalk
+/// effects must explicitly read `leaked_suppressed` or `gated_qubits()`.
 pub trait NoiseChannel: Send + Sync {
     /// Declare every kind on which `try_apply` can return a response.
     ///
@@ -843,11 +979,11 @@ pub trait NoiseChannel: Send + Sync {
 #[derive(Debug, Clone, Copy)]
 pub struct PauliWeights {
     /// Weight for X errors.
-    pub x: f64,
+    pub(crate) x: f64,
     /// Weight for Y errors.
-    pub y: f64,
+    pub(crate) y: f64,
     /// Weight for Z errors.
-    pub z: f64,
+    pub(crate) z: f64,
 }
 
 impl Default for PauliWeights {
@@ -857,6 +993,53 @@ impl Default for PauliWeights {
 }
 
 impl PauliWeights {
+    /// Return the validated `x` weight.
+    #[must_use]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    /// Return the validated `y` weight.
+    #[must_use]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+
+    /// Return the validated `z` weight.
+    #[must_use]
+    pub fn z(&self) -> f64 {
+        self.z
+    }
+
+    /// Distribution containing only Z errors.
+    #[must_use]
+    pub fn z_only() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+        }
+    }
+
+    /// Distribution containing only X errors.
+    #[must_use]
+    pub fn x_only() -> Self {
+        Self {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        }
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(&[self.x, self.y, self.z], "PauliWeights")?;
+        Ok(())
+    }
+
     /// Uniform distribution (1/3 each).
     #[must_use]
     pub fn uniform() -> Self {
@@ -868,39 +1051,40 @@ impl PauliWeights {
     }
 
     /// Z-biased distribution (mostly dephasing).
-    #[must_use]
-    pub fn z_biased(z_weight: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn z_biased(z_weight: f64) -> ValidationResult<Self> {
+        validate_probability(z_weight, "z_weight")?;
         let remaining = 1.0 - z_weight;
-        Self {
+        Ok(Self {
             x: remaining / 2.0,
             y: remaining / 2.0,
             z: z_weight,
-        }
+        })
     }
 
     /// X-biased distribution (mostly bit-flip).
-    #[must_use]
-    pub fn x_biased(x_weight: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn x_biased(x_weight: f64) -> ValidationResult<Self> {
+        validate_probability(x_weight, "x_weight")?;
         let remaining = 1.0 - x_weight;
-        Self {
+        Ok(Self {
             x: x_weight,
             y: remaining / 2.0,
             z: remaining / 2.0,
-        }
+        })
     }
 
     /// Custom distribution.
     ///
-    /// # Panics
-    /// Panics if weights don't sum to approximately 1.0.
-    #[must_use]
-    pub fn custom(x: f64, y: f64, z: f64) -> Self {
-        let total = x + y + z;
-        assert!(
-            (total - 1.0).abs() < 1e-6,
-            "Pauli weights must sum to 1.0, got {total}"
-        );
-        Self { x, y, z }
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn custom(x: f64, y: f64, z: f64) -> ValidationResult<Self> {
+        validate_distribution(&[x, y, z], "PauliWeights")?;
+        Ok(Self { x, y, z })
     }
 
     /// Sample a Pauli gate type based on the weights.
@@ -944,7 +1128,7 @@ pub const TWO_QUBIT_PAULIS: [(GateType, GateType); 15] = [
 #[derive(Debug, Clone)]
 pub struct TwoQubitPauliWeights {
     /// Weights for each of the 15 two-qubit Pauli operators.
-    pub weights: [f64; 15],
+    pub(crate) weights: [f64; 15],
 }
 
 impl Default for TwoQubitPauliWeights {
@@ -954,6 +1138,21 @@ impl Default for TwoQubitPauliWeights {
 }
 
 impl TwoQubitPauliWeights {
+    /// Return the validated `weights` weight.
+    #[must_use]
+    pub fn weights(&self) -> [f64; 15] {
+        self.weights
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(&self.weights, "TwoQubitPauliWeights")?;
+        Ok(())
+    }
+
     /// Uniform distribution (1/15 each).
     #[must_use]
     pub fn uniform() -> Self {
@@ -964,28 +1163,26 @@ impl TwoQubitPauliWeights {
 
     /// Create from custom weights.
     ///
-    /// # Panics
-    /// Panics if weights don't sum to approximately 1.0.
-    #[must_use]
-    pub fn custom(weights: [f64; 15]) -> Self {
-        let total: f64 = weights.iter().sum();
-        assert!(
-            (total - 1.0).abs() < 1e-6,
-            "Two-qubit Pauli weights must sum to 1.0, got {total}"
-        );
-        Self { weights }
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn custom(weights: [f64; 15]) -> ValidationResult<Self> {
+        validate_distribution(&weights, "TwoQubitPauliWeights")?;
+        Ok(Self { weights })
     }
 
     /// Create Z-biased weights (more dephasing on both qubits).
     ///
     /// Weight for ZZ is `zz_weight`, remaining weight is distributed uniformly.
-    #[must_use]
-    pub fn zz_biased(zz_weight: f64) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error for invalid probabilities or weights.
+    pub fn zz_biased(zz_weight: f64) -> ValidationResult<Self> {
+        validate_probability(zz_weight, "zz_weight")?;
         let remaining = 1.0 - zz_weight;
         let other = remaining / 14.0;
         let mut weights = [other; 15];
         weights[14] = zz_weight; // ZZ is at index 14
-        Self { weights }
+        Ok(Self { weights })
     }
 
     /// Sample a two-qubit Pauli operator based on the weights.
@@ -1034,13 +1231,13 @@ pub enum SingleQubitEmissionResult {
 #[derive(Debug, Clone, Copy)]
 pub struct SingleQubitEmissionWeights {
     /// Weight for X errors.
-    pub x: f64,
+    pub(crate) x: f64,
     /// Weight for Y errors.
-    pub y: f64,
+    pub(crate) y: f64,
     /// Weight for Z errors.
-    pub z: f64,
+    pub(crate) z: f64,
     /// Weight for leakage.
-    pub leak: f64,
+    pub(crate) leak: f64,
 }
 
 impl Default for SingleQubitEmissionWeights {
@@ -1050,6 +1247,42 @@ impl Default for SingleQubitEmissionWeights {
 }
 
 impl SingleQubitEmissionWeights {
+    /// Return the validated `x` weight.
+    #[must_use]
+    pub fn x(&self) -> f64 {
+        self.x
+    }
+
+    /// Return the validated `y` weight.
+    #[must_use]
+    pub fn y(&self) -> f64 {
+        self.y
+    }
+
+    /// Return the validated `z` weight.
+    #[must_use]
+    pub fn z(&self) -> f64 {
+        self.z
+    }
+
+    /// Return the validated `leak` weight.
+    #[must_use]
+    pub fn leak(&self) -> f64 {
+        self.leak
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(
+            &[self.x, self.y, self.z, self.leak],
+            "SingleQubitEmissionWeights",
+        )?;
+        Ok(())
+    }
+
     /// Uniform distribution over Pauli errors (no leakage).
     #[must_use]
     pub fn uniform() -> Self {
@@ -1085,16 +1318,11 @@ impl SingleQubitEmissionWeights {
 
     /// Custom distribution.
     ///
-    /// # Panics
-    /// Panics if weights don't sum to approximately 1.0.
-    #[must_use]
-    pub fn custom(x: f64, y: f64, z: f64, leak: f64) -> Self {
-        let total = x + y + z + leak;
-        assert!(
-            (total - 1.0).abs() < 1e-6,
-            "Single-qubit emission weights must sum to 1.0, got {total}"
-        );
-        Self { x, y, z, leak }
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn custom(x: f64, y: f64, z: f64, leak: f64) -> ValidationResult<Self> {
+        validate_distribution(&[x, y, z, leak], "SingleQubitEmissionWeights")?;
+        Ok(Self { x, y, z, leak })
     }
 
     /// Sample an emission result based on the weights.
@@ -1180,7 +1408,7 @@ pub const TWO_QUBIT_EMISSION_OPS: [(char, char); 24] = [
 #[derive(Debug, Clone)]
 pub struct TwoQubitEmissionWeights {
     /// Weights for each of the 24 two-qubit emission operators.
-    pub weights: [f64; 24],
+    pub(crate) weights: [f64; 24],
 }
 
 impl Default for TwoQubitEmissionWeights {
@@ -1190,6 +1418,21 @@ impl Default for TwoQubitEmissionWeights {
 }
 
 impl TwoQubitEmissionWeights {
+    /// Return the validated `weights` weight.
+    #[must_use]
+    pub fn weights(&self) -> [f64; 24] {
+        self.weights
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(&self.weights, "TwoQubitEmissionWeights")?;
+        Ok(())
+    }
+
     /// Uniform distribution over Pauli errors only (no leakage).
     ///
     /// Matches the 15 non-identity two-qubit Pauli operators.
@@ -1214,16 +1457,11 @@ impl TwoQubitEmissionWeights {
 
     /// Create from custom weights.
     ///
-    /// # Panics
-    /// Panics if weights don't sum to approximately 1.0.
-    #[must_use]
-    pub fn custom(weights: [f64; 24]) -> Self {
-        let total: f64 = weights.iter().sum();
-        assert!(
-            (total - 1.0).abs() < 1e-6,
-            "Two-qubit emission weights must sum to 1.0, got {total}"
-        );
-        Self { weights }
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn custom(weights: [f64; 24]) -> ValidationResult<Self> {
+        validate_distribution(&weights, "TwoQubitEmissionWeights")?;
+        Ok(Self { weights })
     }
 
     /// Sample a two-qubit emission operator based on the weights.
@@ -1299,17 +1537,17 @@ pub enum CrosstalkResult {
 #[derive(Debug, Clone, Copy)]
 pub struct CrosstalkTransitions {
     /// Probability of staying at 0 when starting at 0.
-    pub from_0_stay: f64,
+    pub(crate) zero_stay: f64,
     /// Probability of flipping to 1 when starting at 0.
-    pub from_0_flip: f64,
+    pub(crate) zero_flip: f64,
     /// Probability of leaking when starting at 0.
-    pub from_0_leak: f64,
+    pub(crate) zero_leak: f64,
     /// Probability of staying at 1 when starting at 1.
-    pub from_1_stay: f64,
+    pub(crate) one_stay: f64,
     /// Probability of flipping to 0 when starting at 1.
-    pub from_1_flip: f64,
+    pub(crate) one_flip: f64,
     /// Probability of leaking when starting at 1.
-    pub from_1_leak: f64,
+    pub(crate) one_leak: f64,
 }
 
 impl Default for CrosstalkTransitions {
@@ -1319,16 +1557,68 @@ impl Default for CrosstalkTransitions {
 }
 
 impl CrosstalkTransitions {
+    /// Return the validated `from_0_stay` weight.
+    #[must_use]
+    pub fn from_0_stay(&self) -> f64 {
+        self.zero_stay
+    }
+
+    /// Return the validated `from_0_flip` weight.
+    #[must_use]
+    pub fn from_0_flip(&self) -> f64 {
+        self.zero_flip
+    }
+
+    /// Return the validated `from_0_leak` weight.
+    #[must_use]
+    pub fn from_0_leak(&self) -> f64 {
+        self.zero_leak
+    }
+
+    /// Return the validated `from_1_stay` weight.
+    #[must_use]
+    pub fn from_1_stay(&self) -> f64 {
+        self.one_stay
+    }
+
+    /// Return the validated `from_1_flip` weight.
+    #[must_use]
+    pub fn from_1_flip(&self) -> f64 {
+        self.one_flip
+    }
+
+    /// Return the validated `from_1_leak` weight.
+    #[must_use]
+    pub fn from_1_leak(&self) -> f64 {
+        self.one_leak
+    }
+
+    /// Validate this distribution before use by a noise channel.
+    ///
+    /// # Errors
+    /// Rejects invalid weights or a total other than one.
+    pub fn validate(&self) -> ValidationResult<()> {
+        validate_distribution(
+            &[self.zero_stay, self.zero_flip, self.zero_leak],
+            "CrosstalkTransitions from 0",
+        )?;
+        validate_distribution(
+            &[self.one_stay, self.one_flip, self.one_leak],
+            "CrosstalkTransitions from 1",
+        )?;
+        Ok(())
+    }
+
     /// Simple flip model: 50% chance to flip, no leakage.
     #[must_use]
     pub fn flip_only() -> Self {
         Self {
-            from_0_stay: 0.5,
-            from_0_flip: 0.5,
-            from_0_leak: 0.0,
-            from_1_stay: 0.5,
-            from_1_flip: 0.5,
-            from_1_leak: 0.0,
+            zero_stay: 0.5,
+            zero_flip: 0.5,
+            zero_leak: 0.0,
+            one_stay: 0.5,
+            one_flip: 0.5,
+            one_leak: 0.0,
         }
     }
 
@@ -1338,20 +1628,19 @@ impl CrosstalkTransitions {
     #[must_use]
     pub fn symmetric_with_leakage() -> Self {
         Self {
-            from_0_stay: 1.0 / 3.0,
-            from_0_flip: 1.0 / 3.0,
-            from_0_leak: 1.0 / 3.0,
-            from_1_stay: 1.0 / 3.0,
-            from_1_flip: 1.0 / 3.0,
-            from_1_leak: 1.0 / 3.0,
+            zero_stay: 1.0 / 3.0,
+            zero_flip: 1.0 / 3.0,
+            zero_leak: 1.0 / 3.0,
+            one_stay: 1.0 / 3.0,
+            one_flip: 1.0 / 3.0,
+            one_leak: 1.0 / 3.0,
         }
     }
 
     /// Custom transitions.
     ///
-    /// # Panics
-    /// Panics if probabilities for either starting state don't sum to approximately 1.0.
-    #[must_use]
+    /// # Errors
+    /// Rejects invalid probabilities or a total other than one for either state.
     pub fn custom(
         from_0_stay: f64,
         from_0_flip: f64,
@@ -1359,25 +1648,23 @@ impl CrosstalkTransitions {
         from_1_stay: f64,
         from_1_flip: f64,
         from_1_leak: f64,
-    ) -> Self {
-        let total_0 = from_0_stay + from_0_flip + from_0_leak;
-        let total_1 = from_1_stay + from_1_flip + from_1_leak;
-        assert!(
-            (total_0 - 1.0).abs() < 1e-6,
-            "Crosstalk transitions from 0 must sum to 1.0, got {total_0}"
-        );
-        assert!(
-            (total_1 - 1.0).abs() < 1e-6,
-            "Crosstalk transitions from 1 must sum to 1.0, got {total_1}"
-        );
-        Self {
-            from_0_stay,
-            from_0_flip,
-            from_0_leak,
-            from_1_stay,
-            from_1_flip,
-            from_1_leak,
-        }
+    ) -> ValidationResult<Self> {
+        validate_distribution(
+            &[from_0_stay, from_0_flip, from_0_leak],
+            "CrosstalkTransitions from 0",
+        )?;
+        validate_distribution(
+            &[from_1_stay, from_1_flip, from_1_leak],
+            "CrosstalkTransitions from 1",
+        )?;
+        Ok(Self {
+            zero_stay: from_0_stay,
+            zero_flip: from_0_flip,
+            zero_leak: from_0_leak,
+            one_stay: from_1_stay,
+            one_flip: from_1_flip,
+            one_leak: from_1_leak,
+        })
     }
 
     /// Sample a crosstalk result based on the qubit's current state.
@@ -1389,18 +1676,18 @@ impl CrosstalkTransitions {
     pub fn sample(&self, current_state: bool, r: f64) -> CrosstalkResult {
         if current_state {
             // Starting from 1
-            if r < self.from_1_stay {
+            if r < self.one_stay {
                 CrosstalkResult::NoChange
-            } else if r < self.from_1_stay + self.from_1_flip {
+            } else if r < self.one_stay + self.one_flip {
                 CrosstalkResult::Flip
             } else {
                 CrosstalkResult::Leak
             }
         } else {
             // Starting from 0
-            if r < self.from_0_stay {
+            if r < self.zero_stay {
                 CrosstalkResult::NoChange
-            } else if r < self.from_0_stay + self.from_0_flip {
+            } else if r < self.zero_stay + self.zero_flip {
                 CrosstalkResult::Flip
             } else {
                 CrosstalkResult::Leak
@@ -1422,6 +1709,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: gate_group_size(GateType::CX.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert_eq!(event.qubits(), &qubits);
@@ -1436,6 +1725,8 @@ mod tests {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: gate_group_size(GateType::RZ.quantum_arity(), qubits.len()),
+            leaked_suppressed: &[],
         };
 
         assert_eq!(event.angles(), &angles);
@@ -1453,11 +1744,107 @@ mod tests {
 
     #[test]
     fn test_noise_response_skip_gate() {
-        assert!(NoiseResponse::SkipGate.should_skip_gate());
-        assert!(!NoiseResponse::None.should_skip_gate());
+        let skip = NoiseResponse::SkipGate(smallvec::smallvec![QubitId(2), QubitId(2)]);
+        assert_eq!(skip.skipped_qubits().as_slice(), &[QubitId(2)]);
+        assert!(NoiseResponse::None.skipped_qubits().is_empty());
 
-        let combined = NoiseResponse::SkipGate.combine(NoiseResponse::None);
-        assert!(combined.should_skip_gate());
+        let combined = NoiseResponse::Multiple(vec![
+            skip,
+            NoiseResponse::Multiple(vec![
+                NoiseResponse::None,
+                NoiseResponse::SkipGate(smallvec::smallvec![QubitId(0), QubitId(2)]),
+            ]),
+        ]);
+        assert_eq!(
+            combined.skipped_qubits().as_slice(),
+            &[QubitId(0), QubitId(2)]
+        );
+    }
+
+    #[test]
+    fn test_partition_gate_qubits() {
+        let qubits: Vec<_> = (0..6).map(QubitId).collect();
+        for skipped in [&[][..], &[QubitId(99)][..]] {
+            let partition =
+                partition_gate_qubits(&qubits, gate_group_size(2, qubits.len()), skipped, None);
+            assert!(matches!(partition.executed, Cow::Borrowed(_)));
+            assert_eq!(partition.executed.as_ptr(), qubits.as_ptr());
+            assert!(matches!(partition.leaked_suppressed, Cow::Borrowed(_)));
+            assert!(partition.leaked_suppressed.is_empty());
+            assert!(partition.emit_after_gate);
+        }
+        for (group_size, skipped, leaked, executed, suppressed) in [
+            (2, vec![2, 99], vec![], vec![0, 1, 4, 5], vec![]),
+            (2, vec![2], vec![3], vec![0, 1, 4, 5], vec![2, 3]),
+            (2, vec![0, 2], vec![1], vec![4, 5], vec![0, 1]),
+            (2, vec![2], vec![2], vec![0, 1, 4, 5], vec![2, 3]),
+            (2, vec![0, 2, 5], vec![], vec![], vec![]),
+            (
+                2,
+                vec![0, 2, 5],
+                vec![0, 2, 5],
+                vec![],
+                vec![0, 1, 2, 3, 4, 5],
+            ),
+            (1, vec![2], vec![], vec![0, 1, 3, 4, 5], vec![]),
+            (3, vec![2], vec![], vec![3, 4, 5], vec![]),
+        ] {
+            let skipped: Vec<_> = skipped.into_iter().map(QubitId).collect();
+            let mut ctx = NoiseContext::new();
+            for q in &leaked {
+                ctx.mark_leaked(QubitId(*q));
+            }
+            // None preserves importance sampling's leakage-independent partition.
+            for context in [None, Some(&ctx)] {
+                let partition = partition_gate_qubits(
+                    &qubits,
+                    gate_group_size(group_size, qubits.len()),
+                    &skipped,
+                    context,
+                );
+                let expected: Vec<_> = executed.iter().copied().map(QubitId).collect();
+                assert_eq!(partition.executed.as_ref(), expected);
+                let expected: Vec<_> = if context.is_some() {
+                    suppressed.iter().copied().map(QubitId).collect()
+                } else {
+                    vec![]
+                };
+                assert_eq!(partition.leaked_suppressed.as_ref(), expected);
+                assert_eq!(
+                    partition.emit_after_gate,
+                    !executed.is_empty() || !expected.is_empty()
+                );
+            }
+        }
+        let partition = partition_gate_qubits(&[], NonZeroUsize::MIN, &[QubitId(0)], None);
+        assert!(matches!(partition.executed, Cow::Borrowed(_)));
+        assert!(partition.emit_after_gate);
+    }
+
+    #[test]
+    fn gate_group_size_and_gated_qubits() {
+        for (arity, len, expected) in [(2, 4, 2), (0, 4, 4), (2, 3, 3), (2, 0, 1), (0, 0, 1)] {
+            assert_eq!(gate_group_size(arity, len).get(), expected);
+        }
+        let qubits = [QubitId(0), QubitId(1)];
+        let event = NoiseEvent::after_gate(GateType::CX, &qubits, &[]);
+        let gated = event.gated_qubits();
+        assert!(matches!(gated, Cow::Borrowed(_)));
+        assert_eq!(gated.as_ptr(), qubits.as_ptr());
+        let suppressed = [QubitId(2), QubitId(3)];
+        let event = NoiseEvent::AfterGate {
+            gate_type: GateType::CX,
+            gate_id: None,
+            qubits: &qubits,
+            leaked_suppressed: &suppressed,
+            group_size: NonZeroUsize::new(2).unwrap(),
+            angles: &[],
+        };
+        assert_eq!(event.qubits(), qubits);
+        assert_eq!(
+            event.gated_qubits().as_ref(),
+            &[QubitId(0), QubitId(1), QubitId(2), QubitId(3)]
+        );
     }
 
     #[test]
@@ -1507,14 +1894,14 @@ mod tests {
 
     #[test]
     fn test_two_qubit_pauli_weights_zz_biased() {
-        let weights = TwoQubitPauliWeights::zz_biased(0.5);
+        let weights = TwoQubitPauliWeights::zz_biased(0.5).unwrap();
 
         // ZZ (index 14) should have 50% weight
         assert!((weights.weights[14] - 0.5).abs() < 1e-10);
 
         // Other 14 operators should share the remaining 50%
-        for i in 0..14 {
-            assert!((weights.weights[i] - 0.5 / 14.0).abs() < 1e-10);
+        for weight in weights.weights.iter().take(14) {
+            assert!((weight - 0.5 / 14.0).abs() < 1e-10);
         }
 
         // Values >= 0.5 should sample ZZ
@@ -1651,3 +2038,11 @@ mod tests {
         assert_eq!(trans.sample(true, 0.9), CrosstalkResult::Leak);
     }
 }
+
+#[cfg(all(test, feature = "composite-noise"))]
+#[path = "noise/suppressed_tests.rs"]
+mod suppressed_tests;
+
+#[cfg(all(test, feature = "composite-noise"))]
+#[path = "noise/channel_action_tests.rs"]
+mod channel_action_tests;

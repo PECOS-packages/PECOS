@@ -1145,6 +1145,7 @@ where
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "CX");
         let n = self.num_physical_qubits;
 
         for &(control, target) in pairs {
@@ -1356,6 +1357,7 @@ where
     /// * `&mut Self` - Returns self for method chaining
     #[inline]
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        crate::clifford_gateable::validate_distinct_pairs(pairs, "RZZ");
         let n = self.num_physical_qubits;
 
         for &(q1, q2) in pairs {

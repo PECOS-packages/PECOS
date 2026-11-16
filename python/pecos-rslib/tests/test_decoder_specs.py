@@ -87,7 +87,6 @@ FACTORY_CASES: list[FactoryCase] = [
         "relay_bp",
         lambda: relay_bp(
             error_rate=0.03,
-            max_iter=120,
             alpha=0.9,
             alpha_iteration_scaling_factor=0.95,
             gamma0=0.6,
@@ -317,10 +316,10 @@ def test_parse_errors_preserve_rust_messages() -> None:
 @pytest.mark.parametrize(
     ("spec", "history_dependent", "wall_clock_dependent"),
     [
-        (relay_bp(), True, False),
+        (relay_bp(), False, False),
         (mwpf(timeout=0.5), False, True),
         (mwpf(), False, False),
-        (ensemble(pymatching(correlated=True), relay_bp()), True, False),
+        (ensemble(pymatching(correlated=True), bp_osd(bp_schedule="serial")), True, False),
         (bp_osd(bp_schedule="serial"), True, False),
     ],
 )
@@ -482,3 +481,44 @@ def test_tesseract_trellis_defaults_and_repr() -> None:
     assert repr(tesseract_trellis(merge_errors=False)) == "tesseract_trellis(merge_errors=False)"
     assert not defaults.history_dependent
     assert not defaults.wall_clock_dependent
+
+
+# contract: typed graph policy matches the string grammar and appears only when non-default.
+def test_graph_irreducible_policy() -> None:
+    spec = pymatching(correlated=True, irreducible="drop")
+    assert spec == DecoderSpec.parse("pymatching:irreducible=drop")
+    assert repr(spec) == 'pymatching(correlated=True, irreducible="drop")'
+    assert "irreducible" not in repr(pymatching(correlated=True))
+
+
+# contract: every graph builder validates the policy at construction.
+@pytest.mark.parametrize(
+    "builder",
+    [
+        lambda **kw: pymatching(correlated=True, **kw),
+        fusion_blossom,
+        pecos_uf,
+        belief_matching,
+        k_mwpm,
+        astar,
+        perturbed_fb_corr,
+    ],
+)
+def test_graph_builders_validate_irreducible(builder: Callable[..., DecoderSpec]) -> None:
+    assert 'irreducible="drop"' in repr(builder(irreducible="drop"))
+    assert "irreducible" not in repr(builder(irreducible="refuse"))
+    with pytest.raises(ValueError, match=r"refuse\|drop"):
+        builder(irreducible="unknown")
+
+
+@pytest.mark.parametrize("factor", [0.0, -1.0, float("nan"), float("inf")])
+def test_relay_alpha_iteration_scaling_factor_is_positive(factor: float) -> None:
+    with pytest.raises(ValueError, match="alpha_iteration_scaling_factor"):
+        relay_bp(alpha_iteration_scaling_factor=factor)
+
+
+def test_relay_rejects_max_iter_and_is_history_independent() -> None:
+    with pytest.raises(TypeError, match="max_iter"):
+        relay_bp(max_iter=20)
+    spec = relay_bp(pre_iter=8, gamma0=None)
+    assert not spec.history_dependent

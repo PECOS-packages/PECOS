@@ -38,6 +38,7 @@ members = [
   "python/selene-plugins/pecos-selene-stab-vec",
   "python/selene-plugins/pecos-selene-stabilizer",
   "python/selene-plugins/pecos-selene-statevec",
+  "python/selene-plugins/pecos-selene-wasm",
 ]
 
 [dependency-groups]

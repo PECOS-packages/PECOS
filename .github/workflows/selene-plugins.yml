@@ -67,6 +67,9 @@ jobs:
         run: |
           run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins \
             python/selene-plugins/ \
+            crates/pecos-wasm/ \
+            crates/pecos-wasm-runtime/ \
+            examples/guppy_wasm/ \
             python/pecos-rslib/src/sim.rs \
             python/pecos-rslib/src/engine_builders.rs \
             python/quantum-pecos/src/pecos/_sim.py \

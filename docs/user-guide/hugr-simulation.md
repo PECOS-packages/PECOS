@@ -1,5 +1,8 @@
 # HUGR and Guppy Simulations
 
+For classical WebAssembly calls within Guppy programs, see
+[Guppy WASM calls](guppy-wasm.md), including PECOS and standalone Selene examples.
+
 This guide walks you through running quantum circuit simulations using PECOS's HUGR interface and the Guppy quantum programming language. HUGR (Hierarchical Unified Graph Representation) is a modern intermediate representation for quantum programs that supports native control flow based on measurement results.
 
 Python Guppy and HUGR programs are lowered to QIS and executed by the QIS engine

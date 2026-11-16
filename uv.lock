@@ -30,6 +30,7 @@ members = [
     "pecos-selene-stab-vec",
     "pecos-selene-stabilizer",
     "pecos-selene-statevec",
+    "pecos-selene-wasm",
     "pecos-workspace",
     "quantum-pecos",
 ]
@@ -2601,6 +2602,34 @@ requires-dist = [
 provides-extras = ["test"]
 
 [[package]]
+name = "pecos-selene-wasm"
+version = "0.11.0.dev0"
+source = { editable = "python/selene-plugins/pecos-selene-wasm" }
+dependencies = [
+    { name = "hugr" },
+    { name = "selene-core" },
+    { name = "selene-hugr-qis-compiler" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "guppylang" },
+    { name = "pytest" },
+    { name = "selene-sim" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "guppylang", marker = "extra == 'test'", specifier = ">=1.0.1,<1.3" },
+    { name = "hugr", specifier = "~=0.18.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
+    { name = "selene-core", specifier = "~=0.3.0" },
+    { name = "selene-hugr-qis-compiler", specifier = ">=0.4.2,<0.6" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
+]
+provides-extras = ["test"]
+
+[[package]]
 name = "pecos-workspace"
 version = "0.11.0.dev0"
 source = { virtual = "." }
@@ -3476,6 +3505,9 @@ visualization = [
     { name = "matplotlib" },
     { name = "plotly" },
 ]
+wasm = [
+    { name = "pecos-selene-wasm" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -3489,6 +3521,7 @@ requires-dist = [
     { name = "networkx", specifier = ">=2.1.0" },
     { name = "pecos-rslib", editable = "python/pecos-rslib" },
     { name = "pecos-rslib-llvm", editable = "python/pecos-rslib-llvm" },
+    { name = "pecos-selene-wasm", marker = "extra == 'wasm'", editable = "python/selene-plugins/pecos-selene-wasm" },
     { name = "phir", specifier = ">=0.3.3" },
     { name = "plotly", marker = "extra == 'visualization'", specifier = "~=5.9.0" },
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11' and extra == 'cuda12'", specifier = ">=0.12.0" },
@@ -3500,7 +3533,7 @@ requires-dist = [
     { name = "stim", marker = "extra == 'stim'", specifier = ">=1.15.0" },
     { name = "tket", specifier = "~=0.15.9" },
 ]
-provides-extras = ["stim", "visualization", "all", "cuda13", "cuda12"]
+provides-extras = ["wasm", "stim", "visualization", "all", "cuda13", "cuda12"]
 
 [[package]]
 name = "qwasm"

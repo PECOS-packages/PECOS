@@ -1123,6 +1123,7 @@ python-ci-sync-test:
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
       --package quantum-pecos \
+      --package pecos-selene-wasm \
       --no-install-package pecos-rslib \
       --no-install-package pecos-rslib-exp \
       --no-install-package pecos-rslib-llvm

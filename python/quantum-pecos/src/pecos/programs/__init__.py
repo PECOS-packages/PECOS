@@ -57,6 +57,7 @@ Example:
     >>> results = sim(Guppy(my_circuit)).qubits(1).run(1000)
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -99,9 +100,9 @@ class HugrPackage(Protocol):
 # =============================================================================
 
 
-def _hugr_to_program(data: bytes) -> "CompiledQis":
+def _hugr_to_program(data: bytes, *, wasm_modules: Mapping[str, bytes] | None = None) -> "CompiledQis":
     """Lower a HUGR envelope to the shared executable program representation."""
-    return pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(data))
+    return pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(data, wasm_modules=wasm_modules))
 
 
 class Guppy:
@@ -126,9 +127,14 @@ class Guppy:
         >>> results = sim(Guppy(bell_state)).qubits(2).run(1000)
     """
 
-    def __init__(self, func: GuppyFunction) -> None:
-        """Initialize with a Guppy-decorated function."""
+    def __init__(self, func: GuppyFunction, *, wasm_modules: Mapping[str, bytes] | None = None) -> None:
+        """Initialize with a Guppy function and optional explicit WASM module bytes.
+
+        Keys in ``wasm_modules`` are the module identifiers used by Guppy's
+        ``@wasm_module`` declarations. Requires ``quantum-pecos[wasm]``.
+        """
         self._func = func
+        self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None
 
     @property
@@ -146,7 +152,7 @@ class Guppy:
     def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            self._program = _hugr_to_program(self.hugr_bytes)
+            self._program = _hugr_to_program(self.hugr_bytes, wasm_modules=self._wasm_modules)
         return self._program
 
 
@@ -167,9 +173,10 @@ class Hugr:
         >>> results = sim(Hugr.from_file("program.hugr")).qubits(2).run(1000)
     """
 
-    def __init__(self, data: bytes) -> None:
-        """Initialize with HUGR bytes."""
+    def __init__(self, data: bytes, *, wasm_modules: Mapping[str, bytes] | None = None) -> None:
+        """Initialize with HUGR bytes and optional explicit WASM module bytes."""
         self._data = data
+        self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None
 
     @property
@@ -178,23 +185,23 @@ class Hugr:
         return self._data
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "Hugr":
+    def from_file(cls, path: str | Path, *, wasm_modules: Mapping[str, bytes] | None = None) -> "Hugr":
         """Create from a HUGR file."""
         with Path(path).open("rb") as f:
-            return cls(f.read())
+            return cls(f.read(), wasm_modules=wasm_modules)
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> "Hugr":
+    def from_bytes(cls, data: bytes, *, wasm_modules: Mapping[str, bytes] | None = None) -> "Hugr":
         """Create from HUGR bytes.
 
         This is an alias for the constructor.
         """
-        return cls(data)
+        return cls(data, wasm_modules=wasm_modules)
 
     def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            self._program = _hugr_to_program(self._data)
+            self._program = _hugr_to_program(self._data, wasm_modules=self._wasm_modules)
         return self._program
 
 

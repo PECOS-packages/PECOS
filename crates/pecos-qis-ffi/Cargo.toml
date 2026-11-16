@@ -20,6 +20,7 @@ categories.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+pecos-wasm-runtime.workspace = true
 # Data structures (no FFI symbols)
 pecos-qis-ffi-types.workspace = true
 pecos-random.workspace = true

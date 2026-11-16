@@ -1,0 +1,12 @@
+[package]
+name = "pecos-wasm-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Public scalar WASM call runtime shared by PECOS and Selene"
+
+[dependencies]
+pecos-wasm.workspace = true
+
+[lints]
+workspace = true

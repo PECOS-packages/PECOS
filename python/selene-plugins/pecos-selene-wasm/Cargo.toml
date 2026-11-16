@@ -1,0 +1,15 @@
+[package]
+name = "pecos-selene-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Public WASM utility plugin for Selene"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pecos-wasm-runtime.workspace = true
+
+[lints]
+workspace = true

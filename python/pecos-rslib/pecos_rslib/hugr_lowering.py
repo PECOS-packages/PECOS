@@ -7,6 +7,7 @@ compiler is imported lazily when compile_hugr_to_qis is called.
 """
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 # These PECOS runtime helper ABIs must match the extern signatures in
@@ -326,6 +327,7 @@ def compile_hugr_to_qis(
     platform: str = "helios",
     opt_level: int = 2,
     emit_debug: bool = False,
+    wasm_modules: Mapping[str, bytes] | None = None,
 ) -> str:
     """Lower a HUGR envelope with Selene and normalize PECOS runtime helpers.
 
@@ -334,6 +336,7 @@ def compile_hugr_to_qis(
         platform: Target QSystem platform ("helios" or "sol").
         opt_level: LLVM optimization level.
         emit_debug: Whether to emit debug information.
+        wasm_modules: Explicit module identifier to WAT/WASM bytes mapping.
 
     Returns:
         LLVM IR with PECOS's public helper symbols.
@@ -355,6 +358,16 @@ def compile_hugr_to_qis(
     except ImportError as error:
         msg = "HUGR -> QIS lowering requires the selene-hugr-qis-compiler package"
         raise ImportError(msg) from error
+
+    if wasm_modules is not None:
+        try:
+            from pecos_selene_wasm import compile_wasm
+        except ImportError as error:
+            msg = "Guppy WASM lowering requires the pecos-selene-wasm package (quantum-pecos[wasm])"
+            raise ImportError(msg) from error
+        return normalize_pecos_helper_symbols(
+            compile_wasm(hugr_bytes, wasm_modules, platform=platform, opt_level=opt_level, emit_debug=emit_debug),
+        )
 
     return normalize_pecos_helper_symbols(
         compile_to_llvm_ir(hugr_bytes, platform=platform, opt_level=opt_level, emit_debug=emit_debug),

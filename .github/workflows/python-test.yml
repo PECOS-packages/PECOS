@@ -121,12 +121,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -209,12 +216,19 @@ jobs:
         # into the top-level target/.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -334,12 +348,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -394,9 +415,12 @@ jobs:
         maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
 
     - name: Test QIS executor recovery and runtime symbol binding
+      shell: bash
       if: runner.os == 'macOS' || runner.os == 'Windows'
       run: |
         cargo +stable test --locked -p pecos-qis-ffi --lib
+        runtime_dir=$(cargo +stable run --locked -p pecos-cli -- qis-runtime --profile debug --tests)
+        export PECOS_QIS_FFI_PATH="$runtime_dir" PECOS_SELENE_DIR="$runtime_dir"
         cargo +stable test --locked -p pecos-qis --lib executor::tests
 
     - name: Test StabVec numerical reference contract
@@ -509,13 +533,20 @@ jobs:
         tool: just@1.59.0
         fallback: none
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       if: matrix.include-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       if: matrix.include-llvm
@@ -654,12 +685,19 @@ jobs:
         # and share the python-core key: same crates, same profile, same env.
         shared-key: python-core
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -735,12 +773,19 @@ jobs:
         # a root-workspace member and builds into the top-level target/, so the
         # default (root) workspace is the right one.
 
+    - name: Identify the runner image for the LLVM cache key
+      # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+      # or ubuntu26) keeps a copy from one image from being restored onto another.
+      id: runner-image
+      shell: bash
+      run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm-zluppy
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-21.1
-        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env

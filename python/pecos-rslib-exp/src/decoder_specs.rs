@@ -124,8 +124,8 @@ impl PyExperimentalDecoderSpec {
     fn wall_clock_dependent(&self) -> bool {
         false
     }
-    #[getter]
-    fn _pecos_decoder_api_version(&self) -> u32 {
+    #[getter(_pecos_decoder_api_version)]
+    fn pecos_decoder_api_version(&self) -> u32 {
         if self.inner.is_recovery_configured() {
             2
         } else {
@@ -160,7 +160,8 @@ impl PyExperimentalDecoderSpec {
         hasher.finish()
     }
     /// Internal v2 protocol: prepare shared recovery models once per decode call.
-    fn _pecos_prepare_decoder(
+    #[pyo3(name = "_pecos_prepare_decoder")]
+    fn pecos_prepare_decoder(
         &self,
         py: Python<'_>,
         dem: &str,
@@ -168,7 +169,8 @@ impl PyExperimentalDecoderSpec {
         self.prepare(py, dem)
     }
     /// Internal batch protocol: construct an independent native worker.
-    fn _pecos_build_decoder(&self, py: Python<'_>, dem: &str) -> PyResult<PyExperimentalWorker> {
+    #[pyo3(name = "_pecos_build_decoder")]
+    fn pecos_build_decoder(&self, py: Python<'_>, dem: &str) -> PyResult<PyExperimentalWorker> {
         // One construction path for recovery workers: the v2 preparation.
         if self.inner.is_recovery_configured() {
             return Ok(self.prepare(py, dem)?.build_worker(py));
@@ -216,7 +218,8 @@ impl PyPreparedFrontierDecoder {
 #[pymethods]
 impl PyPreparedFrontierDecoder {
     /// Internal v2 protocol: a worker sharing the prepared models with fresh scratch.
-    fn _pecos_build_decoder(&self, py: Python<'_>) -> PyExperimentalWorker {
+    #[pyo3(name = "_pecos_build_decoder")]
+    fn pecos_build_decoder(&self, py: Python<'_>) -> PyExperimentalWorker {
         self.build_worker(py)
     }
 }
@@ -232,11 +235,8 @@ struct PyExperimentalWorker {
 #[pymethods]
 impl PyExperimentalWorker {
     /// Internal v2 outcome: words or None, fallback flag, consistency, deltas.
-    fn _pecos_decode_outcome(
-        &self,
-        py: Python<'_>,
-        syndrome: Vec<u8>,
-    ) -> PyResult<ProviderOutcome> {
+    #[pyo3(name = "_pecos_decode_outcome")]
+    fn pecos_decode_outcome(&self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<ProviderOutcome> {
         py.detach(|| {
             let mut decoder = self
                 .inner
@@ -254,7 +254,8 @@ impl PyExperimentalWorker {
         })
     }
     /// Decode without the GIL and return little-endian observable words.
-    fn _pecos_decode_obs(&self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Vec<u64>> {
+    #[pyo3(name = "_pecos_decode_obs")]
+    fn pecos_decode_obs(&self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Vec<u64>> {
         py.detach(|| {
             let mut decoder = self
                 .inner

@@ -2649,7 +2649,7 @@ pub mod actions {
             };
 
             let angles: Vec<pecos_core::Angle64> =
-                gate_info.map(|g| g.angles.to_vec()).unwrap_or_default();
+                gate_info.map_or_else(Vec::new, |g| g.angles.to_vec());
 
             let gate_type = gate_info.map_or(GateType::I, |g| g.gate_type);
 

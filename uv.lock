@@ -26,6 +26,7 @@ members = [
     "pecos-rslib-llvm",
     "pecos-selene-general-noise",
     "pecos-selene-mast",
+    "pecos-selene-runtime-plugin",
     "pecos-selene-stab-mps",
     "pecos-selene-stab-vec",
     "pecos-selene-stabilizer",
@@ -2484,6 +2485,30 @@ provides-extras = ["test"]
 name = "pecos-selene-mast"
 version = "0.11.0.dev0"
 source = { editable = "python/selene-plugins/pecos-selene-mast" }
+dependencies = [
+    { name = "selene-core" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "guppylang" },
+    { name = "pytest" },
+    { name = "selene-sim" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "guppylang", marker = "extra == 'test'", specifier = "~=1.0.1" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
+    { name = "selene-core", specifier = "~=0.3.0" },
+    { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
+]
+provides-extras = ["test"]
+
+[[package]]
+name = "pecos-selene-runtime-plugin"
+version = "0.11.0.dev0"
+source = { editable = "python/selene-plugins/pecos-selene-runtime-plugin" }
 dependencies = [
     { name = "selene-core" },
 ]

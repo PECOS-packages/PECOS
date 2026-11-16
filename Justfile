@@ -1106,8 +1106,8 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
-# The python-ci-sync* recipes install the pure-Python side of the workspace
-# only. The native packages are listed with `--package` so their dependencies
+# The python-ci-sync* recipes install the Python packages and the small standard
+# runtime plugin. The main native bindings are listed with `--package` so their dependencies
 # land in the environment, but are excluded from installation with
 # `--no-install-package`: otherwise uv builds release wheels of each one
 # (~20 min on a 4-core runner) that the following `pecos python build`
@@ -1123,6 +1123,7 @@ python-ci-sync-test:
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
       --package quantum-pecos \
+      --package pecos-selene-runtime-plugin \
       --no-install-package pecos-rslib \
       --no-install-package pecos-rslib-exp \
       --no-install-package pecos-rslib-llvm

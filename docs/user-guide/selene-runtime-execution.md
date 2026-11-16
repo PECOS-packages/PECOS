@@ -10,6 +10,39 @@ concern Rust and direct-runtime callers. For timing and noise on the scheduled
 route, see [Scheduled idle simulation](scheduled-idle-simulation.md). For operation
 capture, see [Runtime QIS tracing](runtime-qis-tracing.md).
 
+## PECOS runtime plugin
+
+The optional `pecos-selene-runtime-plugin` package supplies a standard Selene
+runtime backed by PECOS's Rust `pecos-selene-runtime` crate. It provides virtual-Z
+phase tracking, configurable pulse durations and batching, and deferred ordinary
+and leakage-aware measurement futures:
+
+```python
+import pecos
+from pecos_selene_runtime_plugin import PecosRuntimePlugin
+
+runtime = PecosRuntimePlugin(max_batch_size=2)
+engine = pecos.selene_engine(runtime=runtime)
+```
+
+The same plugin object works with standalone Selene. Both hosts use the standard
+runtime interface: submitting a measurement creates a future, and reading it
+releases the queued prefix needed to obtain its value. This runtime implements
+forcing for ordinary and leakage-aware measurements, preserving leakage outcome
+`2` through integer reads. Later unrelated measurements may remain queued.
+
+The Python convenience builder exposes `scheduled_batches()` and
+`scheduled_event_batches()`. Pair these with the corresponding scheduled noise
+profile, as described in [Scheduled idle simulation](scheduled-idle-simulation.md).
+
+Rust callers can also use `PecosRuntime` through Selene's existing
+`RuntimeInterface`. PECOS currently loads the standard shared-library plugin.
+See the [plugin README](../../python/selene-plugins/pecos-selene-runtime-plugin/README.md)
+for installation and standalone usage, and the
+[crate contract](../../crates/pecos-selene-runtime/README.md) for lifecycle and
+timing semantics. The scheduler does not model Anduril transport or predict
+hardware timing.
+
 ## Shot identity and randomness
 
 `QisEngine` calls runtime `shot_start` with IDs `0, 1, 2, ...` per engine

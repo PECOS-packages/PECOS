@@ -62,7 +62,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         # Assign on its own line so a git failure aborts the step (fail closed).
         run: |
-          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins python/selene-plugins/ .github/workflows/selene-plugins.yml scripts/ci/smoke_selene_wheel.py Cargo.toml Cargo.lock uv.lock)"
+          run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins python/selene-plugins/ crates/pecos-selene-runtime/ .github/workflows/selene-plugins.yml scripts/ci/smoke_selene_wheel.py Cargo.toml Cargo.lock uv.lock)"
           case "$run" in
             true|false) ;;
             *)

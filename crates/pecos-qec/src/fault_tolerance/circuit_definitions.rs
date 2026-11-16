@@ -382,7 +382,7 @@ pub fn resolve_definitions(
                 &entry.meas_ids,
             )?,
             reference: None,
-            coords: entry.coords.map(Vec::from),
+            coords: entry.coords,
             label: entry.label,
             pauli: None,
         };

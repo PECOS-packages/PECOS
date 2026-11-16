@@ -1757,6 +1757,19 @@ impl QisEngine {
             self.signal_dynamic_result_ready()?;
             return Ok(None);
         }
+        let targeted = self.runtime.force_result(result_key).map_err(|e| {
+            self.latch_terminal_error(format!("runtime result forcing failed: {e}"))
+        })?;
+        if targeted {
+            let lowered = self.lower_operations_terminal(&[])?;
+            self.trace_operations_chunk("result_force", &[], Some(result_id), Some(&lowered));
+            if !lowered.is_empty && lowered.measurement_credits_consumed > 0 {
+                return Ok(Some(lowered.commands));
+            }
+            return Err(self.latch_terminal_error(format!(
+                "runtime released no measurement for worker-requested result {result_id}"
+            )));
+        }
         // While the worker is blocked, imported credits are finite. Each
         // progressing drain consumes at least one; feedback may release the
         // requested measurement, but padding cannot keep a request alive.

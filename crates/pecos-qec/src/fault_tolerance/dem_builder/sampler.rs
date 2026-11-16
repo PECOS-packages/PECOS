@@ -487,6 +487,11 @@ impl DemSampler {
         circuit: &pecos_quantum::TickCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
+        if super::inline::tick_uses_inline_noise(circuit) {
+            let dem =
+                super::DemBuilder::try_from_tick_circuit_with_noise_config(circuit, noise.clone())?;
+            return Ok(Self::from_detector_error_model(&dem));
+        }
         if let Some(error) =
             crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
         {
@@ -513,11 +518,15 @@ impl DemSampler {
         circuit: &pecos_quantum::DagCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
-        // Build the DetectorErrorModel via DemBuilder (single code path for
-        // DEM computation), then convert to sampler.
         use super::builder::DemBuilder;
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        if super::inline::uses_inline_noise(circuit) {
+            let dem = super::inline::build_inline_dem(circuit, noise)?;
+            return Ok(Self::from_detector_error_model(&dem));
+        }
+        // Build the DetectorErrorModel via DemBuilder (single code path for
+        // DEM computation), then convert to sampler.
 
         let definitions =
             crate::fault_tolerance::circuit_definitions::definitions_from_dag_circuit(circuit)

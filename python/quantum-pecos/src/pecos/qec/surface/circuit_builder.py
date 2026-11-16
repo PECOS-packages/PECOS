@@ -3220,6 +3220,12 @@ def tick_circuit_to_stim(
     This makes TickCircuit the source of truth for circuit structure,
     with Stim circuit being derived from it for DEM generation.
 
+    Inline Pauli channels on one or two qubits are exported from their actual
+    categorical payloads, without approximation. Extra nonzero gate/readout noise
+    is rejected for inline circuits, including explicitly marked zero-noise ones.
+    Other channel types raise ValueError. TICKs retain execution-step boundaries;
+    they do not imply additional physical time. Affine constants use MPAD.
+
     Args:
         tc: TickCircuit instance with detector/observable metadata
         p1: Single-qubit error rate
@@ -3241,6 +3247,15 @@ def tick_circuit_to_stim(
     import math
 
     from pecos_rslib import is_supported_noop_or_metadata_gate
+
+    from pecos.qec._stim_channels import channel_to_stim, has_inline_noise
+    from pecos.qec.dem_spec import parity_constants
+
+    if has_inline_noise(tc) and any(
+        rate != 0 for rate in (p1, p2, p_meas, p_prep, *(p1_gate_rates or {}).values())
+    ):
+        msg = "Inline channels cannot be combined with external gate/readout noise during Stim export"
+        raise ValueError(msg)
 
     lines = []
 
@@ -3383,6 +3398,15 @@ def tick_circuit_to_stim(
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
         for gate in tick.gate_batches():
+            if gate.is_channel():
+                try:
+                    instruction = channel_to_stim(gate)
+                except ValueError as error:
+                    msg = f"Unsupported inline channel at tick {tick_idx}: {error}"
+                    raise ValueError(msg) from error
+                if instruction is not None:
+                    lines.append(instruction)
+                continue
             instructions, noise_kind = _gate_to_stim(gate)
             if not instructions:
                 continue
@@ -3411,15 +3435,26 @@ def tick_circuit_to_stim(
 
     definitions = tc.circuit_definitions()
     num_measurements = definitions["num_measurements"]
+    constants = {
+        key: parity_constants(tc.get_meta(key), key[:-1])
+        for key in ("detectors", "observables")
+    }
+    if any(value for group in constants.values() for value in group.values()):
+        lines.append("MPAD 1")
+        num_measurements += 1
     for det in definitions["detectors"]:
         coords = det["coords"]
-        coord_str = "" if coords is None else "(" + ", ".join(str(c) for c in coords) + ")"
+        coord_str = "" if not coords else "(" + ", ".join(str(c) for c in coords) + ")"
         record_str = " ".join(f"rec[{position - num_measurements}]" for position in det["measurements"])
+        if constants["detectors"].get(det["id"], 0):
+            record_str += " rec[-1]"
         lines.append(f"DETECTOR{coord_str} {record_str}")
 
     for obs in definitions["observables"]:
         obs_id = obs["id"]
         record_str = " ".join(f"rec[{position - num_measurements}]" for position in obs["measurements"])
+        if constants["observables"].get(obs_id, 0):
+            record_str += " rec[-1]"
         lines.append(f"OBSERVABLE_INCLUDE({obs_id}) {record_str}")
 
     return "\n".join(lines)
@@ -3774,11 +3809,11 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
 def generate_dem_from_tick_circuit_via_stim(
     tc: TickCircuit,
     *,
-    p1: float = 0.01,
+    p1: float | None = None,
     p1_gate_rates: Mapping[str, float] | None = None,
-    p2: float = 0.01,
-    p_meas: float = 0.01,
-    p_prep: float = 0.01,
+    p2: float | None = None,
+    p_meas: float | None = None,
+    p_prep: float | None = None,
     decompose_errors: bool = True,
     maximal_decomposition: bool = False,
 ) -> str:
@@ -3787,6 +3822,10 @@ def generate_dem_from_tick_circuit_via_stim(
     This uses TickCircuit as the source of truth for circuit structure,
     converts to Stim format, and uses Stim's DEM generator for full
     circuit-level noise analysis.
+
+    Omitted rates are zero for inline-noise circuits and retain the legacy 0.01
+    defaults for ideal circuits. Stim may reject categorical channels that it
+    cannot convert to a DEM exactly; no disjoint-error approximation is enabled.
 
     Args:
         tc: TickCircuit with detector/observable metadata
@@ -3817,6 +3856,10 @@ def generate_dem_from_tick_circuit_via_stim(
         msg = "Stim is required for this function. Install with: pip install stim"
         raise ImportError(msg) from e
 
+    from pecos.qec._stim_channels import has_inline_noise
+
+    default = 0.0 if has_inline_noise(tc) else 0.01
+    p1, p2, p_meas, p_prep = (default if p is None else p for p in (p1, p2, p_meas, p_prep))
     stim_str = tick_circuit_to_stim(
         tc,
         p1=p1,

@@ -10,7 +10,7 @@ import hashlib
 import json
 from collections import Counter, defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from numbers import Integral
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +18,8 @@ from pecos._traced_circuit import measurement_ids_in_execution_order
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from pecos.qec.guppy_output_dem import InferredGuppyDemAnnotations
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +79,14 @@ def result_ref(tag: str, *, occurrence: int = 0, element: int | None = None) -> 
 MeasurementRef = RecordRef | ResultRef
 
 
+def _xor_constant(value: bool | int) -> bool:
+    if type(value) not in (bool, int):
+        raise TypeError("XOR constant must be bool or integer 0/1")
+    if value not in (0, 1):
+        raise ValueError("XOR constant must be 0 or 1")
+    return bool(value)
+
+
 def _coerce_refs(refs: tuple[MeasurementRef | str, ...]) -> tuple[MeasurementRef, ...]:
     """Accept a bare tag string as shorthand for ``result_ref(tag)``."""
     if not refs:
@@ -93,6 +103,22 @@ def _coerce_refs(refs: tuple[MeasurementRef | str, ...]) -> tuple[MeasurementRef
     return tuple(coerced)
 
 
+def _coerce_parity_terms(
+    terms: tuple[MeasurementRef | str | bool | int, ...],
+    constant: bool,
+) -> tuple[tuple[MeasurementRef, ...], bool]:
+    """Separate literal XOR bits from measurement selectors."""
+    if type(constant) is not bool:
+        raise TypeError("parity constant must be bool")
+    refs = []
+    for term in terms:
+        if type(term) in (bool, int):
+            constant ^= _xor_constant(term)
+        else:
+            refs.append(term)
+    return _coerce_refs(tuple(refs)), constant
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class Detector:
     """A detector parity over canonical measurement references."""
@@ -101,24 +127,42 @@ class Detector:
     id: int | None
     coords: tuple[float, ...] | None
     metadata: Mapping[str, Any] | None
+    constant: bool
 
     def __init__(
         self,
-        *refs: MeasurementRef | str,
+        *refs: MeasurementRef | str | bool | int,
         id: int | None = None,
         coords: Sequence[float] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        constant: bool = False,
     ) -> None:
         """Create a detector from measurement references.
 
         Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
-        string, which is shorthand for ``result_ref(tag)``.
+        string, which is shorthand for ``result_ref(tag)``. Literal 0/1 terms
+        XOR into the expression constant; repeated ones cancel. ``constant=True``
+        and ``definition ^ 1`` are equivalent spellings. Constants are not
+        noiseless-reference claims and do not change fault propagation.
         """
-        refs_tuple = _coerce_refs(tuple(refs))
+        refs_tuple, constant = _coerce_parity_terms(tuple(refs), constant)
+        object.__setattr__(self, "constant", constant)
         object.__setattr__(self, "refs", refs_tuple)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "coords", tuple(float(value) for value in coords) if coords is not None else None)
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)
+
+    def __xor__(self, value: bool | int) -> Detector:
+        """Return the same detector definition with an explicit XOR constant."""
+        return Detector(
+            *self.refs,
+            id=self.id,
+            coords=self.coords,
+            metadata=self.metadata,
+            constant=self.constant ^ _xor_constant(value),
+        )
+
+    __rxor__ = __xor__
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -128,22 +172,34 @@ class Observable:
     refs: tuple[MeasurementRef, ...]
     id: int | None
     metadata: Mapping[str, Any] | None
+    constant: bool
 
     def __init__(
         self,
-        *refs: MeasurementRef | str,
+        *refs: MeasurementRef | str | bool | int,
         id: int | None = None,
         metadata: Mapping[str, Any] | None = None,
+        constant: bool = False,
     ) -> None:
         """Create an observable from measurement references.
 
         Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
-        string, which is shorthand for ``result_ref(tag)``.
+        string, which is shorthand for ``result_ref(tag)``. Literal 0/1 terms
+        XOR into the expression constant; repeated ones cancel. ``constant=True``
+        and ``definition ^ 1`` are equivalent spellings. Constants are not
+        noiseless-reference claims and do not change fault propagation.
         """
-        refs_tuple = _coerce_refs(tuple(refs))
+        refs_tuple, constant = _coerce_parity_terms(tuple(refs), constant)
+        object.__setattr__(self, "constant", constant)
         object.__setattr__(self, "refs", refs_tuple)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)
+
+    def __xor__(self, value: bool | int) -> Observable:
+        """Return the same observable definition with an explicit XOR constant."""
+        return Observable(*self.refs, id=self.id, metadata=self.metadata, constant=self.constant ^ _xor_constant(value))
+
+    __rxor__ = __xor__
 
 
 def surface_memory_dem_spec(
@@ -259,6 +315,17 @@ class GuppyDemBuild:
     _detector_meas_ids: tuple[tuple[int, ...], ...]
     _observable_meas_ids: tuple[tuple[int, tuple[int, ...]], ...]
     _result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...]
+    inference: InferredGuppyDemAnnotations | None = None
+
+    _parity_constants: tuple[dict[int, int], dict[int, int]] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Cache explicit expression constants, independently of reference values."""
+        constants = (
+            parity_constants(self.detectors_json, "detector"),
+            parity_constants(self.observables_json, "observable"),
+        )
+        object.__setattr__(self, "_parity_constants", constants)
 
     @property
     def audit(self) -> dict[str, Any]:
@@ -266,7 +333,8 @@ class GuppyDemBuild:
         runtime_order = [entry.meas_id for entry in self.measurement_ledger]
         return {
             "schema_fingerprint": self.schema_fingerprint,
-            "soundness_scope": "static_schedule_only",
+            "soundness_scope": "empirical_static_schedule" if self.inference is not None else "static_schedule_only",
+            "inference": None if self.inference is None else self.inference.audit,
             "named_result_binding": self.named_result_binding,
             "measurement_count": len(runtime_order),
             "runtime_measurement_order": runtime_order,
@@ -323,7 +391,7 @@ class GuppyDemBuild:
         """
         available = [tag for tag, _ in self._result_ids_by_tag if tag in results]
         if not available:
-            raise ValueError("result columns do not contain any compiler- or generator-certified measurement tags")
+            raise ValueError("result columns do not contain any bound measurement tags")
         shot_count = len(results[available[0]])
         mismatched = {tag: len(results[tag]) for tag in available if len(results[tag]) != shot_count}
         if mismatched:
@@ -351,10 +419,11 @@ class GuppyDemBuild:
                 & 1
             )
 
-        events = [parity(meas_ids) for meas_ids in self._detector_meas_ids]
+        detector_constants, observable_constants = self._parity_constants
+        events = [parity(meas_ids) ^ detector_constants.get(i, 0) for i, meas_ids in enumerate(self._detector_meas_ids)]
         observable_mask = 0
         for observable_id, meas_ids in self._observable_meas_ids:
-            observable_mask |= parity(meas_ids) << observable_id
+            observable_mask |= (parity(meas_ids) ^ observable_constants.get(observable_id, 0)) << observable_id
         return events, observable_mask
 
 
@@ -457,9 +526,40 @@ def _xor_normalize(meas_ids: Sequence[int], *, context: str) -> tuple[int, ...]:
     return normalized
 
 
+def parity_constant(entry: Mapping[str, Any]) -> int:
+    """Read the explicit XOR constant from serialized parity metadata.
+
+    This is neither a measured reference value nor a determinism certificate.
+    Fault propagation depends only on support; raw-record evaluation applies it.
+    """
+    value = entry.get("parity_constant", 0)
+    if type(value) is not int or value not in (0, 1):
+        raise ValueError("parity_constant metadata must be integer 0 or 1")
+    return value
+
+
+def parity_constants(metadata: str | None, kind: str) -> dict[int, int]:
+    """Resolve constants using the native parser's ID aliases and prefix forms."""
+    if kind not in {"detector", "observable"}:
+        raise ValueError("parity kind must be detector or observable")
+    entries = json.loads((metadata or "").strip() or "[]")
+    if not isinstance(entries, list):
+        raise TypeError("parity metadata must be a JSON list")
+    prefix = "D" if kind == "detector" else "L"
+    result = {}
+    for entry in entries:
+        value = entry.get("id", entry.get(f"{kind}_id"))
+        if isinstance(value, str) and value.startswith(prefix) and value[1:].isascii() and value[1:].isdigit():
+            value = int(value[1:])
+        if type(value) is not int or not 0 <= value < 2**32:
+            raise ValueError(f"Invalid {kind} ID in parity metadata: {value!r}")
+        result[value] = parity_constant(entry)
+    return result
+
+
 def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     entry = dict(metadata or {})
-    reserved = {"id", "records", "meas_ids", "result_tags"}.intersection(entry)
+    reserved = {"id", "records", "meas_ids", "result_tags", "parity_constant"}.intersection(entry)
     if reserved:
         raise ValueError(f"detector/observable metadata uses reserved keys: {sorted(reserved)}")
     try:
@@ -503,6 +603,8 @@ def _resolve_dem_specs(
         )
         entry = _metadata_entry(detector.metadata)
         entry.update({"id": detector_id, "meas_ids": list(meas_ids)})
+        if detector.constant:
+            entry["parity_constant"] = 1
         if detector.coords is not None:
             entry["coords"] = list(detector.coords)
         resolved_detectors.append((detector_id, entry, meas_ids))
@@ -534,6 +636,8 @@ def _resolve_dem_specs(
         # (including surface_memory_dem_spec's), and leave unknown values absent.
         entry = _metadata_entry(observable.metadata)
         entry.update({"id": observable_id, "meas_ids": list(meas_ids)})
+        if observable.constant:
+            entry["parity_constant"] = 1
         resolved_observables.append((observable_id, entry, meas_ids))
     observable_ids = [item[0] for item in resolved_observables]
     if len(set(observable_ids)) != len(observable_ids):
@@ -592,6 +696,7 @@ def _resolved_schema_from_validated_json(
     *,
     circuit: Any,
     result_traces: Sequence[Mapping[str, Any]],
+    allow_array_bindings: bool = False,
 ) -> _ResolvedSchema:
     """Build audit data from metadata already validated by the Rust DEM builder."""
     runtime_order = _measurement_ids_in_runtime_order(circuit)
@@ -616,7 +721,10 @@ def _resolved_schema_from_validated_json(
         for tag, calls in sorted(result_calls.items())
         if calls
         and sorted(calls) == list(range(len(calls)))
-        and all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
+        and (
+            allow_array_bindings
+            or all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
+        )
         and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
     )
     fingerprint_payload = {

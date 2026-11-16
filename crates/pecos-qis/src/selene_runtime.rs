@@ -328,6 +328,8 @@ pub struct SeleneRuntime {
     plugin_path: String,
     /// Declared accepted ABI gates; part of this runtime's configuration identity.
     native_gate_set: RuntimeNativeGateSet,
+    defer_measurements: bool,
+    outstanding_native_results: BTreeSet<u64>,
 
     /// Runtime-plugin init arguments passed to `selene_runtime_init`.
     init_args: Vec<String>,
@@ -513,6 +515,8 @@ impl SeleneRuntime {
         Self {
             plugin_path: plugin_path.as_ref().to_string_lossy().to_string(),
             native_gate_set: RuntimeNativeGateSet::default(),
+            defer_measurements: false,
+            outstanding_native_results: BTreeSet::new(),
             init_args: Vec::new(),
             library_search_dirs: Vec::new(),
             library: None,
@@ -551,6 +555,14 @@ impl SeleneRuntime {
             scheduled_drained: false,
             scheduled_output: None,
         }
+    }
+
+    /// Preserve deferred measurement requests until the engine needs their values.
+    /// Opt in only for plugins with correct ordinary and leakage result forcing.
+    #[must_use]
+    pub fn with_deferred_measurements(mut self, enabled: bool) -> Self {
+        self.defer_measurements = enabled;
+        self
     }
 
     fn lower_native_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
@@ -867,6 +879,16 @@ impl SeleneRuntime {
                                      for result {result_id}"
                             )));
                         }
+                    }
+                    if self.defer_measurements {
+                        let errno =
+                            (descriptor.decrement_future_refcount_fn)(instance, runtime_result_id);
+                        if errno != 0 {
+                            return Err(RuntimeError::FfiError(format!(
+                                "future retirement failed with errno {errno}"
+                            )));
+                        }
+                        self.outstanding_native_results.remove(&runtime_result_id);
                     }
                 }
             } else {
@@ -1438,6 +1460,7 @@ impl SeleneRuntime {
         self.released_qubit_handles.clear();
         self.native_result_slots.clear();
         self.runtime_to_program_results.clear();
+        self.outstanding_native_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
         self.submitted_rz_phases.clear();
@@ -1775,7 +1798,12 @@ impl SeleneRuntime {
         self.native_result_slots.insert(program_result);
         self.runtime_to_program_results
             .insert(runtime_result, (program_result, false));
-        self.force_runtime_result(runtime_result)
+        if self.defer_measurements {
+            self.outstanding_native_results.insert(runtime_result);
+            Ok(())
+        } else {
+            self.force_runtime_result(runtime_result)
+        }
     }
 
     fn call_runtime_measure_leaked(
@@ -1806,6 +1834,10 @@ impl SeleneRuntime {
         self.native_result_slots.insert(program_result);
         self.runtime_to_program_results
             .insert(runtime_result, (program_result, true));
+        if self.defer_measurements {
+            self.outstanding_native_results.insert(runtime_result);
+            return Ok(());
+        }
         // Soft-RZ's force_result only matches Measure, not MeasureLeaked.
         // Release this qubit's queued work before PECOS needs the leaked result.
         self.call_runtime_local_barrier(&[runtime_qubit])?;
@@ -2025,10 +2057,19 @@ impl SeleneRuntime {
         lowered_ops: &mut Vec<QuantumOp>,
     ) -> Result<()> {
         match classify(qop, self.native_gate_set)? {
-            RuntimeInput::Native(native) => self.submit_native_op(&native),
+            RuntimeInput::Native(native) => {
+                self.submit_native_op(&native)?;
+                if self.defer_measurements {
+                    lowered_ops.extend(self.drain_runtime_operations()?);
+                }
+                Ok(())
+            }
             RuntimeInput::Decomposed(sequence) => {
                 for native in sequence {
                     self.submit_native_op(&native)?;
+                    if self.defer_measurements {
+                        lowered_ops.extend(self.drain_runtime_operations()?);
+                    }
                 }
                 Ok(())
             }
@@ -3018,6 +3059,8 @@ impl Clone for SeleneRuntime {
         Self {
             plugin_path: self.plugin_path.clone(),
             native_gate_set: self.native_gate_set,
+            defer_measurements: self.defer_measurements,
+            outstanding_native_results: self.outstanding_native_results.clone(),
             init_args: self.init_args.clone(),
             library_search_dirs: self.library_search_dirs.clone(),
             library: None,  // Will be reloaded on demand
@@ -3370,6 +3413,28 @@ impl QisRuntime for SeleneRuntime {
         Ok(batches)
     }
 
+    fn force_result(&mut self, program_result: usize) -> Result<bool> {
+        if !self.defer_measurements {
+            return Ok(false);
+        }
+        self.check_batch_failure()?;
+        self.with_native_mutation(|runtime| {
+            if !runtime.native_result_slots.contains(&program_result) {
+                return Err(RuntimeError::InvalidResult(program_result));
+            }
+            for native in &runtime.outstanding_native_results {
+                if runtime
+                    .runtime_to_program_results
+                    .get(native)
+                    .is_some_and(|(slot, _)| *slot == program_result)
+                {
+                    runtime.force_runtime_result(*native)?;
+                }
+            }
+            Ok(true)
+        })
+    }
+
     fn lower_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
         self.select_output_mode(false)?;
         self.prepare_runtime_input(operations)?;
@@ -3463,6 +3528,7 @@ impl QisRuntime for SeleneRuntime {
         self.released_qubit_handles.clear();
         self.native_result_slots.clear();
         self.runtime_to_program_results.clear();
+        self.outstanding_native_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
         self.submitted_rz_phases.clear();
@@ -3556,6 +3622,7 @@ impl QisRuntime for SeleneRuntime {
         self.released_qubit_handles.clear();
         self.native_result_slots.clear();
         self.runtime_to_program_results.clear();
+        self.outstanding_native_results.clear();
         self.emitted_measurements.clear();
         self.last_gate_time_end_nanos.clear();
         self.submitted_rz_phases.clear();

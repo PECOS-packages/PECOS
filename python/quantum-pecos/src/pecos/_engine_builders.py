@@ -209,6 +209,16 @@ class QisEngineBuilder:
         self._builder = self._builder.interface(builder)
         return self
 
+    def scheduled_batches(self, *, enabled: bool = True) -> Self:
+        """Select scheduled transport, paired with a scheduled noise profile."""
+        self._builder = self._builder.scheduled_batches(enabled)
+        return self
+
+    def scheduled_event_batches(self, *, enabled: bool = True) -> Self:
+        """Select scheduled event transport, paired with an event noise profile."""
+        self._builder = self._builder.scheduled_event_batches(enabled)
+        return self
+
     def to_sim(self) -> prs.SimBuilder:
         """Convert to simulation builder.
 
@@ -302,6 +312,16 @@ def _known_runtime_name(runtime: object) -> str | None:
     return name if name != package and name in _KNOWN_RUNTIME_NATIVE_GATES else None
 
 
+def _runtime_native_gates(runtime: object | None) -> object | None:
+    """Resolve plugin declarations and known-package defaults in one place."""
+    gates = getattr(runtime, "native_gates", None)
+    if gates is None and runtime is not None and not isinstance(runtime, (str, PathLike)):
+        known_name = _known_runtime_name(runtime)
+        if known_name is not None:
+            gates = _KNOWN_RUNTIME_NATIVE_GATES[known_name]
+    return gates
+
+
 def _configure_selene_runtime(
     builder: object,
     runtime: object | None,
@@ -313,12 +333,8 @@ def _configure_selene_runtime(
     if custom_event_policy not in ("capture", "reject_unhandled"):
         msg = "custom_event_policy must be 'capture' or 'reject_unhandled'"
         raise ValueError(msg)
-    if native_gates is None and runtime is not None:
-        native_gates = getattr(runtime, "native_gates", None)
-    if native_gates is None and runtime is not None and not isinstance(runtime, (str, PathLike)):
-        known_name = _known_runtime_name(runtime)
-        if known_name is not None:
-            native_gates = _KNOWN_RUNTIME_NATIVE_GATES[known_name]
+    if native_gates is None:
+        native_gates = _runtime_native_gates(runtime)
     if batch_adapter_factory is None and runtime is not None:
         batch_adapter_factory = getattr(runtime, "batch_adapter_factory", None)
     if batch_adapter_factory is not None and not callable(batch_adapter_factory):
@@ -382,6 +398,8 @@ def _configure_selene_runtime(
     get_init_args = getattr(runtime, "get_init_args", None)
     init_args = list(get_init_args()) if callable(get_init_args) else []
     library_search_dirs = [fspath(path) for path in getattr(runtime, "library_search_dirs", [])]
+    if getattr(runtime, "defer_measurements", False):
+        gate_options["defer_measurements"] = True
     return builder.selene_runtime_plugin(
         fspath(library_file),
         [str(arg) for arg in init_args],

@@ -6,6 +6,42 @@ concern Rust and direct-runtime callers. For timing and noise on the scheduled
 route, see [Scheduled idle simulation](scheduled-idle-simulation.md). For operation
 capture, see [Runtime QIS tracing](runtime-qis-tracing.md).
 
+## PECOS runtime plugin
+
+The optional `pecos-selene-runtime-plugin` package supplies a standard Selene
+runtime backed by PECOS's Rust `pecos-selene-runtime` crate. It provides virtual-Z
+phase tracking, configurable pulse durations and batching, and deferred ordinary
+and leakage-aware measurement futures. The same plugin works in standalone Selene:
+
+```python
+import pecos
+from pecos_selene_runtime_plugin import PecosRuntimePlugin
+
+runtime = PecosRuntimePlugin(max_batch_size=2)
+engine = pecos.selene_engine(runtime=runtime)
+```
+
+Selecting this plugin object enables targeted result forcing in PECOS. A result
+read releases the queued prefix through its pending measurement producers;
+unrelated later measurements can remain queued. Cached reads do not force again.
+Both ordinary and leakage-aware measurements use this path, preserving leakage
+outcome `2`. Existing plugins retain their current eager forcing behavior.
+
+The Python convenience builder also exposes `scheduled_batches()` and
+`scheduled_event_batches()`. Pair these with the corresponding scheduled noise
+profile, as described in [Scheduled idle simulation](scheduled-idle-simulation.md).
+Attaching an LLVM text program to a dynamic engine validates and loads it without
+executing its measurement-dependent branches. Those branches run during each
+shot with simulator feedback, including after replacing the classical builder.
+
+Rust callers can use the implementation through Selene's existing
+`RuntimeInterface`; there is no separate PECOS runtime protocol. PECOS currently
+loads the standard shared-library plugin. See the
+[plugin README](../../python/selene-plugins/pecos-selene-runtime-plugin/README.md)
+for installation and standalone Selene usage, and the
+[crate contract](../../crates/pecos-selene-runtime/README.md) for lifecycle and
+timing semantics.
+
 ## Native gate lowering
 
 All Selene runtimes receive gates through their native entry points. Flat,
@@ -72,7 +108,7 @@ than an otherwise identical unlabelled program.
 
 Flat and metadata routes release queued work on an Idle's qubit before emitting
 the Idle. Scheduled extraction accepts decomposable gates but continues to reject
-source Idle and trace metadata. Leakage-aware measurements release queued work on
+source Idle and trace metadata. In the default eager mode, leakage-aware measurements release queued work on
 the measured qubit so their results are available even when a plugin's result
 forcing only recognizes ordinary measurements.
 

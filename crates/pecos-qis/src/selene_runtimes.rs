@@ -65,15 +65,14 @@ pub(crate) fn find_library_in_dir(dir: &Path, lib_name: &str) -> Option<PathBuf>
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| {
-                path.is_file()
-                    && path
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case(lib_ext))
+                path.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case(lib_ext))
                     && path
                         .file_stem()
                         .and_then(|stem| stem.to_str())
                         .and_then(|stem| stem.strip_prefix(&hashed_stem_prefix))
                         .is_some_and(|hash| !hash.is_empty())
+                    && path.is_file()
             })
             .collect::<Vec<_>>();
 
@@ -507,4 +506,13 @@ mod tests {
             Some(newer_path)
         );
     }
+}
+
+#[cfg(test)]
+pub(crate) fn pecos_test_runtime(args: &[&str]) -> SeleneRuntime {
+    let path = find_built_selene_runtime("pecos_selene_runtime_plugin")
+        .expect("Cargo must build the PECOS runtime plugin dev dependency");
+    SeleneRuntime::with_plugin_config(path, args.iter().map(ToString::to_string).collect(), vec![])
+        .with_native_gate_set(RuntimeNativeGateSet::RXY_RZ_RZZ)
+        .with_deferred_measurements(true)
 }

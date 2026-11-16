@@ -1,4 +1,4 @@
-"""Prototype DEM annotations inferred from Guppy parity outputs.
+"""Empirical DEM annotations inferred from Guppy parity outputs.
 
 This module is deliberately code-agnostic.  It treats a Guppy program as the
 owner of its detector/observable post-processing and learns the corresponding
@@ -20,6 +20,8 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+from pecos_rslib.qec import DemInferenceSettings, _correlate_measurement_ids
 
 
 def _bit(value: Any, *, context: str) -> int:
@@ -48,75 +50,6 @@ def _rows(values: Sequence[Any], *, tag: str) -> list[list[int]]:
     if not rows:
         raise ValueError(f"result {tag!r} contains no shots")
     return rows
-
-
-def _infer_affine_columns(
-    inputs: Sequence[Sequence[int]],
-    outputs: Sequence[Sequence[int]],
-    *,
-    validation_rows: int,
-) -> tuple[tuple[int, tuple[int, ...]], ...]:
-    """Infer all output columns as ``constant XOR selected inputs``."""
-    if len(inputs) != len(outputs):
-        raise ValueError("raw and derived output records contain different shot counts")
-    input_width = len(inputs[0])
-    output_width = len(outputs[0])
-    if any(len(row) != input_width for row in inputs):
-        raise ValueError("raw measurement records have inconsistent widths")
-    if any(len(row) != output_width for row in outputs):
-        raise ValueError("derived output records have inconsistent widths")
-
-    variable_count = input_width + 1  # affine constant followed by raw bits
-    minimum_rows = variable_count + validation_rows
-    if len(inputs) < minimum_rows:
-        raise ValueError(
-            f"affine inference needs at least {minimum_rows} shots for {input_width} raw measurements "
-            f"and {validation_rows} validation rows; got {len(inputs)}",
-        )
-
-    matrix = [
-        [1, *(_bit(value, context="raw measurement") for value in raw), *derived]
-        for raw, derived in zip(inputs, outputs, strict=True)
-    ]
-    pivot_rows: dict[int, int] = {}
-    next_row = 0
-    for column in range(variable_count):
-        pivot = next((row for row in range(next_row, len(matrix)) if matrix[row][column]), None)
-        if pivot is None:
-            continue
-        matrix[next_row], matrix[pivot] = matrix[pivot], matrix[next_row]
-        for row in range(len(matrix)):
-            if row != next_row and matrix[row][column]:
-                matrix[row] = [left ^ right for left, right in zip(matrix[row], matrix[next_row], strict=True)]
-        pivot_rows[column] = next_row
-        next_row += 1
-
-    if len(pivot_rows) != variable_count:
-        raise ValueError(
-            f"coin-toss probes have GF(2) rank {len(pivot_rows)}; need {variable_count}. "
-            "Increase probe_shots or change the seed.",
-        )
-    for row in matrix:
-        if not any(row[:variable_count]) and any(row[variable_count:]):
-            raise ValueError("derived Guppy outputs are not affine parities of the raw measurement record")
-
-    inferred: list[tuple[int, tuple[int, ...]]] = []
-    for output in range(output_width):
-        coefficients = tuple(matrix[pivot_rows[column]][variable_count + output] for column in range(variable_count))
-        constant = coefficients[0]
-        support = tuple(index for index, coefficient in enumerate(coefficients[1:]) if coefficient)
-        inferred.append((constant, support))
-
-    for shot, (raw, derived) in enumerate(zip(inputs, outputs, strict=True)):
-        for output, (constant, support) in enumerate(inferred):
-            predicted = constant
-            for index in support:
-                predicted ^= raw[index]
-            if predicted != derived[output]:
-                raise ValueError(
-                    f"derived output {output} is not affine in the raw measurements (failed at shot {shot})",
-                )
-    return tuple(inferred)
 
 
 def _named_trace_items(trace: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
@@ -196,32 +129,7 @@ def _correlate_raw_measurement_ids(
         raw_rows.append(raw_row)
         physical_rows.append([outcomes[result_id] for result_id in source_ids])
 
-    physical_signatures: dict[tuple[int, ...], list[int]] = {}
-    for column, result_id in enumerate(source_ids):
-        signature = tuple(row[column] for row in physical_rows)
-        physical_signatures.setdefault(signature, []).append(result_id)
-    collisions = [ids for ids in physical_signatures.values() if len(ids) != 1]
-    if collisions:
-        raise ValueError(
-            "physical measurement signatures are ambiguous during provenance probing; "
-            f"increase provenance_shots (first collision: {collisions[0][:8]})",
-        )
-
-    raw_ids: list[int] = []
-    for column in range(len(source_ids)):
-        signature = tuple(row[column] for row in raw_rows)
-        matches = physical_signatures.get(signature)
-        if matches is None:
-            raise ValueError(
-                f"raw output element {column} is not a direct physical measurement across provenance probes",
-            )
-        raw_ids.append(matches[0])
-    if len(set(raw_ids)) != len(source_ids) or set(raw_ids) != set(source_ids):
-        raise ValueError(
-            f"result tag {raw_tag!r} does not expose every physical measurement exactly once; "
-            f"correlated ids={raw_ids[:12]}, source ids={list(source_ids)[:12]}",
-        )
-    return raw_ids
+    return _correlate_measurement_ids(raw_rows, physical_rows, source_ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,33 +145,31 @@ class InferredGuppyDemAnnotations:
     observable_labels: tuple[tuple[str, int], ...]
     probe_shots: int
     raw_binding: str
+    validation_rows: int = 32
+    provenance_shots: int = 32
+    raw_tag: str = "raw measurements"
+    schedule_validation: str = "unspecified"
+    result_traces: tuple[Mapping[str, Any], ...] = ()
+
+    @property
+    def audit(self) -> dict[str, Any]:
+        """Describe the empirical evidence without claiming a compiler proof."""
+        return {
+            "method": "coin_toss_affine_inference_v2",
+            "raw_binding": self.raw_binding,
+            "probe_shots": self.probe_shots,
+            "provenance_shots": self.provenance_shots,
+            "validation_rows": self.validation_rows,
+            "validation_kind": "additional_consistency_equations",
+            "schedule_validation": self.schedule_validation,
+            "raw_measurement_ids": list(self.raw_measurement_ids),
+        }
 
     def build_dem(self, **noise: Any) -> Any:
         """Build a PECOS DEM from the annotated trace, without Stim."""
         from pecos.qec.dem import DetectorErrorModel  # noqa: PLC0415
 
         return DetectorErrorModel.from_circuit(self.circuit, **noise)
-
-
-_PROBE_RANK_MARGIN = 32
-
-
-def _auto_probe_shots(raw_width: int, validation_rows: int) -> int:
-    """Rows needed to infer every parity, plus margin for random-probe rank.
-
-    Affine inference needs one row per raw measurement plus one for the affine
-    constant; the square system of exactly that many random GF(2) rows is full
-    rank only about 29% of the time, and each row beyond it halves the
-    shortfall probability. The requested validation rows and the fixed margin
-    are both such extra rows (elimination uses every row; validation rows are
-    additional consistency constraints, not a held-out set), so the shortfall
-    probability at this floor is about 2**-(validation_rows + margin).
-
-    Extra rows beyond full rank do not change the inferred DEM -- the affine
-    solution is exact and unique once the system has rank -- so this derives a
-    floor, not a quality knob.
-    """
-    return raw_width + 1 + validation_rows + _PROBE_RANK_MARGIN
 
 
 def infer_guppy_dem_annotations(
@@ -279,6 +185,8 @@ def infer_guppy_dem_annotations(
     seed: int = 0,
     runtime: object | None = None,
     require_raw_provenance: bool = True,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> InferredGuppyDemAnnotations:
     """Infer parity annotations from an untouched Guppy program.
 
@@ -308,13 +216,25 @@ def infer_guppy_dem_annotations(
         qis_operation_trace_to_tick_circuit,
     )
 
-    if not observable_tags:
-        raise ValueError("observable_tags must contain at least one result tag")
-    if (probe_shots is not None and probe_shots <= 0) or provenance_shots < 2 or validation_rows < 1:
-        raise ValueError("probe_shots must be positive, provenance_shots at least 2, and validation_rows at least 1")
+    settings = (
+        DemInferenceSettings()
+        .with_raw_tag(raw_tag)
+        .with_detector_tag(detector_tag)
+        .with_observable_tags(observable_tags)
+        .with_provenance_shots(provenance_shots)
+        .with_validation_rows(validation_rows)
+        .with_require_raw_provenance(require_raw_provenance)
+    )
+    if probe_shots is not None:
+        settings = settings.with_probe_shots(probe_shots)
+    settings.validate()
 
     trace = capture_qis_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    circuit = qis_operation_trace_to_tick_circuit(trace)
+    circuit = qis_operation_trace_to_tick_circuit(
+        trace,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
+    )
     normalize_traced_tick_circuit(circuit, context="infer_guppy_dem_annotations")
 
     raw_ids: list[int] = []
@@ -348,15 +268,24 @@ def infer_guppy_dem_annotations(
                 f"result tag {raw_tag!r} must expose physical measurements in certified source order; "
                 f"tag ids={raw_ids[:12]}, source ids={source_ids[:12]}",
             )
+    # Schedule comparison is required even when runtime IDs already bind raw
+    # outputs. Compare to the circuit-producing shot, not only between probes.
+    provenance_trace = _capture_qis_operation_traces(
+        program,
+        num_qubits,
+        shots=provenance_shots,
+        seed=(seed + 1) % (1 << 64),
+        runtime=runtime,
+    )
+    expected_schedule = _lowered_schedule(trace)
+    for shot in _trace_shots(provenance_trace):
+        if _lowered_schedule(shot) != expected_schedule:
+            raise ValueError(
+                "quantum operation schedule changed during provenance probing; "
+                "a single static DEM cannot represent this program",
+            )
     if not provenance_complete:
         if require_raw_provenance:
-            provenance_trace = _capture_qis_operation_traces(
-                program,
-                num_qubits,
-                shots=provenance_shots,
-                seed=seed,
-                runtime=runtime,
-            )
             raw_ids = _correlate_raw_measurement_ids(
                 provenance_trace,
                 raw_tag=raw_tag,
@@ -375,7 +304,7 @@ def infer_guppy_dem_annotations(
         raw_binding = "runtime_result_ids"
 
     if probe_shots is None:
-        probe_shots = _auto_probe_shots(raw_value_count, validation_rows)
+        probe_shots = settings.resolved_probe_shots(raw_value_count)
 
     results = (
         pecos.sim(program)
@@ -401,21 +330,15 @@ def infer_guppy_dem_annotations(
     observable_rows = [[value for _, rows in observable_parts for value in rows[shot]] for shot in range(probe_shots)]
     observable_labels = tuple((tag, element) for tag, rows in observable_parts for element in range(len(rows[0])))
 
-    detector_affine = _infer_affine_columns(raw_rows, detector_rows, validation_rows=validation_rows)
-    observable_affine = _infer_affine_columns(raw_rows, observable_rows, validation_rows=validation_rows)
-    nonzero_offsets = [
-        *(f"detector {index}" for index, (constant, _) in enumerate(detector_affine) if constant),
-        *(f"observable {index}" for index, (constant, _) in enumerate(observable_affine) if constant),
-    ]
-    if nonzero_offsets:
-        raise ValueError(
-            "DEM annotations cannot represent affine constant-one outputs: " + ", ".join(nonzero_offsets[:8]),
-        )
-
-    detector_supports = tuple(tuple(raw_ids[index] for index in support) for _, support in detector_affine)
-    observable_supports = tuple(tuple(raw_ids[index] for index in support) for _, support in observable_affine)
-    if any(not support for support in (*detector_supports, *observable_supports)):
-        raise ValueError("detector and observable outputs must depend on at least one physical measurement")
+    # Shared Rust inference validates both output families with one elimination.
+    detector_supports, observable_supports = settings._infer(  # noqa: SLF001
+        raw_ids,
+        raw_rows,
+        detector_rows,
+        observable_rows,
+    )
+    detector_supports = tuple(tuple(support) for support in detector_supports)
+    observable_supports = tuple(tuple(support) for support in observable_supports)
 
     detectors = [
         {"id": index, "meas_ids": list(support), "inferred_from_result_tag": detector_tag}
@@ -442,6 +365,14 @@ def infer_guppy_dem_annotations(
     circuit.set_meta("guppy_dem_annotation_method", "coin_toss_affine_inference_v2")
     circuit.set_meta("guppy_raw_measurement_binding", raw_binding)
 
+    bound_traces = []
+    offset = 0
+    for item in _named_trace_items(trace):
+        if item.get("name") == raw_tag:
+            width = len(item["values"])
+            bound_traces.append({**item, "result_ids": raw_ids[offset : offset + width]})
+            offset += width
+
     return InferredGuppyDemAnnotations(
         circuit=circuit,
         detectors_json=detectors_json,
@@ -452,7 +383,12 @@ def infer_guppy_dem_annotations(
         observable_labels=observable_labels,
         probe_shots=probe_shots,
         raw_binding=raw_binding,
+        validation_rows=validation_rows,
+        provenance_shots=provenance_shots,
+        raw_tag=raw_tag,
+        result_traces=tuple(bound_traces),
+        schedule_validation="probe_compared",
     )
 
 
-__all__ = ["InferredGuppyDemAnnotations", "infer_guppy_dem_annotations"]
+__all__ = ["DemInferenceSettings", "InferredGuppyDemAnnotations", "infer_guppy_dem_annotations"]

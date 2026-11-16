@@ -66,6 +66,8 @@
 pub mod channel;
 mod circuit;
 mod circuit_display;
+mod circuit_inspection;
+mod circuit_inspector;
 mod dag_circuit;
 pub mod diamond_norm;
 pub mod measures;
@@ -79,10 +81,13 @@ mod tick_circuit;
 pub mod unitary_matrix;
 
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
+pub use circuit_display::DiagramRangeError;
+pub use circuit_inspection::{CircuitInspection, InspectionOperation, InspectionSource};
 pub use dag_circuit::{
     AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagGateError, DagTraversalIndex,
     MeasRef, MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
 };
+pub use pecos_core::circuit_diagram::{AngleUnit, DiagramRenderer, DiagramStyle};
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
     Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,

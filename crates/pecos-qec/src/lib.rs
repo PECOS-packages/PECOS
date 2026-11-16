@@ -67,6 +67,8 @@ pub mod bivariate_bicycle;
 pub mod bounded_enumeration_distance;
 pub mod code_distance;
 pub mod coloration;
+pub mod dem_build;
+pub mod dem_inference;
 pub mod dem_stab;
 pub mod distance;
 pub mod distance_problem;
@@ -95,6 +97,12 @@ pub use bounded_enumeration_distance::{
     bounded_enumeration_z_distance_with_backend,
 };
 pub use coloration::{ColorationMemoryError, coloration_memory_circuit};
+pub use dem_build::{
+    DemBuild, DemBuildBuilder, DemBuildError, DemBuildInput, DemProgram, DemProgramRequest,
+};
+pub use dem_inference::{
+    DemInferenceData, DemInferenceError, DemInferenceReport, DemInferenceSettings,
+};
 pub use dem_stab::{DemStabError, DemStabShotBatch, DemStabSim, DemStabSimBuilder};
 pub use hypergraph_product::{HypergraphProductCode, HypergraphProductError};
 pub use mem_stab::{MemStabError, MemStabSim, MemStabSimBuilder};

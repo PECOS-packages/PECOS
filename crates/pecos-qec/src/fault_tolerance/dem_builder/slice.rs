@@ -441,7 +441,15 @@ impl DemSlice {
                     source_detector,
                 }
             })?;
-            let coords = declaration.coords.map(|[x, y, _]| [x, y]);
+            let coords = match declaration.coords.as_deref() {
+                None => None,
+                Some([x, y, _]) => Some([*x, *y]),
+                Some(_) => {
+                    return Err(DemSliceComposeError::InvalidDetectorCoordinates {
+                        source_detector,
+                    });
+                }
+            };
             let emitted = target.round_offset == 0;
             match local_detectors.entry(target.detector) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
@@ -1135,11 +1143,17 @@ fn detector_round_layout(
     let mut detectors_per_round = BTreeMap::<i64, usize>::new();
     let mut coordinate_owners = BTreeMap::new();
     for detector in &model.detectors {
-        let Some([x, y, time]) = detector.coords else {
+        let Some(coords) = detector.coords.as_deref() else {
             return Err(DemSliceComposeError::MissingDetectorCoordinates {
                 source_detector: detector.id,
             });
         };
+        let [x, y, time] = coords else {
+            return Err(DemSliceComposeError::InvalidDetectorCoordinates {
+                source_detector: detector.id,
+            });
+        };
+        let (x, y, time) = (*x, *y, *time);
         let Some(x) = finite_coordinate_key(x) else {
             return Err(DemSliceComposeError::InvalidDetectorCoordinates {
                 source_detector: detector.id,
@@ -1524,7 +1538,7 @@ impl DemComposer {
             detector_addresses.push(address);
             let mut detector = DetectorDef::new(id);
             if let Some([x, y]) = coords {
-                detector.coords = Some([x, y, round_coordinate(address.round)?]);
+                detector.coords = Some(vec![x, y, round_coordinate(address.round)?]);
             }
             model.add_detector(detector);
         }
@@ -1839,7 +1853,7 @@ pub enum DemSliceComposeError {
     },
     /// A detector has no `[x, y, round]` coordinates from which to derive a stream.
     MissingDetectorCoordinates { source_detector: u32 },
-    /// A detector has non-finite spatial coordinates.
+    /// A detector lacks exactly three coordinates or has non-finite spatial coordinates.
     InvalidDetectorCoordinates { source_detector: u32 },
     /// A detector time coordinate is not an exactly representable integer round.
     NonIntegralDetectorRound { source_detector: u32, value: f64 },
@@ -1997,7 +2011,7 @@ impl fmt::Display for DemSliceComposeError {
             ),
             Self::InvalidDetectorCoordinates { source_detector } => write!(
                 f,
-                "source DEM detector D{source_detector} has non-finite spatial coordinates"
+                "source DEM detector D{source_detector} requires exactly three [x, y, round] coordinates with finite spatial values for slice layout"
             ),
             Self::NonIntegralDetectorRound {
                 source_detector,
@@ -2203,6 +2217,31 @@ mod tests {
     }
 
     #[test]
+    fn detector_streams_reject_unsupported_coordinate_dimensions() {
+        for coords in [vec![], vec![1.0], vec![1.0, 2.0], vec![1.0, 2.0, 3.0, 4.0]] {
+            let mut model = DetectorErrorModel::new();
+            model.add_detector(DetectorDef::new(0).with_coords(coords));
+            let error = detector_round_layout(&model).unwrap_err();
+            assert_eq!(
+                error,
+                DemSliceComposeError::InvalidDetectorCoordinates { source_detector: 0 }
+            );
+            assert!(error.to_string().contains("exactly three"));
+            let error = DemSlice::from_detector_error_model(
+                "unsupported coordinates",
+                &model,
+                &DemSliceModelMap::new().with_detector(0, target(0, 0)),
+                DemTemporalHorizon::new(0, 0),
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                DemSliceComposeError::InvalidDetectorCoordinates { source_detector: 0 }
+            );
+        }
+    }
+
+    #[test]
     fn detector_streams_reject_duplicate_spatial_coordinates_in_one_round() {
         let mut model = DetectorErrorModel::new();
         model.add_detector(DetectorDef::new(4).with_coords([3.0, -2.0, 7.0]));
@@ -2261,7 +2300,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(composed.detector_addresses.len(), 3);
-        assert_eq!(composed.model.detectors[0].coords, Some([2.0, 3.0, 0.0]));
+        assert_eq!(
+            composed.model.detectors[0].coords,
+            Some(vec![2.0, 3.0, 0.0])
+        );
         assert_eq!(composed.diagnostics.projected_future_contributions, 1);
         assert_eq!(
             composed.model.to_mechanisms().0,
@@ -2526,7 +2568,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(composed.detector_addresses.len(), 1);
-        assert_eq!(composed.model.detectors[0].coords, Some([1.0, 2.0, 1.0]));
+        assert_eq!(
+            composed.model.detectors[0].coords,
+            Some(vec![1.0, 2.0, 1.0])
+        );
         assert_eq!(
             composed.model.to_mechanisms().0,
             vec![(0.02, vec![0], vec![])]
@@ -2668,12 +2713,12 @@ mod tests {
             .model
             .detectors
             .iter()
-            .map(|detector| detector.coords)
+            .map(|detector| detector.coords.clone())
             .collect();
         let model_coords: Vec<_> = model
             .detectors
             .iter()
-            .map(|detector| detector.coords)
+            .map(|detector| detector.coords.clone())
             .collect();
         assert_eq!(composed_coords, model_coords);
         let targets: Vec<_> = composed

@@ -271,6 +271,11 @@ fn cancellation_checkpoints_prevent_operation_submission() {
         ___rpp(0, 1, 0.1, 0.2);
         pecos_qis_runtime_barrier_qubit_hugr(1);
         pecos_qis_runtime_barrier_qubits2_hugr(1, 2);
+        pecos_qis_ordering_join_hugr(1, 0);
+        pecos_qis_ordering_observe_hugr(0, false);
+        pecos_qis_ordering_barrier_hugr(0);
+        assert_eq!(pecos_qis_ordered_alloc_hugr(0), 0);
+        assert_eq!(pecos_qis_ordered_alloc_tagged_hugr(0), 0);
         assert_eq!(__quantum__rt__qubit_allocate(), 0);
         assert_eq!(__quantum__qis__m__body(0, 7), 0);
         assert_eq!(___lazy_measure(0), 0);

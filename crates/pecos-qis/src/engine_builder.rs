@@ -206,6 +206,15 @@ impl QisEngineBuilder {
                 // Store the LLVM IR source for later loading
                 match &qis_prog.content {
                     pecos_programs::QisContent::Ir(ir_string) => {
+                        if let Some(builder) = &self.interface_builder {
+                            // Dynamic execution must not first run the program
+                            // against collection-mode placeholder measurements.
+                            // Validate/load now, but leave execution to the shot.
+                            builder.create_dynamic_interface_from_qis(qis_prog.clone())?;
+                            self.program_source = Some(ir_string.clone());
+                            self.interface = None;
+                            return Ok(self);
+                        }
                         self.program_source = Some(ir_string.clone());
                     }
                     pecos_programs::QisContent::Bitcode(_bitcode) => {
@@ -412,6 +421,32 @@ mod tests {
     fn test_builder_creation() {
         // Basic builder creation - doesn't require a runtime
         let _builder = qis_engine();
+    }
+
+    #[test]
+    #[cfg(feature = "selene")]
+    fn attaching_dynamic_program_does_not_execute_feedback_with_placeholder_results() {
+        let program = pecos_programs::Qis::from_string(include_str!(
+            "../../pecos-selene-runtime/tests/fixtures/feedback.ll"
+        ));
+        let builder = qis_engine()
+            .interface(crate::helios_interface_builder())
+            .runtime(crate::selene_runtimes::pecos_test_runtime(&[]))
+            .try_program(program)
+            .unwrap();
+        assert!(builder.interface.is_none());
+        builder.build().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "selene")]
+    fn attaching_dynamic_program_still_rejects_invalid_ir() {
+        let error = qis_engine()
+            .interface(crate::helios_interface_builder())
+            .try_program(pecos_programs::Qis::from_string("not LLVM IR"))
+            .err()
+            .expect("program attachment must validate IR without executing it");
+        assert!(error.to_string().contains("Failed to load QIS program"));
     }
 
     #[test]

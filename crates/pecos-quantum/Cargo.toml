@@ -31,3 +31,7 @@ default = []
 
 [lints]
 workspace = true
+
+[[example]]
+name = "inspector_fixtures"
+path = "tests/inspector/fixtures.rs"

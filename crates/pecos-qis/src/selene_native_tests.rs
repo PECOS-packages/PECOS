@@ -1349,3 +1349,96 @@ fn shot_end_rejects_undelivered_native_measurements() {
         assert!(runtime.shot_end().unwrap().measurements[&7]);
     }
 }
+
+#[test]
+fn pecos_runtime_targeted_forcing_retains_unrelated_work_on_every_route() {
+    for route in Route::ALL {
+        let mut runtime = start(crate::selene_runtimes::pecos_test_runtime(&[]), 2);
+        let operations = [
+            QuantumOp::X(0).into(),
+            QuantumOp::MeasureLeaked(0, 7).into(),
+            QuantumOp::X(1).into(),
+            QuantumOp::Measure(1, 8).into(),
+        ];
+        assert!(route.lower(&mut runtime, &operations).is_empty());
+        assert!(runtime.force_result(7).unwrap());
+        let first = route.lower(&mut runtime, &[]);
+        assert!(
+            first
+                .iter()
+                .any(|op| matches!(op, QuantumOp::MeasureLeaked(0, 7)))
+        );
+        assert!(
+            !first
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(1, 8)))
+        );
+        runtime.provide_measurement_outcomes(vec![(7, 2)]).unwrap();
+        assert!(runtime.force_result(7).unwrap());
+        assert!(route.lower(&mut runtime, &[]).is_empty());
+        assert!(runtime.force_result(8).unwrap());
+        assert!(
+            route
+                .lower(&mut runtime, &[])
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(1, 8)))
+        );
+        runtime.provide_measurement_outcomes(vec![(8, 1)]).unwrap();
+        if matches!(route, Route::Scheduled) {
+            runtime.drain_pending_scheduled_operations().unwrap();
+        }
+        runtime.shot_end().unwrap();
+    }
+}
+
+#[test]
+fn pecos_runtime_forces_all_pending_producers_of_a_reused_slot() {
+    for route in Route::ALL {
+        let mut runtime = start(crate::selene_runtimes::pecos_test_runtime(&[]), 2);
+        let ops = [
+            QuantumOp::Measure(0, 3).into(),
+            QuantumOp::X(0).into(),
+            QuantumOp::Measure(0, 3).into(),
+        ];
+        assert!(route.lower(&mut runtime, &ops).is_empty());
+        runtime.force_result(3).unwrap();
+        assert_eq!(
+            route
+                .lower(&mut runtime, &[])
+                .iter()
+                .filter(|op| matches!(op, QuantumOp::Measure(_, 3)))
+                .count(),
+            2
+        );
+        runtime
+            .provide_measurement_outcomes(vec![(3, 0), (3, 1)])
+            .unwrap();
+        assert!(runtime.outstanding_native_results.is_empty());
+        assert!(runtime.force_result(3).unwrap());
+        assert!(route.lower(&mut runtime, &[]).is_empty());
+    }
+}
+
+#[test]
+fn pecos_runtime_pressure_drains_between_decomposed_native_gates() {
+    for route in Route::ALL {
+        let mut runtime = start(
+            crate::selene_runtimes::pecos_test_runtime(&["--max-queued-batches=1"]),
+            2,
+        );
+        let emitted = route.lower(
+            &mut runtime,
+            &[
+                QuantumOp::H(0).into(),
+                QuantumOp::CX(0, 1).into(),
+                QuantumOp::Measure(1, 0).into(),
+            ],
+        );
+        assert!(
+            emitted
+                .iter()
+                .any(|op| matches!(op, QuantumOp::Measure(_, 0)))
+        );
+        runtime.provide_measurement_outcomes(vec![(0, 0)]).unwrap();
+    }
+}

@@ -499,6 +499,18 @@ pub use pecos_qis_ffi_types::{
     QuantumOp, TraceMetadata,
 };
 
+/// Return one word of the shared Rust build fingerprint (indices 0 through 3).
+///
+/// This versioned handshake uses only fixed-width C ABI integers and must be
+/// checked before exchanging Rust-owned data. Other indices return zero.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_qis_ffi_abi_fingerprint_v1(index: u32) -> u64 {
+    pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT
+        .get(index as usize)
+        .copied()
+        .unwrap_or(0)
+}
+
 /// Type alias for the quantum executor callback
 ///
 /// This callback is called when `___read_future_bool` needs a measurement result

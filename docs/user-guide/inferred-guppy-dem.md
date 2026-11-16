@@ -1,6 +1,6 @@
 # Inferring a DEM from Guppy Outputs
 
-Use `infer_guppy_dem_annotations` when a Guppy program already emits raw
+Use `DetectorErrorModel.builder().with_inference(...)` when a Guppy program already emits raw
 physical measurements, detector bits, and logical-observable bits with
 `output()`, but does not separately expose the measurement parities that
 define those detectors and observables. The program does not need to be
@@ -12,13 +12,105 @@ Stim is not used.
 
 | What the application already has | Use |
 | --- | --- |
-| Raw measurements plus detector and observable **values** computed by Guppy | `infer_guppy_dem_annotations` (this guide) |
+| Raw measurements plus detector and observable **values** computed by Guppy | `DetectorErrorModel.builder().with_inference(...)` (this guide) |
 | Audited detector and observable **definitions** using records, measurement IDs, or scalar result tags | [`DetectorErrorModel.from_guppy`](dem-from-guppy.md) |
 | An annotated `TickCircuit` | `DetectorErrorModel.from_circuit` |
 
 The inferred-output workflow is especially useful for generated Guppy that
 collects measurements into arrays or computes round-to-round parities inside
 the program.
+
+## Use inference in the DEM builder
+
+Inference supplies the detector and observable definitions. Noise, idle placement,
+sampling and decoding use the same pipeline as an explicit-definition build:
+
+<!--skip: API template requires a caller-supplied Guppy program; covered by test_dem_inference_builder.py.-->
+```python
+from pecos import NoiseParameters
+from pecos.qec import DemInferenceSettings, DetectorErrorModel
+
+inference = (
+    DemInferenceSettings()
+    .with_raw_tag("raw measurements")
+    .with_detector_tag("DETECTOR")
+    .with_observable_tags(("obs",))
+    .with_provenance_shots(32)
+    .with_validation_rows(32)
+)
+
+build = (
+    DetectorErrorModel.builder()
+    .with_program(program)  # Your Guppy program satisfying the contract below.
+    .with_qubits(num_qubits)
+    .with_inference(inference)
+    .with_seed(7)
+    .with_noise(NoiseParameters().with_p1(0.001).with_p2(0.005))
+    .with_idle_after_2q(1.0)
+    .build()
+)
+dem = build.dem
+report = build.inference
+```
+
+`DemInferenceSettings()` is sufficient for the default tags. Every `with_*`
+method returns a new settings value; keep the returned value when configuring
+settings outside a chain. `.with_probe_shots(n)` overrides automatic sizing.
+Seed and runtime belong to the DEM builder and apply to tracing and probing.
+Inference conflicts with explicit detector/observable setters and
+`with_num_measurements()` in either call order.
+
+The returned `GuppyDemBuild` supports the same `evaluate_runtime_record`,
+`evaluate_measurements`, and `evaluate_result_columns` methods as an explicit
+build. The last method evaluates the bound raw output columns, including arrays
+and reordered outputs. Pass columns from one simulation run. Its audit includes
+`inference`, with probe counts, the raw measurement binding, and schedule evidence.
+Explicit builds have `build.inference is None`.
+
+The low-level `infer_guppy_dem_annotations` helper remains available when you
+want to inspect the inferred annotations without building a DEM; the examples
+below demonstrate that interface.
+
+## Rust settings and circuit/probe builds
+
+Rust exposes the same settings and inference algorithms through `pecos_qec`.
+For an already captured circuit and bound coin-toss probes:
+
+<!--skip: API template requires caller-supplied circuit and probes; covered by dem_inference_builder.rs.-->
+```rust
+use pecos_qec::{DemInferenceSettings, DetectorErrorModel, NoiseConfig};
+
+let settings = DemInferenceSettings::default()
+    .with_raw_tag("raw measurements")
+    .with_detector_tag("DETECTOR")
+    .with_observable_tags(["obs"])
+    .with_provenance_shots(32)
+    .with_validation_rows(32);
+
+let build = DetectorErrorModel::builder()
+    .with_circuit(circuit)
+    .with_inference(settings)
+    .with_inference_data(probes)
+    .with_noise(NoiseConfig::new(0.001, 0.005, 0.001, 0.001))
+    .with_idle_after_2q(1.0)
+    .build()?;
+let shots = build.evaluate_result_columns(&columns)?;
+```
+
+`probes` is a `DemInferenceData` containing `raw_measurement_ids`, `raw_rows`,
+`detector_rows`, and `observable_rows`. IDs follow raw-output column order and
+must cover every measurement in the circuit exactly once. Each row contains
+`u8` bits. Supplying bound data is a trusted boundary: the caller establishes
+measurement provenance and a fixed quantum schedule. The Rust
+`correlate_measurement_ids` function is available for empirical binding.
+
+Rust program execution connects through the `DemProgram` trait and
+`.with_program(adapter).with_qubits(n).with_seed(seed)`. The adapter owns its
+runtime and receives the inference settings before execution. There is not yet
+a built-in HUGR/Selene adapter for this Rust builder; direct Guppy execution
+continues to use the Python adapter. Rust circuit/probe builds and inference do
+not require Python. Explicit Rust builds use `.with_detectors(...)` and
+`.with_observables(...)` with stable measurement-ID supports, or JSON setters.
 
 ## Program contract
 
@@ -30,6 +122,10 @@ Before calling the tool, check all of the following:
 2. Detector and observable outputs are Boolean XOR parities of those raw
    measurements. AND, OR, nonlinear expressions, constant-one offsets, and
    outputs independent of every measurement are rejected.
+   This restriction belongs to automatic output inference. Explicit static
+   definitions support offsets such as `Detector("raw_tag", 1)` and
+   `Observable("raw_tag", 1)` through `build_dem_from_guppy`; see the
+   [typed-definition workflow](../workflows/guppy-dem-decoding.md).
 3. Measurement values may affect classical parity calculations, but must not
    change the quantum gate schedule. Measurement-dependent quantum branches
    and repeated-until-success loops need a different analysis.
@@ -311,7 +407,9 @@ Leave `require_raw_provenance=True`, the default, whenever possible:
 | `probe_correlated_result_ids` | PECOS recovered a unique complete ID mapping from independent probe signatures. |
 | `assumed_canonical_result_order` | Strict identity was disabled and PECOS used positional order. |
 
-Correlation fails loudly if the quantum schedule changes, a raw element is a
+All inference builds compare the circuit-producing schedule against additional
+probe schedules, including when direct runtime IDs are available. Correlation
+fails loudly if the quantum schedule changes, a raw element is a
 computed value instead of a direct measurement, a measurement is omitted or
 duplicated, or two physical signatures collide. Increasing
 `provenance_shots` resolves a rare signature collision; it cannot repair an

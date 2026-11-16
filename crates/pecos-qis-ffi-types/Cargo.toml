@@ -19,5 +19,8 @@ crate-type = ["rlib"]
 # Minimal dependencies for data structures
 serde = { workspace = true, features = ["derive"] }
 
+[build-dependencies]
+sha2.workspace = true
+
 [lints]
 workspace = true

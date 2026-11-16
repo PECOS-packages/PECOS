@@ -52,6 +52,7 @@ from collections.abc import Mapping, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
+from pecos_rslib.qec import DemInferenceSettings
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
 from pecos._traced_circuit import (
@@ -986,6 +987,7 @@ class GuppyDemBuilder:
         "_detectors_kind",
         "_detectors_value",
         "_idle_after_2q",
+        "_inference",
         "_max_hosted_tick_separation",
         "_noise",
         "_num_measurements",
@@ -1002,6 +1004,7 @@ class GuppyDemBuilder:
 
     def __init__(self) -> None:
         """Create an empty builder whose required inputs are not yet set."""
+        self._inference: Any = _UNSET
         self._program: Any = _UNSET
         self._qubits: Any = _UNSET
         self._detectors_kind: str | object = _UNSET
@@ -1025,6 +1028,9 @@ class GuppyDemBuilder:
         setattr(self, attribute, value)
 
     def _set_specs(self, role: str, kind: str, value: Any) -> None:
+        if self._inference is not _UNSET:
+            msg = f"with_{role}() cannot be combined with with_inference()"
+            raise ValueError(msg)
         kind_attribute = f"_{role}_kind"
         value_attribute = f"_{role}_value"
         current_kind = getattr(self, kind_attribute)
@@ -1072,8 +1078,38 @@ class GuppyDemBuilder:
         self._set_specs("observables", "json", text)
         return self
 
+    def with_inference(self, settings: DemInferenceSettings) -> Self:
+        """Infer detector/observable parities instead of supplying definitions.
+
+        Settings are immutable values shared with the Rust API. Inference is
+        empirical; the returned build records its evidence separately from
+        compiler-certified explicit bindings.
+        """
+        if not isinstance(settings, DemInferenceSettings):
+            msg = "with_inference() requires a DemInferenceSettings instance"
+            raise TypeError(msg)
+        settings.validate()
+        if any(
+            value is not _UNSET
+            for value in (
+                self._detectors_kind,
+                self._observables_kind,
+                self._num_measurements,
+            )
+        ):
+            msg = (
+                "with_inference() cannot be combined with explicit detector/observable definitions "
+                "or with_num_measurements()"
+            )
+            raise ValueError(msg)
+        self._set_once("_inference", settings, "with_inference")
+        return self
+
     def with_num_measurements(self, count: int) -> Self:
         """Set the measurement count used by raw JSON record references."""
+        if self._inference is not _UNSET:
+            msg = "with_num_measurements() cannot be combined with with_inference()"
+            raise ValueError(msg)
         if self._detectors_kind == "typed" or self._observables_kind == "typed":
             msg = "with_num_measurements() cannot be combined with typed with_detectors() or with_observables()"
             raise ValueError(msg)
@@ -1199,14 +1235,14 @@ class GuppyDemBuilder:
         return value
 
     def build(self) -> GuppyDemBuild:
-        """Trace the configured program once and return its audited DEM build."""
+        """Prepare explicit or inferred annotations and return an audited DEM build."""
         from pecos.programs import Hugr as _HugrProgram
         from pecos.tracing import _collect_program_result_traces, trace_program_to_tick_circuit
 
         program = self._required("_program", "with_program")
         num_qubits = self._required("_qubits", "with_qubits")
-        if self._detectors_kind is _UNSET:
-            msg = "build() requires with_detectors() or with_detectors_json()"
+        if self._detectors_kind is _UNSET and self._inference is _UNSET:
+            msg = "build() requires with_detectors() or with_detectors_json() or with_inference()"
             raise ValueError(msg)
 
         noise_parameters = self._noise_parameters()
@@ -1263,28 +1299,22 @@ class GuppyDemBuilder:
             p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
             p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
         )
-        typed_detectors = self._detectors_value if self._detectors_kind == "typed" else ()
-        typed_observables = self._observables_value if self._observables_kind == "typed" else ()
-        referenced_tags = sorted(
-            {
-                ref.tag
-                for item in (*typed_detectors, *typed_observables)
-                for ref in item.refs
-                if isinstance(ref, ResultRef)
-            },
-        )
-        raw_detectors_json = self._detectors_value if self._detectors_kind == "json" else "[]"
-        raw_observables_json = self._observables_value if self._observables_kind == "json" else "[]"
-        json_needs_tags = _result_tags_present(raw_detectors_json, raw_observables_json)
-        generator_layout, analysis = _preflight_guppy_static_schedule(
-            program,
-            required_tags=referenced_tags,
-            json_result_tags=json_needs_tags,
-        )
-        with _collect_program_result_traces() as result_traces:
-            circuit = trace_program_to_tick_circuit(
-                _HugrProgram(analysis.hugr_bytes),
-                num_qubits,
+        inference = None
+        generator_layout = None
+        if self._inference is not _UNSET:
+            from pecos.qec.guppy_output_dem import infer_guppy_dem_annotations
+
+            settings = self._inference
+            inference = infer_guppy_dem_annotations(
+                program,
+                num_qubits=num_qubits,
+                raw_tag=settings.raw_tag,
+                detector_tag=settings.detector_tag,
+                observable_tags=settings.observable_tags,
+                probe_shots=settings.probe_shots,
+                provenance_shots=settings.provenance_shots,
+                validation_rows=settings.validation_rows,
+                require_raw_provenance=settings.require_raw_provenance,
                 seed=0 if self._seed is _UNSET else self._seed,
                 runtime=None if self._runtime is _UNSET else self._runtime,
                 require_hosted_operation_order=(
@@ -1294,7 +1324,79 @@ class GuppyDemBuilder:
                     None if self._max_hosted_tick_separation is _UNSET else self._max_hosted_tick_separation
                 ),
             )
-        normalize_traced_tick_circuit(circuit, context="GuppyDemBuilder.build")
+            circuit = inference.circuit
+            detectors_json = inference.detectors_json
+            observables_json = inference.observables_json
+            result_traces = inference.result_traces
+        else:
+            typed_detectors = self._detectors_value if self._detectors_kind == "typed" else ()
+            typed_observables = self._observables_value if self._observables_kind == "typed" else ()
+            referenced_tags = sorted(
+                {
+                    ref.tag
+                    for item in (*typed_detectors, *typed_observables)
+                    for ref in item.refs
+                    if isinstance(ref, ResultRef)
+                },
+            )
+            raw_detectors_json = self._detectors_value if self._detectors_kind == "json" else "[]"
+            raw_observables_json = self._observables_value if self._observables_kind == "json" else "[]"
+            json_needs_tags = _result_tags_present(raw_detectors_json, raw_observables_json)
+            generator_layout, analysis = _preflight_guppy_static_schedule(
+                program,
+                required_tags=referenced_tags,
+                json_result_tags=json_needs_tags,
+            )
+            with _collect_program_result_traces() as result_traces:
+                circuit = trace_program_to_tick_circuit(
+                    _HugrProgram(analysis.hugr_bytes),
+                    num_qubits,
+                    seed=0 if self._seed is _UNSET else self._seed,
+                    runtime=None if self._runtime is _UNSET else self._runtime,
+                    require_hosted_operation_order=(
+                        False
+                        if self._require_hosted_operation_order is _UNSET
+                        else self._require_hosted_operation_order
+                    ),
+                    max_hosted_tick_separation=(
+                        None if self._max_hosted_tick_separation is _UNSET else self._max_hosted_tick_separation
+                    ),
+                )
+            normalize_traced_tick_circuit(circuit, context="GuppyDemBuilder.build")
+
+            result_traces = _compiler_certified_result_traces(
+                generator_layout,
+                analysis,
+                circuit,
+                result_traces,
+                required_tags=referenced_tags,
+            )
+            typed_schema = _resolve_dem_specs(
+                typed_detectors,
+                typed_observables,
+                circuit=circuit,
+                result_traces=result_traces,
+            )
+            detectors_json = typed_schema.detectors_json if self._detectors_kind == "typed" else raw_detectors_json
+            observables_json = (
+                typed_schema.observables_json if self._observables_kind == "typed" else raw_observables_json
+            )
+            if json_needs_tags:
+                from pecos_rslib import resolve_result_tags_for_guppy
+
+                source_ids_json = circuit.get_meta("qis_source_measurement_ids") or circuit.get_meta(
+                    "guppy_source_measurement_ids",
+                )
+                source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
+                tag_occurrences, static_measurement_count = analysis.result_tags
+                detectors_json, observables_json = resolve_result_tags_for_guppy(
+                    detectors_json,
+                    observables_json,
+                    tag_occurrences,
+                    static_measurement_count,
+                    source_measurement_ids,
+                    measurement_ids_in_execution_order(circuit),
+                )
 
         _apply_traced_idle_passes(
             circuit,
@@ -1319,38 +1421,6 @@ class GuppyDemBuilder:
                 p_idle_z_quadratic_sine_rate,
             ),
         )
-        result_traces = _compiler_certified_result_traces(
-            generator_layout,
-            analysis,
-            circuit,
-            result_traces,
-            required_tags=referenced_tags,
-        )
-        typed_schema = _resolve_dem_specs(
-            typed_detectors,
-            typed_observables,
-            circuit=circuit,
-            result_traces=result_traces,
-        )
-        detectors_json = typed_schema.detectors_json if self._detectors_kind == "typed" else raw_detectors_json
-        observables_json = typed_schema.observables_json if self._observables_kind == "typed" else raw_observables_json
-        if json_needs_tags:
-            from pecos_rslib import resolve_result_tags_for_guppy
-
-            source_ids_json = circuit.get_meta("qis_source_measurement_ids") or circuit.get_meta(
-                "guppy_source_measurement_ids",
-            )
-            source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
-            tag_occurrences, static_measurement_count = analysis.result_tags
-            detectors_json, observables_json = resolve_result_tags_for_guppy(
-                detectors_json,
-                observables_json,
-                tag_occurrences,
-                static_measurement_count,
-                source_measurement_ids,
-                measurement_ids_in_execution_order(circuit),
-            )
-
         circuit.set_meta("detectors", detectors_json)
         circuit.set_meta("observables", observables_json)
         measurement_count = circuit.num_measurements() if self._num_measurements is _UNSET else self._num_measurements
@@ -1384,9 +1454,12 @@ class GuppyDemBuilder:
             observables_json,
             circuit=circuit,
             result_traces=result_traces,
+            allow_array_bindings=inference is not None,
         )
         circuit.set_meta("dem_schema_fingerprint", schema.schema_fingerprint)
-        if generator_layout is not None:
+        if inference is not None:
+            named_result_binding = inference.raw_binding
+        elif generator_layout is not None:
             named_result_binding = "generator_layout_v2_program_bound"
         else:
             result_ids = [result_id for _, ids in schema.result_ids_by_tag for result_id in ids]
@@ -1411,6 +1484,7 @@ class GuppyDemBuilder:
             _detector_meas_ids=schema.detector_meas_ids,
             _observable_meas_ids=schema.observable_meas_ids,
             _result_ids_by_tag=schema.result_ids_by_tag,
+            inference=inference,
         )
 
 

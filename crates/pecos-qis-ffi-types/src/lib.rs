@@ -12,6 +12,17 @@ pub use named_results::{NamedResult, ProgramError};
 
 pub use operations::{LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, TraceMetadata};
 
+/// Conservative build identity for the Rust types exchanged with the QIS cdylib.
+///
+/// Both sides must come from matching sources, compiler, target, configuration,
+/// and profile. This detects stale builds; it is not a stable Rust ABI guarantee
+/// and does not certify custom allocator compatibility.
+mod abi_fingerprint {
+    include!(concat!(env!("OUT_DIR"), "/abi_fingerprint.rs"));
+}
+
+pub use abi_fingerprint::QIS_FFI_ABI_FINGERPRINT;
+
 const DEFAULT_OPERATION_CAPACITY: usize = 1024;
 const DEFAULT_MEASUREMENT_CAPACITY: usize = 256;
 const DEFAULT_ID_CAPACITY: usize = 128;

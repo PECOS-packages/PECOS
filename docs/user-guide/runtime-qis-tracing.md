@@ -214,6 +214,8 @@ schedule checks than these general tracing APIs.
 
 ## Next Steps
 
+- **[Circuit Visualization](circuit-visualization.md)** - Render a saved trace or
+  circuit in a notebook, terminal, or file
 - **[HUGR & Guppy Simulation](hugr-simulation.md)** - Build and run programs
   accepted by the tracing entry points
 - **[Circuit Representation](circuit-representation.md)** - Work with the
@@ -222,3 +224,17 @@ schedule checks than these general tracing APIs.
   fault model from a statically certifiable program
 - **[Noise Model Builders](noise-model-builders.md)** - Apply gate and idle
   noise in subsequent simulation workflows
+
+## Incompatible QIS Runtime Libraries
+
+Capture rejects a QIS runtime whose build fingerprint is missing or differs
+from the host's. The error identifies the selected library. Rebuild
+`pecos-qis-ffi` and the PECOS host or Python extension from the same checkout,
+Rust toolchain, target, profile, and build flags. Check `PECOS_QIS_FFI_PATH` if
+it selects a custom or older library, then restart Python or the host process.
+The selected library and any loading failure are cached for the process lifetime.
+
+When developing Rust and Python together, builds with different flags can
+overwrite the runtime in a shared Cargo target directory. Use separate target
+directories, or rebuild the Python extension and runtime together after running
+Rust builds with different flags.

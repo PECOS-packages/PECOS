@@ -1,0 +1,62 @@
+{
+  "doi": "10.5281/zenodo.22820614",
+  "archive": "denser_planar_color_codes_source_v1.zip",
+  "files": {
+    "__init__.py": {
+      "upstream_path": "src/vendor/_torus488/__init__.py",
+      "sha256": "25bf3a7a941fdb52e24a2d49aed198bcf475012ca5e6ad4af10e6b4ccb8f26ee"
+    },
+    "check.py": {
+      "upstream_path": "src/vendor/_torus488/check.py",
+      "sha256": "05fdc4d80ab6fafbee8128f9c002cec338a28b198521b6d124745db6f2299a42"
+    },
+    "cliffords.py": {
+      "upstream_path": "src/vendor/_torus488/cliffords.py",
+      "sha256": "34ae2832b2b5a2be0764e2485f2ff91172ba0987407c369189d00851223b9adf"
+    },
+    "core.py": {
+      "upstream_path": "src/vendor/_torus488/core.py",
+      "sha256": "028d4f7e0fda7af9e587f752465388163f29cead50b246d0ecfa86b916c20309"
+    },
+    "family.py": {
+      "upstream_path": "src/vendor/_torus488/family.py",
+      "sha256": "7ba1519fd75238072d13020959e8d2499d57d0908ca51d8faa027f67caee1f2d"
+    },
+    "geometry.py": {
+      "upstream_path": "src/vendor/_torus488/geometry.py",
+      "sha256": "4ce6bf0e55daaed266a255fd3e0ed9caa2af9958946d2f3c23419451cfeef48e"
+    },
+    "instrument.py": {
+      "upstream_path": "src/vendor/_torus488/instrument.py",
+      "sha256": "53b2dc022242d6ecf477a24a9940d93fb51b2ae4eaeebf3e29f214dc9db3bf18"
+    },
+    "linear_circuit.py": {
+      "upstream_path": "src/vendor/_torus488/linear_circuit.py",
+      "sha256": "11b8612c76fe2c8279e0341f51a163aeb05805b1d05d80471f309e263cc8a558"
+    },
+    "make_memory.py": {
+      "upstream_path": "src/vendor/_torus488/make_memory.py",
+      "sha256": "3a5e6dcfd133a297397900248d2c8fac0a27cf01838c4d0b159b018a3d95e27e"
+    },
+    "memory25.py": {
+      "upstream_path": "src/vendor/_torus488/memory25.py",
+      "sha256": "d7f81a5be95c54431ea6336d3347de2deb89f1acea33efd48e5a3d654ceddcf8"
+    },
+    "native_gates.py": {
+      "upstream_path": "src/vendor/_torus488/native_gates.py",
+      "sha256": "9c895c7121065d6f9d90cf27b58fd7ccfd8e4e60fb239bc0d01627de463221e4"
+    },
+    "rule.py": {
+      "upstream_path": "src/vendor/_torus488/rule.py",
+      "sha256": "a82ad1860bd5fc0c6277e637ab3706ef35605181a30f3f4d6bd0f5ba7359af5a"
+    },
+    "rule25.json": {
+      "upstream_path": "src/vendor/_torus488/rule25.json",
+      "sha256": "abf1a313dc5cdeb043f260b1e18c48472f9ba342f21f07fbf12b7fcfa0fc440b"
+    },
+    "rule_seed.json": {
+      "upstream_path": "src/vendor/_torus488/rule_seed.json",
+      "sha256": "6222a7cb1e52836eaa9bd4916619f01bb5bf1cb7b74de3e7b19d4ffa510ce98d"
+    }
+  }
+}

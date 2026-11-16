@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 
 import numpy as np
 import pecos as pc
@@ -485,6 +486,7 @@ def test_szz_detector_paths_accept_abstract_and_traced_qis_basis() -> None:
     raises=ValueError,
     reason="#498: SZZ final provenance reversed",
 )
+@pytest.mark.skipif(sys.platform == "win32", reason="Native aggregate helper ABI adapter not implemented")
 def test_szz_runtime_barriers_allow_strict_traced_hosted_order() -> None:
     patch = SurfacePatch.create(distance=3)
 

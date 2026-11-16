@@ -1,0 +1,3005 @@
+{
+  "source": "https://doi.org/10.5281/zenodo.22820614",
+  "sha256": {
+    "memory_statistics.jsonl": "e414245158bb4f8aada5e30445319af6770ed6774a48db3d470157a9d2e51aee",
+    "plot_points.jsonl": "c44e3fef5ab32a1ec9c7f175af5eb0d07d6f3c831040d41c8a0ca069fa359864",
+    "decoder_configs.json": "13668b671192457697c4a93f93093b157604d2de3e85c09ba66648168e7dc1ac"
+  },
+  "instances": [
+    {
+      "instance_id": "planar_488_d11_r11_X_phase0_p0p0005",
+      "family": "planar_488",
+      "distance": 11,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 100933632,
+      "block_errors": 21,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d11_r11_X_phase0_p0p001",
+      "family": "planar_488",
+      "distance": 11,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.001,
+      "shots": 5513216,
+      "block_errors": 94,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d11_r11_X_phase1_p0p0005",
+      "family": "planar_488",
+      "distance": 11,
+      "basis": "X",
+      "start_phase": 1,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 100933632,
+      "block_errors": 15,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d11_r11_X_phase1_p0p001",
+      "family": "planar_488",
+      "distance": 11,
+      "basis": "X",
+      "start_phase": 1,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.001,
+      "shots": 5513216,
+      "block_errors": 92,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d11_r11_Z_phase0_p0p0005",
+      "family": "planar_488",
+      "distance": 11,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 100933632,
+      "block_errors": 13,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d11_r11_Z_phase0_p0p001",
+      "family": "planar_488",
+      "distance": 11,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.001,
+      "shots": 5513216,
+      "block_errors": 86,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d11_r11_Z_phase1_p0p0005",
+      "family": "planar_488",
+      "distance": 11,
+      "basis": "Z",
+      "start_phase": 1,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 100933632,
+      "block_errors": 13,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d11_r11_Z_phase1_p0p001",
+      "family": "planar_488",
+      "distance": 11,
+      "basis": "Z",
+      "start_phase": 1,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.001,
+      "shots": 5513216,
+      "block_errors": 67,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d15_r15_X_phase0_p0p0005",
+      "family": "planar_488",
+      "distance": 15,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d15_r15_X_phase0_p0p001",
+      "family": "planar_488",
+      "distance": 15,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.001,
+      "shots": 7720736,
+      "block_errors": 3,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d15_r15_X_phase1_p0p0005",
+      "family": "planar_488",
+      "distance": 15,
+      "basis": "X",
+      "start_phase": 1,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d15_r15_X_phase1_p0p001",
+      "family": "planar_488",
+      "distance": 15,
+      "basis": "X",
+      "start_phase": 1,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.001,
+      "shots": 7739328,
+      "block_errors": 4,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d15_r15_Z_phase0_p0p0005",
+      "family": "planar_488",
+      "distance": 15,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d15_r15_Z_phase0_p0p001",
+      "family": "planar_488",
+      "distance": 15,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.001,
+      "shots": 7734944,
+      "block_errors": 2,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d15_r15_Z_phase1_p0p0005",
+      "family": "planar_488",
+      "distance": 15,
+      "basis": "Z",
+      "start_phase": 1,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d15_r15_Z_phase1_p0p001",
+      "family": "planar_488",
+      "distance": 15,
+      "basis": "Z",
+      "start_phase": 1,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.001,
+      "shots": 7718976,
+      "block_errors": 4,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d3_r3_X_phase0_p0p0005",
+      "family": "planar_488",
+      "distance": 3,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 415,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d3_r3_X_phase0_p0p001",
+      "family": "planar_488",
+      "distance": 3,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 1894,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d3_r3_X_phase1_p0p0005",
+      "family": "planar_488",
+      "distance": 3,
+      "basis": "X",
+      "start_phase": 1,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 435,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d3_r3_X_phase1_p0p001",
+      "family": "planar_488",
+      "distance": 3,
+      "basis": "X",
+      "start_phase": 1,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 1738,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d3_r3_Z_phase0_p0p0005",
+      "family": "planar_488",
+      "distance": 3,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 435,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d3_r3_Z_phase0_p0p001",
+      "family": "planar_488",
+      "distance": 3,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 1817,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d3_r3_Z_phase1_p0p0005",
+      "family": "planar_488",
+      "distance": 3,
+      "basis": "Z",
+      "start_phase": 1,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 477,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d3_r3_Z_phase1_p0p001",
+      "family": "planar_488",
+      "distance": 3,
+      "basis": "Z",
+      "start_phase": 1,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 1865,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d7_r7_X_phase0_p0p0005",
+      "family": "planar_488",
+      "distance": 7,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 1318912,
+      "block_errors": 40,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d7_r7_X_phase0_p0p001",
+      "family": "planar_488",
+      "distance": 7,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.001,
+      "shots": 532480,
+      "block_errors": 254,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d7_r7_X_phase1_p0p0005",
+      "family": "planar_488",
+      "distance": 7,
+      "basis": "X",
+      "start_phase": 1,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 1318912,
+      "block_errors": 30,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d7_r7_X_phase1_p0p001",
+      "family": "planar_488",
+      "distance": 7,
+      "basis": "X",
+      "start_phase": 1,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.001,
+      "shots": 532480,
+      "block_errors": 228,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d7_r7_Z_phase0_p0p0005",
+      "family": "planar_488",
+      "distance": 7,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 1318912,
+      "block_errors": 23,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d7_r7_Z_phase0_p0p001",
+      "family": "planar_488",
+      "distance": 7,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.001,
+      "shots": 532480,
+      "block_errors": 235,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d7_r7_Z_phase1_p0p0005",
+      "family": "planar_488",
+      "distance": 7,
+      "basis": "Z",
+      "start_phase": 1,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 1318912,
+      "block_errors": 31,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_488_d7_r7_Z_phase1_p0p001",
+      "family": "planar_488",
+      "distance": 7,
+      "basis": "Z",
+      "start_phase": 1,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.001,
+      "shots": 532480,
+      "block_errors": 230,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d11_r11_X_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 11,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 151265280,
+      "block_errors": 3,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d11_r11_X_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 11,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.001,
+      "shots": 21241856,
+      "block_errors": 121,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d11_r11_Z_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 11,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 151265280,
+      "block_errors": 13,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d11_r11_Z_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 11,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.001,
+      "shots": 21241856,
+      "block_errors": 191,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d13_r13_X_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 13,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 13,
+      "k": 1,
+      "p": 0.001,
+      "shots": 33554432,
+      "block_errors": 34,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d13_r13_Z_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 13,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 13,
+      "k": 1,
+      "p": 0.001,
+      "shots": 33554432,
+      "block_errors": 42,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d3_r3_X_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 3,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 331,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d3_r3_X_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 3,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 1435,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d3_r3_Z_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 3,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 441,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d3_r3_Z_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 3,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 1457,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d5_r5_X_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 5,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 5,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 53,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d5_r5_X_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 5,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 5,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 383,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d5_r5_Z_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 5,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 5,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 54,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d5_r5_Z_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 5,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 5,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 452,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d7_r7_X_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 7,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 4464640,
+      "block_errors": 49,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d7_r7_X_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 7,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.001,
+      "shots": 794624,
+      "block_errors": 197,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d7_r7_Z_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 7,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 4464640,
+      "block_errors": 89,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d7_r7_Z_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 7,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.001,
+      "shots": 794624,
+      "block_errors": 287,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d9_r9_X_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 9,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 9,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 17047552,
+      "block_errors": 16,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d9_r9_X_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 9,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 9,
+      "k": 1,
+      "p": 0.001,
+      "shots": 6561792,
+      "block_errors": 248,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d9_r9_Z_phase0_p0p0005",
+      "family": "planar_666",
+      "distance": 9,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 9,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 17047552,
+      "block_errors": 21,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_666_d9_r9_Z_phase0_p0p001",
+      "family": "planar_666",
+      "distance": 9,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 9,
+      "k": 1,
+      "p": 0.001,
+      "shots": 6561792,
+      "block_errors": 366,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d11_r11_X_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 11,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 67379200,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d11_r11_X_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 11,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.001,
+      "shots": 84156416,
+      "block_errors": 96,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d11_r11_Z_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 11,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 67379200,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d11_r11_Z_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 11,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 11,
+      "k": 1,
+      "p": 0.001,
+      "shots": 84156416,
+      "block_errors": 111,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d13_r13_X_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 13,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 13,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 226304,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d13_r13_X_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 13,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 13,
+      "k": 1,
+      "p": 0.001,
+      "shots": 232448,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d13_r13_Z_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 13,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 13,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 232448,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d13_r13_Z_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 13,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 13,
+      "k": 1,
+      "p": 0.001,
+      "shots": 224256,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d15_r15_X_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 15,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 220160,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d15_r15_X_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 15,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.001,
+      "shots": 223232,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d15_r15_Z_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 15,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 231424,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d15_r15_Z_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 15,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 15,
+      "k": 1,
+      "p": 0.001,
+      "shots": 220032,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d3_r3_X_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 3,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 197,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d3_r3_X_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 3,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 714,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d3_r3_Z_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 3,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 181,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d3_r3_Z_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 3,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 3,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 751,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d5_r5_X_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 5,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 5,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 13,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d5_r5_X_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 5,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 5,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 136,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d5_r5_Z_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 5,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 5,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 20,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d5_r5_Z_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 5,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 5,
+      "k": 1,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 151,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d7_r7_X_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 7,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 17047552,
+      "block_errors": 70,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d7_r7_X_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 7,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.001,
+      "shots": 1318912,
+      "block_errors": 112,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d7_r7_Z_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 7,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 17047552,
+      "block_errors": 77,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d7_r7_Z_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 7,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 7,
+      "k": 1,
+      "p": 0.001,
+      "shots": 1318912,
+      "block_errors": 106,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d9_r9_X_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 9,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 9,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 33824768,
+      "block_errors": 8,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d9_r9_X_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 9,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 9,
+      "k": 1,
+      "p": 0.001,
+      "shots": 50601984,
+      "block_errors": 509,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d9_r9_Z_phase0_p0p0005",
+      "family": "planar_surface",
+      "distance": 9,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 9,
+      "k": 1,
+      "p": 0.0005,
+      "shots": 33824768,
+      "block_errors": 9,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "planar_surface_d9_r9_Z_phase0_p0p001",
+      "family": "planar_surface",
+      "distance": 9,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 9,
+      "k": 1,
+      "p": 0.001,
+      "shots": 50601984,
+      "block_errors": 554,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "toric_d4_r4_X_phase0_p0p0005",
+      "family": "toric",
+      "distance": 4,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 2,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 336,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "toric_d4_r4_X_phase0_p0p001",
+      "family": "toric",
+      "distance": 4,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 2,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 1354,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "toric_d4_r4_Z_phase0_p0p0005",
+      "family": "toric",
+      "distance": 4,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 2,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 328,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "toric_d4_r4_Z_phase0_p0p001",
+      "family": "toric",
+      "distance": 4,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 2,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 1384,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "toric_d8_r8_X_phase0_p0p0005",
+      "family": "toric",
+      "distance": 8,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 2,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 2,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "toric_d8_r8_X_phase0_p0p001",
+      "family": "toric",
+      "distance": 8,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 2,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 17,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "toric_d8_r8_Z_phase0_p0p0005",
+      "family": "toric",
+      "distance": 8,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 2,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "toric_d8_r8_Z_phase0_p0p001",
+      "family": "toric",
+      "distance": 8,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 2,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 16,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d12_r12_X_phase0_p0p0005",
+      "family": "torus_488",
+      "distance": 12,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 12,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d12_r12_Z_phase0_p0p0005",
+      "family": "torus_488",
+      "distance": 12,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 12,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d4_r4_X_phase0_p0p0005",
+      "family": "torus_488",
+      "distance": 4,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 639,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d4_r4_X_phase0_p0p001",
+      "family": "torus_488",
+      "distance": 4,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 3059,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d4_r4_Z_phase0_p0p0005",
+      "family": "torus_488",
+      "distance": 4,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 699,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d4_r4_Z_phase0_p0p001",
+      "family": "torus_488",
+      "distance": 4,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 2996,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d8_r8_X_phase0_p0p0005",
+      "family": "torus_488",
+      "distance": 8,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 1,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d8_r8_X_phase0_p0p001",
+      "family": "torus_488",
+      "distance": 8,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 37,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d8_r8_Z_phase0_p0p0005",
+      "family": "torus_488",
+      "distance": 8,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 3,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_488_d8_r8_Z_phase0_p0p001",
+      "family": "torus_488",
+      "distance": 8,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 31,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_alternate_d4_r4_X_phase0_p0p0005",
+      "family": "torus_666_alternate",
+      "distance": 4,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 659,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_alternate_d4_r4_X_phase0_p0p001",
+      "family": "torus_666_alternate",
+      "distance": 4,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 3217,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_alternate_d4_r4_Z_phase0_p0p0005",
+      "family": "torus_666_alternate",
+      "distance": 4,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 807,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_alternate_d4_r4_Z_phase0_p0p001",
+      "family": "torus_666_alternate",
+      "distance": 4,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 3712,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_alternate_d8_r8_X_phase0_p0p0005",
+      "family": "torus_666_alternate",
+      "distance": 8,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 0,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_alternate_d8_r8_X_phase0_p0p001",
+      "family": "torus_666_alternate",
+      "distance": 8,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 32,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_alternate_d8_r8_Z_phase0_p0p0005",
+      "family": "torus_666_alternate",
+      "distance": 8,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 2,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_alternate_d8_r8_Z_phase0_p0p001",
+      "family": "torus_666_alternate",
+      "distance": 8,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 62,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_best_d4_r4_X_phase0_p0p0005",
+      "family": "torus_666_best",
+      "distance": 4,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 906,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_best_d4_r4_X_phase0_p0p001",
+      "family": "torus_666_best",
+      "distance": 4,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 3974,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_best_d4_r4_Z_phase0_p0p0005",
+      "family": "torus_666_best",
+      "distance": 4,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 1024,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_best_d4_r4_Z_phase0_p0p001",
+      "family": "torus_666_best",
+      "distance": 4,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 4,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 4397,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_best_d8_r8_X_phase0_p0p0005",
+      "family": "torus_666_best",
+      "distance": 8,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 1,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_best_d8_r8_X_phase0_p0p001",
+      "family": "torus_666_best",
+      "distance": 8,
+      "basis": "X",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 28,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_best_d8_r8_Z_phase0_p0p0005",
+      "family": "torus_666_best",
+      "distance": 8,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.0005,
+      "shots": 262144,
+      "block_errors": 3,
+      "low_confidence": 0
+    },
+    {
+      "instance_id": "torus_666_best_d8_r8_Z_phase0_p0p001",
+      "family": "torus_666_best",
+      "distance": 8,
+      "basis": "Z",
+      "start_phase": 0,
+      "rounds": 8,
+      "k": 4,
+      "p": 0.001,
+      "shots": 262144,
+      "block_errors": 63,
+      "low_confidence": 0
+    }
+  ],
+  "points": [
+    {
+      "block_errors": 1762,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 3,
+      "family": "planar_488",
+      "instance_weights": [
+        {
+          "instance_id": "planar_488_d3_r3_X_phase0_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d3_r3_X_phase1_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d3_r3_Z_phase0_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d3_r3_Z_phase1_p0p0005",
+          "weight": 0.25
+        }
+      ],
+      "interval95": [
+        0.00049600426120953,
+        0.0006306563490197395
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0005604387480832581,
+      "mean_block_error_rate": 0.0016803741455078125,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 14.0,
+      "rounds": 3,
+      "shots": 1048576
+    },
+    {
+      "block_errors": 124,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 7,
+      "family": "planar_488",
+      "instance_weights": [
+        {
+          "instance_id": "planar_488_d7_r7_X_phase0_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d7_r7_X_phase1_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d7_r7_Z_phase0_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d7_r7_Z_phase1_p0p0005",
+          "weight": 0.25
+        }
+      ],
+      "interval95": [
+        2.0480851799543584e-06,
+        5.177229496373919e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 3.3577797755072998e-06,
+      "mean_block_error_rate": 2.3504221661490684e-05,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 64.0,
+      "rounds": 7,
+      "shots": 5275648
+    },
+    {
+      "block_errors": 62,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 11,
+      "family": "planar_488",
+      "instance_weights": [
+        {
+          "instance_id": "planar_488_d11_r11_X_phase0_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d11_r11_X_phase1_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d11_r11_Z_phase0_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d11_r11_Z_phase1_p0p0005",
+          "weight": 0.25
+        }
+      ],
+      "interval95": [
+        6.7219661921661344e-09,
+        2.5509538713230785e-08
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 1.3960569728130573e-08,
+      "mean_block_error_rate": 1.5356625629007386e-07,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 146.0,
+      "rounds": 11,
+      "shots": 403734528
+    },
+    {
+      "block_errors": 0,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 15,
+      "family": "planar_488",
+      "instance_weights": [
+        {
+          "instance_id": "planar_488_d15_r15_X_phase0_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d15_r15_X_phase1_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d15_r15_Z_phase0_p0p0005",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d15_r15_Z_phase1_p0p0005",
+          "weight": 0.25
+        }
+      ],
+      "interval95": [
+        0.0,
+        1.2906826121047534e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0,
+      "mean_block_error_rate": 0.0,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 260.0,
+      "rounds": 15,
+      "shots": 1048576
+    },
+    {
+      "block_errors": 7314,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 3,
+      "family": "planar_488",
+      "instance_weights": [
+        {
+          "instance_id": "planar_488_d3_r3_X_phase0_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d3_r3_X_phase1_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d3_r3_Z_phase0_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d3_r3_Z_phase1_p0p001",
+          "weight": 0.25
+        }
+      ],
+      "interval95": [
+        0.0021967471056275815,
+        0.002469955786376695
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0023304849243020163,
+      "mean_block_error_rate": 0.0069751739501953125,
+      "p": 0.001,
+      "physical_qubits_per_logical": 14.0,
+      "rounds": 3,
+      "shots": 1048576
+    },
+    {
+      "block_errors": 947,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 7,
+      "family": "planar_488",
+      "instance_weights": [
+        {
+          "instance_id": "planar_488_d7_r7_X_phase0_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d7_r7_X_phase1_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d7_r7_Z_phase0_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d7_r7_Z_phase1_p0p001",
+          "weight": 0.25
+        }
+      ],
+      "interval95": [
+        5.368820030018355e-05,
+        7.459626042780522e-05
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 6.35289119462166e-05,
+      "mean_block_error_rate": 0.00044461763822115384,
+      "p": 0.001,
+      "physical_qubits_per_logical": 64.0,
+      "rounds": 7,
+      "shots": 2129920
+    },
+    {
+      "block_errors": 339,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 11,
+      "family": "planar_488",
+      "instance_weights": [
+        {
+          "instance_id": "planar_488_d11_r11_X_phase0_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d11_r11_X_phase1_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d11_r11_Z_phase0_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d11_r11_Z_phase1_p0p001",
+          "weight": 0.25
+        }
+      ],
+      "interval95": [
+        1.0479769825379567e-06,
+        1.82323057791236e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 1.3974782213082724e-06,
+      "mean_block_error_rate": 1.5372153022845468e-05,
+      "p": 0.001,
+      "physical_qubits_per_logical": 146.0,
+      "rounds": 11,
+      "shots": 22052864
+    },
+    {
+      "block_errors": 13,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 15,
+      "family": "planar_488",
+      "instance_weights": [
+        {
+          "instance_id": "planar_488_d15_r15_X_phase0_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d15_r15_X_phase1_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d15_r15_Z_phase0_p0p001",
+          "weight": 0.25
+        },
+        {
+          "instance_id": "planar_488_d15_r15_Z_phase1_p0p001",
+          "weight": 0.25
+        }
+      ],
+      "interval95": [
+        4.133824910615554e-09,
+        9.539453762247852e-08
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 2.8036255797203404e-08,
+      "mean_block_error_rate": 4.2054375442473895e-07,
+      "p": 0.001,
+      "physical_qubits_per_logical": 260.0,
+      "rounds": 15,
+      "shots": 30913984
+    },
+    {
+      "block_errors": 772,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 3,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d3_r3_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d3_r3_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0004369110654085353,
+        0.0005499719186032818
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.00049106548735057,
+      "mean_block_error_rate": 0.00147247314453125,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 13.0,
+      "rounds": 3,
+      "shots": 524288
+    },
+    {
+      "block_errors": 107,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 5,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d5_r5_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d5_r5_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        2.9346292751687817e-05,
+        5.521758487051636e-05
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 4.082059324781607e-05,
+      "mean_block_error_rate": 0.0002040863037109375,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 37.0,
+      "rounds": 5,
+      "shots": 524288
+    },
+    {
+      "block_errors": 138,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 7,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d7_r7_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d7_r7_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        1.661864427286312e-06,
+        2.8759773415001403e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 2.20783941063568e-06,
+      "mean_block_error_rate": 1.5454773509174313e-05,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 73.0,
+      "rounds": 7,
+      "shots": 8929280
+    },
+    {
+      "block_errors": 37,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 9,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d9_r9_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d9_r9_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        6.676885468923972e-08,
+        1.9999706161006417e-07
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 1.205778135754232e-07,
+      "mean_block_error_rate": 1.0851997987746276e-06,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 121.0,
+      "rounds": 9,
+      "shots": 34095104
+    },
+    {
+      "block_errors": 16,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 11,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d11_r11_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d11_r11_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        2.030578725359563e-09,
+        1.0044621526610227e-08
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 4.807929121316577e-09,
+      "mean_block_error_rate": 5.288721906309234e-08,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 181.0,
+      "rounds": 11,
+      "shots": 302530560
+    },
+    {
+      "block_errors": 2892,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 3,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d3_r3_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d3_r3_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.001735299753429858,
+        0.001953559765810784
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0018420752396847175,
+      "mean_block_error_rate": 0.00551605224609375,
+      "p": 0.001,
+      "physical_qubits_per_logical": 13.0,
+      "rounds": 3,
+      "shots": 524288
+    },
+    {
+      "block_errors": 835,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 5,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d5_r5_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d5_r5_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.00028482946930892945,
+        0.000355481857481261
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0003187303349838762,
+      "mean_block_error_rate": 0.0015926361083984375,
+      "p": 0.001,
+      "physical_qubits_per_logical": 37.0,
+      "rounds": 5,
+      "shots": 524288
+    },
+    {
+      "block_errors": 484,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 7,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d7_r7_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d7_r7_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        3.7512967045106125e-05,
+        5.018668715573158e-05
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 4.351232996168693e-05,
+      "mean_block_error_rate": 0.00030454655283505155,
+      "p": 0.001,
+      "physical_qubits_per_logical": 73.0,
+      "rounds": 7,
+      "shots": 1589248
+    },
+    {
+      "block_errors": 614,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 9,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d9_r9_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d9_r9_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        4.559469028356414e-06,
+        5.901078167960855e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 5.198552534257296e-06,
+      "mean_block_error_rate": 4.6785999921972533e-05,
+      "p": 0.001,
+      "physical_qubits_per_logical": 121.0,
+      "rounds": 9,
+      "shots": 13123584
+    },
+    {
+      "block_errors": 312,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 11,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d11_r11_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d11_r11_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        5.543721809825921e-07,
+        7.970480790813859e-07
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 6.676377772012593e-07,
+      "mean_block_error_rate": 7.34399103355187e-06,
+      "p": 0.001,
+      "physical_qubits_per_logical": 181.0,
+      "rounds": 11,
+      "shots": 42483712
+    },
+    {
+      "block_errors": 76,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 13,
+      "family": "planar_666",
+      "instance_weights": [
+        {
+          "instance_id": "planar_666_d13_r13_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_666_d13_r13_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        5.8596415295192406e-08,
+        1.2447704095389338e-07
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 8.711452635920058e-08,
+      "mean_block_error_rate": 1.1324882507324219e-06,
+      "p": 0.001,
+      "physical_qubits_per_logical": 253.0,
+      "rounds": 13,
+      "shots": 67108864
+    },
+    {
+      "block_errors": 378,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 3,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d3_r3_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d3_r3_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.00020292074609630465,
+        0.00028262995853294817
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.00024038370743103635,
+      "mean_block_error_rate": 0.000720977783203125,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 17.0,
+      "rounds": 3,
+      "shots": 524288
+    },
+    {
+      "block_errors": 33,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 5,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d5_r5_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d5_r5_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        6.722296311517512e-06,
+        2.1465153334183738e-05
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 1.2588817929246128e-05,
+      "mean_block_error_rate": 6.29425048828125e-05,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 49.0,
+      "rounds": 5,
+      "shots": 524288
+    },
+    {
+      "block_errors": 147,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 7,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d7_r7_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d7_r7_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        4.6628802193377896e-07,
+        7.974892406739082e-07
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 6.159253482062646e-07,
+      "mean_block_error_rate": 4.311469470807304e-06,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 97.0,
+      "rounds": 7,
+      "shots": 34095104
+    },
+    {
+      "block_errors": 17,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 9,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d9_r9_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d9_r9_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        1.095402538083665e-08,
+        5.813235524424487e-08
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 2.7921685964745542e-08,
+      "mean_block_error_rate": 2.51295145616372e-07,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 161.0,
+      "rounds": 9,
+      "shots": 67649536
+    },
+    {
+      "block_errors": 0,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 11,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d11_r11_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d11_r11_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0,
+        5.912300183439341e-09
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0,
+      "mean_block_error_rate": 0.0,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 241.0,
+      "rounds": 11,
+      "shots": 134758400
+    },
+    {
+      "block_errors": 0,
+      "display_figure_1": false,
+      "display_figure_5": false,
+      "distance": 13,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d13_r13_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d13_r13_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0,
+        1.469810249513268e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0,
+      "mean_block_error_rate": 0.0,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 337.0,
+      "rounds": 13,
+      "shots": 458752
+    },
+    {
+      "block_errors": 0,
+      "display_figure_1": false,
+      "display_figure_5": false,
+      "distance": 15,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d15_r15_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d15_r15_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0,
+        1.2946286337870927e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0,
+      "mean_block_error_rate": 0.0,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 449.0,
+      "rounds": 15,
+      "shots": 451584
+    },
+    {
+      "block_errors": 1465,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 3,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d3_r3_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d3_r3_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0008568314885870629,
+        0.0010124795432028101
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0009322908117425562,
+      "mean_block_error_rate": 0.0027942657470703125,
+      "p": 0.001,
+      "physical_qubits_per_logical": 17.0,
+      "rounds": 3,
+      "shots": 524288
+    },
+    {
+      "block_errors": 287,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 5,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d5_r5_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d5_r5_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        9.005476337504669e-05,
+        0.00013183638024977479
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.00010950579193423414,
+      "mean_block_error_rate": 0.0005474090576171875,
+      "p": 0.001,
+      "physical_qubits_per_logical": 49.0,
+      "rounds": 5,
+      "shots": 524288
+    },
+    {
+      "block_errors": 218,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 7,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d7_r7_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d7_r7_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        9.418627482832834e-06,
+        1.4605000973650376e-05
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 1.1806686208802417e-05,
+      "mean_block_error_rate": 8.264387616459628e-05,
+      "p": 0.001,
+      "physical_qubits_per_logical": 97.0,
+      "rounds": 7,
+      "shots": 2637824
+    },
+    {
+      "block_errors": 1063,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 9,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d9_r9_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d9_r9_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        1.0565820360546387e-06,
+        1.2857410159742842e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 1.167065529345739e-06,
+      "mean_block_error_rate": 1.0503540730734985e-05,
+      "p": 0.001,
+      "physical_qubits_per_logical": 161.0,
+      "rounds": 9,
+      "shots": 101203968
+    },
+    {
+      "block_errors": 207,
+      "display_figure_1": true,
+      "display_figure_5": true,
+      "distance": 11,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d11_r11_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d11_r11_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        8.864915903701475e-08,
+        1.3905519154021766e-07
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 1.1180485833667708e-07,
+      "mean_block_error_rate": 1.2298527541857296e-06,
+      "p": 0.001,
+      "physical_qubits_per_logical": 241.0,
+      "rounds": 11,
+      "shots": 168312832
+    },
+    {
+      "block_errors": 0,
+      "display_figure_1": false,
+      "display_figure_5": false,
+      "distance": 13,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d13_r13_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d13_r13_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0,
+        1.4766115904449753e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0,
+      "mean_block_error_rate": 0.0,
+      "p": 0.001,
+      "physical_qubits_per_logical": 337.0,
+      "rounds": 13,
+      "shots": 456704
+    },
+    {
+      "block_errors": 0,
+      "display_figure_1": false,
+      "display_figure_5": false,
+      "distance": 15,
+      "family": "planar_surface",
+      "instance_weights": [
+        {
+          "instance_id": "planar_surface_d15_r15_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "planar_surface_d15_r15_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0,
+        1.3181767169020968e-06
+      ],
+      "k": 1,
+      "logical_error_rate_per_round_per_logical": 0.0,
+      "mean_block_error_rate": 0.0,
+      "p": 0.001,
+      "physical_qubits_per_logical": 449.0,
+      "rounds": 15,
+      "shots": 443264
+    },
+    {
+      "block_errors": 664,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 4,
+      "family": "toric",
+      "instance_weights": [
+        {
+          "instance_id": "toric_d4_r4_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "toric_d4_r4_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.00013955713524121033,
+        0.00017902347589891595
+      ],
+      "k": 2,
+      "logical_error_rate_per_round_per_logical": 0.00015839772314517317,
+      "mean_block_error_rate": 0.0012664794921875,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 16.0,
+      "rounds": 4,
+      "shots": 524288
+    },
+    {
+      "block_errors": 2,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 8,
+      "family": "toric",
+      "instance_weights": [
+        {
+          "instance_id": "toric_d8_r8_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "toric_d8_r8_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        1.9920591004727396e-08,
+        1.4906281118529285e-06
+      ],
+      "k": 2,
+      "logical_error_rate_per_round_per_logical": 2.384190054282543e-07,
+      "mean_block_error_rate": 3.814697265625e-06,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 64.0,
+      "rounds": 8,
+      "shots": 524288
+    },
+    {
+      "block_errors": 2738,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 4,
+      "family": "toric",
+      "instance_weights": [
+        {
+          "instance_id": "toric_d4_r4_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "toric_d4_r4_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0006153047433300205,
+        0.0006950391868447648
+      ],
+      "k": 2,
+      "logical_error_rate_per_round_per_logical": 0.0006542864280799903,
+      "mean_block_error_rate": 0.005222320556640625,
+      "p": 0.001,
+      "physical_qubits_per_logical": 16.0,
+      "rounds": 4,
+      "shots": 524288
+    },
+    {
+      "block_errors": 33,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 8,
+      "family": "toric",
+      "instance_weights": [
+        {
+          "instance_id": "toric_d8_r8_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "toric_d8_r8_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        2.0885650748458233e-06,
+        6.719163034499176e-06
+      ],
+      "k": 2,
+      "logical_error_rate_per_round_per_logical": 3.934022627050059e-06,
+      "mean_block_error_rate": 6.29425048828125e-05,
+      "p": 0.001,
+      "physical_qubits_per_logical": 64.0,
+      "rounds": 8,
+      "shots": 524288
+    },
+    {
+      "block_errors": 1338,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 4,
+      "family": "torus_488",
+      "instance_weights": [
+        {
+          "instance_id": "torus_488_d4_r4_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_488_d4_r4_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0001461799897153197,
+        0.0001740950809231375
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 0.0001596931512252345,
+      "mean_block_error_rate": 0.002552032470703125,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 8.0,
+      "rounds": 4,
+      "shots": 524288
+    },
+    {
+      "block_errors": 4,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 8,
+      "family": "torus_488",
+      "instance_weights": [
+        {
+          "instance_id": "torus_488_d8_r8_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_488_d8_r8_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        2.9008339438940212e-08,
+        9.608390533169272e-07
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 2.3841946017896624e-07,
+      "mean_block_error_rate": 7.62939453125e-06,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 32.0,
+      "rounds": 8,
+      "shots": 524288
+    },
+    {
+      "block_errors": 0,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 12,
+      "family": "torus_488",
+      "instance_weights": [
+        {
+          "instance_id": "torus_488_d12_r12_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_488_d12_r12_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0,
+        3.4825212730159693e-07
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 0.0,
+      "mean_block_error_rate": 0.0,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 72.0,
+      "rounds": 12,
+      "shots": 524288
+    },
+    {
+      "block_errors": 6055,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 4,
+      "family": "torus_488",
+      "instance_weights": [
+        {
+          "instance_id": "torus_488_d4_r4_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_488_d4_r4_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0006965163187563678,
+        0.0007558672931385652
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 0.000725749240302571,
+      "mean_block_error_rate": 0.011548995971679688,
+      "p": 0.001,
+      "physical_qubits_per_logical": 8.0,
+      "rounds": 4,
+      "shots": 524288
+    },
+    {
+      "block_errors": 68,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 8,
+      "family": "torus_488",
+      "instance_weights": [
+        {
+          "instance_id": "torus_488_d8_r8_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_488_d8_r8_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        2.6587540680923474e-06,
+        5.909028139945545e-06
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 4.0533704964963864e-06,
+      "mean_block_error_rate": 0.00012969970703125,
+      "p": 0.001,
+      "physical_qubits_per_logical": 32.0,
+      "rounds": 8,
+      "shots": 524288
+    },
+    {
+      "block_errors": 1466,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 4,
+      "family": "torus_666_alternate",
+      "instance_weights": [
+        {
+          "instance_id": "torus_666_alternate_d4_r4_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_666_alternate_d4_r4_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0001608438801050869,
+        0.00019002509187504655
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 0.00017499029306114125,
+      "mean_block_error_rate": 0.002796173095703125,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 12.0,
+      "rounds": 4,
+      "shots": 524288
+    },
+    {
+      "block_errors": 2,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 8,
+      "family": "torus_666_alternate",
+      "instance_weights": [
+        {
+          "instance_id": "torus_666_alternate_d8_r8_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_666_alternate_d8_r8_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        9.960295551967443e-09,
+        7.453143336731922e-07
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 1.1920950981958075e-07,
+      "mean_block_error_rate": 3.814697265625e-06,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 48.0,
+      "rounds": 8,
+      "shots": 524288
+    },
+    {
+      "block_errors": 6929,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 4,
+      "family": "torus_666_alternate",
+      "instance_weights": [
+        {
+          "instance_id": "torus_666_alternate_d4_r4_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_666_alternate_d4_r4_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0007998653043922149,
+        0.0008633445450498707
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 0.000831162356202622,
+      "mean_block_error_rate": 0.013216018676757812,
+      "p": 0.001,
+      "physical_qubits_per_logical": 12.0,
+      "rounds": 4,
+      "shots": 524288
+    },
+    {
+      "block_errors": 94,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 8,
+      "family": "torus_666_alternate",
+      "instance_weights": [
+        {
+          "instance_id": "torus_666_alternate_d8_r8_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_666_alternate_d8_r8_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        3.957247434801338e-06,
+        7.707957426299887e-06
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 5.6033232387042766e-06,
+      "mean_block_error_rate": 0.000179290771484375,
+      "p": 0.001,
+      "physical_qubits_per_logical": 48.0,
+      "rounds": 8,
+      "shots": 524288
+    },
+    {
+      "block_errors": 1930,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 4,
+      "family": "torus_666_best",
+      "instance_weights": [
+        {
+          "instance_id": "torus_666_best_d4_r4_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_666_best_d4_r4_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0002141729951164352,
+        0.0002476580564514143
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 0.00023047188033953363,
+      "mean_block_error_rate": 0.003681182861328125,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 9.0,
+      "rounds": 4,
+      "shots": 524288
+    },
+    {
+      "block_errors": 4,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 8,
+      "family": "torus_666_best",
+      "instance_weights": [
+        {
+          "instance_id": "torus_666_best_d8_r8_X_phase0_p0p0005",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_666_best_d8_r8_Z_phase0_p0p0005",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        2.9008339438940212e-08,
+        9.608390533169272e-07
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 2.3841946017896624e-07,
+      "mean_block_error_rate": 7.62939453125e-06,
+      "p": 0.0005,
+      "physical_qubits_per_logical": 36.0,
+      "rounds": 8,
+      "shots": 524288
+    },
+    {
+      "block_errors": 8371,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 4,
+      "family": "torus_666_best",
+      "instance_weights": [
+        {
+          "instance_id": "torus_666_best_d4_r4_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_666_best_d4_r4_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        0.0009709619276494777,
+        0.0010408182290555334
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 0.001005447437822722,
+      "mean_block_error_rate": 0.015966415405273438,
+      "p": 0.001,
+      "physical_qubits_per_logical": 9.0,
+      "rounds": 4,
+      "shots": 524288
+    },
+    {
+      "block_errors": 91,
+      "display_figure_1": false,
+      "display_figure_5": true,
+      "distance": 8,
+      "family": "torus_666_best",
+      "instance_weights": [
+        {
+          "instance_id": "torus_666_best_d8_r8_X_phase0_p0p001",
+          "weight": 0.5
+        },
+        {
+          "instance_id": "torus_666_best_d8_r8_Z_phase0_p0p001",
+          "weight": 0.5
+        }
+      ],
+      "interval95": [
+        3.81882201033468e-06,
+        7.489366248338433e-06
+      ],
+      "k": 4,
+      "logical_error_rate_per_round_per_logical": 5.424478736849457e-06,
+      "mean_block_error_rate": 0.0001735687255859375,
+      "p": 0.001,
+      "physical_qubits_per_logical": 36.0,
+      "rounds": 8,
+      "shots": 524288
+    }
+  ],
+  "decoder_configs": {
+    "tesseract_63fbe2f8fd7d7d6f": {
+      "beam": 20,
+      "beam_climbing": true,
+      "det_order_seed": 518278944,
+      "no_revisit_dets": true,
+      "order_sources": [
+        "bfs",
+        "coordinate",
+        "index"
+      ],
+      "orders_per_source": 21,
+      "pqlimit": 1000000,
+      "pqlimit_semantics": "cumulative pushes per order/beam trial; fails when count > limit",
+      "repository": "https://github.com/quantumlib/tesseract-decoder",
+      "selection": "minimum cost over all successful trials; stop publication on any low-confidence shot",
+      "source_commit": "024db1d3b5b038f565c476dd1b51885271f7b0bf",
+      "sparsify_errors": false,
+      "total_orders": 63
+    }
+  }
+}

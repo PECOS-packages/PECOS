@@ -7,6 +7,7 @@ compiler is imported lazily when compile_hugr_to_qis is called.
 """
 
 import re
+import sys
 from dataclasses import dataclass
 
 # These PECOS runtime helper ABIs must match the extern signatures in
@@ -16,6 +17,11 @@ PECOS_HELPER_ABIS = {
     "pecos_qis_trace_metadata_qubit_hugr": "i64 (i64, ptr, ptr)",
     "pecos_qis_runtime_barrier_qubit_hugr": "i64 (i64)",
     "pecos_qis_runtime_barrier_qubits2_hugr": "{ i64, i64 } (i64, i64)",
+    "pecos_qis_ordered_alloc_hugr": "i64 (i64)",
+    "pecos_qis_ordered_alloc_tagged_hugr": "i64 (i64)",
+    "pecos_qis_ordering_join_hugr": "{ i64, i64 } (i64, i64)",
+    "pecos_qis_ordering_observe_hugr": "i64 (i64, i1)",
+    "pecos_qis_ordering_barrier_hugr": "i64 (i64)",
 }
 
 # Consume quoted strings and comments before considering symbol tokens. LLVM
@@ -283,6 +289,11 @@ def normalize_pecos_helper_symbols(ir: str) -> str:
         helper = _symbol(tokens[function.name].group())
         if helper not in PECOS_HELPER_ABIS:
             continue
+        if sys.platform == "win32" and helper in {
+            "pecos_qis_runtime_barrier_qubits2_hugr", "pecos_qis_ordering_join_hugr",
+        }:
+            msg = f"PECOS helper '{helper}' requires a Windows aggregate-return ABI adapter; unsupported on Windows"
+            raise ValueError(msg)
         if tokens[function.keyword].group() == "define":
             line = renamed.count("\n", 0, tokens[function.name].start()) + 1
             msg = f"PECOS helper '{helper}' must be declared, not defined (line {line})"

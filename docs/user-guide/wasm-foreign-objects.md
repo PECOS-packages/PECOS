@@ -2,6 +2,9 @@
 
 This guide covers using WebAssembly (WASM) modules for classical computation within PECOS quantum simulations. WASM foreign objects allow you to execute custom classical logic alongside quantum operations in QASM and PHIR programs.
 
+For Guppy declarations, arithmetic examples, and version-specific execution
+support, see [WASM calls in Guppy](guppy-wasm.md).
+
 ## What You'll Learn
 
 - When and why to use WASM foreign objects

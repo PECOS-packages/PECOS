@@ -39,6 +39,27 @@ def test_bodyless_declared_function_is_nontrivial_control_flow() -> None:
     assert has_nontrivial_control_flow(hugr)
 
 
+@pytest.mark.parametrize("arity", [1, 2])
+def test_only_exact_native_barrier_declarations_are_known_static(arity) -> None:
+    def is_static(declaration):
+        hugr = Hugr()
+        hugr.add_node(declaration)
+        return not has_nontrivial_control_flow(hugr)
+
+    helper = "pecos_qis_runtime_barrier_" + ("qubit" if arity == 1 else "qubits2") + "_hugr"
+    signature = tys.PolyFuncType([], tys.FunctionType([tys.Qubit] * arity, [tys.Qubit] * arity))
+    op = ops.FuncDecl("generated.module." + helper, signature)
+    assert is_static(op)
+    # A matching suffix is insufficient if the declared arguments/results differ.
+    for inputs, outputs in (([tys.Bool] * arity, [tys.Qubit] * arity),
+                            ([tys.Qubit] * arity, [tys.Bool] * arity),
+                            ([tys.Qubit] * (arity + 1), [tys.Qubit] * arity)):
+        wrong = ops.FuncDecl(helper, tys.PolyFuncType([], tys.FunctionType(inputs, outputs)))
+        assert not is_static(wrong)
+    for name in ("unknown_external", helper + "_other", "pecos_qis_trace_metadata_qubit_hugr"):
+        assert not is_static(ops.FuncDecl(name, signature))
+
+
 def test_indirect_call_is_nontrivial_control_flow() -> None:
     """A real indirect call is the only reason this graph is nontrivial."""
     builder = Dfg(tys.FunctionType([tys.Bool], [tys.Bool]), tys.Bool)
@@ -168,3 +189,32 @@ def test_loader_rejects_unresolved_operation_after_validation(monkeypatch: pytes
     monkeypatch.setattr(_hugr_result_tags, "validate", lambda *_args, **_kwargs: None)
     with pytest.raises(ValueError, match=r"^Failed to parse HUGR: unresolved operation unknown\.extension\.missing$"):
         load_hugr_from_bytes(_unresolved_package())
+
+
+@pytest.mark.parametrize("helper", ["ordered_alloc", "ordered_alloc_tagged", "ordering_join",
+                                  "ordering_observe", "ordering_barrier"])
+def test_lifetime_helpers_require_exact_monomorphic_types(helper):
+    from hugr.std.int import int_t
+
+    token = int_t(6)
+    signatures = {
+        "ordered_alloc": ([token], [tys.Qubit]),
+        "ordered_alloc_tagged": ([token], [tys.Qubit]),
+        "ordering_join": ([tys.Qubit, token], [tys.Qubit, token]),
+        "ordering_observe": ([token, tys.Bool], [token]),
+        "ordering_barrier": ([token], [token]),
+    }
+    inputs, outputs = signatures[helper]
+    name = "pecos_qis_" + helper + "_hugr"
+
+    def rejected(name, inputs, outputs, params=()):
+        graph = Hugr()
+        graph.add_node(ops.FuncDecl(name, tys.PolyFuncType(list(params), tys.FunctionType(inputs, outputs))))
+        return has_nontrivial_control_flow(graph)
+
+    assert not rejected("generated.module." + name, inputs, outputs)
+    assert rejected(name + "_other", inputs, outputs)
+    assert rejected(name, [tys.Bool] * len(inputs), outputs)
+    assert rejected(name, [int_t(5) if t == token else t for t in inputs], outputs)
+    assert rejected(name, inputs, [tys.Bool] * len(outputs))
+    assert rejected(name, inputs, outputs, [tys.TypeTypeParam(tys.TypeBound.Copyable)])

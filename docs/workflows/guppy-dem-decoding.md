@@ -85,6 +85,14 @@ in the canonical Guppy measurement stream, as in Stim, and
 `result_ref("tag", occurrence=...)` is the explicit form when you need its
 extra selectors.
 
+For a check whose raw XOR is one noiselessly, include a literal one:
+`Detector("m0", "m1", 1)`. The same syntax works for
+`Observable(rec[-1], 1, id=0)`. Literal zero is neutral and repeated ones cancel;
+`constant=True` and `definition ^ 1` are equivalent alternatives. These offsets
+are applied by the audited build's raw-result evaluation methods and retained
+in its schema fingerprint. Fault DEM supports are unchanged because constants
+cancel in error differences. See [signed-parity semantics](../user-guide/named-qec-gadgets.md#xor-with-a-constant).
+
 Detectors and observables are not named: each one's DEM label is its position in
 the list, so `detectors[0]` is `D0` and `observables[0]` is `L0`. That is the
 identity the decoders and the DEM text use. A tag that no `result()` call emits is a hard error, so
@@ -173,6 +181,17 @@ assert dem.num_detectors == 6
 assert dem.num_observables == 1
 print(f"detectors: {dem.num_detectors}, mechanisms: {dem.to_string().count('error(')}")
 ```
+
+If your program already emits computed detector and observable parities, plus
+all raw measurements, replace the two explicit-definition setters with
+`.with_inference(DemInferenceSettings())`. Import `DemInferenceSettings` from
+`pecos.qec`; use its chained `with_*` methods for custom tags and probe settings.
+The remaining noise, idle, sampling, and decoding stages are the same, including
+`dem_build.evaluate_result_columns(...)`, which uses the inferred raw-output
+binding. See [Inferring a DEM from Guppy Outputs](../user-guide/inferred-guppy-dem.md)
+for the program contract and inference audit. The program above uses scalar
+measurement tags and must first emit the required raw and computed outputs to
+use that route.
 
 The DEM has several text forms, one per decoder appetite. `to_string()` returns
 Stim-format text with raw hyperedges, which BP+OSD and Tesseract consume

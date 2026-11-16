@@ -206,7 +206,7 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None, batch_adapter_factory = None, defer_measurements = false))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,
@@ -215,6 +215,7 @@ impl PyQisEngineBuilder {
         custom_event_policy: &str,
         native_gates: Option<Vec<String>>,
         batch_adapter_factory: Option<Py<PyAny>>,
+        defer_measurements: bool,
         py: Python<'_>,
     ) -> PyResult<Self> {
         let policy = runtime_custom_event_policy(custom_event_policy)?;
@@ -230,6 +231,7 @@ impl PyQisEngineBuilder {
         if let Some(names) = native_gates {
             runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
         }
+        runtime = runtime.with_deferred_measurements(defer_measurements);
         runtime.set_custom_event_policy(policy);
         crate::runtime_batch_adapter::configure(&mut runtime, batch_adapter_factory, py)?;
         self.inner = self.inner.clone().runtime(runtime);

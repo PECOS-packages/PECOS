@@ -745,6 +745,42 @@ fn library_load_error(context: &str, error: &libloading::Error) -> InterfaceErro
     InterfaceError::ExecutionError(format!("{context}: {detail}"))
 }
 
+// Primitive-only handshake: do not inspect any runtime-owned Rust value until
+// this succeeds. A matching stamp detects stale builds, not arbitrary ABI safety.
+fn validate_qis_ffi_abi(library: &Library, path: &Path) -> Result<(), InterfaceError> {
+    type FingerprintFn = unsafe extern "C" fn(u32) -> u64;
+    const SYMBOL: &[u8] = b"pecos_qis_ffi_abi_fingerprint_v1\0";
+    let remedy = "Rebuild pecos-qis-ffi and the host/Python extension from the same checkout, \
+                  Rust toolchain, target, profile and build flags. Correct or unset \
+                  PECOS_QIS_FFI_PATH if it selects an older library, then restart the process.";
+    // SAFETY: The versioned export has a fixed-width integer-only C ABI.
+    let fingerprint = unsafe { library.get::<FingerprintFn>(SYMBOL) }.map_err(|_| {
+        InterfaceError::LoadError(format!(
+            "QIS FFI library {} has no compatible build fingerprint (missing pecos_qis_ffi_abi_fingerprint_v1). {remedy}",
+            path.display()
+        ))
+    })?;
+    let mut actual = [0_u64; 4];
+    for (index, word) in (0_u32..4).zip(&mut actual) {
+        // SAFETY: Only the declared primitive handshake is called, with valid indices.
+        *word = unsafe { fingerprint(index) };
+    }
+    let expected = pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT;
+    if actual != expected {
+        let hex = |words: [u64; 4]| {
+            let [a, b, c, d] = words;
+            format!("{a:016x}{b:016x}{c:016x}{d:016x}")
+        };
+        return Err(InterfaceError::LoadError(format!(
+            "QIS FFI library {} has an incompatible build fingerprint: expected {}, found {}. {remedy}",
+            path.display(),
+            hex(expected),
+            hex(actual)
+        )));
+    }
+    Ok(())
+}
+
 fn link_error_message(stdout: &[u8], stderr: &[u8]) -> String {
     // Clang and its platform linker can report errors on different streams.
     format!(
@@ -972,94 +1008,52 @@ impl QisHeliosInterface {
         profile_order: &[&str; 2],
         lib_name: &str,
     ) -> Result<PathBuf, InterfaceError> {
-        let mut candidate_paths = vec![
-            exe_dir.join(lib_name),
-            exe_dir.join(format!("deps/{lib_name}")),
-        ];
+        // Cargo refreshes dependencies in `deps/` without necessarily updating
+        // an older top-level cdylib. Use the same deps-first, hash-aware lookup
+        // for every root so a stale copy cannot shadow this build's artifact.
+        let mut search_dirs = vec![exe_dir.to_path_buf()];
 
         // Editable/development installs may execute from outside the checkout.
         // Preserve the workspace target as a stable fallback in that case.
         if let Some(workspace_root) = manifest_dir.parent().and_then(std::path::Path::parent) {
             for profile in profile_order {
-                candidate_paths.push(workspace_root.join(format!("target/{profile}/{lib_name}")));
-                candidate_paths
-                    .push(workspace_root.join(format!("target/{profile}/deps/{lib_name}")));
+                search_dirs.push(workspace_root.join("target").join(profile));
             }
         }
-
-        if let Some(path) = candidate_paths.iter().find(|path| path.is_file()) {
-            return Ok(path.clone());
-        }
-
         if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
             let target_dir = PathBuf::from(target_dir);
             for profile in profile_order {
-                let profile_dir = target_dir.join(profile);
-                if let Some(path) = find_library_in_dir(&profile_dir, "pecos_qis_ffi") {
-                    return Ok(path);
-                }
-                candidate_paths.push(profile_dir.join(lib_name));
-                candidate_paths.push(profile_dir.join("deps").join(lib_name));
+                search_dirs.push(target_dir.join(profile));
             }
         }
 
         if let Some(parent) = exe_dir.parent() {
-            candidate_paths.push(parent.join(lib_name));
-            candidate_paths.push(parent.join(format!("deps/{lib_name}")));
+            search_dirs.push(parent.to_path_buf());
         }
 
         if let Ok(current_dir) = std::env::current_dir() {
             debug!("Current directory: {}", current_dir.display());
             for profile in profile_order {
-                candidate_paths.push(current_dir.join(format!("target/{profile}/{lib_name}")));
-                candidate_paths.push(current_dir.join(format!("target/{profile}/deps/{lib_name}")));
+                search_dirs.push(current_dir.join("target").join(profile));
             }
 
-            // Search up the directory tree for workspace root (when running from Python)
-            let mut search_dir = current_dir.as_path();
-            for _ in 0..5 {
-                // Search up to 5 levels
-                if let Some(parent) = search_dir.parent() {
-                    for profile in profile_order {
-                        candidate_paths.push(parent.join(format!("target/{profile}/{lib_name}")));
-                        candidate_paths
-                            .push(parent.join(format!("target/{profile}/deps/{lib_name}")));
-                    }
-                    search_dir = parent;
-                } else {
-                    break;
+            // Search up the directory tree for workspace root (when running from Python).
+            for parent in current_dir.ancestors().skip(1).take(5) {
+                for profile in profile_order {
+                    search_dirs.push(parent.join("target").join(profile));
                 }
             }
         }
 
-        debug!("Searching {} candidate paths...", candidate_paths.len());
-
-        // Check each path and report which ones exist
-        let mut found_files = Vec::new();
-        for path in &candidate_paths {
-            if path.exists() {
-                debug!("Found library: {}", path.display());
-                found_files.push(path.clone());
+        for dir in &search_dirs {
+            debug!("Searching QIS FFI library directory: {}", dir.display());
+            if let Some(path) = find_library_in_dir(dir, "pecos_qis_ffi") {
+                return Ok(path);
             }
         }
-
-        if found_files.is_empty() {
-            warn!("No matching files found!");
-            warn!("Searched paths:");
-            for (i, path) in candidate_paths.iter().enumerate() {
-                warn!("  {}: {}", i + 1, path.display());
-            }
-        }
-
-        candidate_paths
-            .iter()
-            .find(|p| p.exists())
-            .ok_or_else(|| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find {lib_name}. Searched in: {candidate_paths:?}"
-                ))
-            })
-            .cloned()
+        Err(InterfaceError::ExecutionError(format!(
+            "Failed to find {lib_name}. Searched directories (including deps and hash-suffixed libraries): {search_dirs:?}"
+        )))
     }
 
     /// Get or initialize the process-wide QIS FFI library singleton.
@@ -1083,6 +1077,9 @@ impl QisHeliosInterface {
                     true,
                 ) {
                     Ok((lib_global, lib)) => {
+                        if let Err(error) = validate_qis_ffi_abi(&lib, &lib_path) {
+                            return Err(error.to_string());
+                        }
                         debug!("QIS FFI library singleton initialized successfully");
                         Ok(SharedLibrary {
                             _global_handle: std::mem::ManuallyDrop::new(lib_global),
@@ -4306,6 +4303,103 @@ attributes #0 = { "EntryPoint" }
     }
 
     #[test]
+    fn qis_ffi_build_associated_dependencies_precede_stale_top_level_copies() {
+        let exact_name = platform_library_name("pecos_qis_ffi");
+        let (stem, extension) = exact_name.rsplit_once('.').unwrap();
+        for executable_root in [false, true] {
+            for hashed in [false, true] {
+                let temp_dir = tempfile::tempdir().unwrap();
+                let exe_dir = temp_dir.path().join("bin");
+                let workspace = temp_dir.path().join("workspace");
+                let manifest_dir = workspace.join("crates/pecos-qis");
+                let library_dir = if executable_root {
+                    exe_dir.clone()
+                } else {
+                    workspace.join("target/debug")
+                };
+                std::fs::create_dir_all(library_dir.join("deps")).unwrap();
+                let stale = library_dir.join(&exact_name);
+                File::create(&stale).unwrap();
+                let dependency = library_dir.join("deps").join(if hashed {
+                    format!("{stem}-abc123.{extension}")
+                } else {
+                    exact_name.clone()
+                });
+                File::create(&dependency).unwrap();
+                assert_eq!(
+                    QisHeliosInterface::find_pecos_qis_lib_from_roots(
+                        &exe_dir,
+                        &manifest_dir,
+                        &["debug", "release"],
+                        &exact_name,
+                    )
+                    .unwrap(),
+                    dependency,
+                    "dependency must precede stale top-level library (exe={executable_root}, hashed={hashed})"
+                );
+                // A top-level artifact remains usable when no dependency exists.
+                std::fs::remove_file(&dependency).unwrap();
+                assert_eq!(
+                    QisHeliosInterface::find_pecos_qis_lib_from_roots(
+                        &exe_dir,
+                        &manifest_dir,
+                        &["debug", "release"],
+                        &exact_name,
+                    )
+                    .unwrap(),
+                    stale,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn qis_ffi_executable_location_and_profile_precedence_are_preserved() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let exe_dir = temp_dir.path().join("bin");
+        let workspace = temp_dir.path().join("workspace");
+        let manifest_dir = workspace.join("crates/pecos-qis");
+        let exact_name = platform_library_name("pecos_qis_ffi");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let adjacent = exe_dir.join(&exact_name);
+        File::create(&adjacent).unwrap();
+        for profile in ["debug", "release"] {
+            let deps = workspace.join("target").join(profile).join("deps");
+            std::fs::create_dir_all(&deps).unwrap();
+            File::create(deps.join(&exact_name)).unwrap();
+        }
+        for profiles in [["debug", "release"], ["release", "debug"]] {
+            assert_eq!(
+                QisHeliosInterface::find_pecos_qis_lib_from_roots(
+                    &exe_dir,
+                    &manifest_dir,
+                    &profiles,
+                    &exact_name,
+                )
+                .unwrap(),
+                adjacent,
+            );
+        }
+        std::fs::remove_file(adjacent).unwrap();
+        for profiles in [["debug", "release"], ["release", "debug"]] {
+            assert_eq!(
+                QisHeliosInterface::find_pecos_qis_lib_from_roots(
+                    &exe_dir,
+                    &manifest_dir,
+                    &profiles,
+                    &exact_name,
+                )
+                .unwrap(),
+                workspace
+                    .join("target")
+                    .join(profiles[0])
+                    .join("deps")
+                    .join(&exact_name),
+            );
+        }
+    }
+
+    #[test]
     fn qis_ffi_build_associated_library_precedes_cargo_target() {
         const CHILD_ENV: &str = "PECOS_TEST_CARGO_TARGET_PRECEDENCE";
         if std::env::var_os(CHILD_ENV).is_none() {
@@ -4362,3 +4456,6 @@ attributes #0 = { "EntryPoint" }
 
 #[cfg(test)]
 mod selene_tests;
+
+#[cfg(test)]
+mod abi_tests;

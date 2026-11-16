@@ -312,6 +312,16 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         false
     }
 
+    /// Request a particular program result without globally flushing the scheduler.
+    /// Return `true` when supported; collect released work with ordinary lowering
+    /// of an empty input. `false` preserves the legacy global-drain fallback.
+    /// All outstanding producers of a reused result slot must be released.
+    /// # Errors
+    /// Fails for an invalid result or scheduler failure.
+    fn force_result(&mut self, _program_result: usize) -> Result<bool> {
+        Ok(false)
+    }
+
     /// Lower freshly collected program operations through the runtime.
     ///
     /// Implementations that return `true` from `supports_operation_lowering`

@@ -186,7 +186,7 @@ fn failed_window_retains_error_then_next_nonzero_shot_starts_fresh() {
     .unwrap();
     let error = decoder.decode(&[0, 1]).unwrap_err();
     assert_eq!(error.failed_window, Some(0));
-    assert!(error.completed_windows.is_empty());
+    assert_eq!(error.completed_windows, []);
     let next = decoder.decode(&[1, 0]).unwrap();
     assert_eq!(next.predicted.to_u64(), Some(1));
     assert!(next.windows[0].committee.is_some());

@@ -287,7 +287,9 @@ impl<'a> BpLsdBuilder<'a> {
         self
     }
 
-    /// Set an explicit LSD method. `Off` is invalid; `Osd0` requires order zero.
+    /// Set an explicit LSD method. `Osd0` requires order zero.
+    /// At order zero the method has no effect: LSD-0 runs.
+    /// `Off` is rejected because LSD always runs.
     pub fn lsd_method(mut self, method: OsdMethod) -> Self {
         self.lsd_method = Some(method);
         self
@@ -765,6 +767,15 @@ mod tests {
                     .contains(&format!("lsd_method {method:?}"))
             );
             assert!(error.to_string().contains(&format!("lsd_order {order}")));
+            let message = error.to_string();
+            if method == OsdMethod::Off {
+                assert!(message.contains("LSD cannot be disabled"));
+                assert!(
+                    message.contains("use Osd0 for LSD-0, or OsdCs/OsdE with a positive order")
+                );
+            } else {
+                assert!(message.contains("use OsdCs or OsdE for reprocessing, or lsd_order 0"));
+            }
         }
     }
 

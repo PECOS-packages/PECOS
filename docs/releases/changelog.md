@@ -67,9 +67,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   reprocessing. The raw Rust builder infers the method unless one is set.
   Both the builder and `BpLsdDecoder::new` reject `Off` at every order and
   reject `Osd0` with a positive order.
-- **Breaking:** BP+LSD settings on the Python side: `BpLsdBuilder` gains `ms_scaling_factor`
-  (`build` previously used 1.0); `BpLsdDecoder.from_dem` gains `bp_method`,
-  `bits_per_step` and `lsd_order`; `DemAwareDecoder.from_dem(...,
+- **Breaking:** BP+LSD settings on the Python side: `BpLsdBuilder` gains
+  `ms_scaling_factor` (`build` previously used 1.0); `BpLsdDecoder.from_dem`
+  gains `bp_method`, `bits_per_step` and `lsd_order`; `DemAwareDecoder.from_dem(...,
   decoder_type="bp_lsd")` gains those and `ms_scaling_factor`. On every Python
   BP+LSD path an explicit `ms_scaling_factor=None` selects product-sum, an
   explicit `bp_method` overrides that (`"product_sum"`/`"ps"` ignores the

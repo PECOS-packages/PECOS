@@ -1211,7 +1211,7 @@ fn uf_method(s: &str) -> Result<RustUfMethod, String> {
     }
 }
 
-/// Render the offending value only when validation fails.
+/// Build a `ValueError` quoting the offending value's Python `repr()`.
 fn invalid_python_value(value: &Bound<'_, PyAny>, parameter: &str, requirement: &str) -> PyErr {
     match value.repr() {
         Ok(representation) => pyo3::exceptions::PyValueError::new_err(format!(
@@ -1221,12 +1221,14 @@ fn invalid_python_value(value: &Bound<'_, PyAny>, parameter: &str, requirement: 
     }
 }
 
+/// Extract a non-negative integer, rejecting invalid values with `ValueError`.
 pub(crate) fn non_negative_integer(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<usize> {
     let invalid = || invalid_python_value(value, parameter, "a non-negative integer");
     let integer = value.extract::<i128>().map_err(|_| invalid())?;
     usize::try_from(integer).map_err(|_| invalid())
 }
 
+/// Extract a finite non-negative factor, rejecting invalid values with `ValueError`.
 fn non_negative_factor(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<f64> {
     let invalid = || invalid_python_value(value, parameter, "finite and non-negative");
     let factor = value.extract::<f64>().map_err(|_| invalid())?;
@@ -1236,8 +1238,6 @@ fn non_negative_factor(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<f6
         Err(invalid())
     }
 }
-
-const DEM_DECODER_TYPES: [&str; 5] = ["bp_osd", "bp_lsd", "union_find", "relay_bp", "min_sum_bp"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DemDecoderType {
@@ -1249,23 +1249,37 @@ enum DemDecoderType {
 }
 
 impl DemDecoderType {
-    fn parse(value: &str) -> PyResult<Self> {
-        match value {
-            "bp_osd" => Ok(Self::BpOsd),
-            "bp_lsd" => Ok(Self::BpLsd),
-            "union_find" => Ok(Self::UnionFind),
-            "relay_bp" => Ok(Self::RelayBp),
-            "min_sum_bp" => Ok(Self::MinSumBp),
-            _ => Err(unknown_dem_decoder_type(value)),
+    const ALL: [Self; 5] = [
+        Self::BpOsd,
+        Self::BpLsd,
+        Self::UnionFind,
+        Self::RelayBp,
+        Self::MinSumBp,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::BpOsd => "bp_osd",
+            Self::BpLsd => "bp_lsd",
+            Self::UnionFind => "union_find",
+            Self::RelayBp => "relay_bp",
+            Self::MinSumBp => "min_sum_bp",
         }
+    }
+
+    fn parse(value: &str) -> PyResult<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.name() == value)
+            .ok_or_else(|| unknown_dem_decoder_type(value))
     }
 }
 
-/// The `DemAwareDecoder.from_dem` error for a `decoder_type` outside `DEM_DECODER_TYPES`.
+/// Build the error for an unsupported `DemAwareDecoder.from_dem` decoder type.
 fn unknown_dem_decoder_type(decoder_type: &str) -> PyErr {
     pyo3::exceptions::PyValueError::new_err(format!(
         "Unknown decoder type: {decoder_type}. Supported: {}",
-        DEM_DECODER_TYPES.join(", ")
+        DemDecoderType::ALL.map(DemDecoderType::name).join(", ")
     ))
 }
 
@@ -1319,12 +1333,6 @@ impl DemLsdScaling {
             .map_or(Ok(Some(bp_lsd_defaults::MS_SCALING_FACTOR)), |value| {
                 optional_bp_lsd_factor(value.bind(py))
             })
-    }
-    fn supplied_repr(&self, py: Python<'_>) -> PyResult<Option<String>> {
-        self.supplied
-            .as_ref()
-            .map(|value| value.bind(py).repr().map(|value| value.to_string()))
-            .transpose()
     }
 }
 
@@ -3691,35 +3699,23 @@ impl PyDemAwareDecoder {
     ) -> PyResult<Self> {
         let decoder_type = DemDecoderType::parse(decoder_type)?;
         if decoder_type != DemDecoderType::BpLsd {
+            let method = bp_method.map(|value| value.into_pyobject(py)).transpose()?;
             for (name, value) in [
+                ("bp_method", method.as_ref().map(Bound::as_any)),
                 (
-                    "bp_method",
-                    bp_method
-                        .map(|value| {
-                            value
-                                .into_pyobject(py)?
-                                .repr()
-                                .map(|value| value.to_string())
-                        })
-                        .transpose()?,
+                    "ms_scaling_factor",
+                    ms_scaling_factor
+                        .supplied
+                        .as_ref()
+                        .map(|value| value.bind(py)),
                 ),
-                ("ms_scaling_factor", ms_scaling_factor.supplied_repr(py)?),
-                (
-                    "bits_per_step",
-                    bits_per_step
-                        .map(|value| value.repr().map(|value| value.to_string()))
-                        .transpose()?,
-                ),
-                (
-                    "lsd_order",
-                    lsd_order
-                        .map(|value| value.repr().map(|value| value.to_string()))
-                        .transpose()?,
-                ),
+                ("bits_per_step", bits_per_step),
+                ("lsd_order", lsd_order),
             ] {
                 if let Some(value) = value {
+                    let representation = value.repr()?;
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "{name}={value} is only supported for decoder_type='bp_lsd'"
+                        "{name}={representation} is only supported for decoder_type='bp_lsd'"
                     )));
                 }
             }
@@ -3767,8 +3763,7 @@ impl PyDemAwareDecoder {
                 None,
             )),
         };
-        let dcm = Self::parse_dem(dem)?;
-        Self::from_dem_check_matrix_with_config(dcm, config)
+        Self::from_dem_with_config(dem, config)
     }
 
     /// Decode a dense syndrome vector.

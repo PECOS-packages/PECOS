@@ -718,6 +718,8 @@ fn test_bplsd_constructor_validates_method_and_order() {
         (OsdMethod::Off, 3, false),
         (OsdMethod::Osd0, 3, false),
         (OsdMethod::Osd0, 0, true),
+        (OsdMethod::OsdCs, 0, true),
+        (OsdMethod::OsdE, 0, true),
         (OsdMethod::OsdCs, 3, true),
         (OsdMethod::OsdE, 3, true),
     ] {
@@ -753,6 +755,15 @@ fn test_bplsd_constructor_validates_method_and_order() {
                     .contains(&format!("lsd_method {method:?}"))
             );
             assert!(error.to_string().contains(&format!("lsd_order {order}")));
+            let message = error.to_string();
+            if method == OsdMethod::Off {
+                assert!(message.contains("LSD cannot be disabled"));
+                assert!(
+                    message.contains("use Osd0 for LSD-0, or OsdCs/OsdE with a positive order")
+                );
+            } else {
+                assert!(message.contains("use OsdCs or OsdE for reprocessing, or lsd_order 0"));
+            }
         }
     }
 }

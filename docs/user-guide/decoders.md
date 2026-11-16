@@ -206,7 +206,8 @@ factor 0.625, at most 30 iterations, parallel scheduling, one bit per growth ste
 and order 0. `lsd_order`: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
 The raw Rust builder permits explicit reprocessing methods. Both the builder
 and `BpLsdDecoder::new` reject `Off` at every order and reject `Osd0` with a
-positive order.
+positive order. At order 0 the method has no effect: LSD-0 runs. `Off` is
+rejected because LSD always runs.
 
 Cluster growth ranks BP log-probability ratios in ascending order, choosing more
 likely errors first. `bits_per_step=0` grows all candidate bits each step; their

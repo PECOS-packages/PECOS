@@ -287,7 +287,7 @@ impl<'a> BpLsdBuilder<'a> {
         self
     }
 
-    /// Set the LSD method
+    /// Set an explicit LSD method. `Off` is invalid; `Osd0` requires order zero.
     pub fn lsd_method(mut self, method: OsdMethod) -> Self {
         self.lsd_method = Some(method);
         self
@@ -339,12 +339,6 @@ impl<'a> BpLsdBuilder<'a> {
         let method = self
             .lsd_method
             .unwrap_or_else(|| crate::bp_lsd_defaults::lsd_method_for_order(self.lsd_order));
-        if self.lsd_order > 0 && matches!(method, OsdMethod::Off | OsdMethod::Osd0) {
-            return Err(crate::LdpcError::InvalidInput(format!(
-                "lsd_method {method:?} is incompatible with lsd_order {}",
-                self.lsd_order
-            )));
-        }
         crate::BpLsdDecoder::new(
             self.pcm,
             self.error_rate,
@@ -752,11 +746,15 @@ mod tests {
             .unwrap();
         assert_eq!(decoder.lsd_order(), 3);
         assert_eq!(decoder.lsd_method(), OsdMethod::OsdCs);
-        for method in [OsdMethod::Off, OsdMethod::Osd0] {
+        for (method, order) in [
+            (OsdMethod::Off, 0),
+            (OsdMethod::Off, 3),
+            (OsdMethod::Osd0, 3),
+        ] {
             let error = BpLsdBuilder::new(&pcm)
                 .error_rate(0.1)
                 .lsd_method(method)
-                .lsd_order(3)
+                .lsd_order(order)
                 .build()
                 .err()
                 .unwrap();
@@ -766,7 +764,7 @@ mod tests {
                     .to_string()
                     .contains(&format!("lsd_method {method:?}"))
             );
-            assert!(error.to_string().contains("lsd_order 3"));
+            assert!(error.to_string().contains(&format!("lsd_order {order}")));
         }
     }
 

@@ -62,10 +62,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   settings: minimum-sum BP with scaling 0.625, at most 30 iterations, parallel
   scheduling, one bit per growth step, and LSD-0 (`lsd_order=0`, no
   reprocessing). A positive `lsd_order` selects OSD-CS reprocessing of that
-  order. The Python `BpLsdBuilder` previously ran LSD-0 without reprocessing for
-  every order. The raw Rust `BpLsdBuilder` infers the method from the order unless
-  one is set, and rejects `Off` or `Osd0` with a positive order.
-- BP+LSD settings on the Python side: `BpLsdBuilder` gains `ms_scaling_factor`
+  order. The Python `BpLsdBuilder` previously grew clusters to the requested
+  positive order but solved them with OSD-0: order affected results without
+  reprocessing. The raw Rust builder infers the method unless one is set.
+  Both the builder and `BpLsdDecoder::new` reject `Off` at every order and
+  reject `Osd0` with a positive order.
+- **Breaking:** BP+LSD settings on the Python side: `BpLsdBuilder` gains `ms_scaling_factor`
   (`build` previously used 1.0); `BpLsdDecoder.from_dem` gains `bp_method`,
   `bits_per_step` and `lsd_order`; `DemAwareDecoder.from_dem(...,
   decoder_type="bp_lsd")` gains those and `ms_scaling_factor`. On every Python
@@ -76,6 +78,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `BpLsdBuilder` now raise in the setter rather than in `build`, and a
   non-numeric `ms_scaling_factor` in `from_dem` or the `bp_lsd` spec factory
   raises `ValueError` instead of `TypeError`.
+  Non-integer or negative `lsd_order` and `bits_per_step` now raise `ValueError`
+  on the builder, DEM constructors and spec factory. Previously, builder
+  negatives raised `OverflowError`, non-integers raised `TypeError` on both
+  builder and spec factory, and spec negatives already raised `ValueError`.
+  The DEM constructors did not accept these keywords before.
 - **Breaking:** Named-result measurement identity now comes from a compile-time
   shadow pass instead of read adjacency, so reordered reads and copied arrays
   retain exact measurement IDs. `NamedResultTrace` gains `provenance` and

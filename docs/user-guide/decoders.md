@@ -204,8 +204,9 @@ Localized version of OSD for better scaling with large codes.
 BP+LSD builders, specs and DEM constructors default to minimum-sum BP, scaling
 factor 0.625, at most 30 iterations, parallel scheduling, one bit per growth step,
 and order 0. `lsd_order`: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
-The raw Rust builder permits explicit reprocessing methods; `Off` or `Osd0` with
-positive order is rejected.
+The raw Rust builder permits explicit reprocessing methods. Both the builder
+and `BpLsdDecoder::new` reject `Off` at every order and reject `Osd0` with a
+positive order.
 
 Cluster growth ranks BP log-probability ratios in ascending order, choosing more
 likely errors first. `bits_per_step=0` grows all candidate bits each step; their

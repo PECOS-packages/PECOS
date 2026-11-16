@@ -357,7 +357,10 @@ impl BpLsdDecoder {
         crate::builders::BpLsdBuilder::new(pcm)
     }
 
-    /// Create a new BP+LSD decoder
+    /// Create a new BP+LSD decoder.
+    ///
+    /// `Off` is invalid at every order because LSD cannot be disabled here.
+    /// `Osd0` requires order zero; positive orders require a reprocessing method.
     ///
     /// # Errors
     ///
@@ -380,6 +383,12 @@ impl BpLsdDecoder {
         serial_schedule_order: Option<&[i32]>,
         random_schedule_seed: Option<i32>,
     ) -> Result<Self, LdpcError> {
+        if lsd_method == OsdMethod::Off || (lsd_method == OsdMethod::Osd0 && lsd_order > 0) {
+            return Err(LdpcError::InvalidInput(format!(
+                "lsd_method {lsd_method:?} is incompatible with lsd_order {lsd_order}"
+            )));
+        }
+
         // Validate input type - LSD requires syndrome input
         if input_vector_type != InputVectorType::Syndrome {
             return Err(LdpcError::InvalidInput(

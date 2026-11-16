@@ -451,7 +451,12 @@ fn bp_lsd(
     bp_method: Option<&str>,
 ) -> PyResult<PyDecoderSpec> {
     use pecos_decoders::bp_lsd_defaults as defaults;
-    let factor = crate::decoder_bindings::resolve_bp_lsd_scaling(bp_method, ms_scaling_factor)?;
+    let factor = crate::decoder_bindings::resolve_bp_lsd_scaling(
+        bp_method
+            .map(crate::decoder_bindings::parse_bp_method)
+            .transpose()?,
+        ms_scaling_factor,
+    );
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::BpLsd(
         BpLsdConfig {
             error_rate: optional_probability("error_rate", error_rate)?,

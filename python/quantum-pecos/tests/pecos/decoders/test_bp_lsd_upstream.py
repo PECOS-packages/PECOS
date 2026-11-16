@@ -82,7 +82,8 @@ def test_bp_lsd_product_sum_and_growth_options(entry_point) -> None:
 
 @pytest.mark.parametrize("entry_point", ["builder", "dem", "generic_dem", "spec"])
 @pytest.mark.parametrize(
-    ("argument", "value"), [("ms_scaling_factor", "0.5"), ("bits_per_step", "2"), ("lsd_order", "3")],
+    ("argument", "value"),
+    [("ms_scaling_factor", "0.5"), ("bits_per_step", "2"), ("lsd_order", "3")],
 )
 def test_bp_lsd_errors_quote_string_values(entry_point, argument, value) -> None:
     from pecos_rslib.decoders import BpLsdDecoder, DemAwareDecoder, bp_lsd
@@ -128,3 +129,73 @@ def test_bp_lsd_scaling_signature_default(entry_point) -> None:
 
     factories = {"dem": BpLsdDecoder.from_dem, "generic_dem": DemAwareDecoder.from_dem, "spec": bp_lsd}
     assert signature(factories[entry_point]).parameters["ms_scaling_factor"].default == 0.625
+
+
+@pytest.mark.parametrize("entry_point", ["builder", "dem", "generic_dem", "spec"])
+@pytest.mark.parametrize("value", ["unknown", 'bad "method"', "bad\nmethod"])
+def test_bp_lsd_invalid_method_uses_python_repr(entry_point, value) -> None:
+    from pecos_rslib.decoders import BpLsdDecoder, DemAwareDecoder, bp_lsd
+
+    dem = "error(0.1) D0"
+    if entry_point == "builder":
+        invoke = partial(BpLsdBuilder(SparseMatrix([[1]]), error_rate=0.1).bp_method, value)
+    elif entry_point == "dem":
+        invoke = partial(BpLsdDecoder.from_dem, dem, bp_method=value)
+    elif entry_point == "generic_dem":
+        invoke = partial(DemAwareDecoder.from_dem, dem, "bp_lsd", bp_method=value)
+    else:
+        invoke = partial(bp_lsd, bp_method=value)
+    with pytest.raises(ValueError, match="bp_method") as exc_info:
+        invoke()
+    message = str(exc_info.value)
+    assert repr(value) in message
+    for spelling in ["minimum_sum", "product_sum", "ms", "ps"]:
+        assert repr(spelling) in message
+
+
+def test_generic_dem_rejects_explicit_none_scaling_for_bp_osd() -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    with pytest.raises(ValueError, match=r"ms_scaling_factor=None.*only supported"):
+        DemAwareDecoder.from_dem("error(0.1) D0", "bp_osd", ms_scaling_factor=None)
+
+
+def test_generic_dem_other_none_options_remain_omitted() -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    decoder = DemAwareDecoder.from_dem(
+        "error(0.1) D0",
+        "bp_osd",
+        bp_method=None,
+        bits_per_step=None,
+        lsd_order=None,
+    )
+    assert decoder is not None
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [("ms_scaling_factor", "bad"), ("bits_per_step", -1), ("lsd_order", 1.5), ("bp_method", "bad")],
+)
+def test_generic_bp_lsd_validates_options_before_dem(argument, value) -> None:
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    with pytest.raises(ValueError, match=argument):
+        DemAwareDecoder.from_dem("not a DEM", "bp_lsd", **{argument: value})
+
+
+def test_valid_numeric_options_do_not_call_repr() -> None:
+    class IntegerWithoutRepr(int):
+        def __repr__(self):
+            msg = "repr must not be called on valid integers"
+            raise AssertionError(msg)
+
+    class FloatWithoutRepr(float):
+        def __repr__(self):
+            msg = "repr must not be called on valid factors"
+            raise AssertionError(msg)
+
+    builder = BpLsdBuilder(SparseMatrix([[1]]), error_rate=0.1)
+    builder.bits_per_step(IntegerWithoutRepr(1)).lsd_order(IntegerWithoutRepr(0))
+    builder.ms_scaling_factor(FloatWithoutRepr(0.5))
+    assert builder.build() is not None

@@ -27,7 +27,7 @@ CONVENIENCE = {
 @pytest.mark.parametrize("family", sorted(CONVENIENCE))
 @pytest.mark.parametrize("convenience", [False, True])
 def test_duplicate_dem_observables_preserve_original_mechanism_count(family, convenience):
-    """Red/green: merged decoding preserves observables and the original mechanism count."""
+    """Merged decoding preserves observables and reports the original mechanism count."""
     dem = "\n".join(
         [
             "error(0.1) D0 D1 L0",

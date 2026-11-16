@@ -149,7 +149,7 @@ impl BpSchedule {
 pub struct BpOsdConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
     /// A group of k identical symptoms receives the k-fold independent XOR of
-    /// this rate. `None` uses the original DEM probabilities before merging.
+    /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,
@@ -176,7 +176,7 @@ impl Default for BpOsdConfig {
 pub struct BpLsdConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
     /// A group of k identical symptoms receives the k-fold independent XOR of
-    /// this rate. `None` uses the original DEM probabilities before merging.
+    /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,
@@ -215,7 +215,7 @@ pub enum RelayStoppingCriterion {
 pub struct RelayBpConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
     /// A group of k identical symptoms receives the k-fold independent XOR of
-    /// this rate. `None` uses the original DEM probabilities before merging.
+    /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
     pub error_rate: Option<f64>,
     pub alpha: Option<f64>,
     pub alpha_iteration_scaling_factor: f64,
@@ -250,7 +250,7 @@ impl Default for RelayBpConfig {
 pub struct MinSumBpConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
     /// A group of k identical symptoms receives the k-fold independent XOR of
-    /// this rate. `None` uses the original DEM probabilities before merging.
+    /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub alpha: Option<f64>,

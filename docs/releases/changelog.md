@@ -63,10 +63,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and the native DEM builder accepts exact ID permutations while retaining
   bijection and physical-outcome checks. Fixes SZZ final readout binding (#498).
 
-- Relay-BP, min-sum, BP-OSD and BP-LSD decoders built from a DEM merge mechanisms
-  with identical detector and observable sets using independent-XOR probabilities.
-  This improves decoding of repeated symptoms, such as stim's flattened multi-round
-  DEMs; BP-OSD and BP-LSD results change on such DEMs, and their `max_iter=0`
+- **Breaking:** Relay-BP, min-sum, BP-OSD and BP-LSD decoders built from a DEM
+  merge mechanisms with identical detector and observable sets using
+  independent-XOR probabilities. This improves decoding of repeated symptoms,
+  such as stim's flattened multi-round DEMs; BP-OSD and BP-LSD results change on such DEMs, and their `max_iter=0`
   ("one iteration per column") counts merged columns. `error_rate` applies to each
   original line before merging. Union-find and other decoders are unchanged.
 - **Breaking:** BP-OSD, BP-LSD, soft-information BP, BeliefFind and MBP reject a

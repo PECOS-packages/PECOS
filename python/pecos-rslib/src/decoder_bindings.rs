@@ -1608,7 +1608,8 @@ impl PyBpOsdDecoder {
     ///
     /// * `error_rate` - Uniform probability per original DEM error line, before merging
     ///   identical detector and observable sets. A group of k lines receives the
-    ///   k-fold independent XOR of this rate (default: use DEM probabilities before merging).
+    ///   k-fold independent XOR of this rate
+    ///   (default: each line's DEM probability, merged the same way).
     /// * `max_iter` - BP iteration cap; larger values can improve convergence but increase runtime
     /// * `bp_schedule` - Update ordering; serial may converge sooner while parallel favors throughput
     /// * `ms_scaling_factor` - Select minimum-sum BP and set its correction factor;
@@ -1796,7 +1797,8 @@ impl PyBpLsdDecoder {
     ///
     /// * `error_rate` - Uniform probability per original DEM error line, before merging
     ///   identical detector and observable sets. A group of k lines receives the
-    ///   k-fold independent XOR of this rate (default: use DEM probabilities before merging).
+    ///   k-fold independent XOR of this rate
+    ///   (default: each line's DEM probability, merged the same way).
     /// * `max_iter` - BP iteration cap; larger values can improve convergence but increase runtime
     /// * `bp_schedule` - Update ordering; serial may converge sooner while parallel favors throughput
     /// * `ms_scaling_factor` - Select minimum-sum BP and set its correction factor;
@@ -2936,7 +2938,8 @@ impl PyRelayBpDecoder {
     ///
     /// * `error_rate` - Uniform probability per original DEM error line, before merging
     ///   identical detector and observable sets. A group of k lines receives the
-    ///   k-fold independent XOR of this rate (default: use DEM probabilities before merging).
+    ///   k-fold independent XOR of this rate
+    ///   (default: each line's DEM probability, merged the same way).
     /// * `alpha` - Min-sum scaling factor; tuning can improve accuracy with negligible runtime cost
     /// * `seed` - Reproducible relay sampling; changes exploration without increasing its runtime bound
     #[staticmethod]
@@ -3148,7 +3151,8 @@ impl PyMinSumBpDecoder {
     ///
     /// * `error_rate` - Uniform probability per original DEM error line, before merging
     ///   identical detector and observable sets. A group of k lines receives the
-    ///   k-fold independent XOR of this rate (default: use DEM probabilities before merging).
+    ///   k-fold independent XOR of this rate
+    ///   (default: each line's DEM probability, merged the same way).
     /// * `max_iter` - BP iteration cap; larger values can improve convergence but increase runtime
     /// * `alpha` - Min-sum scaling factor; tuning can improve accuracy with negligible runtime cost
     #[staticmethod]

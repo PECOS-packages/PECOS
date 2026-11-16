@@ -3904,7 +3904,8 @@ class decoders:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
                 error_rate: Uniform probability per original DEM error line, before merging
                     identical detector and observable sets. A group of k lines receives the
-                    k-fold independent XOR of this rate. None uses DEM probabilities before merging.
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
                 ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
@@ -3987,7 +3988,8 @@ class decoders:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
                 error_rate: Uniform probability per original DEM error line, before merging
                     identical detector and observable sets. A group of k lines receives the
-                    k-fold independent XOR of this rate. None uses DEM probabilities before merging.
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
                 ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
@@ -4293,7 +4295,8 @@ class decoders:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
                 error_rate: Uniform probability per original DEM error line, before merging
                     identical detector and observable sets. A group of k lines receives the
-                    k-fold independent XOR of this rate. None uses DEM probabilities before merging.
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
                 seed: Makes relay sampling reproducible without increasing its runtime bound.
             """
@@ -4391,7 +4394,8 @@ class decoders:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
                 error_rate: Uniform probability per original DEM error line, before merging
                     identical detector and observable sets. A group of k lines receives the
-                    k-fold independent XOR of this rate. None uses DEM probabilities before merging.
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
             """

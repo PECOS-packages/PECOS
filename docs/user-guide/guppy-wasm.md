@@ -48,10 +48,12 @@ from guppylang_internals.decorator import wasm, wasm_module
 
 WASM_PATH = Path(__file__).with_name("arithmetic.wat")
 
+
 @wasm_module(str(WASM_PATH))
 class Arithmetic:
     @wasm
     def add(self, a: int, b: int) -> int: ...
+
 
 @guppy
 def addition() -> int:
@@ -60,6 +62,7 @@ def addition() -> int:
     arithmetic.discard()
     result("sum", total)
     return total
+
 
 modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
 ```
@@ -75,13 +78,7 @@ and binary WASM bytes are accepted.
 ```python
 import pecos as pc
 
-data = (
-    pc.sim(pc.Guppy(addition, wasm_modules=modules))
-    .qubits(1)
-    .quantum(pc.state_vector())
-    .run(4)
-    .to_dict()
-)
+data = pc.sim(pc.Guppy(addition, wasm_modules=modules)).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
 assert data["sum"] == [5, 5, 5, 5]
 ```
 
@@ -100,7 +97,10 @@ runner = build(addition.compile(), modules)
 shots = [
     dict(shot)
     for shot in runner.run_shots(
-        simulator=Quest(), n_qubits=1, n_shots=4, n_processes=1,
+        simulator=Quest(),
+        n_qubits=1,
+        n_shots=4,
+        n_processes=1,
     )
 ]
 assert shots == [{"sum": 5}] * 4

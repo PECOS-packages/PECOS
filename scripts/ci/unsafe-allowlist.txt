@@ -16,6 +16,8 @@ crates/pecos-qis-ffi
 crates/pecos-qis/tests/fixtures/runtime-descriptor
 crates/pecos-simulators
 crates/pecos-tesseract
+# Shared WASM C ABI; generated LLVM callers own pointer and buffer-size validity.
+crates/pecos-wasm-runtime
 exp/pecos-experimental
 exp/pecos-frontier-wasm
 # zlup revival (experimental): zlup contains one reviewed `unsafe fn new_unchecked`

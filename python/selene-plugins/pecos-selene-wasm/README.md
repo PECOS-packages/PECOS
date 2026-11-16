@@ -6,6 +6,7 @@ or one signed 64-bit result, with explicit module bytes.
 
 ```python
 from pecos_selene_wasm import build
+
 runner = build(program.compile(), {module_identifier: wasm_bytes})
 ```
 

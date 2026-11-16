@@ -256,7 +256,10 @@ class NativeScheduledNoise:
         )
 
     def explain_signature(
-        self, *, detectors: Sequence[int] = (), observables: Sequence[int] = (),
+        self,
+        *,
+        detectors: Sequence[int] = (),
+        observables: Sequence[int] = (),
     ) -> FaultSignatureExplanation:
         """Explain the nonzero independent factors for one detector/logical support.
 

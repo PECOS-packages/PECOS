@@ -126,7 +126,9 @@ def verify_logical_fault(
 
 
 def remap_operation_faults(
-    reference: NoisyScheduledCircuit, candidate: NoisyScheduledCircuit, faults: Sequence[PauliFault],
+    reference: NoisyScheduledCircuit,
+    candidate: NoisyScheduledCircuit,
+    faults: Sequence[PauliFault],
 ) -> tuple[PauliFault, ...]:
     """Transfer operation-attached faults across source-equivalent schedules.
 

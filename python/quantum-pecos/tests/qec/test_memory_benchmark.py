@@ -12,8 +12,12 @@ INSTANCES = {row["instance_id"]: row for row in DATA["instances"]}
 
 @pytest.mark.parametrize(
     ("outcome", "budget", "status"),
-    [("timeout", 100, "native_sampling_timeout"), ("timeout", 5, "budget_exhausted"),
-     ("error", 100, "native_sampling_error"), ("success", 100, "complete")],
+    [
+        ("timeout", 100, "native_sampling_timeout"),
+        ("timeout", 5, "budget_exhausted"),
+        ("error", 100, "native_sampling_error"),
+        ("success", 100, "complete"),
+    ],
 )
 @pytest.mark.parametrize("threads", [1, 2])
 def test_native_worker_deadline_preserves_only_completed_shots(tmp_path, monkeypatch, outcome, budget, status, threads):
@@ -29,12 +33,17 @@ def test_native_worker_deadline_preserves_only_completed_shots(tmp_path, monkeyp
     binary = tmp_path / "decoder"
     binary.write_bytes(b"mock decoder: never executed")
     provenance = tmp_path / "provenance.json"
-    provenance.write_text(json.dumps({
-        "source_commit": module.SOURCE_COMMIT, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-    }))
+    provenance.write_text(
+        json.dumps(
+            {
+                "source_commit": module.SOURCE_COMMIT,
+                "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+            },
+        ),
+    )
     case = "planar_488_d3_r3_X_phase0_p0p001"
     output = tmp_path / "results"
-    clock, calls = [0.], []
+    clock, calls = [0.0], []
 
     def run(command, **kwargs):
         calls.append((command, kwargs["timeout"]))
@@ -50,22 +59,53 @@ def test_native_worker_deadline_preserves_only_completed_shots(tmp_path, monkeyp
             Path(request["receipt_path"]).write_text(json.dumps({"ideal_reference": [[], []]}))
         else:
             stats = Path(command[command.index("--stats-out") + 1])
-            stats.write_text(json.dumps({
-                "num_shots": 4, "num_errors": 0, "num_low_confidence": 0, "num_det_orders": 63,
-                "num_threads": int(command[command.index("--threads") + 1]),
-                "det_beam": 20, "beam_climbing": True, "no_revisit_dets": True, "pqlimit": 1000000,
-                "det_order_seed": 518278944, "sparsify_errors": False,
-            }))
+            stats.write_text(
+                json.dumps(
+                    {
+                        "num_shots": 4,
+                        "num_errors": 0,
+                        "num_low_confidence": 0,
+                        "num_det_orders": 63,
+                        "num_threads": int(command[command.index("--threads") + 1]),
+                        "det_beam": 20,
+                        "beam_climbing": True,
+                        "no_revisit_dets": True,
+                        "pqlimit": 1000000,
+                        "det_order_seed": 518278944,
+                        "sparsify_errors": False,
+                    },
+                ),
+            )
         clock[0] += 1
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(module.subprocess, "run", run)
     monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(sys, "argv", [
-        "benchmark", "--tesseract", str(binary), "--decoder-provenance", str(provenance), "--case", case,
-        "--sampling-backend", "pecos", "--shots", "4", "--timeout", "10",
-        "--wall-time-budget", str(budget), "--output", str(output), "--threads", str(threads),
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "benchmark",
+            "--tesseract",
+            str(binary),
+            "--decoder-provenance",
+            str(provenance),
+            "--case",
+            case,
+            "--sampling-backend",
+            "pecos",
+            "--shots",
+            "4",
+            "--timeout",
+            "10",
+            "--wall-time-budget",
+            str(budget),
+            "--output",
+            str(output),
+            "--threads",
+            str(threads),
+        ],
+    )
     if outcome == "error":
         with pytest.raises(subprocess.CalledProcessError):
             module.main()
@@ -106,7 +146,9 @@ def test_all_frozen_published_estimates_and_intervals(point):
     assert result.failures == point["block_errors"]
     assert result.block_error_rate == pytest.approx(point["mean_block_error_rate"], rel=2e-12, abs=1e-18)
     assert result.rate_per_round_per_logical == pytest.approx(
-        point["logical_error_rate_per_round_per_logical"], rel=2e-12, abs=1e-18,
+        point["logical_error_rate_per_round_per_logical"],
+        rel=2e-12,
+        abs=1e-18,
     )
     assert result.interval == pytest.approx(point["interval95"], rel=2e-12, abs=1e-18)
 
@@ -128,7 +170,8 @@ def test_zero_and_all_failures_have_one_sided_exact_bounds():
 
 
 @pytest.mark.parametrize(
-    ("shots", "failures", "unresolved"), [(0, 0, 0), (1, 2, 0), (1, -1, 0), (1, 0, 2), (True, 0, 0), (10, 1.5, 0)],
+    ("shots", "failures", "unresolved"),
+    [(0, 0, 0), (1, 2, 0), (1, -1, 0), (1, 0, 2), (True, 0, 0), (10, 1.5, 0)],
 )
 def test_invalid_counts(shots, failures, unresolved):
     with pytest.raises(ValueError, match="Counts"):
@@ -162,8 +205,11 @@ def test_benchmark_only_groups_complete_basis_phase_sets():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     rows = [
-        {"case": f"planar_488_d3_r3_{basis}_phase{phase}_p0p001", "variant": "pecos",
-         "counts": {"shots": 100 * (index + 1), "failures": index, "unresolved": 0}}
+        {
+            "case": f"planar_488_d3_r3_{basis}_phase{phase}_p0p001",
+            "variant": "pecos",
+            "counts": {"shots": 100 * (index + 1), "failures": index, "unresolved": 0},
+        }
         for index, (basis, phase) in enumerate((("X", 0), ("X", 1), ("Z", 0), ("Z", 1)))
     ]
     partial = module.group_estimates(rows[:-1])
@@ -173,10 +219,10 @@ def test_benchmark_only_groups_complete_basis_phase_sets():
     assert complete["incomplete_groups"] == []
     estimate = complete["complete_groups"][0]["estimate"]
     assert estimate["strata"] == 4
-    assert estimate["block_error_rate"] == pytest.approx((0 + 1/200 + 2/300 + 3/400) / 4)
+    assert estimate["block_error_rate"] == pytest.approx((0 + 1 / 200 + 2 / 300 + 3 / 400) / 4)
 
 
-@pytest.mark.parametrize("p", [0., .2])
+@pytest.mark.parametrize("p", [0.0, 0.2])
 def test_native_benchmark_samples_are_deviations_not_authored_signs(tmp_path, p):
     import importlib.util
 
@@ -186,9 +232,12 @@ def test_native_benchmark_samples_are_deviations_not_authored_signs(tmp_path, p)
     spec = importlib.util.spec_from_file_location("native_benchmark_example", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    plan = ScheduledCircuit(1, ((CircuitOp("R", (0,)),), (CircuitOp("X", (0,)),), (CircuitOp("M", (0,)),)),
-                            (MeasurementParity((0,), "detector"),),
-                            (MeasurementParity((0,), "observable", True),))
+    plan = ScheduledCircuit(
+        1,
+        ((CircuitOp("R", (0,)),), (CircuitOp("X", (0,)),), (CircuitOp("M", (0,)),)),
+        (MeasurementParity((0,), "detector"),),
+        (MeasurementParity((0,), "observable", True),),
+    )
     noisy = SI1000(p).apply(plan)
     destination = tmp_path / "samples.01"
     reference = module.write_native_samples(noisy, noisy.to_tick_circuit(), destination, shots=32, seed=101)

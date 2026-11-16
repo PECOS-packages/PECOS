@@ -5,7 +5,10 @@ permissions:
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '37 9 * * *'
   push:
+    tags: ['py-*', 'jl-*', 'rs-*']
     branches: [main, master, development, dev]
     paths:
       - 'crates/**'

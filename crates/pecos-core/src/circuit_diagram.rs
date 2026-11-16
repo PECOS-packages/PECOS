@@ -1608,8 +1608,8 @@ impl CircuitDiagram {
         // Gates and controls. A crossing is only an intersection of wires,
         // not a control dot.
         for (col_idx, &x) in column_x.iter().enumerate() {
-            for row in 0..num_rows {
-                let (ref cell, color) = self.columns[col_idx][row];
+            for (row, (cell, color)) in self.columns[col_idx].iter().take(num_rows).enumerate() {
+                let color = *color;
                 let y = -(row as f64) * ROW_STEP;
                 // When style.color is false, use CellColor::None for all gates.
                 let effective = if style.color { color } else { CellColor::None };
@@ -1726,11 +1726,11 @@ impl CircuitDiagram {
         // Input label nodes.
         writeln!(out, "  // Input labels").unwrap();
         writeln!(out, "  {{ rank=same;").unwrap();
-        for row in 0..num_rows {
+        for (row, label) in self.labels.iter().enumerate() {
             writeln!(
                 out,
                 "    r{row}_in [group=wire{row}, label=\"{label}\", shape=plaintext];",
-                label = escape_dot_text(&self.labels[row]),
+                label = escape_dot_text(label),
             )
             .unwrap();
         }
@@ -1875,8 +1875,14 @@ impl CircuitDiagram {
             // Connect top to bottom through all intermediate non-Wire rows.
             let mut prev_row = top;
             let mut pending_label = label.as_deref();
-            for row in (top + 1)..=bottom {
-                if row < num_rows && !matches!(self.columns[col][row].0, DiagramCell::Wire) {
+            for (row, (cell, _)) in self.columns[col]
+                .iter()
+                .take(num_rows)
+                .enumerate()
+                .take(bottom.saturating_add(1))
+                .skip(top + 1)
+            {
+                if !matches!(cell, DiagramCell::Wire) {
                     let label_attr = pending_label.take().map_or_else(String::new, |text| {
                         format!(", label=\"{}\"", escape_dot_text(text))
                     });
@@ -2642,9 +2648,12 @@ mod tests {
                 .unwrap()
                 .parse()
                 .unwrap();
-            assert_eq!(y, (((bottom - 1) / 2 + 1) * 40) as f64);
+            assert_eq!(
+                y,
+                f64::from(u32::try_from(((bottom - 1) / 2 + 1) * 40).unwrap())
+            );
             let tikz = d.render_tikz("");
-            let label_y = -(((bottom - 1) / 2) as f64 + 0.5) * 0.8;
+            let label_y = -(f64::from(u32::try_from((bottom - 1) / 2).unwrap()) + 0.5) * 0.8;
             assert!(
                 tikz.lines()
                     .any(|line| line.contains("{\\footnotesize RZZ}")

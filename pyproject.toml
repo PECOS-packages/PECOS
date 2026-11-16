@@ -131,6 +131,8 @@ line-length = 120
 # black auto-targets the newest version satisfying requires-python and can
 # emit 3.14-only syntax that 3.12/3.13 can't parse.
 target-version = ["py312"]
+# Keep published reference sources identical to their recorded provenance hashes.
+force-exclude = '/qec/color/_(shutty488|shutty_torus488|shutty_torus488_cz)/'
 
 [tool.pytest.ini_options]
 markers = [

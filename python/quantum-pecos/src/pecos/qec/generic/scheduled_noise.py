@@ -122,7 +122,14 @@ class NoisyScheduledCircuit:
                     kind, rate, placement, reason = "DEPOLARIZE1", p / 10, "after", "one_qubit"
                 channels.append(
                     NoiseChannel(
-                        f"moment[{m}]/operation[{j}]/{reason}", m, j, placement, kind, op.qubits, rate, reason,
+                        f"moment[{m}]/operation[{j}]/{reason}",
+                        m,
+                        j,
+                        placement,
+                        kind,
+                        op.qubits,
+                        rate,
+                        reason,
                     ),
                 )
             for reason, qubits, rate in (
@@ -185,13 +192,23 @@ class NoisyScheduledCircuit:
         return self._to_stim()
 
     def compare_schedule(
-        self, faults: Sequence[PauliFault], *, candidate_policy: SchedulePolicy = SchedulePolicy.ASAP_UNITARIES,
-        exclude_through: int = 2, max_pair_checks: int = 10_000_000,
+        self,
+        faults: Sequence[PauliFault],
+        *,
+        candidate_policy: SchedulePolicy = SchedulePolicy.ASAP_UNITARIES,
+        exclude_through: int = 2,
+        max_pair_checks: int = 10_000_000,
     ) -> ScheduledNoiseComparison:
         """Compare SI1000 fault behavior using an operation-attached reference witness."""
         from pecos.qec.generic.noise_comparison import compare_si1000_schedules  # noqa: PLC0415
-        return compare_si1000_schedules(self, faults, candidate_policy=candidate_policy,
-                                        exclude_through=exclude_through, max_pair_checks=max_pair_checks)
+
+        return compare_si1000_schedules(
+            self,
+            faults,
+            candidate_policy=candidate_policy,
+            exclude_through=exclude_through,
+            max_pair_checks=max_pair_checks,
+        )
 
     def compile_native(self) -> NativeScheduledNoise:
         """Compile explicit channels for native PECOS execution and DEM analysis."""

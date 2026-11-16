@@ -139,7 +139,7 @@ fn inspection_to_py(
             "angles_radians",
             gate.angles
                 .iter()
-                .map(|angle| angle.to_radians())
+                .map(pecos_core::Angle::to_radians)
                 .collect::<Vec<_>>(),
         )?;
         // Decimal strings preserve the fixed-point u64 values in browser JSON.
@@ -2090,7 +2090,8 @@ impl PyDagCircuit {
     }
 
     /// Display the circuit as SVG in notebooks.
-    fn _repr_svg_(&self) -> String {
+    #[pyo3(name = "_repr_svg_")]
+    fn repr_svg(&self) -> String {
         self.inner.to_svg()
     }
 
@@ -3564,7 +3565,8 @@ impl PyTickCircuit {
     }
 
     /// Display the circuit as SVG in notebooks.
-    fn _repr_svg_(&self) -> String {
+    #[pyo3(name = "_repr_svg_")]
+    fn repr_svg(&self) -> String {
         self.inner.to_svg()
     }
 

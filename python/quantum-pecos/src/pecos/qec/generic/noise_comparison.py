@@ -47,12 +47,16 @@ class ScheduledNoiseComparison:
         for key in ("reference", "candidate"):
             row = report[key]
             bounds = row["bounds"]
-            lines.append(f"{key}: {row['physical_moments']} moments, {row['noise_locations']} noise locations; "
-                         f"physical distance [{bounds['lower_bound']}, {bounds['upper_bound']}], "
-                         f"exact={bounds['exact']}")
+            lines.append(
+                f"{key}: {row['physical_moments']} moments, {row['noise_locations']} noise locations; "
+                f"physical distance [{bounds['lower_bound']}, {bounds['upper_bound']}], "
+                f"exact={bounds['exact']}",
+            )
         dem = report["independent_dem_comparison"]
-        lines.append(f"Independent DEMs match at this p within stated tolerance: {dem['matches_at_p']}; "
-                     f"{len(dem['changes'])} changed signatures/probabilities")
+        lines.append(
+            f"Independent DEMs match at this p within stated tolerance: {dem['matches_at_p']}; "
+            f"{len(dem['changes'])} changed signatures/probabilities",
+        )
         lines.append("Finite scheduled memories only; logical error rates and Guppy noise equivalence unverified")
         return "\n".join(lines)
 
@@ -76,8 +80,12 @@ class ScheduledNoiseComparison:
         for key, native in zip(("reference", "candidate"), self._native_pair, strict=True):
             explanation = native.explain_signature(detectors=change["detectors"], observables=change["observables"])
             row = explanation.to_dict()
-            if not isclose(row["dem_probability"], change[f"{key}_probability"],
-                           rel_tol=dem["rel_tol"], abs_tol=dem["abs_tol"]):
+            if not isclose(
+                row["dem_probability"],
+                change[f"{key}_probability"],
+                rel_tol=dem["rel_tol"],
+                abs_tol=dem["abs_tol"],
+            ):
                 msg = f"{key} explanation disagrees with the stored DEM factor weight"
                 raise ValueError(msg)
             result[key] = row
@@ -122,18 +130,26 @@ def _assess(noisy: NoisyScheduledCircuit, faults: Sequence[PauliFault], through:
         msg = "Native trajectory replay disagrees with the independently replayed witness"
         raise ValueError(msg)
     mechanisms = {(tuple(d), tuple(o)): p for p, d, o in native.detector_error_model().independent_mechanisms()}
-    return {"physical_moments": len(noisy.ideal.moments), "noise_locations": len(noisy.channels),
-            "channels_by_reason": dict(sorted(Counter(c.reason for c in noisy.channels).items())),
-            "bounds": {**asdict(bounds), "exact": bounds.exact},
-            "native_propagation_verified": True, "native_trajectory_replay_verified": True,
-            "independent_dem": [{"detectors": list(d), "observables": list(o), "probability": p}
-                                for (d, o), p in sorted(mechanisms.items())]}, mechanisms
+    return {
+        "physical_moments": len(noisy.ideal.moments),
+        "noise_locations": len(noisy.channels),
+        "channels_by_reason": dict(sorted(Counter(c.reason for c in noisy.channels).items())),
+        "bounds": {**asdict(bounds), "exact": bounds.exact},
+        "native_propagation_verified": True,
+        "native_trajectory_replay_verified": True,
+        "independent_dem": [
+            {"detectors": list(d), "observables": list(o), "probability": p} for (d, o), p in sorted(mechanisms.items())
+        ],
+    }, mechanisms
 
 
 def compare_si1000_schedules(
-    noisy: NoisyScheduledCircuit, faults: Sequence[PauliFault], *,
+    noisy: NoisyScheduledCircuit,
+    faults: Sequence[PauliFault],
+    *,
     candidate_policy: SchedulePolicy = SchedulePolicy.ASAP_UNITARIES,
-    exclude_through: int = 2, max_pair_checks: int = 10_000_000,
+    exclude_through: int = 2,
+    max_pair_checks: int = 10_000_000,
 ) -> ScheduledNoiseComparison:
     """Compare a reference schedule with an alternative at one explicit SI1000 p.
 
@@ -155,31 +171,58 @@ def compare_si1000_schedules(
     transferred = remap_operation_faults(noisy, candidate, faults)
     old, old_dem = _assess(noisy, faults, exclude_through, max_pair_checks)
     new, new_dem = _assess(candidate, transferred, exclude_through, max_pair_checks)
-    changes, max_delta = [], 0.
+    changes, max_delta = [], 0.0
     for key in sorted(old_dem.keys() | new_dem.keys()):
-        a, b = old_dem.get(key, 0.), new_dem.get(key, 0.)
+        a, b = old_dem.get(key, 0.0), new_dem.get(key, 0.0)
         max_delta = max(max_delta, abs(b - a))
-        if key not in old_dem or key not in new_dem or not isclose(a, b, rel_tol=1e-10, abs_tol=0.):
-            changes.append({"detectors": list(key[0]), "observables": list(key[1]),
-                            "reference_probability": a, "candidate_probability": b,
-                            "status": "added" if key not in old_dem else "removed" if key not in new_dem
-                            else "probability_changed"})
+        if key not in old_dem or key not in new_dem or not isclose(a, b, rel_tol=1e-10, abs_tol=0.0):
+            changes.append(
+                {
+                    "detectors": list(key[0]),
+                    "observables": list(key[1]),
+                    "reference_probability": a,
+                    "candidate_probability": b,
+                    "status": (
+                        "added" if key not in old_dem else "removed" if key not in new_dem else "probability_changed"
+                    ),
+                },
+            )
     old_channels, new_channels = ({c.id: c for c in x.channels} for x in (noisy, candidate))
-    report = {"p": noisy.noise.p, "reference_policy": noisy.ideal.schedule.value,
-              "candidate_policy": candidate_policy.value, "source_citations": list(noisy.ideal.citations),
-              "noise_reference": "Shutty et al., arXiv:2609.21376v3; https://doi.org/10.5281/zenodo.22820614",
-              "reference": old, "candidate": new,
-              "witness_mapping": [{"reference": asdict(a), "candidate": asdict(b),
-                                   "reference_channel": asdict(old_channels[a.channel_id]),
-                                   "candidate_channel": asdict(new_channels[b.channel_id])}
-                                  for a, b in zip(faults, transferred, strict=True)],
-              "independent_dem_comparison": {"matches_at_p": not changes, "rel_tol": 1e-10, "abs_tol": 0.,
-                                              "max_probability_delta": max_delta, "changes": changes,
-                                              "scope": "Aggregated independent Bernoulli mechanisms at this p"},
-              "scope": "Finite native-CZ schedules with explicitly redecorated SI1000 channels",
-              "exclusion": {"through": exclude_through, "max_pair_checks": max_pair_checks,
-                            "relaxation": "Full undecomposed supports, including mutually exclusive branches"},
-              "source_rescheduling_contract_verified": True, "physical_witnesses_verified": True,
-              "logical_error_rates_verified": False, "guppy_noise_equivalence_verified": False,
-              "all_rate_noise_equivalence_verified": False}
+    report = {
+        "p": noisy.noise.p,
+        "reference_policy": noisy.ideal.schedule.value,
+        "candidate_policy": candidate_policy.value,
+        "source_citations": list(noisy.ideal.citations),
+        "noise_reference": "Shutty et al., arXiv:2609.21376v3; https://doi.org/10.5281/zenodo.22820614",
+        "reference": old,
+        "candidate": new,
+        "witness_mapping": [
+            {
+                "reference": asdict(a),
+                "candidate": asdict(b),
+                "reference_channel": asdict(old_channels[a.channel_id]),
+                "candidate_channel": asdict(new_channels[b.channel_id]),
+            }
+            for a, b in zip(faults, transferred, strict=True)
+        ],
+        "independent_dem_comparison": {
+            "matches_at_p": not changes,
+            "rel_tol": 1e-10,
+            "abs_tol": 0.0,
+            "max_probability_delta": max_delta,
+            "changes": changes,
+            "scope": "Aggregated independent Bernoulli mechanisms at this p",
+        },
+        "scope": "Finite native-CZ schedules with explicitly redecorated SI1000 channels",
+        "exclusion": {
+            "through": exclude_through,
+            "max_pair_checks": max_pair_checks,
+            "relaxation": "Full undecomposed supports, including mutually exclusive branches",
+        },
+        "source_rescheduling_contract_verified": True,
+        "physical_witnesses_verified": True,
+        "logical_error_rates_verified": False,
+        "guppy_noise_equivalence_verified": False,
+        "all_rate_noise_equivalence_verified": False,
+    }
     return ScheduledNoiseComparison(noisy, candidate, json.dumps(report))

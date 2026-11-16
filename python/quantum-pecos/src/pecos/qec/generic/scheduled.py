@@ -480,7 +480,10 @@ class ScheduledCircuit:
         return plan_guppy_ordering(self, ordering)
 
     def guppy_source(
-        self, *, function_name: str = "memory", ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL,
+        self,
+        *,
+        function_name: str = "memory",
+        ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL,
         allocation_provenance: bool = False,
     ) -> str:
         """Render executable Guppy with stable scalar event names.
@@ -490,8 +493,12 @@ class ScheduledCircuit:
         """
         from pecos.guppy_gen.scheduled import render_scheduled_circuit  # noqa: PLC0415 - lazy backend
 
-        return render_scheduled_circuit(self, function_name=function_name, ordering=ordering,
-                                        allocation_provenance=allocation_provenance)
+        return render_scheduled_circuit(
+            self,
+            function_name=function_name,
+            ordering=ordering,
+            allocation_provenance=allocation_provenance,
+        )
 
     def to_tick_circuit(self) -> TickCircuit:
         """Lower to native PECOS ticks with stable measurement IDs and parities.
@@ -508,17 +515,28 @@ class ScheduledCircuit:
         return lower_tick_circuit(self)
 
     def guppy_program(
-        self, *, ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL, allocation_provenance: bool = False,
+        self,
+        *,
+        ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL,
+        allocation_provenance: bool = False,
     ) -> object:
         """Compile/load Guppy with an explicit, independently inspectable ordering contract."""
         from pecos.guppy_gen._module_loader import load_cached_guppy_source  # noqa: PLC0415 - lazy compiler
 
-        return load_cached_guppy_source("scheduled_qec", self.guppy_source(
-            ordering=ordering, allocation_provenance=allocation_provenance,
-        ))["memory"]
+        return load_cached_guppy_source(
+            "scheduled_qec",
+            self.guppy_source(
+                ordering=ordering,
+                allocation_provenance=allocation_provenance,
+            ),
+        )["memory"]
 
     def audit_guppy(
-        self, *, runtime: object | None = None, seed: int = 0, ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL,
+        self,
+        *,
+        runtime: object | None = None,
+        seed: int = 0,
+        ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL,
     ) -> GuppyImplementationAudit:
         """Inspect runtime lowering and measurement bindings without assuming timing equivalence."""
         from pecos.qec.generic.guppy_audit import audit_guppy_implementation  # noqa: PLC0415 - optional backend
@@ -526,8 +544,12 @@ class ScheduledCircuit:
         return audit_guppy_implementation(self, runtime=runtime, seed=seed, ordering=ordering)
 
     def audit_guppy_schedule(
-        self, *, runtime: object, seed: int = 0,
-        ordering: GuppyOrdering = GuppyOrdering.ALL_MOMENTS, batch_adapter_factory: object | None = None,
+        self,
+        *,
+        runtime: object,
+        seed: int = 0,
+        ordering: GuppyOrdering = GuppyOrdering.ALL_MOMENTS,
+        batch_adapter_factory: object | None = None,
         include_lifetimes: bool = False,
     ) -> GuppyScheduleAudit:
         """Inspect an explicit runtime plugin's batch clocks without assuming calibrated timing.
@@ -537,11 +559,21 @@ class ScheduledCircuit:
         """
         from pecos.qec.generic.guppy_schedule import audit_guppy_schedule  # noqa: PLC0415 - optional backend
 
-        return audit_guppy_schedule(self, runtime=runtime, seed=seed, ordering=ordering,
-                                    batch_adapter_factory=batch_adapter_factory, include_lifetimes=include_lifetimes)
+        return audit_guppy_schedule(
+            self,
+            runtime=runtime,
+            seed=seed,
+            ordering=ordering,
+            batch_adapter_factory=batch_adapter_factory,
+            include_lifetimes=include_lifetimes,
+        )
 
     def compare_guppy_schedules(
-        self, *, runtime: object, seed: int = 0, candidate_policy: SchedulePolicy = SchedulePolicy.ASAP_UNITARIES,
+        self,
+        *,
+        runtime: object,
+        seed: int = 0,
+        candidate_policy: SchedulePolicy = SchedulePolicy.ASAP_UNITARIES,
     ) -> GuppyScheduleComparison:
         """Compare this reference plan with a selected policy under one runtime profile."""
         from pecos.qec.generic.guppy_comparison import compare_guppy_schedules  # noqa: PLC0415

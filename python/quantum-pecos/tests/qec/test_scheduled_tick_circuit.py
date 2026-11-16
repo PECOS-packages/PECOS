@@ -93,7 +93,10 @@ def test_opaque_observable_labels_do_not_select_decoder_ids(label):
 @pytest.mark.parametrize(("parity", "match"), [(P((), "empty"), "nonempty")])
 def test_unsupported_parities_fail_at_export_boundary(detector, parity, match):
     plan = ScheduledCircuit(
-        1, ((O("R", (0,)),), (O("M", (0,)),)), (parity,) if detector else (), () if detector else (parity,),
+        1,
+        ((O("R", (0,)),), (O("M", (0,)),)),
+        (parity,) if detector else (),
+        () if detector else (parity,),
     )
     with pytest.raises(ValueError, match=match):
         plan.to_tick_circuit()

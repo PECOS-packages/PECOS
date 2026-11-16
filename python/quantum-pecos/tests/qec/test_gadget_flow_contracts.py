@@ -13,8 +13,7 @@ def _pauli(axis, role="data"):
 
 
 def _unitary(gates=(), **kwargs):
-    return Gadget("unitary", ("data",), ("data",), ("data",),
-                  tuple((Gate(g, ("data",)),) for g in gates), **kwargs)
+    return Gadget("unitary", ("data",), ("data",), ("data",), tuple((Gate(g, ("data",)),) for g in gates), **kwargs)
 
 
 def _cliffords():
@@ -46,8 +45,14 @@ def test_all_single_qubit_clifford_flows_match_dense_matrix_signs(gates, matrix)
         for outgoing, q in paulis.items():
             coefficient = np.trace(q @ conjugated).real / 2
             for sign in (False, True):
-                contracts.append(PauliFlow(f"{incoming}-{outgoing}-{sign}", _pauli(incoming), _pauli(outgoing),
-                                           NamedParity(constant=sign)))
+                contracts.append(
+                    PauliFlow(
+                        f"{incoming}-{outgoing}-{sign}",
+                        _pauli(incoming),
+                        _pauli(outgoing),
+                        NamedParity(constant=sign),
+                    ),
+                )
                 expected.append(bool(abs(coefficient - (-1 if sign else 1)) < 1e-8))
     report = _unitary(gates).audit_flows(contracts).to_dict()
     assert [row["valid"] for row in report["contracts"]] == expected
@@ -63,9 +68,18 @@ def test_boundary_h_frames_include_y_signs(incoming, outgoing):
 
 
 def _zz():
-    return Gadget("ZZ extraction", ("left", "right", "ancilla"), ("left", "right"), ("left", "right"),
-                  ((Gate("R", "ancilla"),), (Gate("CX", ("left", "ancilla")),),
-                   (Gate("CX", ("right", "ancilla")),), (Gate("M", "ancilla", "bit"),)))
+    return Gadget(
+        "ZZ extraction",
+        ("left", "right", "ancilla"),
+        ("left", "right"),
+        ("left", "right"),
+        (
+            (Gate("R", "ancilla"),),
+            (Gate("CX", ("left", "ancilla")),),
+            (Gate("CX", ("right", "ancilla")),),
+            (Gate("M", "ancilla", "bit"),),
+        ),
+    )
 
 
 def test_measurement_backaction_and_arbitrary_open_inputs_are_checked():
@@ -73,40 +87,63 @@ def test_measurement_backaction_and_arbitrary_open_inputs_are_checked():
     xx = NamedPauli("XX", (("left", "X"), ("right", "X")))
     x = _pauli("X", "left")
     bit = NamedParity("bit")
-    audit = _zz().audit_flows([
-        PauliFlow("measure", input=zz, parity=bit),
-        PauliFlow("project", output=zz, parity=bit),
-        PauliFlow("commuting", xx, xx),
-        PauliFlow("backaction", x, x),
-        PauliFlow("random bit", parity=bit),
-        PauliFlow("wrong sign", input=zz, parity=bit ^ 1),
-    ])
+    audit = _zz().audit_flows(
+        [
+            PauliFlow("measure", input=zz, parity=bit),
+            PauliFlow("project", output=zz, parity=bit),
+            PauliFlow("commuting", xx, xx),
+            PauliFlow("backaction", x, x),
+            PauliFlow("random bit", parity=bit),
+            PauliFlow("wrong sign", input=zz, parity=bit ^ 1),
+        ],
+    )
     assert [row["valid"] for row in audit.to_dict()["contracts"]] == [True, True, True, False, False, False]
     with pytest.raises(ValueError, match="backaction, random bit, wrong sign"):
         audit.require_valid()
-    report = _unitary().audit_flows([PauliFlow("unprepared", output=_pauli("Z")),
-                                    PauliFlow("unmeasured", input=_pauli("Z"))]).to_dict()
+    report = (
+        _unitary()
+        .audit_flows([PauliFlow("unprepared", output=_pauli("Z")), PauliFlow("unmeasured", input=_pauli("Z"))])
+        .to_dict()
+    )
     assert not any(row["valid"] for row in report["contracts"])
 
 
 def test_measure_reset_reuse_and_constant_checks():
-    gadget = Gadget("reuse", ("data",), ("data",), ("data",),
-                    ((Gate("M", "data", "old"),), (Gate("R", "data"),),
-                     (Gate("X", "data"),), (Gate("M", "data", "one"),), (Gate("R", "data"),)))
-    contracts = [PauliFlow("old Z measured", input=_pauli("Z"), parity=NamedParity("old")),
-                 PauliFlow("new Z prepared", output=_pauli("Z")),
-                 PauliFlow("one is one", parity=NamedParity("one") ^ 1),
-                 PauliFlow("no constant", parity=NamedParity("one")),
-                 PauliFlow("no old X transport", _pauli("X"), _pauli("X"))]
+    gadget = Gadget(
+        "reuse",
+        ("data",),
+        ("data",),
+        ("data",),
+        (
+            (Gate("M", "data", "old"),),
+            (Gate("R", "data"),),
+            (Gate("X", "data"),),
+            (Gate("M", "data", "one"),),
+            (Gate("R", "data"),),
+        ),
+    )
+    contracts = [
+        PauliFlow("old Z measured", input=_pauli("Z"), parity=NamedParity("old")),
+        PauliFlow("new Z prepared", output=_pauli("Z")),
+        PauliFlow("one is one", parity=NamedParity("one") ^ 1),
+        PauliFlow("no constant", parity=NamedParity("one")),
+        PauliFlow("no old X transport", _pauli("X"), _pauli("X")),
+    ]
     assert [r["valid"] for r in gadget.audit_flows(contracts).to_dict()["contracts"]] == [
-        True, True, True, False, False,
+        True,
+        True,
+        True,
+        False,
+        False,
     ]
 
 
 def test_relabel_changes_carriers_without_inserting_swap():
     gadget = Gadget("relabel", ("a", "b"), ("a", "b"), ("a", "b"), ((Gate("RELABEL", ("a", "b")),),))
-    contracts = [PauliFlow("transport", _pauli("Y", "a"), _pauli("Y", "b")),
-                 PauliFlow("wrong role", _pauli("Y", "a"), _pauli("Y", "a"))]
+    contracts = [
+        PauliFlow("transport", _pauli("Y", "a"), _pauli("Y", "b")),
+        PauliFlow("wrong role", _pauli("Y", "a"), _pauli("Y", "a")),
+    ]
     report = gadget.audit_flows(contracts).to_dict()
     assert [r["valid"] for r in report["contracts"]] == [True, False]
     assert report["output_carriers"] == {"a": 1, "b": 0}
@@ -120,10 +157,14 @@ def test_empty_ports_identity_and_impossible_sign_are_distinct():
     assert [r["valid"] for r in report.to_dict()["contracts"]] == [True, False]
 
 
-@pytest.mark.parametrize(("kind", "distance"), [
-    (kind, d) for kind in ColorExtraction
-    for d in ((3, 7, 11) if kind in (ColorExtraction.BRICKWORK_CX, ColorExtraction.BRICKWORK_CZ) else (3, 5, 7))
-])
+@pytest.mark.parametrize(
+    ("kind", "distance"),
+    [
+        (kind, d)
+        for kind in ColorExtraction
+        for d in ((3, 7, 11) if kind in (ColorExtraction.BRICKWORK_CX, ColorExtraction.BRICKWORK_CZ) else (3, 5, 7))
+    ],
+)
 def test_paper_extraction_phases_have_all_signed_contracts(kind, distance):
     family = "488" if kind in (ColorExtraction.BRICKWORK_CX, ColorExtraction.BRICKWORK_CZ) else "666"
     implementation = color_code_implementation(color_code_spec(family, distance), kind)
@@ -144,14 +185,21 @@ def test_paper_missing_physical_gate_is_detected():
     gadget = impl.gadget()
     index = next(i for i, moment in enumerate(gadget.moments) if any(g.name == "CZ" for g in moment))
     moment = gadget.moments[index]
-    damaged = replace(gadget, moments=(*gadget.moments[:index], moment[1:], *gadget.moments[index+1:]))
+    damaged = replace(gadget, moments=(*gadget.moments[:index], moment[1:], *gadget.moments[index + 1 :]))
     assert not damaged.audit_flows(impl.flow_contracts()).all_valid
 
 
-@pytest.mark.parametrize("contracts", [[], ["not a flow"], [PauliFlow("a"), PauliFlow("a")],
-                                      [PauliFlow("bad input", input=_pauli("X", "missing"))],
-                                      [PauliFlow("bad output", output=_pauli("Z", "missing"))],
-                                      [PauliFlow("bad outcome", parity=NamedParity("missing"))]])
+@pytest.mark.parametrize(
+    "contracts",
+    [
+        [],
+        ["not a flow"],
+        [PauliFlow("a"), PauliFlow("a")],
+        [PauliFlow("bad input", input=_pauli("X", "missing"))],
+        [PauliFlow("bad output", output=_pauli("Z", "missing"))],
+        [PauliFlow("bad outcome", parity=NamedParity("missing"))],
+    ],
+)
 def test_invalid_contracts_rejected_before_verification(contracts):
     with pytest.raises(ValueError, match=r"nonempty|unique|boundary ports|unknown local outcome"):
         _unitary().audit_flows(contracts)

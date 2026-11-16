@@ -369,11 +369,14 @@ header. The source circuit is unchanged.
 from pecos.visualization import circuit_diagram_panels
 
 interaction = circuit_diagram(circuit, start=1, stop=3, title="Entanglement")
-panels = circuit_diagram_panels(circuit, [
-    ("Preparation", 0, 1),
-    ("Entanglement", 1, 3),
-    ("Readout", 3, 4),
-])
+panels = circuit_diagram_panels(
+    circuit,
+    [
+        ("Preparation", 0, 1),
+        ("Entanglement", 1, 3),
+        ("Readout", 3, 4),
+    ],
+)
 # Display each panel in a notebook, or call panel.save(path).
 ```
 

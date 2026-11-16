@@ -162,7 +162,7 @@ fn connectors(gallery: &mut Gallery, style: &DiagramStyle) -> Result<()> {
 fn measurements_and_angles(gallery: &mut Gallery, style: &DiagramStyle) -> Result<()> {
     let mut circuit = TickCircuit::new();
     circuit.tick().pz(&[2, 8]);
-    let mut gate = Gate::simple(GateType::MeasureLeaked, vec![QubitId(8), QubitId(2)]);
+    let mut gate = Gate::simple(GateType::MeasureZLeaked, vec![QubitId(8), QubitId(2)]);
     gate.meas_ids = vec![MeasId::from_raw(42), MeasId::from_raw(7)].into();
     circuit.tick().try_add_gate(gate)?;
     gallery.add("leakage", "Leakage-aware readout", "MZ_L is one leakage-aware Z measurement with outcomes 0, 1, or 2=L. q2 retains m7 and q8 retains m42 despite the reversed operand list; these are IDs, not outcomes.", circuit.render_with(style))?;
@@ -177,8 +177,8 @@ fn measurements_and_angles(gallery: &mut Gallery, style: &DiagramStyle) -> Resul
     let mut circuit = TickCircuit::new();
     for angle in [
         Angle64::ZERO,
-        Angle64::from_radians(1e-7),
-        Angle64::from_radians(-1e-7),
+        Angle64::try_from_radians(1e-7)?,
+        Angle64::try_from_radians(-1e-7)?,
         Angle64::from_turn_ratio(1, 8),
     ] {
         circuit.tick().rz(angle, &[0]);

@@ -35,8 +35,11 @@ def main() -> None:
     parser.add_argument("--schedule", choices=[p.value for p in SchedulePolicy], default="reference")
     parser.add_argument("--output", type=Path, help="Write circuits, measurement manifests, and raw shots here")
     parser.add_argument("--dem", action="store_true", help="Also build a noisy DEM from each actual Guppy trace")
-    parser.add_argument("--audit-flows", action="store_true",
-                        help="Verify signed ideal contracts of every extraction phase")
+    parser.add_argument(
+        "--audit-flows",
+        action="store_true",
+        help="Verify signed ideal contracts of every extraction phase",
+    )
     args = parser.parse_args()
     if args.shots < 1:
         parser.error("--shots must be positive")
@@ -54,10 +57,12 @@ def main() -> None:
             print(f"{choice.value}: {count} signed ideal contracts passed over {len(audits)} phases")
             if args.output:
                 (args.output / f"{choice.value}.flows.json").write_text(
-                    json.dumps([a.to_dict() for a in audits], indent=2), encoding="utf-8",
+                    json.dumps([a.to_dict() for a in audits], indent=2),
+                    encoding="utf-8",
                 )
                 (args.output / f"{choice.value}.flows.txt").write_text(
-                    "\n\n".join(a.describe() for a in audits) + "\n", encoding="utf-8",
+                    "\n\n".join(a.describe() for a in audits) + "\n",
+                    encoding="utf-8",
                 )
         authored = color_memory_program(implementation, args.rounds, args.basis)
         plan = authored.compile(SchedulePolicy(args.schedule))
@@ -78,12 +83,19 @@ def main() -> None:
             manifest_bytes = (json.dumps(plan.measurement_manifest(), indent=2) + "\n").encode("utf-8")
             (args.output / f"{choice.value}.measurements.json").write_bytes(manifest_bytes)
             (args.output / f"{choice.value}.raw-results.json").write_text(
-                json.dumps({
-                    "measurement_manifest": f"{choice.value}.measurements.json",
-                    "measurement_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-                    "source": "ideal Guppy stabilizer simulation", "seed": 42, "shots": args.shots,
-                    "columns": columns,
-                }, indent=2) + "\n", encoding="utf-8",
+                json.dumps(
+                    {
+                        "measurement_manifest": f"{choice.value}.measurements.json",
+                        "measurement_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                        "source": "ideal Guppy stabilizer simulation",
+                        "seed": 42,
+                        "shots": args.shots,
+                        "columns": columns,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
             )
             (args.output / f"{choice.value}.code.txt").write_text(implementation.code.describe(), encoding="utf-8")
             (args.output / f"{choice.value}.gadgets.txt").write_text(authored.describe(), encoding="utf-8")

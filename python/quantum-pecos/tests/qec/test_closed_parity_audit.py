@@ -9,18 +9,23 @@ from pecos.qec.generic import CircuitOp, MeasurementParity, OperationOrigin, Sch
 
 def test_bell_records_distinguish_zero_one_and_random_affine_parities():
     op = CircuitOp
-    plan = ScheduledCircuit(2, ((op("R", (0,)), op("R", (1,))), (op("H", (0,)),),
-                                (op("CX", (0, 1)),), (op("M", (0,)), op("M", (1,)))),
-                            (MeasurementParity((0, 1), "same", coords=(1, 2)),
-                             MeasurementParity((0, 1), "wrong sign", True), MeasurementParity((0,), "random")),
-                            (MeasurementParity((0, 1), "same"),),
-                            measurement_names=("first/bit", "second/bit"))
+    plan = ScheduledCircuit(
+        2,
+        ((op("R", (0,)), op("R", (1,))), (op("H", (0,)),), (op("CX", (0, 1)),), (op("M", (0,)), op("M", (1,)))),
+        (
+            MeasurementParity((0, 1), "same", coords=(1, 2)),
+            MeasurementParity((0, 1), "wrong sign", True),
+            MeasurementParity((0,), "random"),
+        ),
+        (MeasurementParity((0, 1), "same"),),
+        measurement_names=("first/bit", "second/bit"),
+    )
     audit = plan.audit_parities()
     report = audit.to_dict()
     assert [p["ideal_value"] for p in report["parities"]] == [0, 1, None, 0]
     assert [p["deterministic"] for p in report["parities"]] == [True, True, False, True]
     assert [p["valid"] for p in report["parities"]] == [True, False, False, True]
-    assert report["parities"][0]["coords"] == [1., 2.]
+    assert report["parities"][0]["coords"] == [1.0, 2.0]
     assert report["parities"][1]["expression"] == "first/bit ^ second/bit ^ 1"
     assert "always one" in audit.describe()
     assert "nondeterministic" in audit.describe()
@@ -32,12 +37,22 @@ def test_bell_records_distinguish_zero_one_and_random_affine_parities():
 def test_names_origins_relabel_and_reused_lifetimes_survive_audit(policy):
     op = CircuitOp
     origin = OperationOrigin("prepare", "one", 1, 0)
-    plan = ScheduledCircuit(2, ((op("R", (0,)), op("R", (1,))), (op("X", (0,), origin),),
-                                (op("RELABEL", (0, 1)),), (op("M", (0,)), op("M", (1,))),
-                                (op("R", (0,)),), (op("M", (0,)),)),
-                            (MeasurementParity((0, 2), "reuse"),), (MeasurementParity((1,), "signed", True),),
-                            citations=("published fixture",), role_names=("block/data", "role[0]"),
-                            measurement_names=("first/bit", "event[0]", "last/bit"))
+    plan = ScheduledCircuit(
+        2,
+        (
+            (op("R", (0,)), op("R", (1,))),
+            (op("X", (0,), origin),),
+            (op("RELABEL", (0, 1)),),
+            (op("M", (0,)), op("M", (1,))),
+            (op("R", (0,)),),
+            (op("M", (0,)),),
+        ),
+        (MeasurementParity((0, 2), "reuse"),),
+        (MeasurementParity((1,), "signed", True),),
+        citations=("published fixture",),
+        role_names=("block/data", "role[0]"),
+        measurement_names=("first/bit", "event[0]", "last/bit"),
+    )
     plan = plan.rescheduled(policy)
     before = plan.to_stim()
     audit = plan.audit_parities()
@@ -62,8 +77,12 @@ def test_constant_only_checks_and_no_checks_are_distinct():
 
 def test_prepared_one_requires_explicit_constant_and_observable_only_is_supported():
     op = CircuitOp
-    plan = ScheduledCircuit(1, ((op("R", (0,)),), (op("X", (0,)),), (op("M", (0,)),)),
-                            (), (MeasurementParity((0,), "one"),))
+    plan = ScheduledCircuit(
+        1,
+        ((op("R", (0,)),), (op("X", (0,)),), (op("M", (0,)),)),
+        (),
+        (MeasurementParity((0,), "one"),),
+    )
     audit = plan.audit_parities()
     assert not audit.all_valid
     assert audit.to_dict()["parities"][0]["ideal_value"] == 1

@@ -30,8 +30,8 @@ record = qecdb.fetch("670588ce859a107b3f7601fd")
 code = record.to_stabilizer_code()
 
 print(record.reported_parameters)  # (5, 1, 3)
-print(code.code_parameters())      # [[5, 1]]
-print(code.logical_operators())    # a basis computed by PECOS
+print(code.code_parameters())  # [[5, 1]]
+print(code.logical_operators())  # a basis computed by PECOS
 ```
 
 The same conversion is reproducible without network access from a saved response:

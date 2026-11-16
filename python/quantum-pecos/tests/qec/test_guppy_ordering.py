@@ -6,12 +6,24 @@ from pecos.qec.generic import GuppyFence, GuppyOrdering, ScheduledCircuit
 
 
 def _plan():
-    return ScheduledCircuit(3, (
-        tuple(Op("R", (q,)) for q in range(3)),
-        (Op("X", (0,)),), (Op("H", (2,)),), (Op("CX", (1, 2)),),
-        (Op("M", (2,)),), (Op("R", (2,)),),
-        (Op("H", (2,)),), (Op("Z", (0,)),), (Op("RELABEL", (0, 1)),),
-        (Op("X", (0,)),), tuple(Op("M", (q,)) for q in range(3))), (), ())
+    return ScheduledCircuit(
+        3,
+        (
+            tuple(Op("R", (q,)) for q in range(3)),
+            (Op("X", (0,)),),
+            (Op("H", (2,)),),
+            (Op("CX", (1, 2)),),
+            (Op("M", (2,)),),
+            (Op("R", (2,)),),
+            (Op("H", (2,)),),
+            (Op("Z", (0,)),),
+            (Op("RELABEL", (0, 1)),),
+            (Op("X", (0,)),),
+            tuple(Op("M", (q,)) for q in range(3)),
+        ),
+        (),
+        (),
+    )
 
 
 @pytest.mark.parametrize("n", range(1, 21))
@@ -45,8 +57,18 @@ def test_strict_fixed_lifetime_rejects_memory_reuse():
 
 
 def test_fixed_lifetime_covers_relabel_and_empty_moment_cuts():
-    p = ScheduledCircuit(2, ((Op("R", (0,)), Op("R", (1,))), (Op("RELABEL", (0, 1)),), (),
-                             (Op("X", (0,)),), (Op("M", (0,)), Op("M", (1,)))), (), ())
+    p = ScheduledCircuit(
+        2,
+        (
+            (Op("R", (0,)), Op("R", (1,))),
+            (Op("RELABEL", (0, 1)),),
+            (),
+            (Op("X", (0,)),),
+            (Op("M", (0,)), Op("M", (1,))),
+        ),
+        (),
+        (),
+    )
     contract = p.guppy_ordering_plan(GuppyOrdering.FIXED_LIFETIME)
     assert [f.after_moment for f in contract.fences] == [0, 1, 2, 3]
     assert contract.to_dict()["uncovered_cuts"] == []
@@ -63,8 +85,12 @@ def test_default_remains_functional_and_bad_mode_fails_early():
 
 
 def test_all_moments_reports_measurement_dependencies_and_empty_live_fences():
-    plan = ScheduledCircuit(1, ((), (Op("R", (0,)),), (Op("M", (0,)),), (),
-                               (Op("R", (0,)),), (Op("M", (0,)),), ()), (), ())
+    plan = ScheduledCircuit(
+        1,
+        ((), (Op("R", (0,)),), (Op("M", (0,)),), (), (Op("R", (0,)),), (Op("M", (0,)),), ()),
+        (),
+        (),
+    )
     contract = plan.guppy_ordering_plan(GuppyOrdering.ALL_MOMENTS)
     report = contract.to_dict()
     assert report["uncovered_cuts"] == []
@@ -72,7 +98,12 @@ def test_all_moments_reports_measurement_dependencies_and_empty_live_fences():
     assert report["ordered_allocation_calls"] == 2
     assert report["dependency_helper_calls"] == 6  # two collect/scatter pairs, two outcomes
     assert [(f.qubits, f.measurements) for f in contract.fences] == [
-        ((), ()), ((0,), ()), ((), (0,)), ((), ()), ((0,), ()), ((), (1,)),
+        ((), ()),
+        ((0,), ()),
+        ((), (0,)),
+        ((), ()),
+        ((0,), ()),
+        ((), (1,)),
     ]
     assert not report["physical_schedule_verified"]
     assert not report["noise_equivalence_verified"]

@@ -13,12 +13,11 @@ from typing import TYPE_CHECKING, ClassVar
 
 import numpy as np
 import pecos.decoders
+import pytest
 from pecos import asarray, dtypes
 
 if TYPE_CHECKING:
     from types import ModuleType
-
-    import pytest
 
 
 def _repo_root() -> Path:
@@ -97,16 +96,21 @@ def test_dem_stats_and_compare_raw_dems_match_captured_fixed_seed_values() -> No
         "max_line_detectors": 3,
         "pure_logical_components": 0,
     }
-    assert asdict(diagnostics.compare_raw_dems(comparison_native_dem, comparison_stim_dem)) == {
-        "native_errors": 2,
-        "stim_errors": 2,
-        "only_native": 1,
-        "only_stim": 1,
-        "common": 1,
-        "max_abs_probability_diff": 0.04490873066068533,
-        "max_rel_probability_diff": 0.44347431107696206,
-        "l1_probability_diff": 0.21975757274400112,
-    }
+    # Float reductions can differ by a few ulps across platforms and set iteration orders.
+    assert asdict(diagnostics.compare_raw_dems(comparison_native_dem, comparison_stim_dem)) == pytest.approx(
+        {
+            "native_errors": 2,
+            "stim_errors": 2,
+            "only_native": 1,
+            "only_stim": 1,
+            "common": 1,
+            "max_abs_probability_diff": 0.04490873066068533,
+            "max_rel_probability_diff": 0.44347431107696206,
+            "l1_probability_diff": 0.21975757274400112,
+        },
+        rel=1e-14,
+        abs=1e-15,
+    )
 
 
 def test_dense_effect_arrays_matches_fixed_seed_numpy_oracle() -> None:

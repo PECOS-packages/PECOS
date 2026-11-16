@@ -43,9 +43,11 @@ class FaultSignatureExplanation:
         report = self.to_dict()
         support = [f"D{d['id']}:{d['label']}" for d in report["detectors"]]
         support.extend(f"L{o['id']}:{o['label']}" for o in report["observables"])
-        lines = ["Signature flips: " + ", ".join(support),
-                 f"Recombined independent DEM probability: {report['dem_probability']:.12g}",
-                 f"{report['matching_factor_count']} independent factors from {len(report['channels'])} channels"]
+        lines = [
+            "Signature flips: " + ", ".join(support),
+            f"Recombined independent DEM probability: {report['dem_probability']:.12g}",
+            f"{report['matching_factor_count']} independent factors from {len(report['channels'])} channels",
+        ]
         for prefix, parities in (("D", report["detectors"]), ("L", report["observables"])):
             for parity in parities:
                 terms = parity["measurement_names"] + (["1"] if parity["constant"] else [])
@@ -53,10 +55,12 @@ class FaultSignatureExplanation:
         for channel in report["channels"][:max_channels]:
             origin = channel["source_origin"]
             label = origin["id"] if origin else channel["source_operation"] or channel["channel_id"]
-            lines.append(f"  {label}: {channel['reason']} on {', '.join(channel['roles'])}; "
-                         f"{', '.join(channel['matching_branches'])}; local physical mass "
-                         f"{channel['matching_physical_branch_mass']:.12g}; "
-                         f"independent q={channel['independent_probability_per_branch']:.12g}")
+            lines.append(
+                f"  {label}: {channel['reason']} on {', '.join(channel['roles'])}; "
+                f"{', '.join(channel['matching_branches'])}; local physical mass "
+                f"{channel['matching_physical_branch_mass']:.12g}; "
+                f"independent q={channel['independent_probability_per_branch']:.12g}",
+            )
         if len(report["channels"]) > max_channels:
             lines.append(f"  {len(report['channels']) - max_channels} further channels retained in to_dict()")
         lines.append("Local physical masses are not additive across channels; DEM factors combine by XOR")
@@ -65,7 +69,10 @@ class FaultSignatureExplanation:
 
 
 def explain_fault_signature(
-    native: NativeScheduledNoise, *, detectors: Sequence[int] = (), observables: Sequence[int] = (),
+    native: NativeScheduledNoise,
+    *,
+    detectors: Sequence[int] = (),
+    observables: Sequence[int] = (),
 ) -> FaultSignatureExplanation:
     """Reconstruct one independent DEM term from source-local converted branches.
 
@@ -93,11 +100,16 @@ def explain_fault_signature(
 
     def definition(index: int, *, logical: bool) -> dict:
         parity = (plan.observables if logical else plan.detectors)[index]
-        return {"id": index, "label": parity.label, "records": list(parity.records),
-                "measurement_names": [names[i] for i in parity.records], "constant": parity.constant,
-                "coords": parity.coords}
+        return {
+            "id": index,
+            "label": parity.label,
+            "records": list(parity.records),
+            "measurement_names": [names[i] for i in parity.records],
+            "constant": parity.constant,
+            "coords": parity.coords,
+        }
 
-    channels, probability, factors = [], 0., 0
+    channels, probability, factors = [], 0.0, 0
     for channel in native.noisy.channels:
         q = _independent_branch_probability(channel)
         if not q:
@@ -107,33 +119,48 @@ def explain_fault_signature(
         if not matching:
             continue
         factors += len(matching)
-        channel_factor = 0.
+        channel_factor = 0.0
         for _word in matching:
             probability = probability * (1 - q) + q * (1 - probability)
             channel_factor = channel_factor * (1 - q) + q * (1 - channel_factor)
         identity = None if channel.operation is None else at[channel.moment, channel.operation]
         op = None if channel.operation is None else plan.moments[channel.moment][channel.operation]
         physical_probability = channel.probability / len(words)
-        channels.append({"channel_id": channel.id, "moment": channel.moment, "operation": channel.operation,
-                         "reason": channel.reason, "kind": channel.kind, "placement": channel.placement,
-                         "qubits": list(channel.qubits),
-                         "roles": [plan.role_names[q] if plan.role_names else f"q[{q}]" for q in channel.qubits],
-                         "gate": None if op is None else op.name, "source_operation": identity,
-                         "source_origin": None if op is None or op.origin is None else
-                         {**asdict(op.origin), "id": op.origin.id},
-                         "channel_probability": channel.probability, "matching_branches": matching,
-                         "physical_probability_per_branch": physical_probability,
-                         "matching_physical_branch_mass": len(matching) * physical_probability,
-                         "independent_probability_per_branch": q,
-                         "matching_independent_factor_probability": channel_factor})
-    report = {"p": native.noisy.noise.p, "schedule": plan.schedule.value,
-              "detectors": [definition(d, logical=False) for d in ds],
-              "observables": [definition(o, logical=True) for o in os],
-              "dem_probability": probability, "matching_factor_count": factors, "channels": channels,
-              "source_citations": list(plan.citations),
-              "scope": "Nonzero independent factors producing this detector/logical support; flips from ideal",
-              "physical_mass_scope": "Mutually exclusive matching branches of one channel, with other channels absent",
-              "dem_probability_scope": "XOR-composed factor weight, not the marginal probability of this signature",
-              "physical_masses_additive_across_channels": False, "decoded_logical_error_rate_verified": False,
-              "guppy_noise_equivalence_verified": False}
+        channels.append(
+            {
+                "channel_id": channel.id,
+                "moment": channel.moment,
+                "operation": channel.operation,
+                "reason": channel.reason,
+                "kind": channel.kind,
+                "placement": channel.placement,
+                "qubits": list(channel.qubits),
+                "roles": [plan.role_names[q] if plan.role_names else f"q[{q}]" for q in channel.qubits],
+                "gate": None if op is None else op.name,
+                "source_operation": identity,
+                "source_origin": None if op is None or op.origin is None else {**asdict(op.origin), "id": op.origin.id},
+                "channel_probability": channel.probability,
+                "matching_branches": matching,
+                "physical_probability_per_branch": physical_probability,
+                "matching_physical_branch_mass": len(matching) * physical_probability,
+                "independent_probability_per_branch": q,
+                "matching_independent_factor_probability": channel_factor,
+            },
+        )
+    report = {
+        "p": native.noisy.noise.p,
+        "schedule": plan.schedule.value,
+        "detectors": [definition(d, logical=False) for d in ds],
+        "observables": [definition(o, logical=True) for o in os],
+        "dem_probability": probability,
+        "matching_factor_count": factors,
+        "channels": channels,
+        "source_citations": list(plan.citations),
+        "scope": "Nonzero independent factors producing this detector/logical support; flips from ideal",
+        "physical_mass_scope": "Mutually exclusive matching branches of one channel, with other channels absent",
+        "dem_probability_scope": "XOR-composed factor weight, not the marginal probability of this signature",
+        "physical_masses_additive_across_channels": False,
+        "decoded_logical_error_rate_verified": False,
+        "guppy_noise_equivalence_verified": False,
+    }
     return FaultSignatureExplanation(json.dumps(report))

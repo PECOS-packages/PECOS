@@ -118,8 +118,16 @@ def pooled_wilson_memory_estimate(
     upper = 1.0 if failures == shots else min(1.0, center + half_width)
     exposure = rounds + initialization_rounds
     return PooledMemoryEstimate(
-        shots, failures, len(counts), rate, rate / exposure, (lower / exposure, upper / exposure),
-        erf(z_score / sqrt(2)), z_score, rounds, initialization_rounds,
+        shots,
+        failures,
+        len(counts),
+        rate,
+        rate / exposure,
+        (lower / exposure, upper / exposure),
+        erf(z_score / sqrt(2)),
+        z_score,
+        rounds,
+        initialization_rounds,
     )
 
 

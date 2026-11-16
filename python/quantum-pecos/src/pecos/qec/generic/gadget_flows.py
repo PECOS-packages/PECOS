@@ -49,6 +49,7 @@ class PauliFlow:
 
     def describe(self) -> str:
         """Render the relation in named boundary roles."""
+
         def operator(pauli: NamedPauli | None) -> str:
             return " * ".join(f"{axis}({role})" for role, axis in pauli.terms) if pauli and pauli.terms else "I"
 
@@ -80,8 +81,10 @@ class GadgetFlowAudit:
     def describe(self) -> str:
         """Display requested relations and separate sign from support failures."""
         report = self.to_dict()
-        lines = [f"{report['gadget']['name']}: {len(report['contracts'])} signed flow contracts; "
-                 f"all valid={self.all_valid}"]
+        lines = [
+            f"{report['gadget']['name']}: {len(report['contracts'])} signed flow contracts; "
+            f"all valid={self.all_valid}",
+        ]
         for row in report["contracts"]:
             status = "valid" if row["valid"] else "wrong sign" if row["support_valid"] else "unsupported relation"
             lines.append(f"  {status}: {row['description']}")
@@ -187,17 +190,34 @@ def audit_gadget_flows(gadget: Gadget, contracts: Sequence[PauliFlow]) -> Gadget
         product = stim.Flow()
         for index in indices:
             product *= generators[index]
-        valid = support_valid and (product.input_copy().sign * product.output_copy().sign
-                                   == incoming.sign * outgoing.sign)
-        rows.append({"name": contract.name, "contract": asdict(contract), "description": contract.describe(),
-                     "physical_flow": str(target), "valid": valid, "support_valid": support_valid,
-                     "generator_indices": indices, "generator_product": str(product) if support_valid else None})
-    report = {"gadget": asdict(gadget), "contracts": rows, "backend": "stim", "backend_version": stim.__version__,
-              "method": "Signed flow-generator membership with binary elimination and exact Pauli products",
-              "analysis_circuit": str(circuit), "generators": [str(g) for g in generators],
-              "input_carriers": {r: initial[r] for r in gadget.inputs},
-              "output_carriers": {r: carriers[r] for r in gadget.outputs},
-              "scope": "Supplied ideal Pauli contracts in the declared boundary H frames",
-              "complete_channel_specification_verified": False, "fault_tolerance_verified": False,
-              "noise_equivalence_verified": False}
+        valid = support_valid and (
+            product.input_copy().sign * product.output_copy().sign == incoming.sign * outgoing.sign
+        )
+        rows.append(
+            {
+                "name": contract.name,
+                "contract": asdict(contract),
+                "description": contract.describe(),
+                "physical_flow": str(target),
+                "valid": valid,
+                "support_valid": support_valid,
+                "generator_indices": indices,
+                "generator_product": str(product) if support_valid else None,
+            },
+        )
+    report = {
+        "gadget": asdict(gadget),
+        "contracts": rows,
+        "backend": "stim",
+        "backend_version": stim.__version__,
+        "method": "Signed flow-generator membership with binary elimination and exact Pauli products",
+        "analysis_circuit": str(circuit),
+        "generators": [str(g) for g in generators],
+        "input_carriers": {r: initial[r] for r in gadget.inputs},
+        "output_carriers": {r: carriers[r] for r in gadget.outputs},
+        "scope": "Supplied ideal Pauli contracts in the declared boundary H frames",
+        "complete_channel_specification_verified": False,
+        "fault_tolerance_verified": False,
+        "noise_equivalence_verified": False,
+    }
     return GadgetFlowAudit(json.dumps(report))

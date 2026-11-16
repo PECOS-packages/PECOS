@@ -11,16 +11,23 @@ They use the [named gadget interface](named-qec-gadgets.md) throughout.
 ```python
 from pecos import sim, stabilizer
 from pecos.qec.color import (
-    ColorExtraction, LogicalState, color_code_spec, color_code_implementation,
+    ColorExtraction,
+    LogicalState,
+    color_code_spec,
+    color_code_implementation,
     color_state_memory_program,
 )
 from pecos.qec.generic import SchedulePolicy
 
 implementation = color_code_implementation(
-    color_code_spec("666", 5), ColorExtraction.SWAP_SUPERDENSE,
+    color_code_spec("666", 5),
+    ColorExtraction.SWAP_SUPERDENSE,
 )
 experiment = color_state_memory_program(
-    implementation, rounds=4, state=LogicalState.MINUS_I, start_phase=2,
+    implementation,
+    rounds=4,
+    state=LogicalState.MINUS_I,
+    start_phase=2,
 )
 print(experiment.describe())
 plan = experiment.compile(SchedulePolicy.REFERENCE)
@@ -51,6 +58,7 @@ original physical circuits and reference fixtures remain unchanged.
 
 ## Compose multiple logical blocks
 
+<!--continuation-->
 ```python
 from pecos.qec.color import ColorCliffordExperiment
 
@@ -93,6 +101,7 @@ DEMs, the inverse-preparation recipe avoids those constants.
 
 ## Inspect and reuse the logical gadgets
 
+<!--continuation-->
 ```python
 from pecos.qec.color import logical_clifford_gadget
 

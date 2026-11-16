@@ -23,13 +23,28 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Native aggregat
 
 
 def test_compiled_site_reuse_excludes_gap_between_lifetimes():
-    plan = ScheduledCircuit(2, (
-        (Op("R", (0,)), Op("R", (1,))), (Op("X", (0,)),), (Op("M", (0,)),),
-        (Op("X", (1,)),), (Op("R", (0,)),), (Op("X", (0,)),), (Op("M", (0,)), Op("M", (1,))),
-    ), (), ())
-    audit = plan.audit_guppy_schedule(runtime=SimpleRuntimePlugin(
-        duration_ns_reset=5, duration_ns_rxy=10, duration_ns_measure=20,
-    ), include_lifetimes=True)
+    plan = ScheduledCircuit(
+        2,
+        (
+            (Op("R", (0,)), Op("R", (1,))),
+            (Op("X", (0,)),),
+            (Op("M", (0,)),),
+            (Op("X", (1,)),),
+            (Op("R", (0,)),),
+            (Op("X", (0,)),),
+            (Op("M", (0,)), Op("M", (1,))),
+        ),
+        (),
+        (),
+    )
+    audit = plan.audit_guppy_schedule(
+        runtime=SimpleRuntimePlugin(
+            duration_ns_reset=5,
+            duration_ns_rxy=10,
+            duration_ns_measure=20,
+        ),
+        include_lifetimes=True,
+    )
     report = audit.to_dict()
     windows = report["lifetime_windows"]
     assert windows == bind_runtime_lifetime_windows(plan, audit.evidence())
@@ -44,16 +59,34 @@ def test_compiled_site_reuse_excludes_gap_between_lifetimes():
 
 
 def test_tagged_compilation_keeps_random_bell_parity_and_fresh_preparation():
-    plan = ScheduledCircuit(2, (
-        (Op("R", (0,)), Op("R", (1,))), (Op("H", (0,)),), (Op("CX", (0, 1)),),
-        (Op("RELABEL", (0, 1)),), (Op("M", (0,)),), (Op("M", (1,)),),
-        (Op("R", (0,)),), (Op("M", (0,)),),
-    ), (MeasurementParity((0, 1), "bell"), MeasurementParity((2,), "fresh")), ())
+    plan = ScheduledCircuit(
+        2,
+        (
+            (Op("R", (0,)), Op("R", (1,))),
+            (Op("H", (0,)),),
+            (Op("CX", (0, 1)),),
+            (Op("RELABEL", (0, 1)),),
+            (Op("M", (0,)),),
+            (Op("M", (1,)),),
+            (Op("R", (0,)),),
+            (Op("M", (0,)),),
+        ),
+        (MeasurementParity((0, 1), "bell"), MeasurementParity((2,), "fresh")),
+        (),
+    )
     program = plan.guppy_program(ordering=GuppyOrdering.ALL_MOMENTS, allocation_provenance=True)
     columns = sim(program).qubits(2).quantum(stabilizer()).seed(15).run(64).to_dict()
     detectors, observables = plan.dem_spec()
-    build = build_dem_from_guppy(program, num_qubits=2, detectors=detectors, observables=observables,
-                                p1=0., p2=0., p_meas=0., p_prep=0.)
+    build = build_dem_from_guppy(
+        program,
+        num_qubits=2,
+        detectors=detectors,
+        observables=observables,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+    )
     assert build.named_result_binding == "compiler_direct_scalar_complete"
     assert build.evaluate_result_columns(columns) == [([0, 0], 0)] * 64
     assert set(columns["qec:m:0"]) == {0, 1}
@@ -79,9 +112,15 @@ def test_paper_memory_tagged_endpoints_cover_every_measurement(family):
         plan = lacroix_memory("d3_west", 2, "Z")
     else:
         plan = periodic_488_memory(periodic_488_implementation(periodic_488_code(4), gate_set="native-cz"), 2, "Z")
-    report = plan.audit_guppy_schedule(runtime=SimpleRuntimePlugin(
-        duration_ns_reset=5, duration_ns_rxy=10, duration_ns_rzz=25, duration_ns_measure=40,
-    ), include_lifetimes=True).to_dict()
+    report = plan.audit_guppy_schedule(
+        runtime=SimpleRuntimePlugin(
+            duration_ns_reset=5,
+            duration_ns_rxy=10,
+            duration_ns_rzz=25,
+            duration_ns_measure=40,
+        ),
+        include_lifetimes=True,
+    ).to_dict()
     windows = report["lifetime_windows"]
     assert len(windows["windows"]) == plan.num_measurements
     assert [w["measurement_index"] for w in windows["windows"]] == list(range(plan.num_measurements))
@@ -93,9 +132,14 @@ def test_paper_memory_tagged_endpoints_cover_every_measurement(family):
 
 @pytest.mark.parametrize("num_moments", [0, 1, 3])
 def test_empty_tagged_program_has_no_windows(num_moments):
-    report = ScheduledCircuit(1, ((),) * num_moments, (), ()).audit_guppy_schedule(
-        runtime=SimpleRuntimePlugin(), include_lifetimes=True,
-    ).to_dict()["lifetime_windows"]
+    report = (
+        ScheduledCircuit(1, ((),) * num_moments, (), ())
+        .audit_guppy_schedule(
+            runtime=SimpleRuntimePlugin(),
+            include_lifetimes=True,
+        )
+        .to_dict()["lifetime_windows"]
+    )
     assert report["windows"] == []
     assert report["timing_status"] == "no_batches"
     assert report["normalized_window_gap_ns"] == report["excluded_between_window_gap_ns"] == 0
@@ -109,5 +153,7 @@ def test_invalid_lifetime_options_fail_before_compilation(monkeypatch, ordering,
     monkeypatch.setattr(ScheduledCircuit, "guppy_program", unexpected_compile)
     with pytest.raises(ValueError, match="include_lifetimes"):
         ScheduledCircuit(1, (), (), ()).audit_guppy_schedule(
-            runtime=SimpleRuntimePlugin(), ordering=ordering, include_lifetimes=flag,
+            runtime=SimpleRuntimePlugin(),
+            ordering=ordering,
+            include_lifetimes=flag,
         )

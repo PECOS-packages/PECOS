@@ -32,7 +32,10 @@ from pecos.qec.generic import SchedulePolicy
 code = color_code_spec("666", distance=3)
 implementation = color_code_implementation(code, ColorExtraction.SWAP_SUPERDENSE)
 plan = color_memory(
-    implementation, rounds=3, basis="Z", start_phase=0,
+    implementation,
+    rounds=3,
+    basis="Z",
+    start_phase=0,
     schedule=SchedulePolicy.REFERENCE,
 )
 program = plan.guppy_program()
@@ -127,6 +130,7 @@ improvements are outside this implementation scope.
 dependencies permit, while keeping reset, measurement, and relabel moments as
 boundaries. For example:
 
+<!--continuation-->
 ```python
 packed = plan.rescheduled(SchedulePolicy.ASAP_UNITARIES)
 assert packed.detectors == plan.detectors
@@ -143,14 +147,20 @@ comments are not timing barriers. A Guppy noise experiment must therefore use
 the actual lowered trace. The typed event specifications integrate with the
 existing audited DEM builder:
 
+<!--continuation-->
 ```python
 from pecos.qec import build_dem_from_guppy
 
 detectors, observables = plan.dem_spec()
 build = build_dem_from_guppy(
-    program, num_qubits=plan.num_qubits,
-    detectors=detectors, observables=observables,
-    p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004,
+    program,
+    num_qubits=plan.num_qubits,
+    detectors=detectors,
+    observables=observables,
+    p1=0.001,
+    p2=0.002,
+    p_meas=0.003,
+    p_prep=0.004,
 )
 dem_text = build.dem.to_string()
 ```
@@ -267,12 +277,14 @@ also retains independent intrinsic record constraints from the author builder.
 
 ```python
 from pecos.qec.color import (
-    periodic_488_code, periodic_488_implementation, periodic_488_memory_program,
+    periodic_488_code,
+    periodic_488_implementation,
+    periodic_488_memory_program,
 )
 
 code = periodic_488_code(distance=4)
 implementation = periodic_488_implementation(code)
-print(code.describe())                    # Includes four paired X/Z logicals.
+print(code.describe())  # Includes four paired X/Z logicals.
 print(implementation.gadget().describe())  # Named input/output and logical flows.
 experiment = periodic_488_memory_program(implementation, rounds=3, basis="Z")
 plan = experiment.compile()
@@ -299,6 +311,7 @@ and Guppy-trace DEM paths retain all four observable IDs.
 
 Choose the released 25-moment native-CZ construction explicitly:
 
+<!--continuation-->
 ```python
 implementation = periodic_488_implementation(code, gate_set="native-cz")
 experiment = periodic_488_memory_program(implementation, rounds=3, basis="Z")

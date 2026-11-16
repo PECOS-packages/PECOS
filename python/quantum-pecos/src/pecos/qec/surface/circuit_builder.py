@@ -3239,9 +3239,7 @@ def tick_circuit_to_stim(
     from pecos.qec._stim_channels import channel_to_stim, has_inline_noise
     from pecos.qec.dem_spec import parity_constants
 
-    if has_inline_noise(tc) and any(
-        rate != 0 for rate in (p1, p2, p_meas, p_prep, *(p1_gate_rates or {}).values())
-    ):
+    if has_inline_noise(tc) and any(rate != 0 for rate in (p1, p2, p_meas, p_prep, *(p1_gate_rates or {}).values())):
         msg = "Inline channels cannot be combined with external gate/readout noise during Stim export"
         raise ValueError(msg)
 
@@ -3427,10 +3425,7 @@ def tick_circuit_to_stim(
 
     definitions = tc.circuit_definitions()
     num_measurements = definitions["num_measurements"]
-    constants = {
-        key: parity_constants(tc.get_meta(key), key[:-1])
-        for key in ("detectors", "observables")
-    }
+    constants = {key: parity_constants(tc.get_meta(key), key[:-1]) for key in ("detectors", "observables")}
     if any(value for group in constants.values() for value in group.values()):
         lines.append("MPAD 1")
         num_measurements += 1

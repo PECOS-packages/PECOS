@@ -303,12 +303,13 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)] // The fixtures include exact channel-domain endpoints.
     fn depolarization_exact_projection_and_endpoints() {
         for p in [0.0, 1e-25, 0.01, 0.9375] {
             let dem = build(&memory(channel::Depolarizing2(p, 0, 1))).unwrap();
             let mechanisms = dem.to_mechanisms().0;
             if p == 0.0 {
-                assert!(mechanisms.is_empty());
+                assert_eq!(mechanisms.len(), 0);
                 continue;
             }
             let expected = if p == 0.9375 {
@@ -382,6 +383,6 @@ mod tests {
         circuit.detector(&m).unwrap();
         circuit.set_meta(INLINE_NOISE_ATTRIBUTE, Attribute::String("inline".into()));
         assert!(tick_uses_inline_noise(&circuit));
-        assert!(build(&circuit).unwrap().to_mechanisms().0.is_empty());
+        assert_eq!(build(&circuit).unwrap().to_mechanisms().0.len(), 0);
     }
 }

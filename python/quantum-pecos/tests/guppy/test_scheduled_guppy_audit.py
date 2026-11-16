@@ -17,9 +17,13 @@ from pecos.qec.color import (
 from pecos.qec.generic import CircuitOp, MeasurementParity, ScheduledCircuit
 
 
-@pytest.mark.parametrize(("family", "choice"), [
-    ("488", ColorExtraction.BRICKWORK_CZ), ("666", ColorExtraction.SWAP_SUPERDENSE),
-])
+@pytest.mark.parametrize(
+    ("family", "choice"),
+    [
+        ("488", ColorExtraction.BRICKWORK_CZ),
+        ("666", ColorExtraction.SWAP_SUPERDENSE),
+    ],
+)
 def test_audit_retains_measured_contract_and_distinguishes_runtime_units(family, choice):
     plan = color_memory(color_code_implementation(color_code_spec(family, 3), choice), 1)
     audit = plan.audit_guppy(seed=17)
@@ -43,11 +47,15 @@ def test_audit_retains_measured_contract_and_distinguishes_runtime_units(family,
 
 
 def test_affine_constants_and_coordinates_are_retained_in_audit():
-    plan = ScheduledCircuit(1, ((CircuitOp("R", (0,)),), (CircuitOp("X", (0,)),), (CircuitOp("M", (0,)),)),
-                            (MeasurementParity((0,), "sign", True, (1., 2., 3., 4.)),), ())
+    plan = ScheduledCircuit(
+        1,
+        ((CircuitOp("R", (0,)),), (CircuitOp("X", (0,)),), (CircuitOp("M", (0,)),)),
+        (MeasurementParity((0,), "sign", True, (1.0, 2.0, 3.0, 4.0)),),
+        (),
+    )
     audit = plan.audit_guppy()
     assert audit.build.evaluate_results({"qec:m:0": True}) == ([0], 0)
-    assert json.loads(audit.build.detectors_json)[0]["coords"] == [1., 2., 3., 4.]
+    assert json.loads(audit.build.detectors_json)[0]["coords"] == [1.0, 2.0, 3.0, 4.0]
     assert not audit.to_dict()["physical_schedule_verified"]
 
 

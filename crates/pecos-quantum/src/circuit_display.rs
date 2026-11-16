@@ -1200,8 +1200,8 @@ mod tests {
     #[test]
     fn u2q_preserves_operand_order_and_resets_indices_for_each_batch_instance() {
         let angles = [
-            [Angle64::from_radians(0.1); 3],
-            [Angle64::from_radians(0.2); 3],
+            [Angle64::try_from_radians(0.1).unwrap(); 3],
+            [Angle64::try_from_radians(0.2).unwrap(); 3],
         ];
         let gate = |pairs: &[(usize, usize)]| Gate::u2q(angles, angles[0], angles, pairs);
         let render = |gate| {
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[test]
     fn tiny_nonzero_angles_do_not_round_to_zero_or_a_full_turn() {
-        for angle in [Angle64::from_radians(1e-7), Angle64::new(1)] {
+        for angle in [Angle64::try_from_radians(1e-7).unwrap(), Angle64::new(1)] {
             for unit in [AngleUnit::Radians, AngleUnit::Turns] {
                 let positive = format_angle(angle, unit);
                 let negative = format_angle(-angle, unit);
@@ -1250,11 +1250,11 @@ mod tests {
             }
         }
         assert_eq!(
-            format_angle_radians(Angle64::from_radians(0.123_456)),
+            format_angle_radians(Angle64::try_from_radians(0.123_456).unwrap()),
             "0.1235"
         );
         assert_eq!(
-            format_angle_turns(Angle64::from_turns(0.123_456)),
+            format_angle_turns(Angle64::try_from_turns(0.123_456).unwrap()),
             "0.123456"
         );
     }

@@ -44,10 +44,14 @@ def color_memory_program(
     # centroids; constraint detectors use distinct measured physical supports.
     # CNOT retains the original face/index/color annotation convention.
     native_488 = implementation.extraction == ColorExtraction.BRICKWORK_CZ
-    face_centers = tuple(
-        tuple(sum(code.data_coordinates[q][axis] for q in face) / len(face) for axis in (0, 1))
-        for face in code.faces
-    ) if native_488 else ()
+    face_centers = (
+        tuple(
+            tuple(sum(code.data_coordinates[q][axis] for q in face) / len(face) for axis in (0, 1))
+            for face in code.faces
+        )
+        if native_488
+        else ()
+    )
     carrier_coords = ()
     if native_488:
         layout = geometry.generate_base_layout((code.distance + 1) // 4)
@@ -112,10 +116,10 @@ def color_memory_program(
                     measured = [op.qubits[0] for moment in cycle.moments for op in moment if op.name == "M"]
                     mask = cycle.flow.constraints[int(index)]
                     support = {q for bit, q in enumerate(measured) if mask & (1 << bit)}
-                    coords = (*(
-                        sum(carrier_coords[q][axis] for q in sorted(support)) / len(support)
-                        for axis in (0, 1)
-                    ), rd)
+                    coords = (
+                        *(sum(carrier_coords[q][axis] for q in sorted(support)) / len(support) for axis in (0, 1)),
+                        rd,
+                    )
                 elif code.family == "488":
                     coords = (int(index), 1, rd)
                 program.detector(f"round:{rd}:constraint:{index}", current.flow(flow.name), coords=coords)

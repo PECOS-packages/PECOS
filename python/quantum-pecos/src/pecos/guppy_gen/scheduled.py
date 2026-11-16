@@ -15,7 +15,10 @@ if TYPE_CHECKING:
 
 
 def render_scheduled_circuit(
-    circuit: ScheduledCircuit, *, function_name: str = "memory", ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL,
+    circuit: ScheduledCircuit,
+    *,
+    function_name: str = "memory",
+    ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL,
     allocation_provenance: bool = False,
 ) -> str:
     """Emit scalar measurement events and preserve carrier relabel semantics.
@@ -36,13 +39,23 @@ def render_scheduled_circuit(
     allocator = "pecos_qis_ordered_alloc_tagged_hugr" if allocation_provenance else "pecos_qis_ordered_alloc_hugr"
     reserved = {"guppy", "result", "qubit", "h", "s", "sdg", "v", "x", "z", "cx", "cz", "measure"}
     if fences:
-        reserved.update({"owned", "tuple", "pecos_qis_runtime_barrier_qubit_hugr",
-                         "pecos_qis_runtime_barrier_qubits2_hugr"})
+        reserved.update(
+            {"owned", "tuple", "pecos_qis_runtime_barrier_qubit_hugr", "pecos_qis_runtime_barrier_qubits2_hugr"},
+        )
     if lifetime_ordered:
-        reserved.update({"owned", "int", "bool", "tuple", "pecos_qis_ordered_alloc_hugr",
-                         "pecos_qis_ordered_alloc_tagged_hugr",
-                         "pecos_qis_ordering_join_hugr", "pecos_qis_ordering_observe_hugr",
-                         "pecos_qis_ordering_barrier_hugr"})
+        reserved.update(
+            {
+                "owned",
+                "int",
+                "bool",
+                "tuple",
+                "pecos_qis_ordered_alloc_hugr",
+                "pecos_qis_ordered_alloc_tagged_hugr",
+                "pecos_qis_ordering_join_hugr",
+                "pecos_qis_ordering_observe_hugr",
+                "pecos_qis_ordering_barrier_hugr",
+            },
+        )
     if function_name in reserved:
         msg = "function_name must not shadow an imported Guppy primitive"
         raise ValueError(msg)
@@ -57,32 +70,36 @@ def render_scheduled_circuit(
         "from guppylang.std.quantum import qubit, h, s, sdg, v, x, z, cx, cz, measure",
     ]
     if lifetime_ordered:
-        lines.extend([
-            "from guppylang.std.builtins import owned",
-            "",
-            "@guppy.declare",
-            f"def {allocator}(token: int) -> qubit: ...",
-            "",
-            "@guppy.declare",
-            "def pecos_qis_ordering_join_hugr(q: qubit @ owned, token: int) -> tuple[qubit, int]: ...",
-            "",
-            "@guppy.declare",
-            "def pecos_qis_ordering_observe_hugr(token: int, outcome: bool) -> int: ...",
-            "",
-            "@guppy.declare",
-            "def pecos_qis_ordering_barrier_hugr(token: int) -> int: ...",
-        ])
+        lines.extend(
+            [
+                "from guppylang.std.builtins import owned",
+                "",
+                "@guppy.declare",
+                f"def {allocator}(token: int) -> qubit: ...",
+                "",
+                "@guppy.declare",
+                "def pecos_qis_ordering_join_hugr(q: qubit @ owned, token: int) -> tuple[qubit, int]: ...",
+                "",
+                "@guppy.declare",
+                "def pecos_qis_ordering_observe_hugr(token: int, outcome: bool) -> int: ...",
+                "",
+                "@guppy.declare",
+                "def pecos_qis_ordering_barrier_hugr(token: int) -> int: ...",
+            ],
+        )
     elif fences:
-        lines.extend([
-            "from guppylang.std.builtins import owned",
-            "",
-            "@guppy.declare",
-            "def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...",
-            "",
-            "@guppy.declare",
-            "def pecos_qis_runtime_barrier_qubits2_hugr(a: qubit @ owned, b: qubit @ owned) "
-            "-> tuple[qubit, qubit]: ...",
-        ])
+        lines.extend(
+            [
+                "from guppylang.std.builtins import owned",
+                "",
+                "@guppy.declare",
+                "def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...",
+                "",
+                "@guppy.declare",
+                "def pecos_qis_runtime_barrier_qubits2_hugr(a: qubit @ owned, b: qubit @ owned) "
+                "-> tuple[qubit, qubit]: ...",
+            ],
+        )
     lines.extend(["", "@guppy", f"def {function_name}() -> None:"])
     if lifetime_ordered:
         lines.append("    ordering_token = 0")
@@ -111,18 +128,23 @@ def render_scheduled_circuit(
             else:
                 operands = ", ".join(names[q] for q in op.qubits)
                 gates = {"C_XYZ": ("sdg", "h"), "C_ZYX": ("h", "s"), "SQRT_X": ("v",), "S_DAG": ("sdg",)}.get(
-                    op.name, (op.name.lower(),),
+                    op.name,
+                    (op.name.lower(),),
                 )
                 lines.extend(f"    {gate}({operands})" for gate in gates)
         if index in fences:
             fence = fences[index]
             lines.append(f"    # Ordering fence after reference moment {index}; no physical duration assigned")
             if isinstance(fence, GuppyLifetimeFence):
-                joins = [f"    {names[q]}, ordering_token = "
-                         f"pecos_qis_ordering_join_hugr({names[q]}, ordering_token)" for q in fence.qubits]
+                joins = [
+                    f"    {names[q]}, ordering_token = pecos_qis_ordering_join_hugr({names[q]}, ordering_token)"
+                    for q in fence.qubits
+                ]
                 lines.extend(joins)
-                lines.extend(f"    ordering_token = pecos_qis_ordering_observe_hugr(ordering_token, m{m})"
-                             for m in fence.measurements)
+                lines.extend(
+                    f"    ordering_token = pecos_qis_ordering_observe_hugr(ordering_token, m{m})"
+                    for m in fence.measurements
+                )
                 lines.append("    ordering_token = pecos_qis_ordering_barrier_hugr(ordering_token)")
                 lines.extend(joins)
             else:

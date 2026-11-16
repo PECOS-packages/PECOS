@@ -13,8 +13,12 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Native aggregat
 
 
 def _plan():
-    return ScheduledCircuit(2, ((Op("R", (0,)), Op("R", (1,))), (Op("X", (0,)),), (Op("X", (1,)),),
-                                (Op("M", (0,)), Op("M", (1,)))), (), ())
+    return ScheduledCircuit(
+        2,
+        ((Op("R", (0,)), Op("R", (1,))), (Op("X", (0,)),), (Op("X", (1,)),), (Op("M", (0,)), Op("M", (1,)))),
+        (),
+        (),
+    )
 
 
 def test_native_clock_arithmetic_and_source_segmentation_with_identity_recording():
@@ -30,16 +34,28 @@ def test_native_clock_arithmetic_and_source_segmentation_with_identity_recording
     assert report["source_runtime"] == report["normalized_runtime"]
     assert report["observed_barrier_requests"] == 3
     assert [m["qis_quantum_counts"] for m in report["qis_moments"]] == [
-        {"Reset": 2}, {"RXY": 1}, {"RXY": 1}, {"Measure": 2},
+        {"Reset": 2},
+        {"RXY": 1},
+        {"RXY": 1},
+        {"Measure": 2},
     ]
     assert report["trace_lowering_complete"]
     assert report["runtime_events_complete"]
-    for key in ["physical_schedule_verified", "source_moment_timing_verified", "calibrated_durations_verified",
-                "noise_equivalence_verified", "measurement_binding_verified"]:
+    for key in [
+        "physical_schedule_verified",
+        "source_moment_timing_verified",
+        "calibrated_durations_verified",
+        "noise_equivalence_verified",
+        "measurement_binding_verified",
+    ]:
         assert not report[key]
     # Recorder installation must preserve ordinary source/lowered execution.
-    baseline = capture_qis_operation_trace(plan.guppy_program(ordering=GuppyOrdering.ALL_MOMENTS), 2,
-                                           runtime=runtime, seed=17)
+    baseline = capture_qis_operation_trace(
+        plan.guppy_program(ordering=GuppyOrdering.ALL_MOMENTS),
+        2,
+        runtime=runtime,
+        seed=17,
+    )
     captured = audit.evidence()["operation_trace"]
     for key in ["operations", "lowered_quantum_ops", "named_result_traces", "measurement_results"]:
         assert [c[key] for c in captured] == [c[key] for c in baseline]
@@ -63,9 +79,14 @@ def test_empty_program_has_no_fabricated_clock_evidence():
 
 def test_paper_memory_preserves_all_boundaries_and_runtime_timing_records():
     plan = color_memory(color_code_implementation(color_code_spec("488", 3), ColorExtraction.BRICKWORK_CZ), 2, "Z")
-    audit = plan.audit_guppy_schedule(runtime=SimpleRuntimePlugin(
-        duration_ns_reset=5, duration_ns_rxy=10, duration_ns_rzz=25, duration_ns_measure=40,
-    ))
+    audit = plan.audit_guppy_schedule(
+        runtime=SimpleRuntimePlugin(
+            duration_ns_reset=5,
+            duration_ns_rxy=10,
+            duration_ns_rzz=25,
+            duration_ns_measure=40,
+        ),
+    )
     report = audit.to_dict()
     assert report["observed_barrier_requests"] == len(plan.moments) - 1
     assert len(report["qis_moments"]) == len(plan.moments)

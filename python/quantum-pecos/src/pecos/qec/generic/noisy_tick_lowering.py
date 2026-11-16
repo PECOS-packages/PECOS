@@ -57,12 +57,14 @@ def lower_noisy_tick_circuit(noisy: NoisyScheduledCircuit) -> TickCircuit:
         for phase in ("collapse_wait", "idle", "after"):
             insert(moment + 1, moment, phase, channels[moment, phase])
         insert(moment, moment, "before", channels[moment, "before"])
-    circuit.metas({
-        "pecos_noise_source": "inline",
-        "qec_tick_semantics": "execution_steps",
-        "qec_physical_moments": len(noisy.ideal.moments),
-        "qec_noise_model": "SI1000",
-        "qec_noise_probability": noisy.noise.p,
-        "qec_noise_channels": len(noisy.channels),
-    })
+    circuit.metas(
+        {
+            "pecos_noise_source": "inline",
+            "qec_tick_semantics": "execution_steps",
+            "qec_physical_moments": len(noisy.ideal.moments),
+            "qec_noise_model": "SI1000",
+            "qec_noise_probability": noisy.noise.p,
+            "qec_noise_channels": len(noisy.channels),
+        },
+    )
     return circuit

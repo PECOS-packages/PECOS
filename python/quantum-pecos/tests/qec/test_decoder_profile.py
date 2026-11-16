@@ -62,10 +62,18 @@ def test_censoring_disagreement_and_duplicate_runs_block_speedups(profiler, fail
     assert summary["speedups"] == []
 
 
-@pytest.mark.parametrize("outcome", [
-    "success", "sampling_timeout", "decoder_timeout", "bad_predictions", "bad_stats",
-    "missing_stats", "missing_predictions",
-])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "success",
+        "sampling_timeout",
+        "decoder_timeout",
+        "bad_predictions",
+        "bad_stats",
+        "missing_stats",
+        "missing_predictions",
+    ],
+)
 def test_profile_preserves_inputs_and_enforces_completion(tmp_path, monkeypatch, profiler, outcome):
     import stim
 

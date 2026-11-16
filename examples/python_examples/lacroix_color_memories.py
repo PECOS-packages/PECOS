@@ -50,7 +50,10 @@ def main() -> None:
             (args.output / f"{name}.definitions.json").write_text(json.dumps(ticks.circuit_definitions(), indent=2))
             (args.output / f"{name}.svg").write_text(
                 ticks.render(
-                    "svg", start=0, stop=min(12, ticks.num_ticks()), title=f"{name}: first 12 physical moments",
+                    "svg",
+                    start=0,
+                    stop=min(12, ticks.num_ticks()),
+                    title=f"{name}: first 12 physical moments",
                 ),
             )
             columns = (
@@ -64,12 +67,19 @@ def main() -> None:
             manifest_bytes = (json.dumps(plan.measurement_manifest(), indent=2) + "\n").encode("utf-8")
             (args.output / f"{name}.measurements.json").write_bytes(manifest_bytes)
             (args.output / f"{name}.raw-results.json").write_text(
-                json.dumps({
-                    "measurement_manifest": f"{name}.measurements.json",
-                    "measurement_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-                    "source": "ideal Guppy stabilizer simulation", "seed": 42, "shots": args.shots,
-                    "columns": columns,
-                }, indent=2) + "\n", encoding="utf-8",
+                json.dumps(
+                    {
+                        "measurement_manifest": f"{name}.measurements.json",
+                        "measurement_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                        "source": "ideal Guppy stabilizer simulation",
+                        "seed": 42,
+                        "shots": args.shots,
+                        "columns": columns,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
             )
             for shot in range(args.shots):
                 detectors, observables = plan.evaluate_named({tag: values[shot] for tag, values in columns.items()})

@@ -30,7 +30,11 @@ def test_native_and_guppy_signed_dem():
     program = plan.guppy_program()
     noise = {"p1": 0.001, "p2": 0.002, "p_prep": 0.003, "p_meas": 0.004}
     build = build_dem_from_guppy(
-        program, num_qubits=plan.num_qubits, detectors=detectors, observables=observables, **noise,
+        program,
+        num_qubits=plan.num_qubits,
+        detectors=detectors,
+        observables=observables,
+        **noise,
     )
     native = DetectorErrorModel.from_circuit(tick, **noise)
     for dem in (native, build.dem):

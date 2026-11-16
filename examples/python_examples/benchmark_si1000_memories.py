@@ -63,7 +63,12 @@ def _constructed(name: str) -> stim.Circuit:
 
 
 def write_native_samples(
-    noisy: NoisyScheduledCircuit, ticks: TickCircuit, path: Path, *, shots: int, seed: int,
+    noisy: NoisyScheduledCircuit,
+    ticks: TickCircuit,
+    path: Path,
+    *,
+    shots: int,
+    seed: int,
 ) -> tuple[tuple[bool, ...], tuple[bool, ...]]:
     """Write native detector/observable deviations in Stim's appended 01 format.
 
@@ -78,8 +83,11 @@ def write_native_samples(
     with path.open("w") as stream:
         for record in rows:
             values = evaluate_tick_circuit(ticks, record)
-            deviations = [value ^ base for group, ideal in zip(values, reference, strict=True)
-                          for value, base in zip(group, ideal, strict=True)]
+            deviations = [
+                value ^ base
+                for group, ideal in zip(values, reference, strict=True)
+                for value, base in zip(group, ideal, strict=True)
+            ]
             stream.write("".join(str(int(bit)) for bit in deviations) + "\n")
     return reference
 
@@ -105,7 +113,11 @@ def _native_worker(request_path: Path) -> None:
         msg = "Native worker circuit differs from the preflight circuit"
         raise ValueError(msg)
     reference = write_native_samples(
-        noisy, ticks, Path(request["samples_path"]), shots=request["shots"], seed=request["seed"],
+        noisy,
+        ticks,
+        Path(request["samples_path"]),
+        shots=request["shots"],
+        seed=request["seed"],
     )
     extensions = {}
     for name in ("pecos_rslib.pecos_rslib", "pecos_rslib_exp.pecos_rslib_exp"):
@@ -115,9 +127,15 @@ def _native_worker(request_path: Path) -> None:
             raise RuntimeError(msg)
         path = Path(spec.origin)
         extensions[name] = {"path": str(path), "sha256": _sha(path)}
-    Path(request["receipt_path"]).write_text(json.dumps({
-        "ideal_reference": reference, "native_extensions": extensions,
-    }, indent=2))
+    Path(request["receipt_path"]).write_text(
+        json.dumps(
+            {
+                "ideal_reference": reference,
+                "native_extensions": extensions,
+            },
+            indent=2,
+        ),
+    )
 
 
 def group_estimates(rows: list[dict]) -> dict:
@@ -130,14 +148,20 @@ def group_estimates(rows: list[dict]) -> dict:
     complete, incomplete = [], []
     for (variant, family, distance, rounds, rate), strata in sorted(groups.items()):
         expected = {(basis, phase) for basis in "XZ" for phase in ((0, 1) if family == "planar_488" else (0,))}
-        identity = {"variant": variant, "family": family, "distance": distance, "rounds": rounds,
-                    "p": float(rate[1:].replace("p", "."))}
+        identity = {
+            "variant": variant,
+            "family": family,
+            "distance": distance,
+            "rounds": rounds,
+            "p": float(rate[1:].replace("p", ".")),
+        }
         if set(strata) != expected:
             incomplete.append({**identity, "missing": sorted(expected - set(strata))})
             continue
         estimate = equal_weight_memory_estimate(
             [MemoryCounts(**strata[key]["counts"]) for key in sorted(strata)],
-            num_logicals=1 if family == "planar_488" else 4, rounds=rounds,
+            num_logicals=1 if family == "planar_488" else 4,
+            rounds=rounds,
         )
         complete.append({**identity, "estimate": asdict(estimate)})
     return {"complete_groups": complete, "incomplete_groups": incomplete}
@@ -152,15 +176,25 @@ def main() -> None:
     parser.add_argument("--tesseract", type=Path, required=True)
     parser.add_argument("--decoder-provenance", type=Path, required=True)
     parser.add_argument(
-        "--case", action="append", help="Repeat to select pinned fixture stems; default d4/r4, both bases/rates",
+        "--case",
+        action="append",
+        help="Repeat to select pinned fixture stems; default d4/r4, both bases/rates",
     )
-    parser.add_argument("--reference-dir", type=Path, default=FIXTURES,
-                        help="Directory containing pinned released .stim files; supports full release sizes")
+    parser.add_argument(
+        "--reference-dir",
+        type=Path,
+        default=FIXTURES,
+        help="Directory containing pinned released .stim files; supports full release sizes",
+    )
     parser.add_argument("--shots", type=int, default=1000)
     parser.add_argument("--threads", type=int, default=1, help="Independent decoder shot workers (default: 1)")
     parser.add_argument("--seed", type=int, default=20261103)
-    parser.add_argument("--sampling-backend", choices=("stim", "pecos"), default="stim",
-                        help="PECOS variant sampling; reference always uses pinned Tesseract/Stim")
+    parser.add_argument(
+        "--sampling-backend",
+        choices=("stim", "pecos"),
+        default="stim",
+        help="PECOS variant sampling; reference always uses pinned Tesseract/Stim",
+    )
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--wall-time-budget", type=float, help="Overall seconds, including circuit preparation")
     parser.add_argument("--output", type=Path, default=Path("output/si1000-decoder-benchmark"))
@@ -191,16 +225,25 @@ def main() -> None:
 
     def checkpoint(status: str, active: str | None = None) -> None:
         report = {
-            "paper": "https://arxiv.org/abs/2609.21376v3", "decoder": provenance,
-            "dem_generation_stim_version": stim.__version__, "results": rows,
-            **group_estimates(rows), "status": status, "active_case": active,
+            "paper": "https://arxiv.org/abs/2609.21376v3",
+            "decoder": provenance,
+            "dem_generation_stim_version": stim.__version__,
+            "results": rows,
+            **group_estimates(rows),
+            "status": status,
+            "active_case": active,
             "elapsed_seconds": time.monotonic() - started,
             "wall_time_budget_seconds": args.wall_time_budget,
-            "planned_cases": names, "planned_shots_per_variant": args.shots,
+            "planned_cases": names,
+            "planned_shots_per_variant": args.shots,
             "pecos_sampling_backend": args.sampling_backend,
             "decoder_threads": args.threads,
-            "pending_runs": [f"{name}/{variant}" for name in names for variant in ("reference", "pecos")
-                             if not any(row["case"] == name and row["variant"] == variant for row in rows)],
+            "pending_runs": [
+                f"{name}/{variant}"
+                for name in names
+                for variant in ("reference", "pecos")
+                if not any(row["case"] == name and row["variant"] == variant for row in rows)
+            ],
             "scope": "Fixed-shot validation with equal-stratum groups; not threshold reproduction",
         }
         temporary = args.output / "results.json.tmp"
@@ -221,14 +264,16 @@ def main() -> None:
             raise ValueError(msg)
         noisy = _noisy_case(name)
         ticks = noisy.to_tick_circuit()
-        circuits = {"reference": stim.Circuit(source.read_text()),
-                    "pecos": stim.Circuit(str(stim.Circuit(tick_circuit_to_stim(ticks))))}
+        circuits = {
+            "reference": stim.Circuit(source.read_text()),
+            "pecos": stim.Circuit(str(stim.Circuit(tick_circuit_to_stim(ticks)))),
+        }
         dems = {
             key: c.detector_error_model(decompose_errors=False, approximate_disjoint_errors=True)
             for key, c in circuits.items()
         }
         a, b = (_mechanisms(dems[key]) for key in ("reference", "pecos"))
-        if a.keys() != b.keys() or any(not math.isclose(a[k], b[k], rel_tol=1e-10, abs_tol=0.) for k in a):
+        if a.keys() != b.keys() or any(not math.isclose(a[k], b[k], rel_tol=1e-10, abs_tol=0.0) for k in a):
             msg = f"DEM mismatch before decoding: {name}"
             raise ValueError(msg)
         # Stim serialization applies the same decimal precision as the released
@@ -282,20 +327,34 @@ def main() -> None:
                     return
                 samples_path = folder / "detectors-observables.01"
                 request_path, receipt_path = folder / "sampling-request.json", folder / "sampling-receipt.json"
-                request_path.write_text(json.dumps({
-                    "case": name, "shots": args.shots, "seed": seed, "circuit_sha256": _sha(circuit_path),
-                    "samples_path": str(samples_path.resolve()), "receipt_path": str(receipt_path.resolve()),
-                }, indent=2))
+                request_path.write_text(
+                    json.dumps(
+                        {
+                            "case": name,
+                            "shots": args.shots,
+                            "seed": seed,
+                            "circuit_sha256": _sha(circuit_path),
+                            "samples_path": str(samples_path.resolve()),
+                            "receipt_path": str(receipt_path.resolve()),
+                        },
+                        indent=2,
+                    ),
+                )
                 checkpoint("sampling", f"{name}/{variant}")
                 try:
                     with (folder / "sampling.log").open("w") as log:
                         subprocess.run(  # noqa: S603 - current interpreter and repository worker, no shell
                             [sys.executable, str(Path(__file__).resolve()), "--native-worker", str(request_path)],
-                            check=True, timeout=min(args.timeout, available), stdout=log, stderr=subprocess.STDOUT,
+                            check=True,
+                            timeout=min(args.timeout, available),
+                            stdout=log,
+                            stderr=subprocess.STDOUT,
                         )
                 except subprocess.TimeoutExpired:
-                    checkpoint("budget_exhausted" if available <= args.timeout else "native_sampling_timeout",
-                               f"{name}/{variant}")
+                    checkpoint(
+                        "budget_exhausted" if available <= args.timeout else "native_sampling_timeout",
+                        f"{name}/{variant}",
+                    )
                     return
                 except subprocess.CalledProcessError:
                     checkpoint("native_sampling_error", f"{name}/{variant}")
@@ -303,10 +362,13 @@ def main() -> None:
                 receipt = json.loads(receipt_path.read_text())
                 # File input and built-in circuit sampling are mutually exclusive.
                 start = command.index("--sample-num-shots")
-                del command[start:start + 4]
+                del command[start : start + 4]
                 command.extend(["--in", str(samples_path), "--in-format", "01", "--in-includes-appended-observables"])
-                sample_metadata = {"backend": "pecos_sim_neo_stabilizer", "samples_sha256": _sha(samples_path),
-                                   **receipt}
+                sample_metadata = {
+                    "backend": "pecos_sim_neo_stabilizer",
+                    "samples_sha256": _sha(samples_path),
+                    **receipt,
+                }
             (folder / "command.json").write_text(json.dumps(command, indent=2))
             available = remaining()
             if available <= 0:
@@ -316,7 +378,11 @@ def main() -> None:
             try:
                 with (folder / "decoder.log").open("w") as log:
                     subprocess.run(  # noqa: S603 - hash-verified user-selected executable, no shell
-                        command, check=True, timeout=min(args.timeout, available), stdout=log, stderr=subprocess.STDOUT,
+                        command,
+                        check=True,
+                        timeout=min(args.timeout, available),
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
                     )
             except subprocess.TimeoutExpired:
                 checkpoint("budget_exhausted" if available <= args.timeout else "decoder_timeout", f"{name}/{variant}")

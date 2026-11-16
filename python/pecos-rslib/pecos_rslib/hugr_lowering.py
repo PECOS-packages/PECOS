@@ -290,7 +290,8 @@ def normalize_pecos_helper_symbols(ir: str) -> str:
         if helper not in PECOS_HELPER_ABIS:
             continue
         if sys.platform == "win32" and helper in {
-            "pecos_qis_runtime_barrier_qubits2_hugr", "pecos_qis_ordering_join_hugr",
+            "pecos_qis_runtime_barrier_qubits2_hugr",
+            "pecos_qis_ordering_join_hugr",
         }:
             msg = f"PECOS helper '{helper}' requires a Windows aggregate-return ABI adapter; unsupported on Windows"
             raise ValueError(msg)

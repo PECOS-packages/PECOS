@@ -64,8 +64,13 @@ class GuppyOrderingPlan:
         for fence in self.fences:
             row = {"after_moment": fence.after_moment, "live_roles": list(fence.qubits)}
             if isinstance(fence, GuppyLifetimeFence):
-                row.update({"measurement_records": list(fence.measurements), "runtime_barrier_calls": 1,
-                            "dependency_helper_calls": 2 * len(fence.qubits) + len(fence.measurements)})
+                row.update(
+                    {
+                        "measurement_records": list(fence.measurements),
+                        "runtime_barrier_calls": 1,
+                        "dependency_helper_calls": 2 * len(fence.qubits) + len(fence.measurements),
+                    },
+                )
             else:
                 row["runtime_barrier_calls"] = len(fence.joins)
             rows.append(row)
@@ -109,6 +114,7 @@ def plan_guppy_ordering(circuit: ScheduledCircuit, mode: GuppyOrdering) -> Guppy
         raise TypeError(msg)
     moments = circuit.moments
     if mode == GuppyOrdering.FIXED_LIFETIME:
+
         def all_roles(moment: tuple, gate: str) -> bool:
             return len(moment) == circuit.num_qubits and all(op.name == gate for op in moment)
 
@@ -134,9 +140,13 @@ def plan_guppy_ordering(circuit: ScheduledCircuit, mode: GuppyOrdering) -> Guppy
                 measurement += 1
         if mode == GuppyOrdering.ALL_MOMENTS and index + 1 < len(moments):
             fences.append(GuppyLifetimeFence(index, tuple(sorted(live)), tuple(measured)))
-        elif index + 1 < len(moments) and live and (
-            mode == GuppyOrdering.FIXED_LIFETIME
-            or (mode == GuppyOrdering.UNITARY_REGIONS and not boundaries[index] and not boundaries[index + 1])
+        elif (
+            index + 1 < len(moments)
+            and live
+            and (
+                mode == GuppyOrdering.FIXED_LIFETIME
+                or (mode == GuppyOrdering.UNITARY_REGIONS and not boundaries[index] and not boundaries[index + 1])
+            )
         ):
             fences.append(GuppyFence(index, tuple(sorted(live))))
     allocations = circuit.num_measurements if mode == GuppyOrdering.ALL_MOMENTS else 0

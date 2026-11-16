@@ -120,6 +120,7 @@ def _coerce_parity_terms(
             refs.append(term)
     return _coerce_refs(tuple(refs)), constant
 
+
 @dataclass(frozen=True, slots=True)
 class InferredOutput:
     """An element of a tag's flattened per-shot output to infer as a parity."""

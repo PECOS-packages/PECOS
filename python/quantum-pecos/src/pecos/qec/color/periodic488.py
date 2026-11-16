@@ -167,16 +167,20 @@ class Periodic488Implementation:
         contracts = []
         for face, support in enumerate(self.code.faces):
             for axis in "XZ":
-                check = NamedPauli(f"{axis}[{face}]:{self.code.face_colors[face]}",
-                                   tuple((self.code.data_roles[q], axis) for q in support))
+                check = NamedPauli(
+                    f"{axis}[{face}]:{self.code.face_colors[face]}",
+                    tuple((self.code.data_roles[q], axis) for q in support),
+                )
                 name = f"input:{axis}[{face}]"
                 contracts.append(PauliFlow(name, input=check, parity=parities[name]))
                 name = f"output:{axis}[{face}]"
                 contracts.append(PauliFlow(name, output=check, parity=parities[name]))
-        contracts.extend(PauliFlow(op.name, input=op, output=op, parity=parities[op.name])
-                         for op in self.code.logical_operators)
-        contracts.extend(PauliFlow(f.name, parity=f.parity) for f in self.extraction.flows
-                         if f.name.startswith("constraint["))
+        contracts.extend(
+            PauliFlow(op.name, input=op, output=op, parity=parities[op.name]) for op in self.code.logical_operators
+        )
+        contracts.extend(
+            PauliFlow(f.name, parity=f.parity) for f in self.extraction.flows if f.name.startswith("constraint[")
+        )
         return tuple(contracts)
 
     def audit_flows(self) -> GadgetFlowAudit:

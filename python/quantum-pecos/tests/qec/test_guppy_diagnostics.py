@@ -10,15 +10,34 @@ from pecos.qec.generic.guppy_diagnostics import _batch_accounting, _placement_ch
 
 
 def _evidence(*rows):
-    return {"runtime_batches": [{"shot_id": 0, "batch_index": i, "num_qubits": 2,
-                                 "start_time_nanos": start, "duration_nanos": duration,
-                                 "normalized_operations": [{"Rxy": {"qubit_id": q}} for q in sites]}
-                                for i, (start, duration, sites) in enumerate(rows)]}
+    return {
+        "runtime_batches": [
+            {
+                "shot_id": 0,
+                "batch_index": i,
+                "num_qubits": 2,
+                "start_time_nanos": start,
+                "duration_nanos": duration,
+                "normalized_operations": [{"Rxy": {"qubit_id": q}} for q in sites],
+            }
+            for i, (start, duration, sites) in enumerate(rows)
+        ],
+    }
 
 
 def _plan():
-    return ScheduledCircuit(2, ((Op("R", (0,)), Op("R", (1,))), (Op("X", (0,)),), (Op("X", (1,)),),
-                                (Op("X", (0,)),), (Op("M", (0,)), Op("M", (1,)))), (), ())
+    return ScheduledCircuit(
+        2,
+        (
+            (Op("R", (0,)), Op("R", (1,))),
+            (Op("X", (0,)),),
+            (Op("X", (1,)),),
+            (Op("X", (0,)),),
+            (Op("M", (0,)), Op("M", (1,))),
+        ),
+        (),
+        (),
+    )
 
 
 def test_span_decomposition_with_overlap_and_global_gaps():
@@ -31,7 +50,10 @@ def test_span_decomposition_with_overlap_and_global_gaps():
     assert (old["covered_clock_ns"], old["overlap_excess_ns"], old["uncovered_span_ns"]) == (20, 5, 5)
     assert (new["covered_clock_ns"], new["overlap_excess_ns"], new["uncovered_span_ns"]) == (15, 10, 0)
     assert diagnostics["batch_accounting"]["deltas"] == {
-        "reported_span_ns": -10, "sum_batch_duration_ns": 0, "overlap_excess_ns": 5, "uncovered_span_ns": -5,
+        "reported_span_ns": -10,
+        "sum_batch_duration_ns": 0,
+        "overlap_excess_ns": 5,
+        "uncovered_span_ns": -5,
     }
     assert not diagnostics["runtime_causality_verified"]
 
@@ -43,10 +65,22 @@ def test_batch_grouping_counts_duration_once_and_records_changed_packing():
     accounting = diagnose_schedule_pair(plan, plan, old, new)["batch_accounting"]
     assert accounting["operation_kind_counts_equal"]
     assert accounting["changes"] == [
-        {"operation_counts": {"Rxy": 1}, "duration_ns": 10, "reference_batches": 3,
-         "candidate_batches": 1, "delta_batches": -2, "delta_sum_duration_ns": -20},
-        {"operation_counts": {"Rxy": 2}, "duration_ns": 10, "reference_batches": 0,
-         "candidate_batches": 1, "delta_batches": 1, "delta_sum_duration_ns": 10},
+        {
+            "operation_counts": {"Rxy": 1},
+            "duration_ns": 10,
+            "reference_batches": 3,
+            "candidate_batches": 1,
+            "delta_batches": -2,
+            "delta_sum_duration_ns": -20,
+        },
+        {
+            "operation_counts": {"Rxy": 2},
+            "duration_ns": 10,
+            "reference_batches": 0,
+            "candidate_batches": 1,
+            "delta_batches": 1,
+            "delta_sum_duration_ns": 10,
+        },
     ]
     assert accounting["deltas"]["reported_span_ns"] == -10
 
@@ -98,9 +132,17 @@ def test_repeated_gate_identities_and_relabel_boundaries_survive_repacking():
 
 
 def test_diagnostics_reject_changed_order_on_shared_nonanchor_wire():
-    plan = ScheduledCircuit(3, (tuple(Op("R", (q,)) for q in range(3)),
-                               (Op("CX", (0, 2)),), (Op("CZ", (1, 2)),),
-                               tuple(Op("M", (q,)) for q in range(3))), (), ())
+    plan = ScheduledCircuit(
+        3,
+        (
+            tuple(Op("R", (q,)) for q in range(3)),
+            (Op("CX", (0, 2)),),
+            (Op("CZ", (1, 2)),),
+            tuple(Op("M", (q,)) for q in range(3)),
+        ),
+        (),
+        (),
+    )
     changed = replace(plan, moments=(plan.moments[0], plan.moments[2], plan.moments[1], plan.moments[3]))
     with pytest.raises(ValueError, match="same source rescheduling contract"):
         diagnose_schedule_pair(plan, changed, _evidence(), _evidence())
@@ -108,13 +150,24 @@ def test_diagnostics_reject_changed_order_on_shared_nonanchor_wire():
 
 def test_explanation_ranks_absolute_gaps_and_keeps_signs():
     plan = _plan()
-    diagnostics = diagnose_schedule_pair(plan, plan.rescheduled(SchedulePolicy.ASAP_UNITARIES),
-                                         _evidence((0, 10, (0,))), _evidence((0, 20, (0,))))
-    report = {"diagnostics": diagnostics, "measurement_windows": [
-        {"measurement_index": 0, "measurement_name": "small", "role_names": ["data"], "gap_ns": {"delta": 3}},
-        {"measurement_index": 1, "measurement_name": "large", "role_names": ["data", "ancilla"],
-         "gap_ns": {"delta": -9}},
-    ]}
+    diagnostics = diagnose_schedule_pair(
+        plan,
+        plan.rescheduled(SchedulePolicy.ASAP_UNITARIES),
+        _evidence((0, 10, (0,))),
+        _evidence((0, 20, (0,))),
+    )
+    report = {
+        "diagnostics": diagnostics,
+        "measurement_windows": [
+            {"measurement_index": 0, "measurement_name": "small", "role_names": ["data"], "gap_ns": {"delta": 3}},
+            {
+                "measurement_index": 1,
+                "measurement_name": "large",
+                "role_names": ["data", "ancilla"],
+                "gap_ns": {"delta": -9},
+            },
+        ],
+    }
     comparison = GuppyScheduleComparison(None, None, json.dumps(report))
     text = comparison.explain(top_windows=1)
     assert "large (data -> ancilla): -9 ns" in text

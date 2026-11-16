@@ -22,21 +22,29 @@ def _plan():
     op = CircuitOp
     return ScheduledCircuit(
         2,
-        ((op("R", (0,)), op("R", (1,))), (op("H", (0,)),), (op("H", (1,)),),
-         (op("RELABEL", (0, 1)),),
-         (op("M", (0,), OperationOrigin("first", "readout", 0, 0)), op("M", (1,))),
-         (op("R", (0,)),), (op("M", (0,), OperationOrigin("last", "readout", 0, 0)),)),
+        (
+            (op("R", (0,)), op("R", (1,))),
+            (op("H", (0,)),),
+            (op("H", (1,)),),
+            (op("RELABEL", (0, 1)),),
+            (op("M", (0,), OperationOrigin("first", "readout", 0, 0)), op("M", (1,))),
+            (op("R", (0,)),),
+            (op("M", (0,), OperationOrigin("last", "readout", 0, 0)),),
+        ),
         (MeasurementParity((0, 2), "reuse", True, (1, 2)), MeasurementParity((), "one", True)),
         (MeasurementParity((1,), "logical"), MeasurementParity((), "zero")),
-        citations=("published fixture",), role_names=("data", "ancilla"),
+        citations=("published fixture",),
+        role_names=("data", "ancilla"),
         measurement_names=("first/data", "first/ancilla", "last/data"),
     )
 
 
 def _evaluate(manifest, record):
     return tuple(
-        tuple(bool((sum(record[tag] for tag in parity["measurement_tags"]) + parity["constant"]) % 2)
-              for parity in manifest["derived_parities"][kind])
+        tuple(
+            bool((sum(record[tag] for tag in parity["measurement_tags"]) + parity["constant"]) % 2)
+            for parity in manifest["derived_parities"][kind]
+        )
         for kind in ("detectors", "observables")
     )
 
@@ -70,7 +78,11 @@ def test_relabel_origins_reused_roles_and_detached_export():
     assert [e["reference_carrier"] for e in events] == [1, 0, 1]
     assert [e["source_moment"] for e in events] == [4, 4, 6]
     assert events[0]["origin"] == {
-        "call": "first", "gadget": "readout", "moment": 0, "operation": 0, "id": "first/moment[0]/op[0]",
+        "call": "first",
+        "gadget": "readout",
+        "moment": 0,
+        "operation": 0,
+        "id": "first/moment[0]/op[0]",
     }
     assert events[0]["source_operation"] == "first/moment[0]/op[0]"
     assert events[1]["origin"] is None
@@ -113,8 +125,18 @@ def test_empty_measurement_layout_with_constant_only_definitions():
     assert _evaluate(replace(plan, detectors=()).measurement_manifest(), {}) == ((), ())
 
 
-@pytest.mark.parametrize("case", [*(c.value for c in ColorExtraction), "periodic-cnot", "periodic-native-cz",
-                                  "lacroix-d3_west", "lacroix-d3_east", "lacroix-d3_north", "lacroix-d5"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        *(c.value for c in ColorExtraction),
+        "periodic-cnot",
+        "periodic-native-cz",
+        "lacroix-d3_west",
+        "lacroix-d3_east",
+        "lacroix-d3_north",
+        "lacroix-d5",
+    ],
+)
 @pytest.mark.parametrize("basis", ["X", "Z"])
 def test_published_families_keep_named_raw_events_and_all_parities(case, basis):
     if case.startswith("periodic-"):

@@ -12,7 +12,11 @@ adapter or its vendored module path:
 
 ```python
 circuit = denser_codes.build_memory(
-    "torus_488", distance, basis, rounds=rounds, gate_set="cnot",
+    "torus_488",
+    distance,
+    basis,
+    rounds=rounds,
+    gate_set="cnot",
 )
 ```
 

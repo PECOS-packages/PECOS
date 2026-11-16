@@ -241,5 +241,8 @@ def test_independent_model_rejects_invalid_probabilities_or_targets(mechanisms):
 def test_independent_model_rejects_invalid_coordinates(coords):
     with pytest.raises(ValueError, match="coordinates"):
         DetectorErrorModel.from_independent_mechanisms(
-            [], num_detectors=2, num_observables=0, detector_coordinates=coords,
+            [],
+            num_detectors=2,
+            num_observables=0,
+            detector_coordinates=coords,
         )

@@ -10,27 +10,61 @@ from pecos.qec.generic.guppy_lifetimes import bind_runtime_lifetime_windows
 
 @pytest.fixture
 def case():
-    plan = ScheduledCircuit(2, ((Op("R", (0,)), Op("R", (1,))), (Op("RELABEL", (0, 1)),),
-                                (Op("X", (0,)),), (Op("M", (0,)), Op("M", (1,))),
-                                (Op("R", (0,)),), (Op("M", (0,)),)), (), (), role_names=("a", "b"))
+    plan = ScheduledCircuit(
+        2,
+        (
+            (Op("R", (0,)), Op("R", (1,))),
+            (Op("RELABEL", (0, 1)),),
+            (Op("X", (0,)),),
+            (Op("M", (0,)), Op("M", (1,))),
+            (Op("R", (0,)),),
+            (Op("M", (0,)),),
+        ),
+        (),
+        (),
+        role_names=("a", "b"),
+    )
 
     def prep(q):
-        return [{"AllocateQubit": {"id": q}},
-                {"TraceMetadata": {"qubit": q, "metadata": {"pecos_qec_allocation_id": str(q),
-                                                           "source_lowering_required": "true"}}},
-                {"Quantum": {"Reset": q}}]
+        return [
+            {"AllocateQubit": {"id": q}},
+            {
+                "TraceMetadata": {
+                    "qubit": q,
+                    "metadata": {"pecos_qec_allocation_id": str(q), "source_lowering_required": "true"},
+                },
+            },
+            {"Quantum": {"Reset": q}},
+        ]
 
     def measure(q, r):
         return [{"Quantum": {"Measure": [q, r]}}, {"ReleaseQubit": {"id": q}}]
 
     # Source preparation order differs from role order. Source measurement order
     # differs from runtime emission order. Neither is an identity certificate.
-    operations = [*prep(22), *prep(11), "Barrier", "Barrier", {"Quantum": {"RXY": [3.14, 0., 22]}},
-                  "Barrier", *measure(11, 701), *measure(22, 702), "Barrier", *prep(33),
-                  "Barrier", *measure(33, 703)]
-    definitions = [("Reset", 1, 0, 5, 11), ("Reset", 0, 5, 5, 22), ("Rxy", 0, 20, 10, None),
-                   ("Measure", 0, 50, 10, (9001, 702)), ("Measure", 1, 80, 10, (4001, 701)),
-                   ("Reset", 0, 100, 5, 33), ("Measure", 0, 120, 10, (9001, 703))]
+    operations = [
+        *prep(22),
+        *prep(11),
+        "Barrier",
+        "Barrier",
+        {"Quantum": {"RXY": [3.14, 0.0, 22]}},
+        "Barrier",
+        *measure(11, 701),
+        *measure(22, 702),
+        "Barrier",
+        *prep(33),
+        "Barrier",
+        *measure(33, 703),
+    ]
+    definitions = [
+        ("Reset", 1, 0, 5, 11),
+        ("Reset", 0, 5, 5, 22),
+        ("Rxy", 0, 20, 10, None),
+        ("Measure", 0, 50, 10, (9001, 702)),
+        ("Measure", 1, 80, 10, (4001, 701)),
+        ("Reset", 0, 100, 5, 33),
+        ("Measure", 0, 120, 10, (9001, 703)),
+    ]
     batches, lowered = [], []
     for index, (kind, q, start, duration, label) in enumerate(definitions):
         op = {kind: {"qubit_id": q}}
@@ -42,22 +76,64 @@ def case():
             op[kind]["result_id"] = future
             results = [result]
         else:
-            op[kind].update(theta=3.14, phi=0.)
-        batches.append({"shot_id": 100, "batch_index": index, "num_qubits": 2,
-                        "start_time_nanos": start, "duration_nanos": duration,
-                        "operations": [op], "normalized_operations": deepcopy([op])})
-        lowered.append({"gate_type": {"Reset": "PZ", "Measure": "MZ", "Rxy": "RXY1Q"}[kind],
-                        "qubits": [q], "metadata": metadata, "measurement_result_ids": results})
-    header = {"format": "pecos_qis_operation_trace_v1", "engine_trace_id": 9, "shot_index": 7,
-              "lowered_quantum_ops_complete": True, "runtime_events_complete": True}
-    trace = [dict(header, chunk_index=0, stage="pending_start", operations=operations,
-                  num_operations=len(operations), lowered_quantum_ops=lowered, named_result_traces=[]),
-             dict(header, chunk_index=1, stage="named_results", operations=[], num_operations=0,
-                  lowered_quantum_ops=[], named_result_traces=[
-                      {"name": f"qec:m:{i}", "result_ids": [r], "values": [False]}
-                      for i, r in enumerate((702, 701, 703))]),
-             dict(header, chunk_index=2, stage="trace_complete", operations=[], num_operations=0,
-                  lowered_quantum_ops=[], named_result_traces=[])]
+            op[kind].update(theta=3.14, phi=0.0)
+        batches.append(
+            {
+                "shot_id": 100,
+                "batch_index": index,
+                "num_qubits": 2,
+                "start_time_nanos": start,
+                "duration_nanos": duration,
+                "operations": [op],
+                "normalized_operations": deepcopy([op]),
+            },
+        )
+        lowered.append(
+            {
+                "gate_type": {"Reset": "PZ", "Measure": "MZ", "Rxy": "RXY1Q"}[kind],
+                "qubits": [q],
+                "metadata": metadata,
+                "measurement_result_ids": results,
+            },
+        )
+    header = {
+        "format": "pecos_qis_operation_trace_v1",
+        "engine_trace_id": 9,
+        "shot_index": 7,
+        "lowered_quantum_ops_complete": True,
+        "runtime_events_complete": True,
+    }
+    trace = [
+        dict(
+            header,
+            chunk_index=0,
+            stage="pending_start",
+            operations=operations,
+            num_operations=len(operations),
+            lowered_quantum_ops=lowered,
+            named_result_traces=[],
+        ),
+        dict(
+            header,
+            chunk_index=1,
+            stage="named_results",
+            operations=[],
+            num_operations=0,
+            lowered_quantum_ops=[],
+            named_result_traces=[
+                {"name": f"qec:m:{i}", "result_ids": [r], "values": [False]} for i, r in enumerate((702, 701, 703))
+            ],
+        ),
+        dict(
+            header,
+            chunk_index=2,
+            stage="trace_complete",
+            operations=[],
+            num_operations=0,
+            lowered_quantum_ops=[],
+            named_result_traces=[],
+        ),
+    ]
     return plan, {"operation_trace": trace, "runtime_batches": batches}
 
 
@@ -69,8 +145,10 @@ def test_permuted_sites_scrambled_measurements_relabel_and_future_reuse(case):
     assert [w["runtime_site"] for w in report["windows"]] == [0, 1, 0]
     assert [w["runtime_future_id"] for w in report["windows"]] == [9001, 4001, 9001]
     assert [w["program_result_id"] for w in report["windows"]] == [702, 701, 703]
-    assert first["role_history"] == [{"moment": 0, "role": 1, "role_name": "b"},
-                                     {"moment": 1, "role": 0, "role_name": "a"}]
+    assert first["role_history"] == [
+        {"moment": 0, "role": 1, "role_name": "b"},
+        {"moment": 1, "role": 0, "role_name": "a"},
+    ]
     assert [w["gap_ns"] for w in (first, second, reused)] == [30, 75, 15]
     assert [w["gate_interval_ns"] for w in (first, second, reused)] == [10, 0, 0]
     assert [w["storage_interval_ns"] for w in (first, second, reused)] == [40, 75, 15]
@@ -90,8 +168,20 @@ def test_swapped_reset_labels_cannot_be_recovered_from_end_measurements(case):
         bind_runtime_lifetime_windows(plan, evidence)
 
 
-@pytest.mark.parametrize("corruption", ["missing_reset_label", "missing_tag", "duplicate_tag", "duplicate_result",
-                                        "incomplete", "mixed_shot", "bad_count", "terminal_gate", "extra_gate"])
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing_reset_label",
+        "missing_tag",
+        "duplicate_tag",
+        "duplicate_result",
+        "incomplete",
+        "mixed_shot",
+        "bad_count",
+        "terminal_gate",
+        "extra_gate",
+    ],
+)
 def test_incomplete_or_ambiguous_evidence_is_rejected(case, corruption):
     plan, evidence = case
     trace = evidence["operation_trace"]
@@ -125,7 +215,7 @@ def test_normalized_reset_changes_are_not_silently_admitted(case):
 
 def test_shared_boundary_batch_does_not_imply_a_preparation_time(case):
     plan, evidence = case
-    extra = {"Rxy": {"qubit_id": 1, "theta": 0., "phi": 0.}}
+    extra = {"Rxy": {"qubit_id": 1, "theta": 0.0, "phi": 0.0}}
     evidence["runtime_batches"][0]["operations"].append(deepcopy(extra))
     evidence["runtime_batches"][0]["normalized_operations"].append(extra)
     evidence["operation_trace"][0]["lowered_quantum_ops"].insert(1, {"gate_type": "RXY1Q", "qubits": [1]})
@@ -192,8 +282,9 @@ def test_native_requests_bind_recycled_handles_by_allocation_occurrence(case):
             rewritten.append(request({"Reset": 22 if q == 33 else q}))
         elif "Measure" in op["Quantum"]:
             q, result = op["Quantum"]["Measure"]
-            rewritten.append(request({"Measure": {"qubit": 22 if q == 33 else q,
-                                                    "result_id": result, "leaked": False}}))
+            rewritten.append(
+                request({"Measure": {"qubit": 22 if q == 33 else q, "result_id": result, "leaked": False}}),
+            )
         else:
             rewritten.append(op)
     chunk["operations"] = rewritten

@@ -37,8 +37,10 @@ class GuppyScheduleComparison:
         """Show source depth and runtime time separately, without ranking schedules."""
         report = self.to_dict()
         candidate = report["candidate_policy"]
-        lines = ["Tagged Guppy schedule comparison (candidate minus reference)",
-                 f"Metric | Reference | {candidate} | Difference"]
+        lines = [
+            "Tagged Guppy schedule comparison (candidate minus reference)",
+            f"Metric | Reference | {candidate} | Difference",
+        ]
         for name, values in report["metrics"].items():
             lines.append(f"{name} | {values['reference']} | {values['candidate']} | {values['delta']:+d}")
         if include_windows:
@@ -46,8 +48,10 @@ class GuppyScheduleComparison:
             for row in report["measurement_windows"]:
                 gap = row["gap_ns"]
                 roles = " -> ".join(row["role_names"])
-                lines.append(f"{row['measurement_name']} | {roles} | {gap['reference']} | "
-                             f"{gap['candidate']} | {gap['delta']:+d}")
+                lines.append(
+                    f"{row['measurement_name']} | {roles} | {gap['reference']} | "
+                    f"{gap['candidate']} | {gap['delta']:+d}",
+                )
         lines.append("Single-trace observations; calibrated timing, logical residency and noise equivalence unverified")
         return "\n".join(lines)
 
@@ -61,29 +65,36 @@ class GuppyScheduleComparison:
         source = diagnostics["source_placements"]
         clock = diagnostics["batch_accounting"]
         delta = clock["deltas"]
-        lines = ["Schedule diagnostics (candidate minus reference)",
-                 f"Source operations: {source['listing_order_changed_count']} changed listing position; "
-                 f"{source['moment_membership_changed_count']} changed moment membership",
-                 f"Normalized operation-kind counts equal: {clock['operation_kind_counts_equal']}",
-                 f"Span change: {delta['sum_batch_duration_ns']:+d} ns batch-duration sum "
-                 f"- ({delta['overlap_excess_ns']:+d} ns overlap excess) "
-                 f"+ ({delta['uncovered_span_ns']:+d} ns uncovered clock) "
-                 f"= {delta['reported_span_ns']:+d} ns"]
-        placements = [row for row in source["changes"]
-                      if row["listing_order_changed"] or row["moment_membership_changed"]]
+        lines = [
+            "Schedule diagnostics (candidate minus reference)",
+            f"Source operations: {source['listing_order_changed_count']} changed listing position; "
+            f"{source['moment_membership_changed_count']} changed moment membership",
+            f"Normalized operation-kind counts equal: {clock['operation_kind_counts_equal']}",
+            f"Span change: {delta['sum_batch_duration_ns']:+d} ns batch-duration sum "
+            f"- ({delta['overlap_excess_ns']:+d} ns overlap excess) "
+            f"+ ({delta['uncovered_span_ns']:+d} ns uncovered clock) "
+            f"= {delta['reported_span_ns']:+d} ns",
+        ]
+        placements = [
+            row for row in source["changes"] if row["listing_order_changed"] or row["moment_membership_changed"]
+        ]
         if top_operations and placements:
             lines.append("First source operations with changed order or moment membership:")
             for row in placements[:top_operations]:
                 label = row["source_origin"] or row["source_operation"]
-                lines.append(f"  {label}: {row['gate']} {', '.join(row['roles'])}; "
-                             f"moment {row['reference_moment']} -> {row['candidate_moment']}, "
-                             f"listing {row['reference_listing_index']} -> {row['candidate_listing_index']}; "
-                             f"moment peers +{len(row['added_moment_peers'])}/-{len(row['removed_moment_peers'])}")
+                lines.append(
+                    f"  {label}: {row['gate']} {', '.join(row['roles'])}; "
+                    f"moment {row['reference_moment']} -> {row['candidate_moment']}, "
+                    f"listing {row['reference_listing_index']} -> {row['candidate_listing_index']}; "
+                    f"moment peers +{len(row['added_moment_peers'])}/-{len(row['removed_moment_peers'])}",
+                )
         for group in sorted(clock["changes"], key=lambda g: -abs(g["delta_sum_duration_ns"])):
             kinds = ", ".join(f"{kind} x{count}" for kind, count in group["operation_counts"].items()) or "empty"
-            lines.append(f"  {kinds}, {group['duration_ns']} ns/batch: "
-                         f"{group['reference_batches']} -> {group['candidate_batches']} batches "
-                         f"({group['delta_sum_duration_ns']:+d} ns summed duration)")
+            lines.append(
+                f"  {kinds}, {group['duration_ns']} ns/batch: "
+                f"{group['reference_batches']} -> {group['candidate_batches']} batches "
+                f"({group['delta_sum_duration_ns']:+d} ns summed duration)",
+            )
         changed = [row for row in report["measurement_windows"] if row["gap_ns"]["delta"]]
         if top_windows and changed:
             lines.append("Largest absolute window-gap changes:")
@@ -95,15 +106,21 @@ class GuppyScheduleComparison:
         return "\n".join(lines)
 
 
-def _paired_report(reference: ScheduledCircuit, candidate: ScheduledCircuit,
-                   first: GuppyScheduleAudit, second: GuppyScheduleAudit) -> dict:
+def _paired_report(
+    reference: ScheduledCircuit,
+    candidate: ScheduledCircuit,
+    first: GuppyScheduleAudit,
+    second: GuppyScheduleAudit,
+) -> dict:
     a, b = first.to_dict(), second.to_dict()
     metric_pairs = {
         "source_moments": (len(reference.moments), len(candidate.moments)),
         "runtime_batches": (a["normalized_runtime"]["batch_count"], b["normalized_runtime"]["batch_count"]),
         "reported_span_ns": (a["normalized_runtime"]["batch_span_ns"], b["normalized_runtime"]["batch_span_ns"]),
-        "sum_window_gaps_ns": (a["lifetime_windows"]["normalized_window_gap_ns"],
-                               b["lifetime_windows"]["normalized_window_gap_ns"]),
+        "sum_window_gaps_ns": (
+            a["lifetime_windows"]["normalized_window_gap_ns"],
+            b["lifetime_windows"]["normalized_window_gap_ns"],
+        ),
     }
     first_windows = {w["measurement_index"]: w for w in a["lifetime_windows"]["windows"]}
     second_windows = {w["measurement_index"]: w for w in b["lifetime_windows"]["windows"]}
@@ -117,32 +134,46 @@ def _paired_report(reference: ScheduledCircuit, candidate: ScheduledCircuit,
         if roles != [r["role"] for r in new["role_history"]]:
             msg = "Schedule comparison changed the source lifetime role history"
             raise ValueError(msg)
-        row = {"measurement_index": index, "measurement_tag": f"qec:m:{index}",
-               "measurement_name": reference.measurement_names[index] if reference.measurement_names
-               else f"measurement[{index}]", "role_history": roles,
-               "role_names": [reference.role_names[q] if reference.role_names else f"q[{q}]" for q in roles]}
+        row = {
+            "measurement_index": index,
+            "measurement_tag": f"qec:m:{index}",
+            "measurement_name": (
+                reference.measurement_names[index] if reference.measurement_names else f"measurement[{index}]"
+            ),
+            "role_history": roles,
+            "role_names": [reference.role_names[q] if reference.role_names else f"q[{q}]" for q in roles],
+        }
         for name in ("gap_ns", "gate_interval_ns", "storage_interval_ns"):
             row[name] = {"reference": old[name], "candidate": new[name], "delta": new[name] - old[name]}
         row["runtime_sites"] = {"reference": old["runtime_site"], "candidate": new["runtime_site"]}
         rows.append(row)
-    return {"reference_policy": reference.schedule.value, "candidate_policy": candidate.schedule.value,
-            "source_listing_order_preserved": _source_listing(reference) == _source_listing(candidate),
-            "metrics": {k: {"reference": x, "candidate": y, "delta": y - x} for k, (x, y) in metric_pairs.items()},
-            "measurement_windows": rows,
-            "timing_status": {"reference": a["normalized_runtime"]["timing_status"],
-                              "candidate": b["normalized_runtime"]["timing_status"]},
-            "source_citations": list(reference.citations),
-            "scope": "Two tagged coin-toss traces; source-equivalent unitary-region repacking",
-            "source_rescheduling_contract_verified": True,
-            "physical_schedule_verified": False, "calibrated_durations_verified": False,
-            "logical_carrier_residency_verified": False, "noise_equivalence_verified": False,
-            "adapter_state_verified": False,
-            "gap_scope": "Sum over source-bound site windows; not wall-clock duration or calibrated idle exposure",
-            }
+    return {
+        "reference_policy": reference.schedule.value,
+        "candidate_policy": candidate.schedule.value,
+        "source_listing_order_preserved": _source_listing(reference) == _source_listing(candidate),
+        "metrics": {k: {"reference": x, "candidate": y, "delta": y - x} for k, (x, y) in metric_pairs.items()},
+        "measurement_windows": rows,
+        "timing_status": {
+            "reference": a["normalized_runtime"]["timing_status"],
+            "candidate": b["normalized_runtime"]["timing_status"],
+        },
+        "source_citations": list(reference.citations),
+        "scope": "Two tagged coin-toss traces; source-equivalent unitary-region repacking",
+        "source_rescheduling_contract_verified": True,
+        "physical_schedule_verified": False,
+        "calibrated_durations_verified": False,
+        "logical_carrier_residency_verified": False,
+        "noise_equivalence_verified": False,
+        "adapter_state_verified": False,
+        "gap_scope": "Sum over source-bound site windows; not wall-clock duration or calibrated idle exposure",
+    }
 
 
 def compare_guppy_schedules(
-    circuit: ScheduledCircuit, *, runtime: object, seed: int = 0,
+    circuit: ScheduledCircuit,
+    *,
+    runtime: object,
+    seed: int = 0,
     candidate_policy: SchedulePolicy = SchedulePolicy.ASAP_UNITARIES,
 ) -> GuppyScheduleComparison:
     """Capture reference and candidate schedules with the same plugin bytes and arguments.
@@ -183,16 +214,27 @@ def compare_guppy_schedules(
     gates = None if gates is None else tuple(gates)
     search_dirs = tuple(str(Path(p).resolve()) for p in getattr(runtime, "library_search_dirs", []))
     clock_model = getattr(runtime, "clock_model", "continuous")
-    frozen_runtime = SimpleNamespace(library_file=library, get_init_args=lambda: list(args),
-                                     batch_adapter_factory=factory, native_gates=gates,
-                                     library_search_dirs=search_dirs, clock_model=clock_model)
+    frozen_runtime = SimpleNamespace(
+        library_file=library,
+        get_init_args=lambda: list(args),
+        batch_adapter_factory=factory,
+        native_gates=gates,
+        library_search_dirs=search_dirs,
+        clock_model=clock_model,
+    )
     audits = []
     for plan in (circuit, candidate):
         if hashlib.sha256(library.read_bytes()).hexdigest() != digest:
             msg = "Runtime plugin library changed during the comparison"
             raise ValueError(msg)
-        audits.append(plan.audit_guppy_schedule(runtime=frozen_runtime, seed=seed,
-                                                ordering=GuppyOrdering.ALL_MOMENTS, include_lifetimes=True))
+        audits.append(
+            plan.audit_guppy_schedule(
+                runtime=frozen_runtime,
+                seed=seed,
+                ordering=GuppyOrdering.ALL_MOMENTS,
+                include_lifetimes=True,
+            ),
+        )
     if hashlib.sha256(library.read_bytes()).hexdigest() != digest:
         msg = "Runtime plugin library changed during the comparison"
         raise ValueError(msg)
@@ -200,10 +242,16 @@ def compare_guppy_schedules(
     from pecos.qec.generic.guppy_diagnostics import diagnose_schedule_pair  # noqa: PLC0415
 
     report["diagnostics"] = diagnose_schedule_pair(circuit, candidate, audits[0].evidence(), audits[1].evidence())
-    report["runtime_profile"] = {"selector": f"{type(runtime).__module__}.{type(runtime).__qualname__}",
-                                 "library_file": str(library), "library_sha256": digest,
-                                 "init_args": list(args), "seed": seed,
-                                 "native_gates": gates, "library_search_dirs": search_dirs,
-                                 "native_future_protocol": True, "clock_model": clock_model,
-                                 "event_adapter": "identity" if factory is None else "delegated"}
+    report["runtime_profile"] = {
+        "selector": f"{type(runtime).__module__}.{type(runtime).__qualname__}",
+        "library_file": str(library),
+        "library_sha256": digest,
+        "init_args": list(args),
+        "seed": seed,
+        "native_gates": gates,
+        "library_search_dirs": search_dirs,
+        "native_future_protocol": True,
+        "clock_model": clock_model,
+        "event_adapter": "identity" if factory is None else "delegated",
+    }
     return GuppyScheduleComparison(*audits, json.dumps(report))

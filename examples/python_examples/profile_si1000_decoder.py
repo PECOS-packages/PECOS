@@ -36,7 +36,10 @@ def _sample_worker(request_path: Path) -> None:
         msg = "Sampling circuit changed after input validation"
         raise ValueError(msg)
     stim.Circuit(circuit_path.read_text()).compile_detector_sampler(seed=request["seed"]).sample_write(
-        shots=request["shots"], filepath=request["samples_path"], format="01", append_observables=True,
+        shots=request["shots"],
+        filepath=request["samples_path"],
+        format="01",
+        append_observables=True,
     )
 
 
@@ -168,10 +171,18 @@ def main() -> None:
 
     checkpoint("sampling")
     request_path = args.output / "sampling-request.json"
-    request_path.write_text(json.dumps({
-        "circuit_path": str((source / "circuit.stim").resolve()), "circuit_sha256": matches[0]["circuit_sha256"],
-        "samples_path": str(samples.resolve()), "seed": args.seed, "shots": args.shots,
-    }, indent=2))
+    request_path.write_text(
+        json.dumps(
+            {
+                "circuit_path": str((source / "circuit.stim").resolve()),
+                "circuit_sha256": matches[0]["circuit_sha256"],
+                "samples_path": str(samples.resolve()),
+                "seed": args.seed,
+                "shots": args.shots,
+            },
+            indent=2,
+        ),
+    )
     remaining = args.wall_time_budget - (time.monotonic() - started)
     if remaining <= 0:
         checkpoint("budget_exhausted")
@@ -180,7 +191,10 @@ def main() -> None:
         with (args.output / "sampling.log").open("w") as log:
             subprocess.run(  # noqa: S603 - current interpreter and repository worker, no shell
                 [sys.executable, str(Path(__file__).resolve()), "--sample-worker", str(request_path.resolve())],
-                check=True, timeout=min(args.timeout, remaining), stdout=log, stderr=subprocess.STDOUT,
+                check=True,
+                timeout=min(args.timeout, remaining),
+                stdout=log,
+                stderr=subprocess.STDOUT,
             )
     except subprocess.TimeoutExpired:
         checkpoint("budget_exhausted" if remaining <= args.timeout else "sampling_timeout")

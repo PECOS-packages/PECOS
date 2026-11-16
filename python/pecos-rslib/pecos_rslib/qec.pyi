@@ -236,7 +236,6 @@ class DetectorErrorModel:
         p_prep: float | None = None,
         **noise_options: Any,
     ) -> DetectorErrorModel: ...
-
     @staticmethod
     def from_independent_mechanisms(
         mechanisms: Sequence[tuple[float, Sequence[int], Sequence[int]]],

@@ -30,8 +30,11 @@ def main() -> None:
     parser.add_argument("--schedule", choices=[s.value for s in SchedulePolicy], default="reference")
     parser.add_argument("--output", type=Path, default=Path("output/periodic-color-memories"))
     parser.add_argument("--dem", action="store_true", help="Build a native DEM with example Pauli noise")
-    parser.add_argument("--audit-flows", action="store_true",
-                        help="Check signed extraction flows and each memory's closed ideal parities")
+    parser.add_argument(
+        "--audit-flows",
+        action="store_true",
+        help="Check signed extraction flows and each memory's closed ideal parities",
+    )
     args = parser.parse_args()
     if args.shots < 1:
         parser.error("--shots must be positive")
@@ -74,12 +77,19 @@ def main() -> None:
         manifest_bytes = (json.dumps(plan.measurement_manifest(), indent=2) + "\n").encode("utf-8")
         (args.output / f"{basis}.measurements.json").write_bytes(manifest_bytes)
         (args.output / f"{basis}.raw-results.json").write_text(
-            json.dumps({
-                "measurement_manifest": f"{basis}.measurements.json",
-                "measurement_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-                "source": "ideal Guppy stabilizer simulation", "seed": 42, "shots": args.shots,
-                "columns": columns,
-            }, indent=2) + "\n", encoding="utf-8",
+            json.dumps(
+                {
+                    "measurement_manifest": f"{basis}.measurements.json",
+                    "measurement_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                    "source": "ideal Guppy stabilizer simulation",
+                    "seed": 42,
+                    "shots": args.shots,
+                    "columns": columns,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
         for shot in range(args.shots):
             dets, obs = plan.evaluate_named({tag: values[shot] for tag, values in columns.items()})

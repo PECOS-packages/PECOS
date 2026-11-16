@@ -34,7 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from types import MappingProxyType
@@ -47,8 +47,8 @@ if TYPE_CHECKING:
 
 _QECDB_BASE_URL = "https://qecdb.org/codes"
 _PARSER_SCHEMA_VERSION = 1
+# Default timeout used by fetch(), in seconds.
 DEFAULT_TIMEOUT_SECONDS = 10.0
-"""Default timeout used by :func:`fetch`, in seconds."""
 
 _MAX_RESPONSE_BYTES = 2_000_000
 
@@ -516,7 +516,7 @@ def fetch(
     url = f"{_QECDB_BASE_URL}/{normalized_id}"
     path = _cache_path(normalized_id, cache_dir)
     if cache and path.is_file() and not refresh:
-        retrieved_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+        retrieved_at = datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
         return parse_html(path.read_bytes(), source_url=url, expected_id=normalized_id, retrieved_at=retrieved_at)
 
     if offline:
@@ -524,7 +524,7 @@ def fetch(
         raise QecdbCacheMissError(msg)
 
     html = _download_html(url, timeout)
-    retrieved_at = datetime.now(timezone.utc).isoformat()
+    retrieved_at = datetime.now(UTC).isoformat()
     record = parse_html(html, source_url=url, expected_id=normalized_id, retrieved_at=retrieved_at)
     if cache:
         _write_cache(path, html)
@@ -537,7 +537,10 @@ def _download_html(url: str, timeout: float) -> bytes:
         headers={"User-Agent": "PECOS qecdb importer/1"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - URL is fixed HTTPS + validated ID
+        with urllib.request.urlopen(  # noqa: S310 - URL is fixed HTTPS + validated ID
+            request,
+            timeout=timeout,
+        ) as response:
             _validate_response_url(response.geturl())
             data = response.read(_MAX_RESPONSE_BYTES + 1)
     except QecdbFetchError:

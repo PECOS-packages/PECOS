@@ -6836,7 +6836,7 @@ mod tests {
                     let mut gate = if kind == GateType::MZ {
                         Gate::mz(&[q])
                     } else {
-                        Gate::measure_leaked(&[q])
+                        Gate::measure_z_leaked(&[q])
                     };
                     gate.meas_ids.push(MeasId::from_raw(mid));
                     let idx = circuit.tick().index();

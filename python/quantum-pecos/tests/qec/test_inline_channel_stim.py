@@ -36,7 +36,7 @@ def test_published_inline_export_matches_reference(case):
     converter = circuit.compile_m2d_converter(skip_reference_sample=True)
     dets, obs = converter.convert(measurements=sample, separate_observables=True)
     for record, ds, os in zip(sample, dets, obs, strict=True):
-        assert evaluate_tick_circuit(ticks, record[:reference.num_measurements]) == (tuple(ds), tuple(os))
+        assert evaluate_tick_circuit(ticks, record[: reference.num_measurements]) == (tuple(ds), tuple(os))
         if padding:
             assert record[-1]
 
@@ -118,14 +118,16 @@ def test_nonuniform_channels_keep_exclusive_branches_and_stim_argument_order():
     rows = circuit.compile_sampler(seed=91).sample(40000)
     observed = {bits: sum(tuple(row) == bits for row in rows) / len(rows) for bits in product((False, True), repeat=2)}
     assert observed == pytest.approx(
-        {(False, False): 0.45, (False, True): 0.2, (True, False): 0.35, (True, True): 0}, abs=0.012,
+        {(False, False): 0.45, (False, True): 0.2, (True, False): 0.35, (True, True): 0},
+        abs=0.012,
     )
     one = _payload([3], [(0.4, []), (0.1, [("X", 3)]), (0.2, [("Y", 3)]), (0.3, [("Z", 3)])])
     assert stim.Circuit(channel_to_stim(one))[0].gate_args_copy() == [0.1, 0.2, 0.3]
 
 
 @pytest.mark.parametrize(
-    "kwargs", [{"p1": 0.1}, {"p2": 0.1}, {"p_meas": 0.1}, {"p_prep": 0.1}, {"p1_gate_rates": {"H": 0.1}}],
+    "kwargs",
+    [{"p1": 0.1}, {"p2": 0.1}, {"p_meas": 0.1}, {"p_prep": 0.1}, {"p1_gate_rates": {"H": 0.1}}],
 )
 @pytest.mark.parametrize("p", [0.0, 0.01])
 def test_additive_noise_rejected_even_at_explicit_zero(p, kwargs):

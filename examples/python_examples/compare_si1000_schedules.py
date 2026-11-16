@@ -43,14 +43,15 @@ def _stim_mechanisms(circuit: stim.Circuit) -> dict:
         o = tuple(sorted(t.val for t in targets if t.is_logical_observable_id()))
         p = instruction.args_copy()[0]
         if p and (d or o):
-            previous = mechanisms.get((d, o), 0.)
+            previous = mechanisms.get((d, o), 0.0)
             mechanisms[d, o] = previous * (1 - p) + p * (1 - previous)
     return mechanisms
 
 
 def _check_mechanisms(actual: dict, expected: dict) -> None:
-    if actual.keys() != expected.keys() or any(not isclose(actual[k], expected[k], rel_tol=1e-10, abs_tol=0.)
-                                             for k in actual):
+    if actual.keys() != expected.keys() or any(
+        not isclose(actual[k], expected[k], rel_tol=1e-10, abs_tol=0.0) for k in actual
+    ):
         msg = "Independent DEM propagation disagrees with the reference/export"
         raise ValueError(msg)
 
@@ -81,8 +82,11 @@ def main() -> None:
         impl = periodic_488_implementation(periodic_488_code(d), gate_set="native-cz")
         plan = periodic_488_memory(impl, r, basis)
     noisy = SI1000(float(rate[1:].replace("p", "."))).apply(plan)
-    selected = [c for c in noisy.channels if c.kind == "X_ERROR" and c.moment == case["tick"]
-                and c.qubits[0] in case["x_error_qubits"]]
+    selected = [
+        c
+        for c in noisy.channels
+        if c.kind == "X_ERROR" and c.moment == case["tick"] and c.qubits[0] in case["x_error_qubits"]
+    ]
     if sorted(c.qubits[0] for c in selected) != sorted(case["x_error_qubits"]):
         msg = "Published physical witness is absent or ambiguous in the reference schedule"
         raise ValueError(msg)
@@ -91,8 +95,12 @@ def main() -> None:
     published = _stim_mechanisms(stim.Circuit(raw.decode()))
     args.output.mkdir(parents=True, exist_ok=True)
     for policy in (SchedulePolicy.ASAP_UNITARIES, SchedulePolicy.COMPACT_UNITARIES):
-        comparison = noisy.compare_schedule(faults, candidate_policy=policy,
-                                             exclude_through=through, max_pair_checks=args.max_pair_checks)
+        comparison = noisy.compare_schedule(
+            faults,
+            candidate_policy=policy,
+            exclude_through=through,
+            max_pair_checks=args.max_pair_checks,
+        )
         report = comparison.to_dict()
         if report["reference"]["bounds"]["upper_bound"] != case["distance"]:
             msg = "Reference witness does not reproduce the published upper bound"
@@ -100,8 +108,10 @@ def main() -> None:
         destination = args.output / policy.value
         destination.mkdir(parents=True, exist_ok=True)
         for label, variant in (("reference", comparison.reference), ("candidate", comparison.candidate)):
-            actual = {(tuple(row["detectors"]), tuple(row["observables"])): row["probability"]
-                      for row in report[label]["independent_dem"]}
+            actual = {
+                (tuple(row["detectors"]), tuple(row["observables"])): row["probability"]
+                for row in report[label]["independent_dem"]
+            }
             if label == "reference":
                 _check_mechanisms(actual, published)
             _check_mechanisms(actual, _stim_mechanisms(variant.to_stim()))
@@ -110,8 +120,10 @@ def main() -> None:
             (destination / f"{label}.stim").write_text(str(variant.to_stim()))
             (destination / f"{label}-schedule.txt").write_text(variant.ideal.describe())
         report["example_validation"] = {
-            "published_reference": case, "published_reference_dem_matches": True,
-            "stim_dems_match_native": True, "inline_tick_dems_match_native": True,
+            "published_reference": case,
+            "published_reference_dem_matches": True,
+            "stim_dems_match_native": True,
+            "inline_tick_dems_match_native": True,
             "noise_applied_to_guppy": False,
         }
         (destination / "comparison.json").write_text(json.dumps(report, indent=2))

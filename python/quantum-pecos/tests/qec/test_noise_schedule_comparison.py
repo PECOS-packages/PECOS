@@ -17,10 +17,12 @@ from pecos.qec.generic import (
 def _memory(p=0.001):
     op = CircuitOp
     repeated = op("X", (0,))
-    plan = ScheduledCircuit(2, ((op("R", (0,)), op("R", (1,))), (repeated,), (repeated,),
-                                (op("X", (1,)),), (op("M", (0,)), op("M", (1,)))),
-                            (MeasurementParity((1,), "syndrome", True),),
-                            (MeasurementParity((0,), "logical", True),))
+    plan = ScheduledCircuit(
+        2,
+        ((op("R", (0,)), op("R", (1,))), (repeated,), (repeated,), (op("X", (1,)),), (op("M", (0,)), op("M", (1,)))),
+        (MeasurementParity((1,), "syndrome", True),),
+        (MeasurementParity((0,), "logical", True),),
+    )
     return SI1000(p).apply(plan)
 
 
@@ -42,7 +44,7 @@ def test_affine_memory_probabilities_follow_independent_xor_oracle(policy):
     # Each wire has reset X(2p), readout X(5p), and three versus two depolarizing
     # channels p/10. Each depolarizing channel flips Z readout with 2p/30.
     for key, count in [("reference", 3), ("candidate", 2)]:
-        expected = (1 - (1 - 4*p)*(1 - 10*p)*(1 - 2*p/15)**count) / 2
+        expected = (1 - (1 - 4 * p) * (1 - 10 * p) * (1 - 2 * p / 15) ** count) / 2
         mechanisms = report[key]["independent_dem"]
         assert len(mechanisms) == 2
         assert all(row["probability"] == pytest.approx(expected, rel=1e-11) for row in mechanisms)
@@ -67,7 +69,9 @@ def test_repeated_operations_and_overtaking_remap_by_occurrence_not_object_or_ol
     assert len({f.channel_id for f in mapped}) == 3
     target_channels = {c.id: c for c in candidate.channels}
     assert [(target_channels[f.channel_id].moment, target_channels[f.channel_id].operation) for f in mapped] == [
-        (1, 0), (2, 0), (1, 1),
+        (1, 0),
+        (2, 0),
+        (1, 1),
     ]
     assert candidate.compile_native().fault_effect(mapped) == noisy.compile_native().fault_effect(faults)
 
@@ -75,8 +79,7 @@ def test_repeated_operations_and_overtaking_remap_by_occurrence_not_object_or_ol
 @pytest.mark.parametrize("reason", ["idle", "collapse_wait"])
 def test_nonoperation_fault_transfer_requires_a_new_physical_choice(reason):
     op = CircuitOp
-    plan = ScheduledCircuit(2, ((op("R", (0,)),), (op("R", (1,)),),
-                                (op("M", (0,)), op("M", (1,)))), (), ())
+    plan = ScheduledCircuit(2, ((op("R", (0,)),), (op("R", (1,)),), (op("M", (0,)), op("M", (1,)))), (), ())
     noisy = SI1000(0.001).apply(plan)
     selected = next(c for c in noisy.channels if c.reason == reason)
     with pytest.raises(ValueError, match="Idle and collapse-wait"):
@@ -109,15 +112,21 @@ def test_unsupported_policy_and_exclusion_fail_explicitly():
     with pytest.raises(ValueError, match="candidate_policy"):
         noisy.compare_schedule([_readout_fault(noisy)], candidate_policy=SchedulePolicy.REFERENCE)
     with pytest.raises(ValueError, match="original REFERENCE"):
-        noisy.noise.apply(noisy.ideal.rescheduled(SchedulePolicy.COMPACT_UNITARIES)).compare_schedule([_readout_fault(noisy)])
+        noisy.noise.apply(noisy.ideal.rescheduled(SchedulePolicy.COMPACT_UNITARIES)).compare_schedule(
+            [_readout_fault(noisy)],
+        )
     with pytest.raises(ValueError, match="exclude_through"):
         noisy.compare_schedule([_readout_fault(noisy)], exclude_through=4)
 
 
 def test_two_qubit_pauli_branch_remains_one_location():
     op = CircuitOp
-    plan = ScheduledCircuit(2, ((op("R", (0,)), op("R", (1,))), (op("CZ", (0, 1)),),
-                                (op("M", (0,)), op("M", (1,)))), (), (MeasurementParity((0,), "L"),))
+    plan = ScheduledCircuit(
+        2,
+        ((op("R", (0,)), op("R", (1,))), (op("CZ", (0, 1)),), (op("M", (0,)), op("M", (1,)))),
+        (),
+        (MeasurementParity((0,), "L"),),
+    )
     noisy = SI1000(0.001).apply(plan)
     channel = next(c for c in noisy.channels if c.kind == "DEPOLARIZE2")
     comparison = noisy.compare_schedule([PauliFault(channel.id, "XY")])
@@ -165,8 +174,11 @@ def test_released_small_memory_witnesses_retain_exact_bounds(distance, policy):
         impl = periodic_488_implementation(periodic_488_code(4), gate_set="native-cz")
         plan = periodic_488_memory(impl, 4, "Z")
     noisy = SI1000(0.001).apply(plan)
-    faults = [PauliFault(c.id, "X") for c in noisy.channels if c.kind == "X_ERROR"
-              and c.moment == case["tick"] and c.qubits[0] in case["x_error_qubits"]]
+    faults = [
+        PauliFault(c.id, "X")
+        for c in noisy.channels
+        if c.kind == "X_ERROR" and c.moment == case["tick"] and c.qubits[0] in case["x_error_qubits"]
+    ]
     assert len(faults) == distance
     report = noisy.compare_schedule(faults, candidate_policy=policy, exclude_through=distance - 1).to_dict()
     assert report["reference"]["bounds"]["lower_bound"] == report["reference"]["bounds"]["upper_bound"] == distance

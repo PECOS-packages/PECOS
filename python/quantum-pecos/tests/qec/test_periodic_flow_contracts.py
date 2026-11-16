@@ -44,5 +44,5 @@ def test_missing_cz_is_rejected_without_changing_published_contracts():
     layer = next(i for i, m in enumerate(gadget.moments) if any(g.name == "CZ" for g in m))
     j = next(i for i, g in enumerate(gadget.moments[layer]) if g.name == "CZ")
     moments = list(gadget.moments)
-    moments[layer] = (*moments[layer][:j], *moments[layer][j+1:])
+    moments[layer] = (*moments[layer][:j], *moments[layer][j + 1 :])
     assert not replace(gadget, moments=tuple(moments)).audit_flows(impl.flow_contracts()).all_valid

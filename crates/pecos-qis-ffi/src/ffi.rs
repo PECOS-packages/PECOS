@@ -2370,7 +2370,7 @@ mod tests {
                 );
             }
         }
-        with_interface(|iface| assert!(iface.operations.is_empty()));
+        with_interface(|iface| assert_eq!(iface.operations, Vec::<Operation>::new()));
         assert_eq!(unsafe { pecos_qis_ordering_barrier_hugr(-1) }, -1);
         with_interface(|iface| assert_eq!(iface.operations, vec![Operation::Barrier]));
     }

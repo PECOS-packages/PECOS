@@ -143,7 +143,7 @@ for (const name of ['nested', 'dag', 'trace', 'trace-range', 'origins', 'empty',
     }
     if (name === 'leakage') {
       query('MZ_L m7'); assert.deepEqual(filtered(), [1]);
-      query('MeasureLeaked'); assert.deepEqual(filtered(), [1]);
+      query('MeasureZLeaked'); assert.deepEqual(filtered(), [1]);
     }
     const fallback = new JSDOM(html);
     t.after(() => fallback.window.close());

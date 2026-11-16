@@ -13,12 +13,29 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Native aggregat
 
 @pytest.mark.parametrize("policy", [SchedulePolicy.ASAP_UNITARIES, SchedulePolicy.COMPACT_UNITARIES])
 def test_reference_and_candidate_share_profile_and_function_but_not_source_depth(policy):
-    plan = ScheduledCircuit(2, ((Op("R", (0,)), Op("R", (1,))), (Op("X", (0,)),), (Op("X", (1,)),),
-                                (Op("X", (0,)),), (Op("M", (0,)), Op("M", (1,)))), (), (),
-                            role_names=("data", "ancilla"), measurement_names=("data.final", "ancilla.final"))
-    comparison = plan.compare_guppy_schedules(runtime=SimpleRuntimePlugin(
-        duration_ns_reset=5, duration_ns_rxy=10, duration_ns_measure=20,
-    ), seed=17, candidate_policy=policy)
+    plan = ScheduledCircuit(
+        2,
+        (
+            (Op("R", (0,)), Op("R", (1,))),
+            (Op("X", (0,)),),
+            (Op("X", (1,)),),
+            (Op("X", (0,)),),
+            (Op("M", (0,)), Op("M", (1,))),
+        ),
+        (),
+        (),
+        role_names=("data", "ancilla"),
+        measurement_names=("data.final", "ancilla.final"),
+    )
+    comparison = plan.compare_guppy_schedules(
+        runtime=SimpleRuntimePlugin(
+            duration_ns_reset=5,
+            duration_ns_rxy=10,
+            duration_ns_measure=20,
+        ),
+        seed=17,
+        candidate_policy=policy,
+    )
     report = comparison.to_dict()
     assert report["metrics"]["source_moments"] == {"reference": 5, "candidate": 4, "delta": -1}
     assert report["metrics"]["reported_span_ns"] == {"reference": 80, "candidate": 80, "delta": 0}
@@ -44,9 +61,13 @@ def test_reference_and_candidate_share_profile_and_function_but_not_source_depth
 
 
 def test_empty_reference_has_no_windows_and_no_invented_speedup():
-    report = ScheduledCircuit(1, ((), (), ()), (), ()).compare_guppy_schedules(
-        runtime=SimpleRuntimePlugin(),
-    ).to_dict()
+    report = (
+        ScheduledCircuit(1, ((), (), ()), (), ())
+        .compare_guppy_schedules(
+            runtime=SimpleRuntimePlugin(),
+        )
+        .to_dict()
+    )
     assert report["metrics"]["source_moments"]["delta"] == -3
     assert report["metrics"]["reported_span_ns"] == {"reference": 0, "candidate": 0, "delta": 0}
     assert report["measurement_windows"] == []

@@ -11,8 +11,14 @@ from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
 
 def _batch(index, start, duration, *ops):
-    return {"shot_id": 1, "batch_index": index, "num_qubits": 2,
-            "start_time_nanos": start, "duration_nanos": duration, "operations": list(ops)}
+    return {
+        "shot_id": 1,
+        "batch_index": index,
+        "num_qubits": 2,
+        "start_time_nanos": start,
+        "duration_nanos": duration,
+        "operations": list(ops),
+    }
 
 
 def _op(name, q):
@@ -20,13 +26,15 @@ def _op(name, q):
 
 
 def test_distinct_site_intervals_and_reuse_gaps_are_not_live_idle_exposure():
-    report = summarize_runtime_batches([
-        _batch(0, 100, 10, _op("Reset", 0)),
-        _batch(1, 90, 5, _op("Reset", 1)),  # disjoint sites need not be emitted in clock order
-        _batch(2, 120, 20, {"Rzz": {"qubit_id_1": 0, "qubit_id_2": 1}}),
-        _batch(3, 140, 30, _op("Measure", 0)),
-        _batch(4, 200, 10, _op("Reset", 0)),  # gap after measurement can cross lifetimes
-    ])
+    report = summarize_runtime_batches(
+        [
+            _batch(0, 100, 10, _op("Reset", 0)),
+            _batch(1, 90, 5, _op("Reset", 1)),  # disjoint sites need not be emitted in clock order
+            _batch(2, 120, 20, {"Rzz": {"qubit_id_1": 0, "qubit_id_2": 1}}),
+            _batch(3, 140, 30, _op("Measure", 0)),
+            _batch(4, 200, 10, _op("Reset", 0)),  # gap after measurement can cross lifetimes
+        ],
+    )
     assert report["first_batch_start_ns"] == 90
     assert report["last_batch_end_ns"] == 210
     assert report["batch_span_ns"] == 120
@@ -40,8 +48,7 @@ def test_distinct_site_intervals_and_reuse_gaps_are_not_live_idle_exposure():
 def test_multiple_normalized_operations_share_one_batch_interval():
     report = summarize_runtime_batches([_batch(0, 5, 20, _op("Rz", 0), _op("Rxy", 0))])
     assert report["operation_counts"] == {"Rxy": 1, "Rz": 1}
-    assert report["sites"] == [{"runtime_site": 0, "batch_assigned_operation_ns": 20,
-                                "between_operation_gap_ns": 0}]
+    assert report["sites"] == [{"runtime_site": 0, "batch_assigned_operation_ns": 20, "between_operation_gap_ns": 0}]
 
 
 def test_zero_duration_and_empty_batches_are_distinct():
@@ -54,10 +61,18 @@ def test_zero_duration_and_empty_batches_are_distinct():
     assert custom["sites"] == []
 
 
-@pytest.mark.parametrize(("field", "value"), [
-    ("start_time_nanos", -1), ("duration_nanos", True), ("duration_nanos", 1.5),
-    ("duration_nanos", 1 << 64), ("batch_index", 1), ("batch_index", False), ("num_qubits", -1),
-])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("start_time_nanos", -1),
+        ("duration_nanos", True),
+        ("duration_nanos", 1.5),
+        ("duration_nanos", 1 << 64),
+        ("batch_index", 1),
+        ("batch_index", False),
+        ("num_qubits", -1),
+    ],
+)
 def test_invalid_clock_or_identity_fails(field, value):
     batch = _batch(0, 0, 1, _op("Reset", 0))
     batch[field] = value
@@ -73,8 +88,10 @@ def test_mixed_shots_capacities_and_overlaps_fail(field, value):
         summarize_runtime_batches([_batch(0, 0, 10, _op("Reset", 0)), second])
 
 
-@pytest.mark.parametrize("op", [_op("Unknown", 0), _op("Reset", 2), _op("Reset", True),
-                                {"Rzz": {"qubit_id_1": 0, "qubit_id_2": 0}}])
+@pytest.mark.parametrize(
+    "op",
+    [_op("Unknown", 0), _op("Reset", 2), _op("Reset", True), {"Rzz": {"qubit_id_1": 0, "qubit_id_2": 0}}],
+)
 def test_unknown_operations_and_bad_site_ids_fail(op):
     with pytest.raises(ValueError, match=r"Unsupported runtime|Invalid runtime"):
         summarize_runtime_batches([_batch(0, 0, 5, op)])
@@ -84,6 +101,7 @@ def _fake_capture(monkeypatch, batch):
     def capture(_program, _n, **options):
         options["batch_adapter_factory"]().normalize(deepcopy(batch))
         return [{"operations": [], "lowered_quantum_ops_complete": True, "runtime_events_complete": True}]
+
     monkeypatch.setattr(pecos, "capture_qis_operation_trace", capture)
     monkeypatch.setattr(ScheduledCircuit, "guppy_program", lambda *_args, **_kwargs: None)
 

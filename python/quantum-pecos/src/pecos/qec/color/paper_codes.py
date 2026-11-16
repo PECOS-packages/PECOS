@@ -177,8 +177,10 @@ class ColorCodeImplementation:
         for check in self.code.checks:
             result.append(PauliFlow(f"input:{check.name}", input=check, parity=parities[f"input:{check.name}"]))
             result.append(PauliFlow(f"output:{check.name}", output=check, parity=parities[f"output:{check.name}"]))
-        result.extend(PauliFlow(logical.name, input=logical, output=logical, parity=parities[logical.name])
-                      for logical in self.code.logical_operators)
+        result.extend(
+            PauliFlow(logical.name, input=logical, output=logical, parity=parities[logical.name])
+            for logical in self.code.logical_operators
+        )
         result.extend(PauliFlow(f.name, parity=f.parity) for f in gadget.flows if f.name.startswith("constraint["))
         return tuple(result)
 

@@ -46,13 +46,16 @@ class ScheduledParityAudit:
     def describe(self) -> str:
         """Show named equations and distinguish sign errors from random checks."""
         report = self.to_dict()
-        lines = [f"{report['schedule']} schedule: {len(report['parities'])} ideal parity checks; "
-                 f"all valid={self.all_valid}"]
+        lines = [
+            f"{report['schedule']} schedule: {len(report['parities'])} ideal parity checks; "
+            f"all valid={self.all_valid}",
+        ]
         for row in report["parities"]:
             status = "always zero" if row["valid"] else "always one" if row["deterministic"] else "nondeterministic"
             lines.append(f"  {row['id']} ({row['label']}): {row['expression']} = {status}")
-        lines.append("Closed ideal experiment only; open-gadget action, compiled Guppy, "
-                     "fault tolerance and noise unaudited")
+        lines.append(
+            "Closed ideal experiment only; open-gadget action, compiled Guppy, fault tolerance and noise unaudited",
+        )
         return "\n".join(lines)
 
 
@@ -70,8 +73,15 @@ def audit_scheduled_parities(plan: ScheduledCircuit) -> ScheduledParityAudit:
     events = tuple(f"event[{i}]" for i in range(plan.num_measurements))
     authored_roles = plan.role_names or tuple(f"q[{i}]" for i in range(plan.num_qubits))
     authored_events = plan.measurement_names or tuple(f"measurement[{i}]" for i in range(plan.num_measurements))
-    gadget = Gadget.from_operations("closed scheduled experiment", roles, plan.moments,
-                                   inputs=(), outputs=(), outcomes=events, citations=plan.citations)
+    gadget = Gadget.from_operations(
+        "closed scheduled experiment",
+        roles,
+        plan.moments,
+        inputs=(),
+        outputs=(),
+        outcomes=events,
+        citations=plan.citations,
+    )
     contracts, definitions = [], []
     for kind, parities in (("detector", plan.detectors), ("observable", plan.observables)):
         for index, parity in enumerate(parities):
@@ -79,22 +89,45 @@ def audit_scheduled_parities(plan: ScheduledCircuit) -> ScheduledParityAudit:
             local = NamedParity(tuple(events[i] for i in parity.records), parity.constant)
             contracts.append(PauliFlow(identity, parity=local))
             named = NamedParity(tuple(authored_events[i] for i in parity.records), parity.constant)
-            definitions.append({"id": identity, "kind": kind, "index": index, "label": parity.label,
-                                "records": list(parity.records), "measurement_names":
-                                [authored_events[i] for i in parity.records], "constant": parity.constant,
-                                "coords": parity.coords, "expression": str(named)})
+            definitions.append(
+                {
+                    "id": identity,
+                    "kind": kind,
+                    "index": index,
+                    "label": parity.label,
+                    "records": list(parity.records),
+                    "measurement_names": [authored_events[i] for i in parity.records],
+                    "constant": parity.constant,
+                    "coords": parity.coords,
+                    "expression": str(named),
+                },
+            )
     evidence = gadget.audit_flows(contracts).to_dict()
     for definition, result in zip(definitions, evidence["contracts"], strict=True):
-        definition.update(valid=result["valid"], deterministic=result["support_valid"],
-                          ideal_value=(0 if result["valid"] else 1) if result["support_valid"] else None)
-    report = {"schedule": plan.schedule.value, "parities": definitions, "flow_evidence": evidence,
-              "role_bindings": [{"internal": internal, "authored": authored, "index": i}
-                                for i, (internal, authored) in enumerate(zip(roles, authored_roles, strict=True))],
-              "measurement_bindings": [{"internal": internal, "authored": authored, "index": i}
-                                       for i, (internal, authored) in
-                                       enumerate(zip(events, authored_events, strict=True))],
-              "source_operations": [asdict(row) for row in plan.inspect()], "source_citations": list(plan.citations),
-              "expected_ideal_value": 0, "scope": "All declared parities of this closed ideal scheduled experiment",
-              "open_gadget_action_verified": False, "compiled_guppy_verified": False,
-              "fault_tolerance_verified": False, "noise_equivalence_verified": False}
+        definition.update(
+            valid=result["valid"],
+            deterministic=result["support_valid"],
+            ideal_value=(0 if result["valid"] else 1) if result["support_valid"] else None,
+        )
+    report = {
+        "schedule": plan.schedule.value,
+        "parities": definitions,
+        "flow_evidence": evidence,
+        "role_bindings": [
+            {"internal": internal, "authored": authored, "index": i}
+            for i, (internal, authored) in enumerate(zip(roles, authored_roles, strict=True))
+        ],
+        "measurement_bindings": [
+            {"internal": internal, "authored": authored, "index": i}
+            for i, (internal, authored) in enumerate(zip(events, authored_events, strict=True))
+        ],
+        "source_operations": [asdict(row) for row in plan.inspect()],
+        "source_citations": list(plan.citations),
+        "expected_ideal_value": 0,
+        "scope": "All declared parities of this closed ideal scheduled experiment",
+        "open_gadget_action_verified": False,
+        "compiled_guppy_verified": False,
+        "fault_tolerance_verified": False,
+        "noise_equivalence_verified": False,
+    }
     return ScheduledParityAudit(json.dumps(report))

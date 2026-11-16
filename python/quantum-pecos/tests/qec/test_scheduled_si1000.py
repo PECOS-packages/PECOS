@@ -94,7 +94,8 @@ def test_full_noise_matches_unchanged_published_circuit(case):
 def test_released_physical_witnesses_and_exact_small_bounds(case):
     noisy = _case_plan(case)
     selected = [
-        c for c in noisy.channels
+        c
+        for c in noisy.channels
         if c.kind == "X_ERROR" and c.moment == case["tick"] and c.qubits[0] in case["x_error_qubits"]
     ]
     assert sorted(c.qubits[0] for c in selected) == sorted(case["x_error_qubits"])
@@ -153,8 +154,10 @@ def test_two_qubit_branch_costs_one_location_and_deterministic_errors_replay():
 def test_nondeterministic_ideal_detector_is_not_accepted_for_replay():
     op = CircuitOp
     plan = ScheduledCircuit(
-        1, ((op("R", (0,)),), (op("H", (0,)),), (op("M", (0,)),)),
-        (MeasurementParity((0,), "random check"),), (MeasurementParity((0,), "random logical"),),
+        1,
+        ((op("R", (0,)),), (op("H", (0,)),), (op("M", (0,)),)),
+        (MeasurementParity((0,), "random check"),),
+        (MeasurementParity((0,), "random logical"),),
     )
     noisy = SI1000(0.001).apply(plan)
     channel = next(c for c in noisy.channels if c.reason == "measurement")
@@ -173,18 +176,24 @@ def test_idle_and_wait_are_separate_and_include_active_and_retired_sites():
             (op("M", (0,)), op("M", (1,))),
             (op("R", (2,)),),
             (op("M", (2,)),),
-        ), (), (),
+        ),
+        (),
+        (),
     )
     noisy = SI1000(0.001).apply(plan)
     at = [c for c in noisy.channels if c.moment == 1]
     assert {(c.qubits, c.reason, c.probability) for c in at} == {
-        ((0,), "one_qubit", 0.0001), ((1,), "reset", 0.002),
-        ((2,), "idle", 0.0001), ((0,), "collapse_wait", 0.002), ((2,), "collapse_wait", 0.002),
+        ((0,), "one_qubit", 0.0001),
+        ((1,), "reset", 0.002),
+        ((2,), "idle", 0.0001),
+        ((0,), "collapse_wait", 0.002),
+        ((2,), "collapse_wait", 0.002),
     }
     assert len([c for c in noisy.channels if c.moment == 2]) == 3
     # Already measured sites still receive the release's allocated-site idle and wait channels.
     assert {(c.reason, c.qubits) for c in noisy.channels if c.moment == 4 and c.qubits == (0,)} == {
-        ("idle", (0,)), ("collapse_wait", (0,)),
+        ("idle", (0,)),
+        ("collapse_wait", (0,)),
     }
     assert noisy.to_stim().num_ticks == 6
 
@@ -218,9 +227,12 @@ def test_rescheduling_requires_recomputing_noise_locations():
         2,
         (
             (op("R", (0,)), op("R", (1,))),
-            (op("H", (0,)),), (op("H", (1,)),),
+            (op("H", (0,)),),
+            (op("H", (1,)),),
             (op("M", (0,)), op("M", (1,))),
-        ), (), (),
+        ),
+        (),
+        (),
     )
     reference = SI1000(0.001).apply(plan)
     alternative = reference.noise.apply(reference.ideal.rescheduled(SchedulePolicy.ASAP_UNITARIES))
@@ -235,8 +247,11 @@ def test_small_exclusion_against_independent_subset_enumeration():
     # Includes hyperedges and two separate logical bits. Same detector supports
     # with different logical masks must remain distinct, even if both are nonzero.
     universes = [
-        {(3, 0), (5, 0), (6, 1)}, {(0, 2)}, {(7, 1), (7, 2)},
-        {(1, 0), (2, 0), (4, 0), (7, 3)}, {(1, 1), (2, 2), (4, 0)},
+        {(3, 0), (5, 0), (6, 1)},
+        {(0, 2)},
+        {(7, 1), (7, 2)},
+        {(1, 0), (2, 0), (4, 0), (7, 3)},
+        {(1, 1), (2, 2), (4, 0)},
     ]
     for supports in universes:
         for through in (1, 2, 3):
@@ -268,7 +283,8 @@ def test_tiny_dem_probabilities_cannot_hide_a_weight_one_physical_fault(rate):
         moments.extend(((op("H", (target,)),), (op("CZ", (0, target)),), (op("H", (target,)),)))
     moments.append((op("M", (0,)), op("M", (1,)), op("M", (2,))))
     plan = ScheduledCircuit(
-        3, tuple(moments),
+        3,
+        tuple(moments),
         (MeasurementParity((0, 1), "left"), MeasurementParity((1, 2), "right")),
         (MeasurementParity((0,), "logical"),),
     )
@@ -291,7 +307,8 @@ def test_underflowed_channel_is_not_a_positive_probability_witness():
     plan = ScheduledCircuit(
         1,
         ((op("R", (0,)),), (op("H", (0,)),), (op("H", (0,)),), (op("M", (0,)),)),
-        (), (MeasurementParity((0,), "logical"),),
+        (),
+        (MeasurementParity((0,), "logical"),),
     )
     noisy = SI1000(5e-324).apply(plan)
     channel = next(c for c in noisy.channels if c.moment == 2)

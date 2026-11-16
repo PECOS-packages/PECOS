@@ -19,6 +19,26 @@ if TYPE_CHECKING:
     from pecos.qec.generic.scheduled import ScheduledCircuit
 
 
+def _qis_quantum_name(operation: object) -> str | None:
+    """Count quantum work in both logical-QIR and native-handle traces."""
+    if not isinstance(operation, dict):
+        return None
+    if "Quantum" in operation:
+        return next(iter(operation["Quantum"]))
+    native = operation.get("RuntimeRequest", {}).get("request", {}).get("Native")
+    if not isinstance(native, dict):
+        return None
+    name = next(iter(native))
+    if name in {"Rxy", "Rz", "Rzz", "Rpp"}:
+        return name.upper()
+    if name == "Reset":
+        return name
+    if name == "Measure":
+        return "MeasureLeaked" if native[name]["leaked"] else "Measure"
+    # Allocation, release, future reads/refcounts and barriers are not gates.
+    return None
+
+
 def summarize_runtime_batches(batches: Sequence[dict]) -> dict:
     """Summarize batch-assigned occupancy and between-operation gaps by runtime site.
 
@@ -79,13 +99,17 @@ def summarize_runtime_batches(batches: Sequence[dict]) -> dict:
             occupancy[q] += duration
             previous[q] = end
     return {
-        "batch_count": len(batches), "site_capacity": capacity,
+        "batch_count": len(batches),
+        "site_capacity": capacity,
         "timing_status": ("nonzero_reported_durations" if positive else "zero_durations") if batches else "no_batches",
-        "first_batch_start_ns": first, "last_batch_end_ns": last if batches else None,
+        "first_batch_start_ns": first,
+        "last_batch_end_ns": last if batches else None,
         "batch_span_ns": last - first if batches else 0,
         "operation_counts": dict(sorted(counts.items())),
-        "sites": [{"runtime_site": q, "batch_assigned_operation_ns": occupancy[q],
-                   "between_operation_gap_ns": gaps[q]} for q in sorted(previous)],
+        "sites": [
+            {"runtime_site": q, "batch_assigned_operation_ns": occupancy[q], "between_operation_gap_ns": gaps[q]}
+            for q in sorted(previous)
+        ],
         "gap_scope": "Between emitted operations; excludes initial/final gaps; may span site reuse",
         "live_idle_exposure_verified": False,
     }
@@ -111,10 +135,14 @@ class GuppyScheduleAudit:
         data = self.to_dict()
         timing = data["normalized_runtime"]
         windows = data.get("lifetime_windows")
-        lifetimes = "" if windows is None else (
-            f"Tagged execution: {len(windows['windows'])} source-bound site windows, "
-            f"{windows['normalized_window_gap_ns']} ns total window gaps; "
-            f"{windows['excluded_between_window_gap_ns']} ns between-window gaps excluded\n"
+        lifetimes = (
+            ""
+            if windows is None
+            else (
+                f"Tagged execution: {len(windows['windows'])} source-bound site windows, "
+                f"{windows['normalized_window_gap_ns']} ns total window gaps; "
+                f"{windows['excluded_between_window_gap_ns']} ns between-window gaps excluded\n"
+            )
         )
         return (
             f"Runtime schedule: {timing['batch_count']} batches, {timing['batch_span_ns']} ns reported span\n"
@@ -126,8 +154,12 @@ class GuppyScheduleAudit:
 
 
 def audit_guppy_schedule(
-    circuit: ScheduledCircuit, *, runtime: object, seed: int = 0,
-    ordering: GuppyOrdering = GuppyOrdering.ALL_MOMENTS, batch_adapter_factory: object | None = None,
+    circuit: ScheduledCircuit,
+    *,
+    runtime: object,
+    seed: int = 0,
+    ordering: GuppyOrdering = GuppyOrdering.ALL_MOMENTS,
+    batch_adapter_factory: object | None = None,
     include_lifetimes: bool = False,
 ) -> GuppyScheduleAudit:
     """Capture one ideal trace and preserve an existing runtime event adapter.
@@ -178,8 +210,13 @@ def audit_guppy_schedule(
             return output
 
     program = circuit.guppy_program(ordering=ordering, allocation_provenance=include_lifetimes)
-    trace = capture_qis_operation_trace(program, circuit.num_qubits, seed=seed,
-                                        runtime=runtime, batch_adapter_factory=Recorder)
+    trace = capture_qis_operation_trace(
+        program,
+        circuit.num_qubits,
+        seed=seed,
+        runtime=runtime,
+        batch_adapter_factory=Recorder,
+    )
     source_summary = summarize_runtime_batches(batches)
     normalized = summarize_runtime_batches([{**b, "operations": b["normalized_operations"]} for b in batches])
     operations = [op for chunk in trace for op in chunk["operations"]]
@@ -201,21 +238,31 @@ def audit_guppy_schedule(
             segments = []
         moments = []
         for index, (source, segment) in enumerate(zip(circuit.moments, segments, strict=True)):
-            qis_counts = Counter(next(iter(op["Quantum"])) for op in segment
-                                 if isinstance(op, dict) and "Quantum" in op)
-            moments.append({"moment": index, "source_gate_counts": dict(Counter(op.name for op in source)),
-                            "qis_quantum_counts": dict(qis_counts)})
+            qis_counts = Counter(name for op in segment if (name := _qis_quantum_name(op)) is not None)
+            moments.append(
+                {
+                    "moment": index,
+                    "source_gate_counts": dict(Counter(op.name for op in source)),
+                    "qis_quantum_counts": dict(qis_counts),
+                },
+            )
     report = {
-        "ordering": contract.to_dict(), "seed": seed,
-        "source_schedule": circuit.schedule.value, "source_citations": list(circuit.citations),
+        "ordering": contract.to_dict(),
+        "seed": seed,
+        "source_schedule": circuit.schedule.value,
+        "source_citations": list(circuit.citations),
         "runtime_selector": f"{type(runtime).__module__}.{type(runtime).__qualname__}",
         "event_adapter": "identity" if delegate_factory is None else "delegated",
-        "source_runtime": source_summary, "normalized_runtime": normalized,
-        "expected_barrier_requests": expected, "observed_barrier_requests": observed,
+        "source_runtime": source_summary,
+        "normalized_runtime": normalized,
+        "expected_barrier_requests": expected,
+        "observed_barrier_requests": observed,
         "qis_moments": moments,
         "scope": "One completed coin-toss trace; reported batch clock and source QIS barrier segmentation",
-        "source_moment_timing_verified": False, "calibrated_durations_verified": False,
-        "physical_schedule_verified": False, "noise_equivalence_verified": False,
+        "source_moment_timing_verified": False,
+        "calibrated_durations_verified": False,
+        "physical_schedule_verified": False,
+        "noise_equivalence_verified": False,
         "measurement_binding_verified": False,
         "trace_lowering_complete": bool(trace) and all(c.get("lowered_quantum_ops_complete") is True for c in trace),
         "runtime_events_complete": bool(trace) and all(c.get("runtime_events_complete") is True for c in trace),

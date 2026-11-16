@@ -4,7 +4,7 @@
 //! Export real inspector HTML for the DOM regression suite. Trace origins here
 //! are synthetic; Python integration tests cover validated QIS trace replay.
 
-use pecos_core::MeasId;
+use pecos_core::{Angle64, MeasId};
 use pecos_quantum::{Attribute, DagCircuit, DiagramStyle, Gate, GateType, QubitId, TickCircuit};
 use serde_json::json;
 use std::{fs, path::PathBuf};
@@ -46,11 +46,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut trace = TickCircuit::new();
     trace
         .tick()
-        .rzz(-0.25, &[(0, 1)])
+        .rzz(Angle64::try_from_radians(-0.25)?, &[(0, 1)])
         .meta("_pecos_trace_origin", Attribute::Json(base.clone()));
     trace
         .tick()
-        .rz(0.25, &[1])
+        .rz(Angle64::try_from_radians(0.25)?, &[1])
         .meta("_pecos_trace_origin", Attribute::Json(base.clone()));
     save("trace", &trace)?;
     fs::write(
@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut leakage = TickCircuit::new();
     for (kind, qubit, id) in [
         (GateType::MZ, 4, 42),
-        (GateType::MeasureLeaked, 1, 7),
+        (GateType::MeasureZLeaked, 1, 7),
         (GateType::MZ, 3, 20),
     ] {
         let mut gate = Gate::simple(kind, vec![QubitId(qubit)]);

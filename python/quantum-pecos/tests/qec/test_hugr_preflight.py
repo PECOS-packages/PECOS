@@ -49,9 +49,11 @@ def test_only_exact_native_barrier_declarations_are_known_static(arity) -> None:
     op = ops.FuncDecl("generated.module." + helper, signature)
     assert is_static(op)
     # A matching suffix is insufficient if the declared arguments/results differ.
-    for inputs, outputs in (([tys.Bool] * arity, [tys.Qubit] * arity),
-                            ([tys.Qubit] * arity, [tys.Bool] * arity),
-                            ([tys.Qubit] * (arity + 1), [tys.Qubit] * arity)):
+    for inputs, outputs in (
+        ([tys.Bool] * arity, [tys.Qubit] * arity),
+        ([tys.Qubit] * arity, [tys.Bool] * arity),
+        ([tys.Qubit] * (arity + 1), [tys.Qubit] * arity),
+    ):
         wrong = ops.FuncDecl(helper, tys.PolyFuncType([], tys.FunctionType(inputs, outputs)))
         assert not is_static(wrong)
     for name in ("unknown_external", helper + "_other", "pecos_qis_trace_metadata_qubit_hugr"):
@@ -170,8 +172,10 @@ def test_loader_rejects_unresolved_operation_after_validation(monkeypatch: pytes
         load_hugr_from_bytes(_unresolved_package())
 
 
-@pytest.mark.parametrize("helper", ["ordered_alloc", "ordered_alloc_tagged", "ordering_join",
-                                  "ordering_observe", "ordering_barrier"])
+@pytest.mark.parametrize(
+    "helper",
+    ["ordered_alloc", "ordered_alloc_tagged", "ordering_join", "ordering_observe", "ordering_barrier"],
+)
 def test_lifetime_helpers_require_exact_monomorphic_types(helper):
     from hugr.std.int import int_t
 

@@ -22,7 +22,9 @@ For signed Pauli-state preparation and gates between extraction rounds, see
 
 ```python
 from pecos.qec.color import (
-    ColorExtraction, color_code_spec, color_code_implementation,
+    ColorExtraction,
+    color_code_spec,
+    color_code_implementation,
     color_memory_program,
 )
 from pecos.qec.generic import SchedulePolicy
@@ -111,14 +113,17 @@ reference-circuit and conditional-channel checks.
 
 The same definition can be used repeatedly, or on different data roles:
 
+<!--continuation-->
 ```python
-from pecos.qec.generic import GadgetProgram
+from pecos.qec.generic import GadgetProgram, SchedulePolicy
 
 experiment = GadgetProgram(("data[0]", "data[1]", "probe"))
 experiment.append(
     Gadget(
         name="prepare 00",
-        roles=("data[0]", "data[1]"), inputs=(), outputs=("data[0]", "data[1]"),
+        roles=("data[0]", "data[1]"),
+        inputs=(),
+        outputs=("data[0]", "data[1]"),
         moments=((Gate("R", ("data[0]",)), Gate("R", ("data[1]",))),),
     ),
     label="prepare",
@@ -132,7 +137,9 @@ experiment.detector("repeat ZZ", first["syndrome"] ^ second.flow("ZZ"))
 readout = experiment.append(
     Gadget(
         name="readout Z",
-        roles=("data[0]", "data[1]"), inputs=("data[0]", "data[1]"), outputs=(),
+        roles=("data[0]", "data[1]"),
+        inputs=("data[0]", "data[1]"),
+        outputs=(),
         moments=((Gate("M", ("data[0]",), "left"), Gate("M", ("data[1]",), "right")),),
     ),
     label="readout",
@@ -173,6 +180,7 @@ operation; a RELABEL row shows the carriers immediately before exchange.
 
 ## Explain a schedule and follow its provenance
 
+<!--continuation-->
 ```python
 print(plan.describe())
 print(plan.resources)
@@ -208,9 +216,18 @@ debug-information contract. Guppy may reschedule and choose different sites.
 The scheduled Guppy backend emits each physical readout as a direct scalar
 result, with no detector or logical XOR performed on that output:
 
+<!--continuation-->
 ```python
-m0 = measure(q0).read()
-result("qec:m:0", m0)
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import measure, qubit
+
+
+@guppy
+def raw_readout() -> None:
+    q0 = qubit()
+    m0 = measure(q0).read()
+    result("qec:m:0", m0)
 ```
 
 Every measurement has a unique canonical tag, including preparation flags,
@@ -223,6 +240,7 @@ Keep that mapping with exported Guppy and recorded shots.
 `plan.measurement_manifest()` returns a detached, JSON-ready dictionary with a
 versioned format (`pecos.scheduled-measurements`, version 1):
 
+<!--continuation-->
 ```python
 import json
 from pathlib import Path
@@ -251,7 +269,12 @@ results. These examples record ideal stabilizer simulations.
 
 Detector and observable definitions are separate derived data:
 
+<!--continuation-->
 ```python
+from pecos import sim, stabilizer
+
+columns = sim(plan.guppy_program()).qubits(plan.num_qubits).quantum(stabilizer()).seed(32).run(1).to_dict()
+shot = 0
 aliases = plan.measurement_aliases
 raw_one_shot = {tag: values[shot] for tag, values in columns.items()}
 detector_bits, observable_bits = plan.evaluate_named(raw_one_shot)
@@ -278,15 +301,18 @@ explicit `PauliFlow` contracts with input/output operators and the local outcome
 parity. For a ZZ measurement gadget with ports `left`, `right`, and outcome
 `syndrome`:
 
+<!--continuation-->
 ```python
 from pecos.qec.generic import NamedPauli, NamedParity, PauliFlow
 
 zz = NamedPauli("ZZ", (("left", "Z"), ("right", "Z")))
 bit = NamedParity("syndrome")
-audit = measure_zz.audit_flows([
-    PauliFlow("measures ZZ", input=zz, parity=bit),
-    PauliFlow("projects ZZ", output=zz, parity=bit),
-])
+audit = measure_zz.audit_flows(
+    [
+        PauliFlow("measures ZZ", input=zz, parity=bit),
+        PauliFlow("projects ZZ", output=zz, parity=bit),
+    ]
+)
 print(audit.describe())
 audit.require_valid()
 ```
@@ -313,7 +339,11 @@ Stim version. See [Stim's flow API](https://github.com/quantumlib/Stim/blob/main
 The planar 4.8.8 and triangular 6.6.6 implementations supply explicit contracts
 for their published input/output checks, logical transport, and record constraints:
 
+<!--continuation-->
 ```python
+from pecos.qec.color import ColorExtraction, color_code_implementation, color_code_spec
+
+implementation = color_code_implementation(color_code_spec("666", 3), ColorExtraction.SWAP_SUPERDENSE)
 contracts = implementation.flow_contracts(phase=0)
 audit = implementation.audit_flows(phase=0)
 audit.require_valid()
@@ -336,6 +366,7 @@ boundary H frames are included. Check names retain their face-color annotations.
 
 For a closed experiment, use the selected schedule directly:
 
+<!--continuation-->
 ```python
 plan = experiment.compile(SchedulePolicy.COMPACT_UNITARIES)
 audit = plan.audit_parities()
@@ -386,6 +417,7 @@ inference remains a separate feature.
 
 ## Lower the same plan to TickCircuit or Guppy
 
+<!--continuation-->
 ```python
 plan = experiment.compile(SchedulePolicy.REFERENCE)
 function = plan.guppy_program()
@@ -422,6 +454,11 @@ The noise profile is a separate layer after choosing the physical schedule:
 
 ```python
 from pecos.qec.generic import SI1000
+from pecos.qec.color import ColorExtraction, color_code_implementation, color_code_spec, color_memory_program
+from pecos.qec.generic import SchedulePolicy
+
+implementation = color_code_implementation(color_code_spec("488", 3), ColorExtraction.BRICKWORK_CZ)
+plan = color_memory_program(implementation, rounds=2, basis="Z").compile()
 
 noisy = SI1000(0.001).apply(plan)  # plan must use the native-CZ alphabet
 print(noisy.describe())
@@ -447,6 +484,7 @@ unsupported operations fail explicitly.
 `compile_native()` uses PECOS's native stabilizer simulator for noisy trajectories
 and native backward Pauli propagation for an independent DEM:
 
+<!--continuation-->
 ```python
 native = noisy.compile_native()
 records = native.sample_records(100, seed=32)
@@ -475,6 +513,7 @@ which branches were mutually exclusive at a physical location.
 For execution entirely inside the native runtime loop, lower the channels into
 an executable `TickCircuit`:
 
+<!--continuation-->
 ```python
 from pecos_rslib_exp import sim_neo, stabilizer, monte_carlo
 from pecos.qec.generic import evaluate_tick_circuit
@@ -506,6 +545,7 @@ two-qubit Paulis each have probability p/15; they are not sampled independently.
 
 The generic native DEM and sampler now consume the actual channel payloads:
 
+<!--continuation-->
 ```python
 from pecos_rslib.qec import DetectorErrorModel, DemSampler
 
@@ -532,6 +572,7 @@ be deterministic in the ideal circuit. Affine constants cancel in error flips.
 The earlier `noisy.compile_native().detector_error_model()` remains available as
 an independent path. Generic Stim export also accepts inline Pauli channels:
 
+<!--continuation-->
 ```python
 from pecos.qec.surface import tick_circuit_to_stim
 
@@ -567,7 +608,13 @@ noise. A Guppy trace requires a separate timing/allocation audit before claiming
 schedule-matched noise. Inspect the actual implementation with:
 
 ```python
-audit = noisy.ideal.audit_guppy(seed=32)  # optional runtime=plugin selector
+from pecos.qec.color import ColorExtraction, color_code_implementation, color_code_spec, color_memory_program
+from pecos.qec.generic import SchedulePolicy
+
+implementation = color_code_implementation(color_code_spec("488", 3), ColorExtraction.BRICKWORK_CZ)
+plan = color_memory_program(implementation, rounds=2, basis="Z").compile()
+
+audit = plan.audit_guppy(seed=32)  # optional runtime=plugin selector
 print(audit.describe())
 receipt = audit.to_dict()
 normalized_runtime_ticks = audit.build.circuit
@@ -590,6 +637,7 @@ that emitted operation stream before applying noise. `si1000_color_memories.py
 
 Ordering is an opt-in lowering choice, independent of the authored schedule:
 
+<!--continuation-->
 ```python
 from pecos.qec.generic import GuppyOrdering
 
@@ -653,11 +701,16 @@ hardware timing or general portability to other Guppy execution backends.
 Use a separate schedule audit to retain the runtime's timestamped batches:
 
 ```python
+from pecos.qec.color import ColorExtraction, color_code_implementation, color_code_spec, color_memory_program
+from pecos.qec.generic import SchedulePolicy
+
+implementation = color_code_implementation(color_code_spec("488", 3), ColorExtraction.BRICKWORK_CZ)
+plan = color_memory_program(implementation, rounds=2, basis="Z").compile()
+
 from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
 # Illustrative inputs, not measured hardware durations or the paper noise model.
-runtime = SimpleRuntimePlugin(duration_ns_reset=5, duration_ns_rxy=10,
-                              duration_ns_rzz=25, duration_ns_measure=40)
+runtime = SimpleRuntimePlugin(duration_ns_reset=5, duration_ns_rxy=10, duration_ns_rzz=25, duration_ns_measure=40)
 schedule_audit = plan.audit_guppy_schedule(runtime=runtime)
 print(schedule_audit.describe())
 summary = schedule_audit.to_dict()
@@ -703,12 +756,12 @@ preparations in one authored moment can be emitted serially by this runtime.
 Enable `include_lifetimes=True` to exclude gaps between a site's destructive
 measurement and its next preparation:
 
+<!--continuation-->
 ```python
 schedule_audit = plan.audit_guppy_schedule(runtime=runtime, include_lifetimes=True)
 windows = schedule_audit.to_dict()["lifetime_windows"]
 for window in windows["windows"]:
-    print(window["measurement_tag"], window["role_history"],
-          window["runtime_site"], window["gap_ns"])
+    print(window["measurement_tag"], window["role_history"], window["runtime_site"], window["gap_ns"])
 ```
 
 This requires `ALL_MOMENTS` and uses an opt-in allocator that attaches required
@@ -747,6 +800,16 @@ equivalence remain unverified. Compiler-bound parity analysis remains separate.
 Start from the original reference plan:
 
 ```python
+from pecos.qec.color import ColorExtraction, color_code_implementation, color_code_spec, color_memory_program
+from pecos.qec.generic import SchedulePolicy
+
+implementation = color_code_implementation(color_code_spec("488", 3), ColorExtraction.BRICKWORK_CZ)
+plan = color_memory_program(implementation, rounds=2, basis="Z").compile()
+
+from selene_simple_runtime_plugin import SimpleRuntimePlugin
+
+runtime = SimpleRuntimePlugin(duration_ns_reset=5, duration_ns_rxy=10, duration_ns_rzz=25, duration_ns_measure=40)
+
 comparison = plan.compare_guppy_schedules(runtime=runtime, seed=17)
 print(comparison.describe(include_windows=True))
 report = comparison.to_dict()
@@ -754,7 +817,9 @@ reference_evidence = comparison.reference.evidence()
 candidate_evidence = comparison.candidate.evidence()
 
 ordered_comparison = plan.compare_guppy_schedules(
-    runtime=runtime, seed=17, candidate_policy=SchedulePolicy.COMPACT_UNITARIES,
+    runtime=runtime,
+    seed=17,
+    candidate_policy=SchedulePolicy.COMPACT_UNITARIES,
 )
 ```
 
@@ -842,11 +907,29 @@ Given a physical logical witness `reference_faults` on a reference native-CZ
 memory, compare its explicitly scheduled noise model with an alternative:
 
 ```python
+from pecos.qec.generic import SI1000, CircuitOp, MeasurementParity, PauliFault, ScheduledCircuit, SchedulePolicy
+
+# A small memory with a known one-fault logical witness.
+op = CircuitOp
+plan = ScheduledCircuit(
+    2,
+    (
+        (op("R", (0,)), op("R", (1,))),
+        (op("X", (0,)),),
+        (op("X", (0,)),),
+        (op("X", (1,)),),
+        (op("M", (0,)), op("M", (1,))),
+    ),
+    (MeasurementParity((1,), "syndrome", True),),
+    (MeasurementParity((0,), "logical"),),
+)
 noisy = SI1000(0.001).apply(plan)
+readout_channel = next(c for c in noisy.channels if c.reason == "measurement" and c.qubits == (0,))
+reference_faults = [PauliFault(readout_channel.id, "X")]
 comparison = noisy.compare_schedule(
     reference_faults,
     candidate_policy=SchedulePolicy.COMPACT_UNITARIES,
-    exclude_through=2,
+    exclude_through=0,
 )
 print(comparison.describe())
 report = comparison.to_dict()
@@ -890,6 +973,7 @@ channel locations; channel IDs are not matched across rescheduling.
 An individual support can also be inspected without a logical witness or a
 schedule comparison:
 
+<!--continuation-->
 ```python
 explanation = noisy.compile_native().explain_signature(detectors=[0])
 print(explanation.describe(max_channels=5))
@@ -929,7 +1013,20 @@ and noise circuits, including a text explanation of changed terms. See
 Attach decoder coordinates directly to a named detector:
 
 ```python
-program.detector("repeat", first["syndrome"] ^ second["syndrome"], coords=(2, 3, 1, 0))
+from pecos.qec.generic import Gadget, GadgetProgram, Gate
+
+program = GadgetProgram(("data",))
+readout = program.append(
+    Gadget(
+        name="prepare and read out Z",
+        roles=("data",),
+        inputs=(),
+        outputs=(),
+        moments=((Gate("R", ("data",)),), (Gate("M", ("data",), outcome="bit"),)),
+    ),
+    label="readout",
+)
+program.detector("initial Z", readout["bit"], coords=(2, 3, 1, 0))
 ```
 
 Coordinates are optional finite numerical vectors. They survive compilation,
@@ -966,9 +1063,18 @@ that choice gives one in the absence of noise. It does not certify determinism.
 `evaluate_*` methods apply the constants. For native emitted records use:
 
 ```python
-from pecos.qec.generic import evaluate_tick_circuit
+from pecos.qec.generic import CircuitOp, MeasurementParity, ScheduledCircuit, evaluate_tick_circuit
 
+plan = ScheduledCircuit(
+    1,
+    ((CircuitOp("R", (0,)),), (CircuitOp("M", (0,)),)),
+    (MeasurementParity((0,), "inverted Z", True),),
+    (),
+)
+ticks = plan.to_tick_circuit()
+raw_record = [0]
 detectors, observables = evaluate_tick_circuit(ticks, raw_record)
+assert detectors[0]  # The declared XOR constant flips the raw zero.
 ```
 
 The native `circuit_definitions()` API returns **support-only** definitions.

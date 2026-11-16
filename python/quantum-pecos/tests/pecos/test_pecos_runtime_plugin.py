@@ -147,8 +147,18 @@ def test_schedule_comparison_retains_native_configuration_and_batching(runtime: 
 
     if sys.platform == "win32":
         pytest.skip("Native aggregate helper ABI adapter not implemented")
-    plan = ScheduledCircuit(2, ((Op("R", (0,)), Op("R", (1,))), (Op("X", (0,)),), (Op("X", (1,)),),
-                                (Op("X", (0,)),), (Op("M", (0,)), Op("M", (1,)))), (), ())
+    plan = ScheduledCircuit(
+        2,
+        (
+            (Op("R", (0,)), Op("R", (1,))),
+            (Op("X", (0,)),),
+            (Op("X", (1,)),),
+            (Op("X", (0,)),),
+            (Op("M", (0,)), Op("M", (1,))),
+        ),
+        (),
+        (),
+    )
     timed = replace(runtime, duration_ns_reset=5, duration_ns_rxy=10, duration_ns_measure=20)
     comparison = plan.compare_guppy_schedules(runtime=timed, seed=17)
     report = comparison.to_dict()

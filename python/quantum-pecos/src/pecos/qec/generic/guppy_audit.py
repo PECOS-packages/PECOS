@@ -53,21 +53,27 @@ class GuppyImplementationAudit:
 
     def describe(self) -> str:
         """Summarize the implementation in human-readable units."""
-        return "\n".join((
-            f"Reference: {self.reference_moments} physical moments, {self.reference_carriers} carrier roles, "
-            f"{self.reference_peak_live} peak live qubits",
-            f"Normalized runtime analysis: {self.analysis_replay_ticks} replay ticks, "
-            f"{len(self.build.measurement_ledger)} measurements",
-            "Reference operations: " + ", ".join(f"{name}={count}" for name, count in self.reference_gate_counts),
-            "Normalized operations: " + ", ".join(f"{name}={count}" for name, count in self.analysis_gate_counts),
-            f"Named result binding: {self.build.named_result_binding}",
-            "Requested ordering: " + ("unspecified" if self.ordering_plan is None else self.ordering_plan.describe()),
-            "Physical schedule and noise equivalence: not established by this trace",
-        ))
+        return "\n".join(
+            (
+                f"Reference: {self.reference_moments} physical moments, {self.reference_carriers} carrier roles, "
+                f"{self.reference_peak_live} peak live qubits",
+                f"Normalized runtime analysis: {self.analysis_replay_ticks} replay ticks, "
+                f"{len(self.build.measurement_ledger)} measurements",
+                "Reference operations: " + ", ".join(f"{name}={count}" for name, count in self.reference_gate_counts),
+                "Normalized operations: " + ", ".join(f"{name}={count}" for name, count in self.analysis_gate_counts),
+                f"Named result binding: {self.build.named_result_binding}",
+                "Requested ordering: "
+                + ("unspecified" if self.ordering_plan is None else self.ordering_plan.describe()),
+                "Physical schedule and noise equivalence: not established by this trace",
+            ),
+        )
 
 
 def audit_guppy_implementation(
-    circuit: ScheduledCircuit, *, runtime: object | None = None, seed: int = 0,
+    circuit: ScheduledCircuit,
+    *,
+    runtime: object | None = None,
+    seed: int = 0,
     ordering: GuppyOrdering = GuppyOrdering.FUNCTIONAL,
 ) -> GuppyImplementationAudit:
     """Compile and trace a plan, retaining the runtime circuit and typed parities.
@@ -83,9 +89,17 @@ def audit_guppy_implementation(
 
     detectors, observables = circuit.dem_spec()
     build = build_dem_from_guppy(
-        circuit.guppy_program(ordering=ordering), num_qubits=circuit.num_qubits,
-        detectors=detectors, observables=observables, runtime=runtime, seed=seed,
-        p1=0., p2=0., p_meas=0., p_prep=0., strip_traced_idles=False,
+        circuit.guppy_program(ordering=ordering),
+        num_qubits=circuit.num_qubits,
+        detectors=detectors,
+        observables=observables,
+        runtime=runtime,
+        seed=seed,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        strip_traced_idles=False,
     )
     if len(build.measurement_ledger) != circuit.num_measurements:
         msg = "Compiled Guppy measurement count differs from the scheduled contract"
@@ -94,7 +108,12 @@ def audit_guppy_implementation(
     # Native counts expand batches into individual operations.
     lowered = build.circuit.gate_counts_by_type()
     return GuppyImplementationAudit(
-        len(circuit.moments), circuit.num_qubits, circuit.resources.peak_live,
-        tuple(sorted(reference.items())), build.circuit.num_ticks(), tuple(sorted(lowered.items())), build,
+        len(circuit.moments),
+        circuit.num_qubits,
+        circuit.resources.peak_live,
+        tuple(sorted(reference.items())),
+        build.circuit.num_ticks(),
+        tuple(sorted(lowered.items())),
+        build,
         circuit.guppy_ordering_plan(ordering),
     )

@@ -23,10 +23,14 @@ def test_hardware_estimates_and_uncertainties_record_the_printed_discrepancy(row
     else:
         assert estimate.rate_per_cycle == pytest.approx(row["printed_rate"], abs=row["rate_resolution"] / 2, rel=0)
     assert estimate.interval[1] - estimate.rate_per_cycle == pytest.approx(
-        row["printed_plus"], abs=row["plus_resolution"] / 2, rel=0,
+        row["printed_plus"],
+        abs=row["plus_resolution"] / 2,
+        rel=0,
     )
     assert estimate.rate_per_cycle - estimate.interval[0] == pytest.approx(
-        row["printed_minus"], abs=row["minus_resolution"] / 2, rel=0,
+        row["printed_minus"],
+        abs=row["minus_resolution"] / 2,
+        rel=0,
     )
 
 
@@ -35,8 +39,8 @@ def test_pool_counts_before_normalizing_instead_of_equal_weighting_groups():
     assert estimate.shots == 100
     assert estimate.failures == 5
     assert estimate.pooled_groups == 2
-    assert estimate.block_error_rate == .05
-    assert estimate.rate_per_cycle == .05 / 20.5
+    assert estimate.block_error_rate == 0.05
+    assert estimate.rate_per_cycle == 0.05 / 20.5
     merged = pooled_wilson_memory_estimate([MemoryCounts(100, 5)], rounds=20)
     assert estimate.interval == merged.interval
 
@@ -44,20 +48,27 @@ def test_pool_counts_before_normalizing_instead_of_equal_weighting_groups():
 def test_wilson_boundary_and_symmetric_analytic_identities():
     zero = pooled_wilson_memory_estimate([MemoryCounts(10, 0)], rounds=20)
     full = pooled_wilson_memory_estimate([MemoryCounts(10, 10)], rounds=20)
-    assert zero.interval == pytest.approx((0., 1 / (11 * 20.5)))
+    assert zero.interval == pytest.approx((0.0, 1 / (11 * 20.5)))
     assert full.interval == pytest.approx((10 / (11 * 20.5), 1 / 20.5))
     middle = pooled_wilson_memory_estimate([MemoryCounts(100, 50)], rounds=1, initialization_rounds=0)
-    assert middle.interval == pytest.approx((.5 - .5 / sqrt(101), .5 + .5 / sqrt(101)))
+    assert middle.interval == pytest.approx((0.5 - 0.5 / sqrt(101), 0.5 + 0.5 / sqrt(101)))
     two_sigma = pooled_wilson_memory_estimate([MemoryCounts(10, 0)], rounds=1, initialization_rounds=0, z_score=2)
-    assert two_sigma.interval == pytest.approx((0., 2 / 7))
+    assert two_sigma.interval == pytest.approx((0.0, 2 / 7))
     assert two_sigma.confidence == pytest.approx(0.9544997361036416)
 
 
-@pytest.mark.parametrize("kwargs", [
-    {"rounds": 0}, {"rounds": True}, {"rounds": 20, "initialization_rounds": -1},
-    {"rounds": 20, "initialization_rounds": float("nan")}, {"rounds": 20, "z_score": 0},
-    {"rounds": 20, "z_score": float("inf")}, {"rounds": 20, "z_score": True},
-])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"rounds": 0},
+        {"rounds": True},
+        {"rounds": 20, "initialization_rounds": -1},
+        {"rounds": 20, "initialization_rounds": float("nan")},
+        {"rounds": 20, "z_score": 0},
+        {"rounds": 20, "z_score": float("inf")},
+        {"rounds": 20, "z_score": True},
+    ],
+)
 def test_rejects_invalid_exposure_and_confidence(kwargs):
     with pytest.raises(ValueError, match="Pooled estimate requires"):
         pooled_wilson_memory_estimate([MemoryCounts(10, 1)], **kwargs)

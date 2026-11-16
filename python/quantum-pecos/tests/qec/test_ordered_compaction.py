@@ -10,8 +10,12 @@ from pecos.qec.generic.guppy_comparison import _rescheduling_contract
 
 
 def _plan(operations):
-    return ScheduledCircuit(3, (tuple(Op("R", (q,)) for q in range(3)),
-                                *((op,) for op in operations), tuple(Op("M", (q,)) for q in range(3))), (), ())
+    return ScheduledCircuit(
+        3,
+        (tuple(Op("R", (q,)) for q in range(3)), *((op,) for op in operations), tuple(Op("M", (q,)) for q in range(3))),
+        (),
+        (),
+    )
 
 
 def _listing(plan):
@@ -60,21 +64,40 @@ def test_asap_overtakes_while_compaction_preserves_order_and_origins():
 
 
 def test_boundaries_mixed_moments_empty_regions_relabel_and_reuse_are_retained():
-    plan = ScheduledCircuit(2, ((), (Op("R", (0,)), Op("R", (1,))), (),
-                                (Op("H", (0,)),), (Op("X", (1,)),),
-                                (Op("RELABEL", (0, 1)),), (Op("M", (0,)), Op("H", (1,))),
-                                (Op("R", (0,)), Op("X", (1,))), (), (Op("M", (1,)), Op("M", (0,))), ()),
-                            (MeasurementParity((0, 2), "affine", True, (1., 2.)),),
-                            (MeasurementParity((1,), "L", True),), citations=("reference",),
-                            role_names=("a", "b"), measurement_names=("first", "second", "third"))
+    plan = ScheduledCircuit(
+        2,
+        (
+            (),
+            (Op("R", (0,)), Op("R", (1,))),
+            (),
+            (Op("H", (0,)),),
+            (Op("X", (1,)),),
+            (Op("RELABEL", (0, 1)),),
+            (Op("M", (0,)), Op("H", (1,))),
+            (Op("R", (0,)), Op("X", (1,))),
+            (),
+            (Op("M", (1,)), Op("M", (0,))),
+            (),
+        ),
+        (MeasurementParity((0, 2), "affine", True, (1.0, 2.0)),),
+        (MeasurementParity((1,), "L", True),),
+        citations=("reference",),
+        role_names=("a", "b"),
+        measurement_names=("first", "second", "third"),
+    )
     compact = plan.rescheduled(SchedulePolicy.COMPACT_UNITARIES)
+
     def boundaries(p):
         return [m for m in p.moments if any(op.name in {"R", "M", "RELABEL"} for op in m)]
 
     assert boundaries(plan) == boundaries(compact)
     assert _listing(plan) == _listing(compact)
     assert (compact.detectors, compact.observables, compact.measurement_aliases, compact.output_carriers) == (
-        plan.detectors, plan.observables, plan.measurement_aliases, plan.output_carriers)
+        plan.detectors,
+        plan.observables,
+        plan.measurement_aliases,
+        plan.output_carriers,
+    )
     assert compact.citations == plan.citations
     assert compact.resources.physical_operations == plan.resources.physical_operations
     assert not ScheduledCircuit(1, ((), (), ()), (), ()).rescheduled(SchedulePolicy.COMPACT_UNITARIES).moments

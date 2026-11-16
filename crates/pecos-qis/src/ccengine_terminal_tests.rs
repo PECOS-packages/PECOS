@@ -2320,7 +2320,10 @@ fn ordered_helpers_share_native_handles_with_ordinary_allocations_and_reuse() {
         let source = if mode == ScheduledTransport::Off {
             source.to_string()
         } else {
-            source.replace("call i64 @pecos_qis_ordered_alloc_tagged_hugr", "call i64 @pecos_qis_ordered_alloc_hugr")
+            source.replace(
+                "call i64 @pecos_qis_ordered_alloc_tagged_hugr",
+                "call i64 @pecos_qis_ordered_alloc_hugr",
+            )
         };
         engine
             .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)

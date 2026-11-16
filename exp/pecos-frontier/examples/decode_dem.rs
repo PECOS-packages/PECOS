@@ -240,6 +240,29 @@ fn run_args(args: &[String]) -> AnyResult<i32> {
     let mut full = if windowed.is_none() {
         let mut config = settings();
         config.column_order = Some(deadline_column_order(&dem)?);
+        new_json(
+            &output.join("full_dem_config.json"),
+            &json!({
+                "schema": "frontier-full-dem-config.v1",
+                "num_detectors": dem.num_detectors,
+                "num_observables": dem.num_observables,
+                "num_mechanisms": dem.mechanisms.len(),
+                "numeric_config": {
+                    "k": config.k,
+                    "delta": config.delta,
+                    "score_alpha": config.score_alpha,
+                    "column_order": config.column_order,
+                    "merge_indistinguishable": config.merge_indistinguishable,
+                    "bp_score_iterations": config.bp_score_iterations,
+                    "metric_mode": format!("{:?}", config.metric_mode),
+                    "int_metric_scale": config.int_metric_scale,
+                },
+                "committee": "deadline_forward_and_plain_reverse",
+                "backward_column_order": config.column_order.as_ref().expect("deadline order")
+                    .iter().rev().copied().collect::<Vec<_>>(),
+                "column_budget_per_step": COLUMN_BUDGET,
+            }),
+        )?;
         Some(FrontierCommittee::from_sparse_dem(&dem, config)?.into_resumable())
     } else {
         None
@@ -441,6 +464,62 @@ mod tests {
         assert_eq!(rows[2]["truth"], Value::Null);
         assert_eq!(rows[2]["logical_failure"], Value::Null);
         assert!(run_args(&args).is_err()); // Existing output is preserved.
+    }
+
+    #[test]
+    fn full_dem_cli_records_settings_and_exact_committee_orders() {
+        let directory = folder();
+        let dem = directory.join("model.dem");
+        let events = directory.join("events.jsonl");
+        let output = directory.join("output");
+        // The detector-free mechanism moves last in deadline order.
+        std::fs::write(&dem, "error(0.1) L0\nerror(0.2) D0 L0\nerror(0.3) D1\n").unwrap();
+        std::fs::write(
+            &events,
+            "{\"shot_id\":0,\"detectors\":[1,0],\"truth\":[1]}\n",
+        )
+        .unwrap();
+        let args = vec![
+            "full-dem".into(),
+            dem.to_string_lossy().into_owned(),
+            events.to_string_lossy().into_owned(),
+            output.to_string_lossy().into_owned(),
+        ];
+        assert_eq!(run_args(&args).unwrap(), 0);
+        let metadata: Value = serde_json::from_str(
+            &std::fs::read_to_string(output.join("full_dem_config.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            metadata,
+            json!({
+                "schema": "frontier-full-dem-config.v1",
+                "num_detectors": 2,
+                "num_observables": 1,
+                "num_mechanisms": 3,
+                "numeric_config": {
+                    "k": 512,
+                    "delta": 1_000_000_000.0,
+                    "score_alpha": 0.8,
+                    "column_order": [1, 2, 0],
+                    "merge_indistinguishable": false,
+                    "bp_score_iterations": 0,
+                    "metric_mode": "LogSumExpFloat",
+                    "int_metric_scale": 1024,
+                },
+                "committee": "deadline_forward_and_plain_reverse",
+                "backward_column_order": [0, 2, 1],
+                "column_budget_per_step": 32,
+            })
+        );
+        let row: Value = serde_json::from_str(
+            std::fs::read_to_string(output.join("predictions.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        assert_eq!(row["telemetry"]["prediction"], json!([1]));
+        assert_eq!(row["logical_failure"], false);
     }
 
     #[test]

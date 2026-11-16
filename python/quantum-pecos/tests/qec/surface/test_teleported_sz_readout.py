@@ -386,15 +386,16 @@ def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, correct
         lambda _program, _num_qubits: (traced, traces),
     )
     scopes = {"data": "D", "anc": "A", "second": "B"}
-    source = measurement_partition_from_trace(program, num_qubits, scopes)
+    source = measurement_partition_from_trace(program, num_qubits, scopes, by_index=True)
     if count == 1:
         builder, _ = readout_builder(distance, rounds=1)
     else:
         builder, _ = multiple_teleportations_builder(distance, distance, rounds=1)
-    target = measurement_partition_from_builder(builder)
+    target = measurement_partition_from_builder(builder, by_index=True)
     assert source.keys() == target.keys()
     permutation = {}
     for key, ordinals in source.items():
+        assert len(ordinals) == len(target[key]) == 1
         permutation.update(zip(ordinals, target[key], strict=True))
     tc = builder.to_tick_circuit()
     assert sorted(permutation.values()) == list(range(tc.num_measurements()))

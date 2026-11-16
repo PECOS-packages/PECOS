@@ -19,8 +19,10 @@ from pecos.qec import (
     result_ref,
     surface_memory_dem_spec,
 )
-from pecos.qec.surface import SurfacePatch
+from pecos.qec.dem_spec import ResultRef
+from pecos.qec.surface import SurfacePatch, circuit_builder
 from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
 CERTIFICATE = "__pecos_named_measurement_layout_v2__"
 NOISE = {"p1": 0.001, "p2": 0.002, "p_meas": 0.003, "p_prep": 0.004}
@@ -38,18 +40,58 @@ def _assert_same_dem(actual: str, expected: str) -> None:
 def test_dem_matches_legacy(distance: int, num_rounds: int, basis: str, ancilla_budget: int | None) -> None:
     """The audited route also checks every certified slot against runtime outputs."""
     patch = SurfacePatch.create(distance=distance)
-    circuit = generate_tick_circuit_from_patch(patch, num_rounds, basis, ancilla_budget=ancilla_budget)
+    detectors, observables = surface_memory_dem_spec(distance, num_rounds, basis, ancilla_budget=ancilla_budget)
     kwargs = {
         "num_qubits": get_num_qubits(distance, ancilla_budget=ancilla_budget),
-        "detectors_json": circuit.get_meta("detectors"),
-        "observables_json": circuit.get_meta("observables"),
+        "detectors": detectors,
+        "observables": observables,
         **NOISE,
     }
     gadget = make_surface_memory(patch, num_rounds, basis, ancilla_budget=ancilla_budget)
     legacy = make_surface_code(distance, num_rounds, basis, ancilla_budget=ancilla_budget)
-    actual = DetectorErrorModel.from_guppy(gadget, **kwargs).to_string()
-    expected = DetectorErrorModel.from_guppy(legacy, **kwargs).to_string()
+    actual = build_dem_from_guppy(gadget, **kwargs).dem.to_string()
+    expected = build_dem_from_guppy(legacy, **kwargs).dem.to_string()
     _assert_same_dem(actual, expected)
+
+
+@pytest.mark.parametrize("basis", ["Z", "X"])
+@pytest.mark.parametrize("ancilla_budget", [None, 2])
+def test_surface_spec_preserves_annotation_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    basis: str,
+    ancilla_budget: int | None,
+) -> None:
+    """Transport references without losing IDs, coordinates or opaque metadata."""
+    circuit = generate_tick_circuit_from_patch(
+        SurfacePatch.create(distance=3),
+        2,
+        basis,
+        ancilla_budget=ancilla_budget,
+        add_typed_annotations=False,
+    )
+    entries_by_kind = {}
+    for kind in ("detectors", "observables"):
+        entries = json.loads(circuit.get_meta(kind))
+        assert entries
+        for index, entry in enumerate(entries):
+            entry["id"] = 10 + 3 * index
+            entry["coords"] = [index, 0.5, -2]
+            entry["custom"] = {"nested": [kind, index]}
+        entries_by_kind[kind] = entries
+        circuit.set_meta(kind, json.dumps(entries))
+    monkeypatch.setattr(circuit_builder, "generate_tick_circuit_from_patch", lambda *_args, **_kwargs: circuit)
+    detectors, observables = surface_memory_dem_spec(3, 2, basis, ancilla_budget=ancilla_budget)
+    for specs, kind in ((detectors, "detectors"), (observables, "observables")):
+        for spec, entry in zip(specs, entries_by_kind[kind], strict=True):
+            assert spec.id == entry["id"]
+            assert all(isinstance(ref, ResultRef) for ref in spec.refs)
+            excluded = {"id", "records"}
+            if kind == "detectors":
+                assert spec.coords == tuple(entry["coords"])
+                excluded.add("coords")
+            # Observable coordinates, if supplied, belong to its metadata.
+            assert spec.metadata == {key: value for key, value in entry.items() if key not in excluded}
+    assert {spec.metadata["fault_sector"] for spec in detectors} == {"X", "Z"}
 
 
 @pytest.mark.parametrize("ancilla_budget", [None, 2])
@@ -61,30 +103,33 @@ def test_certificate_is_program_bound(ancilla_budget: int | None, rehash: bool) 
     layout_json = json.dumps(layout, separators=(",", ":"))
     assert digest == hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
     # The original binding must succeed before either integrity check is challenged.
-    build_dem_from_guppy(
+    original = build_dem_from_guppy(
         program,
         num_qubits=get_num_qubits(3, ancilla_budget=ancilla_budget),
         detectors=[Detector(result_ref("final:meas:0"))],
         **NOISE,
     )
-    # A stale digest checks integrity; an honest re-hash checks runtime measurement identity.
+    # A stale digest fails integrity; a re-hashed inventory may have any order.
     permuted = (layout[1], layout[0], *layout[2:])
     error = "measurement-layout certificate does not match the program and layout"
     if rehash:
         layout_json = json.dumps(permuted, separators=(",", ":"))
         digest = hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
-        error = (
-            r"runtime result trace 'sx1:init:meas:1'\[0\] has measurement id 1, "
-            r"but the generator-certified layout requires 0"
-        )
     object.__setattr__(program, CERTIFICATE, (digest, permuted))
-    with pytest.raises(ValueError, match=error):
-        build_dem_from_guppy(
+
+    def build():
+        return build_dem_from_guppy(
             program,
             num_qubits=get_num_qubits(3, ancilla_budget=ancilla_budget),
             detectors=[Detector(result_ref("final:meas:0"))],
             **NOISE,
         )
+
+    if rehash:
+        assert build().detectors_json == original.detectors_json
+    else:
+        with pytest.raises(ValueError, match=error):
+            build()
 
 
 @pytest.mark.parametrize("route", ["from_guppy", "build_dem_from_guppy", "builder"])
@@ -95,11 +140,9 @@ def test_uncertified_gadget_is_rejected(route: str) -> None:
     calls = {
         "from_guppy": lambda: DetectorErrorModel.from_guppy(program, num_qubits=get_num_qubits(3), detectors_json="[]"),
         "build_dem_from_guppy": lambda: build_dem_from_guppy(program, num_qubits=get_num_qubits(3), detectors=[]),
-        "builder": lambda: GuppyDemBuilder()
-        .with_program(program)
-        .with_qubits(get_num_qubits(3))
-        .with_detectors([])
-        .build(),
+        "builder": lambda: (
+            GuppyDemBuilder().with_program(program).with_qubits(get_num_qubits(3)).with_detectors([]).build()
+        ),
     }
     with pytest.raises(
         ValueError,
@@ -147,7 +190,14 @@ def test_patch_and_check_plan(basis: str) -> None:
     ancilla_budget = 2
     plan = "cx_balanced_data_v1"
     program = make_surface_memory(patch, 2, basis, ancilla_budget=ancilla_budget, check_plan=plan)
-    circuit = generate_tick_circuit_from_patch(patch, 2, basis.upper(), ancilla_budget=ancilla_budget, check_plan=plan)
+    circuit = _build_surface_tick_circuit_for_native_model(
+        patch,
+        2,
+        basis.upper(),
+        ancilla_budget=ancilla_budget,
+        check_plan=plan,
+        circuit_source="traced_qis",
+    )
     build = (
         GuppyDemBuilder()
         .with_program(program)
@@ -206,3 +256,79 @@ def test_even_and_unrotated_memory_compile(distance: int, rotated: bool, basis: 
 def test_invalid_basis_preserves_caller_value(basis: str) -> None:
     with pytest.raises(ValueError, match=f"basis must be 'Z' or 'X', got {basis!r}"):
         make_surface_memory(SurfacePatch.create(distance=3), 1, basis)
+
+
+@pytest.mark.parametrize("num_rounds", [1, 2])
+@pytest.mark.parametrize("generator", ["gadget", "legacy"])
+def test_surface_slots_have_independent_physical_identity(num_rounds, generator):
+    """Check surface (qubit, occurrence, basis), including repeated output tags.
+
+    These Z-basis, unconstrained d=3 schedules share physical allocation with
+    the trace. Helix allocation does not: its evidence is unique physical tag
+    labels and end-to-end helix test_dem runs, not this qubit oracle.
+    """
+    from collections import Counter
+
+    from pecos.qec.dem import _generator_certified_result_traces, _GuppyProgramAnalysis
+    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
+    from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
+
+    patch = SurfacePatch.create(distance=3)
+    abstract = generate_tick_circuit_from_patch(patch, num_rounds, "Z")
+    program = (
+        make_surface_memory(patch, num_rounds, "Z") if generator == "gadget" else make_surface_code(3, num_rounds, "Z")
+    )
+    traced, traces = _trace_program_to_tick_circuit_with_result_traces(program, get_num_qubits(3))
+    layout = getattr(program, CERTIFICATE)[1]
+    bound = _generator_certified_result_traces(
+        layout,
+        _GuppyProgramAnalysis(guppy_to_hugr(program)),
+        traced,
+        traces,
+        required_tags=[],
+    )
+
+    def physical_measurements(circuit):
+        occurrences = Counter()
+        measurements = []
+        for tick in range(circuit.num_ticks()):
+            for gate in circuit.get_tick(tick).gate_batches():
+                if str(gate.gate_type).rsplit(".", 1)[-1] not in {"MZ", "MX", "MPZ", "MeasureFree"}:
+                    continue
+                for qubit in gate.qubits:
+                    basis = "X" if str(gate.gate_type).endswith(".MX") else "Z"
+                    measurements.append((qubit, occurrences[qubit], basis))
+                    occurrences[qubit] += 1
+        assert len(measurements) == len(circuit.measurement_emission())
+        return measurements
+
+    expected = {}
+    occurrences = Counter()
+    for ref, physical in zip(
+        _surface_abstract_measurement_result_refs(abstract),
+        physical_measurements(abstract),
+        strict=True,
+    ):
+        if ref[0] == "scalar":
+            slot = ref[1], occurrences[ref[1]]
+            occurrences[ref[1]] += 1
+        else:
+            slot = f"{ref[1]}:meas:{ref[2]}", 0
+        expected[slot] = physical
+    actual_by_id = {
+        mid: physical
+        for (_, mid), physical in zip(
+            traced.measurement_emission(),
+            physical_measurements(traced),
+            strict=True,
+        )
+    }
+    assert {(item["name"], item["occurrence"]) for item in bound} == expected.keys()
+    assert [item["result_ids"][0] for item in bound] != [mid for _, mid in traced.measurement_emission()]
+    if num_rounds == 2:
+        assert any(occurrence >= 1 for _, occurrence in expected)
+    for item in bound:
+        slot = item["name"], item["occurrence"]
+        assert actual_by_id[item["result_ids"][0]] == expected[slot], slot
+    # Shadow-backed final scalar prints always carry their own element ID.
+    assert all(len(trace["result_ids"]) == 1 for trace in traces if trace["name"].startswith("final:meas:"))

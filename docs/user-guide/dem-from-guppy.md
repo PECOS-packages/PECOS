@@ -118,8 +118,9 @@ same measurements):
   including the built-in generators' runtime loops; note that generic
   (non-generator) programs with loops or branches are rejected outright by
   the static-schedule guard, whatever reference form they use.
-- `"meas_ids": [0, 4]` — stable stamped `MeasId`s, resolved against the
-  traced circuit, robust to measurement reordering.
+- `"meas_ids": [0, 4]` — stable labels of compiled measurements. Read them
+  from `GuppyDemBuild.measurement_ledger` entries (`.meas_id`) or the JSON
+  returned by `infer_guppy_dem_annotations`, never from source order.
 - `"result_tags": ["s0", "m1"]` — Guppy `result(tag, ...)` names, recovered
   from the lowered QIS program that is executed. Direct scalar measurement reads
   are supported; other tagged values remain unresolved. Measurement and print
@@ -132,45 +133,38 @@ same measurements):
 A practical split: `result_tags` for small straight-line programs,
 `records`/`meas_ids` for round-looped QEC programs.
 
-Note that the negative-offset spelling appears in three places with three
-reference frames: `"records"` here indexes the **traced runtime record**
-(Stim convention); `rec[-k]` in `build_dem_from_guppy` indexes the
-**canonical Guppy result-id stream** (before runtime scheduling); and the
-surface builder's metadata `records` index its **abstract circuit order**.
-They coincide only when the runtime preserves canonical order — when moving
-a detector spec between entry points under a reordering runtime, re-derive
-the offsets rather than copying them.
+JSON `"records"` indexes the **traced runtime record** (Stim convention), while
+the surface builder's metadata `records` indexes its **abstract circuit order**.
+Do not transfer offsets between those circuits. Typed Guppy specs reject
+`rec[-k]` because compiled programs do not preserve source measurement order;
+use `result_ref(tag)` or `result_ref(tag, occurrence=...)` for repeated tags.
 
 ## Surface-Code Memory DEM
 
 For generated QEC programs (see [QEC with Guppy](qec-guppy.md)), the
-surface-code circuit builder already produces matching detector/observable
-metadata, so you do not need to author it by hand:
+surface helper translates abstract detector/observable metadata into named
+measurement references, so you do not need to author them by hand:
 
 <!--test-name: dem_from_guppy_surface_memory-->
 ```python
 from pecos.guppy_gen import get_num_qubits, make_surface_code
-from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import SurfacePatch
-from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+from pecos.qec import build_dem_from_guppy, surface_memory_dem_spec
 
-# The abstract surface builder provides the detector/observable metadata.
-patch = SurfacePatch.create(distance=3)
-meta_tc = generate_tick_circuit_from_patch(patch, num_rounds=3, basis="Z")
+# Bind abstract detector supports by tag, independently of compiled order.
+detectors, observables = surface_memory_dem_spec(3, 3, "Z")
 
 # The DEM itself is built by tracing the generated Guppy program through
 # the Selene QIS engine.
-dem = DetectorErrorModel.from_guppy(
+dem = build_dem_from_guppy(
     make_surface_code(distance=3, num_rounds=3, basis="Z"),
     num_qubits=get_num_qubits(3),
-    detectors_json=meta_tc.get_meta("detectors"),
-    observables_json=meta_tc.get_meta("observables"),
-    num_measurements=int(meta_tc.get_meta("num_measurements")),
+    detectors=detectors,
+    observables=observables,
     p1=0.005,
     p2=0.005,
     p_meas=0.005,
     p_prep=0.005,
-)
+).dem
 assert dem.num_detectors == 28
 assert dem.num_observables == 1
 
@@ -188,9 +182,9 @@ for shot in range(batch.num_shots):
 print(f"logical error rate: {errors / batch.num_shots:.4f}")
 ```
 
-The DEM built this way is identical to the reference DEM produced by the
-surface traced-QIS pipeline — the abstract builder's metadata and the
-traced Guppy program agree on measurement order.
+The helper resolves the abstract detector supports through named measurement
+evidence. Abstract and compiled measurement order may differ; copying abstract
+`records` offsets directly into `from_guppy` would bind the wrong measurements.
 
 ## Sampling and Comparing Decoders with `SampleBatch`
 
@@ -799,23 +793,19 @@ from pecos.decoders import (
     tesseract as tesseract_spec,
 )
 from pecos.guppy_gen import get_num_qubits, make_surface_code
-from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import SurfacePatch
-from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+from pecos.qec import build_dem_from_guppy, surface_memory_dem_spec
 
-patch = SurfacePatch.create(distance=3)
-meta_tc = generate_tick_circuit_from_patch(patch, num_rounds=3, basis="Z")
-dem = DetectorErrorModel.from_guppy(
+detectors, observables = surface_memory_dem_spec(3, 3, "Z")
+dem = build_dem_from_guppy(
     make_surface_code(distance=3, num_rounds=3, basis="Z"),
     num_qubits=get_num_qubits(3),
-    detectors_json=meta_tc.get_meta("detectors"),
-    observables_json=meta_tc.get_meta("observables"),
-    num_measurements=int(meta_tc.get_meta("num_measurements")),
+    detectors=detectors,
+    observables=observables,
     p1=0.005,
     p2=0.005,
     p_meas=0.005,
     p_prep=0.005,
-)
+).dem
 
 batch = dem.to_sampler().sample_batch(1000, 0)
 error_counts = {
@@ -870,9 +860,15 @@ The direct backend `from_dem` constructors above remain text-only.
   contains branching or looping control flow therefore raise `ValueError`
   before tracing; built-in generators such as `make_surface_code` and
   `make_surface_memory` cross this boundary through a program-bound layout
-  certificate. Every layout slot must agree with independent runtime provenance
-  or compiled scalar analysis. If both are available they must agree, and a
-  slot with neither rejects the build.
+  certificate. Each slot's measurement identity is resolved from runtime
+  provenance or compiled scalar analysis. If both are available they must agree,
+  and a slot with neither rejects the build. Layout order is informational;
+  per-tag occurrence k assumes the k-th compiled print retains abstract print
+  order. The certificate checks entry count, runtime value counts and required
+  tags; distinct slots must resolve to distinct measurements. It also detects
+  changes to the program or its slot inventory. No check compares the executed
+  trace's measurement order against the abstract schedule; identity rests on the
+  tags and the evidence above.
   Statically-scheduled gates after measurements (every QEC round has them)
   are fine; genuinely conditioned gates are not.
 - **Clifford circuits only.** Traced operations must normalize to named

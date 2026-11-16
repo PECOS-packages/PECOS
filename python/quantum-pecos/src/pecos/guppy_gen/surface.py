@@ -177,8 +177,8 @@ def generate_guppy_source(
 
     ``ancilla_budget=None`` (default) emits the unconstrained shape:
     one ancilla per stabilizer, all measured in parallel at the end of
-    one round. This matches the abstract circuit's unconstrained-path
-    measurement order (X stabilizers first by index, then Z).
+    one round. Output tags follow the abstract schedule (X stabilizers
+    first by index, then Z); compiled measurements may reorder.
 
     A finite ``ancilla_budget`` emits a stabilizer-batched syndrome-
     extraction routine that mirrors the abstract circuit's
@@ -190,9 +190,10 @@ def generate_guppy_source(
     qubits whose physical slots are reused by Selene's lowering).
     Per-stabilizer counted-round ``output("...:meas:N", …)`` calls
     and prep-boundary ``output("...:init:meas:N", …)`` calls fire
-    in the abstract's batched measurement order, keeping
-    detector record offsets transferable between abstract and traced
-    paths.
+    in abstract schedule order. Compiled measurement order may differ, so
+    abstract detector record offsets cannot be transferred to the trace.
+    Use named ``result_ref`` references resolved through measurement provenance;
+    per-tag occurrences assume the prints retain their source order.
 
     Args:
         patch: SurfacePatch with geometry configuration.
@@ -913,7 +914,7 @@ def generate_guppy_source(
     if not constrained:
         # Unconstrained: one ancilla per stabilizer, X-stabs first then
         # Z-stabs, measured in parallel at the end. Matches the
-        # abstract circuit's unconstrained-path measurement order.
+        # abstract schedule's output-tag order, not compiled measurement order.
         lines.extend(
             [
                 (
@@ -1007,7 +1008,7 @@ def generate_guppy_source(
     else:
         # Constrained: stabilizer-batched. The batch sequence is the
         # shared `batched_stabilizers(patch, effective_budget, schedule=...)` so the
-        # abstract circuit's measurement order matches by construction.
+        # abstract schedule and output tags match; compiled measurements may reorder.
         batches = batched_stabilizers(
             patch,
             effective_budget,

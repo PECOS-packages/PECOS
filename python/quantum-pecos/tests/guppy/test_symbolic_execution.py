@@ -32,6 +32,16 @@ def execute_guppy_symbolic(program: object, num_qubits: int) -> SymbolicExecutio
     return execute_dag_circuit_symbolic(circuit.to_dag_circuit(), num_qubits=num_qubits)
 
 
+def _execute_with_measurement_qubits(program: object, num_qubits: int) -> tuple[SymbolicExecutionResult, list[int]]:
+    """Keep the physical identity of each symbolic measurement position."""
+    circuit = trace_program_to_tick_circuit(Guppy(program), num_qubits, seed=1)
+    qubits = [qubit for qubit, _ in circuit.measurement_emission()]
+    assert len(qubits) == num_qubits
+    assert set(qubits) == set(range(num_qubits))
+    result = execute_dag_circuit_symbolic(circuit.to_dag_circuit(), num_qubits=num_qubits)
+    return result, qubits
+
+
 def execute_guppy_symbolic_noisy(
     program: object,
     num_qubits: int,
@@ -338,14 +348,14 @@ class TestMeasurementStructure:
             x(q2)  # Flip to |1>
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        result = execute_guppy_symbolic(all_deterministic, 3)
+        result, qubits = _execute_with_measurement_qubits(all_deterministic, 3)
 
         assert result.num_measurements == 3
         assert result.num_deterministic == 3
         assert result.num_nondeterministic == 0
 
         counts = result.sample_counts(100)
-        assert counts == {b"\x01\x00\x01": 100}
+        assert counts == {bytes(int(qubit in (0, 2)) for qubit in qubits): 100}
 
     def test_nondeterministic_count(self) -> None:
         """Test that non-deterministic measurement count is correct."""
@@ -383,7 +393,7 @@ class TestMeasurementStructure:
             # q2 stays |0> - deterministic
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        result = execute_guppy_symbolic(mixed, 3)
+        result, qubits = _execute_with_measurement_qubits(mixed, 3)
 
         assert result.num_measurements == 3
         assert result.num_nondeterministic == 1
@@ -391,9 +401,9 @@ class TestMeasurementStructure:
 
         counts = result.sample_counts(1000)
         assert len(counts) == 2
-        # Circuit measurement order is q0, q1, q2: q0 varies; q1=True, q2=False
-        assert b"\x00\x01\x00" in counts
-        assert b"\x01\x01\x00" in counts
+        # q0 varies; q1=True and q2=False, wherever they were emitted.
+        expected = {(0, 1, 0), (1, 1, 0)}
+        assert {tuple(outcome[qubits.index(q)] for q in range(3)) for outcome in counts} == expected
 
     def test_measurements_keep_program_order(self) -> None:
         """Independent measurements retain their runtime positions."""
@@ -404,9 +414,10 @@ class TestMeasurementStructure:
             x(q0)
             return (measure(q0).read(), measure(q1).read(), measure(q2).read())
 
-        result = execute_guppy_symbolic(asymmetric, 3)
-        assert str(result) == "[m0=1, m1=0, m2=0]"
-        assert result.sample_counts(100) == {b"\x01\x00\x00": 100}
+        result, qubits = _execute_with_measurement_qubits(asymmetric, 3)
+        expected = bytes(int(qubit == 0) for qubit in qubits)
+        assert str(result) == "[" + ", ".join(f"m{index}={bit}" for index, bit in enumerate(expected)) + "]"
+        assert result.sample_counts(100) == {expected: 100}
 
 
 class TestRepetitionCode:
@@ -440,7 +451,7 @@ class TestRepetitionCode:
 
             return (s0, s1, measure(d0).read(), measure(d1).read(), measure(d2).read())
 
-        result = execute_guppy_symbolic(repetition_code, 5)
+        result, qubits = _execute_with_measurement_qubits(repetition_code, 5)
 
         assert result.num_measurements == 5
 
@@ -449,7 +460,9 @@ class TestRepetitionCode:
         # With no errors, syndromes should be 00
         # Data qubits should all be same (000 or 111)
         for outcome in counts:
-            s0, s1, d0, d1, d2 = outcome  # bytes unpack to ints
+            by_qubit = dict(zip(qubits, outcome, strict=True))
+            s0, s1 = by_qubit[3], by_qubit[4]
+            d0, d1, d2 = (by_qubit[q] for q in range(3))
             assert s0 == 0, f"Expected s0=0, got {outcome}"
             assert s1 == 0, f"Expected s1=0, got {outcome}"
             assert d0 == d1 == d2, f"Data qubits should match: {outcome}"

@@ -172,7 +172,7 @@ def test_certificate_and_fresh_factory(basis: str, rounds: int) -> None:
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
-def test_uncertified_and_tampered_programs_rejected(basis: str) -> None:
+def test_uncertified_rejected_and_reordered_inventory_resolves_tags(basis: str) -> None:
     rounds = 1
     module = load_cached_guppy_source("helix", render_helix_memory_source(basis, rounds))
     program = module[f"make_memory_{basis.lower()}"]()
@@ -187,13 +187,18 @@ def test_uncertified_and_tampered_programs_rejected(basis: str) -> None:
     with pytest.raises(ValueError, match="requires a statically straight-line Guppy program"):
         build_dem_from_guppy(program, **kwargs)
     steps = memory_steps(basis, rounds)
+    original = lower_steps(steps, HelixAllocation.NUM_SLOTS, schedule="step").tick_circuit
+    certify_measurement_layout(program, original, helix_result_classifier, family="helix")
+    expected = build_dem_from_guppy(program, **kwargs)
     first_x = next(i for i, step in enumerate(steps) if step.label == "c4x:0")
     first_z = next(i for i, step in enumerate(steps) if step.label == "c4z:0")
     steps[first_x], steps[first_z] = steps[first_z], steps[first_x]
     wrong = lower_steps(steps, HelixAllocation.NUM_SLOTS, schedule="step").tick_circuit
     certify_measurement_layout(program, wrong, helix_result_classifier, family="helix")
-    with pytest.raises(ValueError, match=r"runtime result trace .*generator-certified layout requires"):
-        build_dem_from_guppy(program, **kwargs)
+    actual = build_dem_from_guppy(program, **kwargs)
+    assert actual.measurement_ledger == expected.measurement_ledger
+    assert actual.detectors_json == expected.detectors_json
+    assert actual.observables_json == expected.observables_json
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])

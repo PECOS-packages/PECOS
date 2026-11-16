@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pecos
@@ -19,10 +20,12 @@ from pecos.qec import (
     GuppyDemBuilder,
     Observable,
     build_dem_from_guppy,
-    rec,
+    result_ref,
 )
 from pecos.qec.surface import NoiseParameters
 from pecos_rslib.quantum import TickCircuit
+
+from qec._measurement_expectations import measurement_layout
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -42,6 +45,9 @@ _OBSERVABLES_JSON = '[{"id":0,"records":[-1]}]'
 
 
 def test_builder_matches_both_wrappers_with_noise_and_inserted_idles() -> None:
+    _, offsets = measurement_layout(_tagged_two_qubit_program, 2)
+    detectors_json = json.dumps([{"id": 0, "records": [offsets[0]]}])
+    observables_json = json.dumps([{"id": 0, "records": [offsets[1]]}])
     noise = NoiseParameters(p1=0.0, p2=0.01, p_meas=0.02, p_prep=0.0).with_p_idle_linear(
         0.03,
         {"Z": 1.0},
@@ -50,8 +56,8 @@ def test_builder_matches_both_wrappers_with_noise_and_inserted_idles() -> None:
         DetectorErrorModel.builder()
         .with_program(_tagged_two_qubit_program)
         .with_qubits(2)
-        .with_detectors_json(_DETECTORS_JSON)
-        .with_observables_json(_OBSERVABLES_JSON)
+        .with_detectors_json(detectors_json)
+        .with_observables_json(observables_json)
         .with_noise(noise)
         .with_idle_after_2q(1.0)
         .build()
@@ -59,8 +65,8 @@ def test_builder_matches_both_wrappers_with_noise_and_inserted_idles() -> None:
     via_from_guppy = DetectorErrorModel.from_guppy(
         _tagged_two_qubit_program,
         num_qubits=2,
-        detectors_json=_DETECTORS_JSON,
-        observables_json=_OBSERVABLES_JSON,
+        detectors_json=detectors_json,
+        observables_json=observables_json,
         noise=noise,
         idle_after_2q_duration=1.0,
     )
@@ -68,8 +74,8 @@ def test_builder_matches_both_wrappers_with_noise_and_inserted_idles() -> None:
         DetectorErrorModel.builder()
         .with_program(_tagged_two_qubit_program)
         .with_qubits(2)
-        .with_detectors([Detector(rec[-2])])
-        .with_observables([Observable(rec[-1])])
+        .with_detectors([Detector(result_ref("m0"))])
+        .with_observables([Observable(result_ref("m1"))])
         .with_noise(noise)
         .with_idle_after_2q(1.0)
         .build()
@@ -77,8 +83,8 @@ def test_builder_matches_both_wrappers_with_noise_and_inserted_idles() -> None:
     via_typed_wrapper = build_dem_from_guppy(
         _tagged_two_qubit_program,
         num_qubits=2,
-        detectors=[Detector(rec[-2])],
-        observables=[Observable(rec[-1])],
+        detectors=[Detector(result_ref("m0"))],
+        observables=[Observable(result_ref("m1"))],
         noise=noise,
         idle_after_2q_duration=1.0,
     )
@@ -158,8 +164,8 @@ def test_builder_reports_missing_required_setters(
     [
         ("with_program", _tagged_two_qubit_program),
         ("with_qubits", 2),
-        ("with_detectors", [Detector(rec[-1])]),
-        ("with_observables", [Observable(rec[-1])]),
+        ("with_detectors", [Detector(result_ref("m1"))]),
+        ("with_observables", [Observable(result_ref("m1"))]),
         ("with_detectors_json", _DETECTORS_JSON),
         ("with_observables_json", _OBSERVABLES_JSON),
         ("with_num_measurements", 2),
@@ -191,9 +197,9 @@ def test_every_setter_rejects_a_second_call(setter: str, value: Any) -> None:
 )
 def test_typed_and_json_spellings_for_one_role_conflict(first: str, second: str) -> None:
     values = {
-        "with_detectors": [Detector(rec[-1])],
+        "with_detectors": [Detector(result_ref("m1"))],
         "with_detectors_json": _DETECTORS_JSON,
-        "with_observables": [Observable(rec[-1])],
+        "with_observables": [Observable(result_ref("m1"))],
         "with_observables_json": _OBSERVABLES_JSON,
     }
     builder = DetectorErrorModel.builder()
@@ -206,7 +212,7 @@ def test_typed_and_json_spellings_for_one_role_conflict(first: str, second: str)
 @pytest.mark.parametrize("typed_setter", ["with_detectors", "with_observables"])
 @pytest.mark.parametrize("typed_first", [False, True])
 def test_num_measurements_conflicts_with_typed_specs(typed_setter: str, typed_first: bool) -> None:
-    specs = [Detector(rec[-1])] if typed_setter == "with_detectors" else [Observable(rec[-1])]
+    specs = [Detector(result_ref("m1"))] if typed_setter == "with_detectors" else [Observable(result_ref("m1"))]
     builder = DetectorErrorModel.builder()
 
     def combine_typed_specs_and_measurement_count() -> None:
@@ -263,8 +269,8 @@ def test_builder_setter_order_does_not_change_the_dem() -> None:
         DetectorErrorModel.builder()
         .with_program(_tagged_two_qubit_program)
         .with_qubits(2)
-        .with_detectors([Detector(rec[-2])])
-        .with_observables([Observable(rec[-1])])
+        .with_detectors([Detector(result_ref("m0"))])
+        .with_observables([Observable(result_ref("m1"))])
         .with_noise(noise)
         .with_seed(11)
         .build()
@@ -272,9 +278,9 @@ def test_builder_setter_order_does_not_change_the_dem() -> None:
     second = (
         DetectorErrorModel.builder()
         .with_seed(11)
-        .with_observables([Observable(rec[-1])])
+        .with_observables([Observable(result_ref("m1"))])
         .with_noise(noise)
-        .with_detectors([Detector(rec[-2])])
+        .with_detectors([Detector(result_ref("m0"))])
         .with_qubits(2)
         .with_program(_tagged_two_qubit_program)
         .build()

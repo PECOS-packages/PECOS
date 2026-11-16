@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class RecordRef:
-    """A Stim-style offset in the canonical Guppy measurement stream."""
+    """A legacy positional reference, rejected by typed Guppy DEM builds."""
 
     offset: int
 
@@ -37,7 +37,7 @@ class RecordRef:
 
 
 class _RecordLookup:
-    """Support the familiar ``rec[-k]`` spelling without carrying Stim."""
+    """Keep ``rec[-k]`` importable so Guppy builds can explain why it is unsupported."""
 
     __slots__ = ()
 
@@ -91,7 +91,7 @@ def _coerce_refs(refs: tuple[MeasurementRef | str, ...]) -> tuple[MeasurementRef
         elif isinstance(ref, (RecordRef, ResultRef)):
             coerced.append(ref)
         else:
-            msg = 'measurement references must be rec[...], result_ref(...), or a "tag" string'
+            msg = 'measurement references must be result_ref(...) or a "tag" string'
             raise TypeError(msg)
     return tuple(coerced)
 
@@ -113,7 +113,7 @@ class InferredOutput:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Detector:
-    """A detector parity over canonical measurement references."""
+    """A detector parity over named measurement references."""
 
     refs: tuple[MeasurementRef, ...]
     inferred_output: InferredOutput | None
@@ -130,8 +130,9 @@ class Detector:
     ) -> None:
         """Create a detector from measurement references.
 
-        Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
-        string, which is shorthand for ``result_ref(tag)``.
+        Use ``result_ref(...)`` or a bare tag string, which is shorthand for
+        ``result_ref(tag)``. Typed Guppy builds reject positional ``rec[-k]``
+        references because compiled measurements need not retain source order.
         """
         refs_tuple = _coerce_refs(tuple(refs))
         object.__setattr__(self, "refs", refs_tuple)
@@ -167,7 +168,7 @@ class Detector:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Observable:
-    """A logical-observable parity over canonical measurement references."""
+    """A logical-observable parity over named measurement references."""
 
     refs: tuple[MeasurementRef, ...]
     inferred_output: InferredOutput | None
@@ -182,8 +183,9 @@ class Observable:
     ) -> None:
         """Create an observable from measurement references.
 
-        Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
-        string, which is shorthand for ``result_ref(tag)``.
+        Use ``result_ref(...)`` or a bare tag string, which is shorthand for
+        ``result_ref(tag)``. Typed Guppy builds reject positional ``rec[-k]``
+        references because compiled measurements need not retain source order.
         """
         refs_tuple = _coerce_refs(tuple(refs))
         object.__setattr__(self, "refs", refs_tuple)
@@ -224,59 +226,27 @@ def surface_memory_dem_spec(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
 ) -> tuple[list[Detector], list[Observable]]:
-    """Return typed detector and observable specs for ``make_surface_code``."""
-    from pecos.qec.surface import SurfacePatch  # noqa: PLC0415
-    from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch  # noqa: PLC0415
+    """Return named detector and observable specs independent of compiled emission order."""
+    from pecos.qec.surface.decode import surface_memory_dem_spec as surface_spec  # noqa: PLC0415
 
-    circuit = generate_tick_circuit_from_patch(
-        SurfacePatch.create(distance=distance),
+    return surface_spec(
+        distance,
         num_rounds,
         basis,
         ancilla_budget=ancilla_budget,
-        add_typed_annotations=False,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
     )
-    detector_entries = json.loads(circuit.get_meta("detectors") or "[]")
-    observable_entries = json.loads(circuit.get_meta("observables") or "[]")
-
-    def records_of(entry: Mapping[str, Any], kind: str) -> list[int]:
-        records = entry.get("records")
-        if not isinstance(records, list) or not records:
-            raise ValueError(
-                f"surface builder emitted a {kind} entry without positional 'records' "
-                f"({entry.get('id')!r}); surface_memory_dem_spec cannot convert it",
-            )
-        return [int(record) for record in records]
-
-    detectors = []
-    for entry in detector_entries:
-        metadata = {key: value for key, value in entry.items() if key not in {"id", "records", "coords"}}
-        detectors.append(
-            Detector(
-                *(rec[record] for record in records_of(entry, "detector")),
-                id=int(entry["id"]),
-                coords=entry.get("coords"),
-                metadata=metadata or None,
-            ),
-        )
-    observables = []
-    for entry in observable_entries:
-        metadata = {key: value for key, value in entry.items() if key not in {"id", "records"}}
-        observables.append(
-            Observable(
-                *(rec[record] for record in records_of(entry, "observable")),
-                id=int(entry["id"]),
-                metadata=metadata or None,
-            ),
-        )
-    return detectors, observables
 
 
 @dataclass(frozen=True, slots=True)
 class MeasurementLedgerEntry:
-    """Auditable identity transport for one runtime measurement."""
+    """Identity transport for one runtime measurement.
+
+    ``canonical_record_index`` is the compiled MeasId when IDs form a dense
+    range, not an index into Guppy source measurement order.
+    """
 
     meas_id: int
     runtime_record_index: int
@@ -333,7 +303,11 @@ class GuppyDemBuild:
 
     @property
     def audit(self) -> dict[str, Any]:
-        """Return trace and measurement-identity audit metadata."""
+        """Return transport metadata.
+
+        Historical canonical fields compare runtime positions with dense compiled
+        MeasIds, not Guppy source order.
+        """
         runtime_order = [entry.meas_id for entry in self.measurement_ledger]
         return {
             "schema_fingerprint": self.schema_fingerprint,
@@ -475,25 +449,21 @@ def _index_result_traces(
     return calls, refs_by_id
 
 
+def _validate_guppy_measurement_ref(ref: MeasurementRef, *, context: str) -> None:
+    if isinstance(ref, RecordRef):
+        raise TypeError(
+            f"{context} uses rec[{ref.offset}]: compiled Guppy programs do not preserve source measurement order; "
+            "use result_ref(tag), or result_ref(tag, occurrence=...) for repeated tags",
+        )
+
+
 def _resolve_ref(
     ref: MeasurementRef,
     *,
-    num_measurements: int,
-    runtime_meas_ids: set[int],
+    context: str,
     result_calls: Mapping[str, Mapping[int, tuple[int | None, ...]]],
 ) -> int:
-    if isinstance(ref, RecordRef):
-        if sorted(runtime_meas_ids) != list(range(num_measurements)):
-            raise ValueError(
-                "rec[...] requires runtime MeasIds to preserve the canonical dense Guppy "
-                "measurement identity range; use result_ref(...) for non-dense runtimes",
-            )
-        logical_index = num_measurements + ref.offset
-        if logical_index < 0:
-            raise ValueError(
-                f"measurement record offset {ref.offset} is out of range for {num_measurements} measurements",
-            )
-        return logical_index
+    _validate_guppy_measurement_ref(ref, context=context)
 
     calls = result_calls.get(ref.tag)
     if calls is None or ref.occurrence not in calls:
@@ -505,8 +475,7 @@ def _resolve_ref(
         )
     if len(result_ids) != 1:
         raise ValueError(
-            "array-valued result_ref provenance is not yet certified; expose "
-            "scalar result() tags or use canonical rec[...] references",
+            "array-valued result_ref provenance is not yet certified; expose scalar result() tags",
         )
     if ref.element is None:
         return int(result_ids[0])
@@ -577,8 +546,7 @@ def _resolve_dem_specs(
             ids = [
                 _resolve_ref(
                     ref,
-                    num_measurements=num_measurements,
-                    runtime_meas_ids=runtime_ids,
+                    context=context,
                     result_calls=result_calls,
                 )
                 for ref in spec.refs

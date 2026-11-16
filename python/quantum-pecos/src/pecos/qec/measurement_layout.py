@@ -14,7 +14,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from pecos_rslib.quantum import TickCircuit
 
@@ -61,3 +61,23 @@ def abstract_result_refs(
         msg = f"{family} measurement result refs disagree with the shared reader's measurement emission"
         raise ValueError(msg)
     return refs
+
+
+def named_result_slots(refs: Iterable[ResultRef]) -> tuple[tuple[str, int], ...]:
+    """Name scalar occurrences and collected array elements in abstract output order.
+
+    Slot order is informational; identities must be resolved from measurement
+    evidence. Scalar occurrences count prints of that tag, while array elements
+    use the generator's per-element ``:meas:`` sideband names.
+    """
+    occurrences: dict[str, int] = {}
+    slots = []
+    for ref in refs:
+        if ref[0] == "scalar":
+            tag = ref[1]
+            occurrence = occurrences.get(tag, 0)
+            slots.append((tag, occurrence))
+            occurrences[tag] = occurrence + 1
+        else:
+            slots.append((f"{ref[1]}:meas:{ref[2]}", 0))
+    return tuple(slots)

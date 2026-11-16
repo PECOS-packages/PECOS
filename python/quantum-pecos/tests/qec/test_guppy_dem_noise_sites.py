@@ -11,7 +11,7 @@ from guppylang.std.builtins import result
 from guppylang.std.platform import barrier
 from guppylang.std.quantum import measure, qubit, x
 from pecos import NoiseParameters
-from pecos.qec import DemInferenceSettings, Detector, DetectorErrorModel, Observable, rec
+from pecos.qec import DemInferenceSettings, Detector, DetectorErrorModel, Observable, result_ref
 from pecos.tracing import capture_qis_operation_trace, qis_operation_trace_to_tick_circuit
 
 
@@ -50,7 +50,9 @@ def test_cancelled_clifford_pair_keeps_noise_sites(runtime_name: str, *, inferre
     if inferred:
         builder = builder.with_inference(DemInferenceSettings().with_validation_rows(8))
     else:
-        builder = builder.with_detectors([Detector(rec[-1])]).with_observables([Observable(rec[-1])])
+        builder = builder.with_detectors([Detector(result_ref("raw measurements"))]).with_observables(
+            [Observable(result_ref("raw measurements"))],
+        )
     build = builder.build()
     errors = [line for line in build.dem.to_string().splitlines() if line.startswith("error(")]
     assert len(errors) == 1, build.dem.to_string()

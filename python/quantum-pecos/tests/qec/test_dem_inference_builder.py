@@ -5,13 +5,17 @@
 
 from __future__ import annotations
 
+import json
+
 import pecos
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, output
 from guppylang.std.quantum import cx, measure, qubit
 from pecos import NoiseParameters
-from pecos.qec import DemInferenceSettings, Detector, DetectorErrorModel, Observable, rec
+from pecos.qec import DemInferenceSettings, Detector, DetectorErrorModel, Observable, result_ref
+
+from qec._measurement_expectations import measurement_layout
 
 
 @guppy
@@ -95,12 +99,13 @@ def test_inferred_build_shares_noise_idle_and_evaluator() -> None:
     assert build.dem.to_string() == explicit.dem.to_string()
     assert build.circuit.gate_counts_by_type()["Idle"] == 2
     assert build.inference is not None
-    assert build.inference.raw_measurement_ids == (2, 0, 1)
+    ids, _ = measurement_layout(_inferred_program, 3)
+    assert build.inference.raw_measurement_ids == (ids[2], ids[0], ids[1])
     assert build.audit["inference"]["schedule_validation"] == "empirical_trace_comparison"
     assert build.audit["soundness_scope"] == "empirical_static_schedule"
     columns = {"raw measurements": [[0, 1, 1], [1, 1, 0], [1, 0, 1]]}
     assert build.evaluate_result_columns(columns) == [([1], 1), ([0], 0), ([1], 1)]
-    assert build.evaluate_runtime_record([1, 0, 0]) == ([1], 0)
+    assert build.evaluate_runtime_record([int(q == 0) for q in ids]) == ([1], 0)
     with pytest.raises(ValueError, match="expects"):
         build.evaluate_result_columns({"raw measurements": [[1]]})
     assert explicit.inference is None
@@ -126,11 +131,12 @@ def _selected_program() -> None:
     output("parities", array(m0 ^ m2, m0 & m1))
     output("raw measurements", array(m2, m0, m1))
     output("logical", m1)
+    output("m0", m0)
     output("m1", m1)
+    output("m2", m2)
 
 
 def test_mixed_definitions_select_only_requested_elements(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pecos.qec import dem as dem_module
     from pecos.qec import guppy_output_dem
 
     original = guppy_output_dem.infer_guppy_dem_annotations
@@ -140,23 +146,20 @@ def test_mixed_definitions_select_only_requested_elements(monkeypatch: pytest.Mo
         calls.append(kwargs)
         return original(*args, **kwargs)
 
-    def unexpected_analysis(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("record-only mixed definitions must not require compiler tag analysis")
-
     monkeypatch.setattr(guppy_output_dem, "infer_guppy_dem_annotations", infer)
-    monkeypatch.setattr(dem_module, "_preflight_guppy_static_schedule", unexpected_analysis)
     build = (
         DetectorErrorModel.builder()
         .with_program(_selected_program)
         .with_qubits(3)
-        .with_detectors([Detector(rec[-2]), Detector.inferred("parities", element=0)])
-        .with_observables([Observable.inferred("logical", id=70), Observable(rec[-3], id=2)])
+        .with_detectors([Detector(result_ref("m1")), Detector.inferred("parities", element=0)])
+        .with_observables([Observable.inferred("logical", id=70), Observable(result_ref("m2"), id=2)])
         .build()
     )
     assert len(calls) == 1
     assert calls[0]["detector_outputs"] == [("parities", 0)]
     assert calls[0]["observable_outputs"] == [("logical", 0)]
-    assert build.evaluate_runtime_record([1, 1, 0]) == ([1, 1], (1 << 70) | (1 << 2))
+    ids, _ = measurement_layout(_selected_program, 3)
+    assert build.evaluate_runtime_record([int(q != 0) for q in ids]) == ([1, 1], (1 << 70) | (1 << 2))
     assert [item["source"] for item in build.audit["definition_origins"]] == [
         "explicit",
         "inferred",
@@ -190,12 +193,13 @@ def test_explicit_definitions_skip_inference_even_with_settings(
     builder = DetectorErrorModel.builder().with_program(_selected_program).with_qubits(3)
     if settings_first:
         builder.with_inference(DemInferenceSettings().with_raw_tag("missing raw tag"))
-    builder.with_detectors([Detector(rec[-2])]).with_observables([])
+    builder.with_detectors([Detector(result_ref("m1"))]).with_observables([])
     if not settings_first:
         builder.with_inference(DemInferenceSettings().with_raw_tag("missing raw tag"))
     build = builder.build()
     assert build.inference is None
-    assert build.evaluate_runtime_record([0, 1, 0]) == ([1], 0)
+    ids, _ = measurement_layout(_selected_program, 3)
+    assert build.evaluate_runtime_record([int(q == 1) for q in ids]) == ([1], 0)
 
 
 @pytest.mark.parametrize("explicit_role", ["detectors", "observables"])
@@ -205,7 +209,7 @@ def test_role_mixing_does_not_require_unused_tags(explicit_role: str) -> None:
     if explicit_role == "detectors":
         # The unused detector tag does not exist. Only logical is inferred.
         settings = settings.with_detector_tag("absent detector")
-        builder.with_detectors([Detector(rec[-3], rec[-1])])
+        builder.with_detectors([Detector(result_ref("m2"), result_ref("m0"))])
     else:
         # Select just the affine element; there is no default observable tag.
         settings = settings.with_observable_tags(["absent observable"])
@@ -254,14 +258,17 @@ def test_mixed_named_explicit_binding_keeps_compiler_provenance(monkeypatch: pyt
         )
 
 
-@pytest.mark.parametrize(("certified_ids", "agrees"), [([2, 0, 1], True), ([0, 1, 2], False)])
+@pytest.mark.parametrize("agrees", [True, False], ids=["agree", "disagree"])
 def test_mixed_build_checks_certified_raw_ids_against_inference(
     monkeypatch: pytest.MonkeyPatch,
-    certified_ids: list[int],
     *,
     agrees: bool,
 ) -> None:
     from pecos.qec import dem as dem_module
+
+    ids, _ = measurement_layout(_selected_program, 3)
+    correct_ids = [ids[2], ids[0], ids[1]]
+    certified_ids = correct_ids if agrees else [correct_ids[1], correct_ids[0], correct_ids[2]]
 
     original = dem_module._compiler_certified_result_traces  # noqa: SLF001
 
@@ -281,7 +288,8 @@ def test_mixed_build_checks_certified_raw_ids_against_inference(
     if agrees:
         assert builder.build().inference is not None
     else:
-        with pytest.raises(ValueError, match=r"raw measurements.*element 0.*ID 0.*ID 2"):
+        message = rf"raw measurements.*element 0.*ID {certified_ids[0]}.*ID {correct_ids[0]}"
+        with pytest.raises(ValueError, match=message):
             builder.build()
 
 
@@ -301,7 +309,7 @@ def test_invalid_selectors_and_duplicate_ids_fail_before_execution(monkeypatch: 
             DetectorErrorModel.builder()
             .with_program(_selected_program)
             .with_qubits(3)
-            .with_detectors([Detector.inferred("parities", id=0), Detector(rec[-1], id=0)])
+            .with_detectors([Detector.inferred("parities", id=0), Detector(result_ref("m0"), id=0)])
             .build()
         )
 
@@ -328,7 +336,8 @@ def test_observable_only_inference_does_not_require_detector_definitions() -> No
     )
     assert build.dem.num_detectors == 0
     assert build.inference.detector_supports == ()
-    assert build.evaluate_runtime_record([0, 1, 0]) == ([], 4)
+    ids, _ = measurement_layout(_selected_program, 3)
+    assert build.evaluate_runtime_record([int(q == 1) for q in ids]) == ([], 4)
     assert build.audit["definition_origins"] == [
         {"role": "observable", "id": 2, "source": "inferred", "tag": "logical", "element": 0},
     ]
@@ -338,8 +347,8 @@ def test_observable_only_inference_does_not_require_detector_definitions() -> No
 @pytest.mark.parametrize("role", ["detector", "observable", "inferred_detector"])
 def test_reserved_metadata_rejected_before_runtime(key: str, role: str) -> None:
     factory = {
-        "detector": lambda: Detector(rec[-1], metadata={key: 1}),
-        "observable": lambda: Observable(rec[-1], metadata={key: 1}),
+        "detector": lambda: Detector(result_ref("m0"), metadata={key: 1}),
+        "observable": lambda: Observable(result_ref("m0"), metadata={key: 1}),
         "inferred_detector": lambda: Detector.inferred("checks", metadata={key: 1}),
     }[role]
     spec = factory()
@@ -429,36 +438,66 @@ def test_certified_raw_ids_use_runtime_call_widths_and_generator_element_slots()
 
 def test_mixed_build_does_not_bind_nonraw_arrays(monkeypatch: pytest.MonkeyPatch) -> None:
     from pecos.qec import guppy_output_dem
-    from pecos_rslib import TickCircuit
 
-    circuit = TickCircuit()
-    circuit.tick().mz_with_ids([0, 1], [0, 1])
-    circuit.set_meta("qis_source_measurement_ids", "[0,1]")
+    @guppy
+    def program() -> None:
+        q0, q1 = qubit(), qubit()
+        m0 = measure(q0).read()
+        m1 = measure(q1).read()
+        output("m0", m0)
+        output("raw measurements", array(m0, m1))
+        output("other", array(m0, m1))
+
+    circuit = pecos.trace_program_to_tick_circuit(program, 2)
+    ids, _ = measurement_layout(program, 2)
     inferred = guppy_output_dem.InferredGuppyDemAnnotations(
         circuit=circuit,
-        detectors_json='[{"id":0,"meas_ids":[0]}]',
+        detectors_json=json.dumps([{"id": 0, "meas_ids": [ids[1]]}]),
         observables_json="[]",
-        raw_measurement_ids=(0, 1),
-        detector_supports=((0,),),
+        raw_measurement_ids=(ids[0], ids[1]),
+        detector_supports=((ids[1],),),
         observable_supports=(),
         observable_labels=(),
         detector_labels=(("checks", 0),),
         probe_shots=64,
         raw_binding="runtime_result_ids",
         result_traces=tuple(
-            {"name": tag, "values": [False, False], "result_ids": [0, 1]} for tag in ["raw measurements", "other"]
+            {"name": tag, "values": [False, False], "result_ids": [ids[0], ids[1]]}
+            for tag in ["raw measurements", "other"]
         ),
     )
     monkeypatch.setattr(guppy_output_dem, "infer_guppy_dem_annotations", lambda *_args, **_kwargs: inferred)
     build = (
         DetectorErrorModel.builder()
-        .with_program(object())
+        .with_program(program)
         .with_qubits(2)
-        .with_detectors([Detector(rec[-1]), Detector.inferred("checks")])
+        .with_detectors([Detector(result_ref("m0")), Detector.inferred("checks")])
         .with_observables([])
         .build()
     )
     assert build.inference is not None
-    assert build.evaluate_results({"raw measurements": [1, 0]}) == ([0, 1], 0)
+    assert build.evaluate_results({"raw measurements": [0, 1], "m0": 0}) == ([0, 1], 0)
     with pytest.raises(ValueError, match="missing referenced"):
-        build.evaluate_results({"other": [1, 0]})
+        build.evaluate_results({"other": [0, 1]})
+
+
+def test_public_alternatives_to_uncertifiable_result_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import Mock
+
+    from pecos.qec import _qis_result_tags, infer_guppy_dem_annotations
+    from pecos.qec._qis_result_tags import _CertificationError
+
+    extractor = Mock(side_effect=_CertificationError("test unsupported lowered tag analysis"))
+    monkeypatch.setattr(_qis_result_tags, "extract_result_tag_measurements", extractor)
+    inferred = infer_guppy_dem_annotations(_inferred_program, num_qubits=3, validation_rows=8)
+    inferred_dem = inferred.build_dem()
+    extractor.assert_not_called()
+    explicit_dem = DetectorErrorModel.from_guppy(
+        _inferred_program,
+        num_qubits=3,
+        detectors_json=inferred.detectors_json,
+        observables_json=inferred.observables_json,
+    )
+    extractor.assert_called_once()
+    assert inferred_dem.num_detectors == explicit_dem.num_detectors == 1
+    assert inferred_dem.num_observables == explicit_dem.num_observables == 1

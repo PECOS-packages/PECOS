@@ -11,8 +11,8 @@
 
 """qeclib Selene roundtrip corpus (byte-identity safety net).
 
-This
-corpus pins per-shot measurement records under fixed seed for each tracked
+This corpus pins per-shot measurement records by physical qubit under fixed
+seed for each tracked
 qeclib Block class. Each entry was first pinned **pre-conversion** (when
 the Block was still flattened) and remained byte-identical **post-conversion**
 (once `block_inputs` was declared and the SLR converter began emitting
@@ -61,7 +61,7 @@ PRODUCED/DROPPED effects) land.
 
 from __future__ import annotations
 
-from pecos import Hugr, selene_engine, sim
+from pecos import Hugr, selene_engine, sim, trace_program_to_tick_circuit
 from pecos.slr import CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.generic.check import Check
@@ -76,15 +76,20 @@ from pecos.slr.qeclib.steane.gates_tq import transversal_tq as steane_tq
 def _run_via_selene(prog: Main, *, shots: int = 4, seed: int = 42, qubits: int) -> dict:
     """Compile prog through SlrConverter.hugr() and run through Selene.
 
+    Key records by the traced physical qubit, independently of emission order.
     The corpus programs use explicit `Return(...)` (the implicit-return
     path was removed).
     """
     package = SlrConverter(prog).hugr()
     hugr_bytes = package.to_str().encode("utf-8")
-    result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(qubits).seed(seed).run(shots)
+    hugr = Hugr(hugr_bytes)
+    measurements = trace_program_to_tick_circuit(hugr, qubits).measurement_emission()
+    assert len({qubit for qubit, _ in measurements}) == len(measurements)
+    result = sim(hugr).classical(selene_engine()).qubits(qubits).seed(seed).run(shots)
     raw = result.to_dict() if hasattr(result, "to_dict") else result
     assert isinstance(raw, dict)
-    return raw
+    assert set(raw) == {f"measurement_{mid}" for _, mid in measurements}
+    return {f"qubit_{qubit}": raw[f"measurement_{mid}"] for qubit, mid in measurements}
 
 
 class TestQeclibCheck:
@@ -110,7 +115,7 @@ class TestQeclibCheck:
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=5)
         # Re-pinned for global per-shot seeding (2026-10-11).
-        assert raw == {"measurement_0": [0, 1, 0, 0]}, raw
+        assert raw == {"qubit_4": [0, 1, 0, 0]}, raw
 
     def test_check_xyz_on_plus_state_pinned_records(self) -> None:
         """Same Check, data q[0]/q[1] put into |+> by H before the Check.
@@ -131,7 +136,7 @@ class TestQeclibCheck:
         # internally (design R2 -- records unchanged, +1 physical qubit).
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=5)
         # Re-pinned for global per-shot seeding (2026-10-11).
-        assert raw == {"measurement_0": [0, 1, 0, 0]}, raw
+        assert raw == {"qubit_4": [0, 1, 0, 0]}, raw
 
 
 class TestQeclibCheck1Flag:
@@ -156,8 +161,8 @@ class TestQeclibCheck1Flag:
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=7)
         # Re-pinned for global per-shot seeding; flags remain zero (2026-10-11).
         assert raw == {
-            "measurement_0": [0, 1, 0, 0],
-            "measurement_1": [0, 0, 0, 0],
+            "qubit_5": [0, 1, 0, 0],  # internally allocated syndrome ancilla
+            "qubit_6": [0, 0, 0, 0],  # internally allocated flag
         }, raw
 
 
@@ -184,15 +189,15 @@ class TestQeclibTransversalCX:
             Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=6)
-        # Empirical probe 2026-05-15: each measurement_N has 4 identical shots
+        # Empirical probe 2026-05-15: each qubit has 4 identical shots
         # because gates are deterministic (no H anywhere).
         assert raw == {
-            "measurement_0": [1, 1, 1, 1],  # a[0]: X -> measured 1
-            "measurement_1": [0, 0, 0, 0],  # a[1]: untouched -> 0
-            "measurement_2": [1, 1, 1, 1],  # a[2]: X -> measured 1
-            "measurement_3": [1, 1, 1, 1],  # b[0]: flipped by CX from a[0]=1
-            "measurement_4": [0, 0, 0, 0],  # b[1]: CX from a[1]=0
-            "measurement_5": [1, 1, 1, 1],  # b[2]: flipped by CX from a[2]=1
+            "qubit_0": [1, 1, 1, 1],  # a[0]: X -> measured 1
+            "qubit_1": [0, 0, 0, 0],  # a[1]: untouched -> 0
+            "qubit_2": [1, 1, 1, 1],  # a[2]: X -> measured 1
+            "qubit_3": [1, 1, 1, 1],  # b[0]: flipped by CX from a[0]=1
+            "qubit_4": [0, 0, 0, 0],  # b[1]: CX from a[1]=0
+            "qubit_5": [1, 1, 1, 1],  # b[2]: flipped by CX from a[2]=1
         }, raw
 
     def test_transversal_cx_pure_zero_pinned_records(self) -> None:
@@ -209,7 +214,7 @@ class TestQeclibTransversalCX:
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=6)
         # Empirical probe 2026-05-15: |000>|000> through CX stays |000>|000>;
         # all 6 measurements are [0, 0, 0, 0] across 4 shots.
-        assert raw == {f"measurement_{i}": [0, 0, 0, 0] for i in range(6)}, raw
+        assert raw == {f"qubit_{i}": [0, 0, 0, 0] for i in range(6)}, raw
 
 
 class TestQeclibSteaneTransversalCX:
@@ -245,21 +250,21 @@ class TestQeclibSteaneTransversalCX:
         raw = _run_via_selene(self._x_all_then_gate_then_measure(steane_tq.CX), shots=4, seed=42, qubits=14)
         # Empirical probe 2026-05-15: all 14 measurements are [1, 1, 1, 1] across 4 shots.
         # a stays |1>^7 (X is preserved through Steane CX); b becomes |1>^7 from CX propagation.
-        assert raw == {f"measurement_{i}": [1, 1, 1, 1] for i in range(14)}, raw
+        assert raw == {f"qubit_{i}": [1, 1, 1, 1] for i in range(14)}, raw
 
     def test_steane_cy_all_ones_to_zero_propagates_pinned_records(self) -> None:
         """Steane CY also propagates X (since Y = iXZ; X-stab passes through both factors)."""
         raw = _run_via_selene(self._x_all_then_gate_then_measure(steane_tq.CY), shots=4, seed=42, qubits=14)
         # Empirical probe 2026-05-15: same |1>^14 pattern as Steane CX.
-        assert raw == {f"measurement_{i}": [1, 1, 1, 1] for i in range(14)}, raw
+        assert raw == {f"qubit_{i}": [1, 1, 1, 1] for i in range(14)}, raw
 
     def test_steane_cz_x_on_control_only_phase_propagates_pinned_records(self) -> None:
         """Steane CZ propagates phase, not bit-flips: a stays |1>^7, b stays |0>^7."""
         raw = _run_via_selene(self._x_all_then_gate_then_measure(steane_tq.CZ), shots=4, seed=42, qubits=14)
         # Empirical probe 2026-05-15: a's 7 qubits measure 1 (X preserved), b's 7 measure 0
         # (CZ doesn't propagate Z stabilizer to the standard basis measurement).
-        expected: dict[str, list[int]] = {f"measurement_{i}": [1, 1, 1, 1] for i in range(7)}
-        expected.update({f"measurement_{i}": [0, 0, 0, 0] for i in range(7, 14)})
+        expected: dict[str, list[int]] = {f"qubit_{i}": [1, 1, 1, 1] for i in range(7)}
+        expected.update({f"qubit_{i}": [0, 0, 0, 0] for i in range(7, 14)})
         assert raw == expected, raw
 
 
@@ -283,8 +288,8 @@ class TestQeclibSteaneLogicalPaulis:
         """Steane X applies X to q[4..6]; q[0..3] stay |0>, q[4..6] become |1>."""
         raw = _run_via_selene(self._gate_then_measure(steane_paulis.X), shots=4, seed=42, qubits=7)
         # Empirical probe 2026-05-15:
-        expected: dict[str, list[int]] = {f"measurement_{i}": [0, 0, 0, 0] for i in range(4)}
-        expected.update({f"measurement_{i}": [1, 1, 1, 1] for i in range(4, 7)})
+        expected: dict[str, list[int]] = {f"qubit_{i}": [0, 0, 0, 0] for i in range(4)}
+        expected.update({f"qubit_{i}": [1, 1, 1, 1] for i in range(4, 7)})
         assert raw == expected, raw
 
     def test_steane_logical_y_on_zero_pinned_records(self) -> None:
@@ -292,8 +297,8 @@ class TestQeclibSteaneLogicalPaulis:
         raw = _run_via_selene(self._gate_then_measure(steane_paulis.Y), shots=4, seed=42, qubits=7)
         # Empirical probe 2026-05-15: q[0..3] stay 0, q[4..6] become 1 (same as X
         # because Y|0> = i|1>; Z-basis ignores the global phase).
-        expected: dict[str, list[int]] = {f"measurement_{i}": [0, 0, 0, 0] for i in range(4)}
-        expected.update({f"measurement_{i}": [1, 1, 1, 1] for i in range(4, 7)})
+        expected: dict[str, list[int]] = {f"qubit_{i}": [0, 0, 0, 0] for i in range(4)}
+        expected.update({f"qubit_{i}": [1, 1, 1, 1] for i in range(4, 7)})
         assert raw == expected, raw
 
     def test_steane_logical_z_on_zero_pinned_records(self) -> None:
@@ -301,18 +306,18 @@ class TestQeclibSteaneLogicalPaulis:
         raw = _run_via_selene(self._gate_then_measure(steane_paulis.Z), shots=4, seed=42, qubits=7)
         # Empirical probe 2026-05-15: all 7 measurements are [0, 0, 0, 0] across 4
         # shots (Z is phase-only on |0> eigenstates).
-        assert raw == {f"measurement_{i}": [0, 0, 0, 0] for i in range(7)}, raw
+        assert raw == {f"qubit_{i}": [0, 0, 0, 0] for i in range(7)}, raw
 
     def test_steane_logical_h_on_zero_pinned_records(self) -> None:
         """Steane H on |0>^7 -> |+>^7; Z-basis measurement is seeded-random per-qubit per-shot."""
         raw = _run_via_selene(self._gate_then_measure(steane_h.H), shots=4, seed=42, qubits=7)
         # Re-pinned per-qubit, per-shot bit pattern (2026-10-11).
         assert raw == {
-            "measurement_0": [0, 1, 0, 0],
-            "measurement_1": [1, 1, 1, 1],
-            "measurement_2": [0, 1, 1, 0],
-            "measurement_3": [1, 1, 0, 1],
-            "measurement_4": [1, 1, 1, 0],
-            "measurement_5": [1, 0, 1, 1],
-            "measurement_6": [0, 0, 1, 0],
+            "qubit_0": [0, 1, 0, 0],
+            "qubit_1": [1, 1, 1, 1],
+            "qubit_2": [0, 1, 1, 0],
+            "qubit_3": [1, 1, 0, 1],
+            "qubit_4": [1, 1, 1, 0],
+            "qubit_5": [1, 0, 1, 1],
+            "qubit_6": [0, 0, 1, 0],
         }, raw

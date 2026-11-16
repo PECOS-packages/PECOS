@@ -641,24 +641,9 @@ def _assert_canonical_frame_output_matches_lookup(
     assert not observables.any()
 
 
-@pytest.mark.parametrize(
-    "basis",
-    [
-        pytest.param(
-            "Z",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason=(
-                    "Gate-local canonical Z-frame output does not yet match "
-                    "PauliFrameLookup demasking; raw records remain correct. "
-                    "Track the runtime frame-propagation fix separately."
-                ),
-            ),
-        ),
-        "X",
-    ],
-)
+# tket 0.15.12 #2085 (b7414721) fixed the opaque-output dependency
+# miscompilation that previously made the Z case fail.
+@pytest.mark.parametrize("basis", ["Z", "X"])
 def test_runtime_gate_local_canonical_frame_output_matches_lookup(
     patch_d3: SurfacePatch,
     basis: str,

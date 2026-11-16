@@ -80,10 +80,9 @@ it is deterministic in the absence of noise:
 The observable is the logical Z value, which for this code is any single data
 qubit measurement.
 
-A bare string names a tagged measurement. `rec[-k]` refers to one by position
-in the canonical Guppy measurement stream, as in Stim, and
-`result_ref("tag", occurrence=...)` is the explicit form when you need its
-extra selectors.
+A bare string names a tagged measurement. `result_ref("tag", occurrence=...)`
+is the explicit form for repeated tags. Typed `rec[-k]` references are rejected
+because compiled Guppy programs do not preserve source measurement order.
 
 Detectors and observables are not named: each one's DEM label is its position in
 the list, so `detectors[0]` is `D0` and `observables[0]` is `L0`. That is the
@@ -782,7 +781,7 @@ about whether pruning affected the answer.
 
 
 The builder also accepts mixed lists such as
-`[Detector(rec[-2], rec[-1]), Detector.inferred("checks", element=0)]`.
+`[Detector(result_ref("m0"), result_ref("m1")), Detector.inferred("checks", element=0)]`.
 `Observable.inferred(...)` selects logical outputs in the same way. Only selected
 outputs are inferred; supplied explicit definitions and empty lists take
 precedence over `.with_inference(...)` defaults. If every definition is explicit,

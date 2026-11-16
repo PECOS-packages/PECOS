@@ -5,12 +5,14 @@
 
 import inspect
 import json
+import math
 from collections import defaultdict
 from itertools import pairwise
 
 import numpy as np
 import pecos_rslib as prs
 import pytest
+import stim
 from pecos import sim, stab_vec
 from pecos._traced_circuit import measurement_ids_in_execution_order
 from pecos.decoders import tesseract
@@ -247,22 +249,94 @@ def test_nonzero_stand_in_reference_is_rejected(monkeypatch):
         t_teleportation_decision_model(patch)
 
 
-def _binomial_maxima(events, dem, width):
-    sampled = np.asarray(
-        DemSampler.from_dem_string(str(dem)).sample_batch(200000, seed=42).detector_events(),
-        dtype=np.int64,
-    )
+def _exact_detector_rates(dem, width):
+    """Return exact single (diagonal) and joint pair rates of independent errors."""
+    single_character = np.ones(width)
+    xor_character = np.ones((width, width))
+    for instruction in stim.DetectorErrorModel(str(dem)).flattened():
+        if instruction.type != "error":
+            continue
+        flips = np.zeros(width, dtype=bool)
+        for target in instruction.targets_copy():
+            if target.is_relative_detector_id():
+                # Components separated by ^ belong to one mechanism, so repeated
+                # D targets cancel even when they occur in different components.
+                flips[target.val] ^= True
+        factor = 1 - 2 * instruction.args_copy()[0]
+        single_character[flips] *= factor
+        xor_character[flips[:, None] ^ flips[None, :]] *= factor
+    singles = (1 - single_character) / 2
+    rates = (singles[:, None] + singles[None, :] - (1 - xor_character) / 2) / 2
+    # Floating-point subtraction can put a zero probability just below zero.
+    return np.clip(rates, 0, 1)
+
+
+def _binomial_two_sided_p(count, shots, rate):
+    """Compute min(1, 2 min(P(X <= count), P(X >= count))) from binomial terms."""
+    if rate == 0:
+        return float(count == 0)
+    if rate == 1:
+        return float(count == shots)
+    log_factorial = math.lgamma(shots + 1)
+    log_rate, log_complement = math.log(rate), math.log1p(-rate)
+
+    def log_tail(start, stop):
+        terms = [
+            log_factorial
+            - math.lgamma(k + 1)
+            - math.lgamma(shots - k + 1)
+            + k * log_rate
+            + (shots - k) * log_complement
+            for k in range(start, stop)
+        ]
+        peak = max(terms)
+        return peak + math.log(math.fsum(math.exp(term - peak) for term in terms))
+
+    # Sum both inclusive tails directly: no subtraction of a CDF near one.
+    # There are only shots + 2 terms in total (at most 2002 in these tests).
+    log_p = math.log(2) + min(log_tail(0, count + 1), log_tail(count, shots + 1))
+    return math.exp(min(0, log_p))
+
+
+def _binomial_tails(events, dem, width):
+    if width < 2:
+        msg = "single/pair statistics require at least two detectors"
+        raise ValueError(msg)
+    rates = _exact_detector_rates(dem, width)
     program = np.zeros((len(events), width), dtype=np.int64)
     for row, fired in zip(program, events, strict=True):
         row[fired] = 1
-    model_rates = sampled.T @ sampled / len(sampled)
     counts = program.T @ program
-    expected = len(events) * model_rates
-    variance = expected * (1 - model_rates)
-    z = np.zeros_like(model_rates)
-    np.divide(np.abs(counts - expected), np.sqrt(variance), out=z, where=variance > 0)
-    z[(variance == 0) & (counts != expected)] = np.inf
-    return float(np.diag(z).max()), float(z[np.triu_indices(width, k=1)].max())
+    p_values = np.ones_like(rates)
+    for i, j in zip(*np.triu_indices(width), strict=True):
+        p_values[i, j] = _binomial_two_sided_p(int(counts[i, j]), len(events), float(rates[i, j]))
+    singles = np.diag(p_values)
+    single = int(np.argmin(singles))
+    pair_indices = np.triu_indices(width, k=1)
+    pairs = p_values[pair_indices]
+    pair = tuple(int(indices[np.argmin(pairs)]) for indices in pair_indices)
+    worst = [
+        (indices, int(counts[indices]), float(len(events) * rates[indices]), float(p_values[indices]))
+        for indices in ((single, single), pair)
+    ]
+    # The Bonferroni count is the number of p-values the minimum ranges over.
+    return worst, singles.size + pairs.size
+
+
+def test_exact_detector_rates_xor_components_and_binomial_endpoints():
+    with pytest.raises(ValueError, match="at least two detectors"):
+        _binomial_tails([[]], "detector D0", 1)
+    # For X ~ Binomial(3, 1/4), P(X >= 2) = 3*(1/4)**2*(3/4) + (1/4)**3 = 5/32.
+    assert _binomial_two_sided_p(2, 3, 0.25) == pytest.approx(5 / 16, rel=1e-14)
+    # For X ~ Binomial(3, 3/4), the lower tail P(X <= 1) = (1/4)**3 + 3*(3/4)*(1/4)**2 = 5/32 is the smaller one.
+    assert _binomial_two_sided_p(1, 3, 0.75) == pytest.approx(5 / 16, rel=1e-14)
+    rates = _exact_detector_rates("error(0.25) D0 ^ D0 D1\nerror(0.5) D0 D2", 3)
+    np.testing.assert_allclose(rates, [[0.5, 0.125, 0.5], [0.125, 0.25, 0.125], [0.5, 0.125, 0.5]])
+    assert min(item[3] for item in _binomial_tails([[0]], "detector D0\ndetector D1", 2)[0]) == 0
+    assert min(item[3] for item in _binomial_tails([[]], "error(1) D0 D1", 2)[0]) == 0
+    assert all(item[3] == 1 for item in _binomial_tails([[0, 1]], "error(1) D0 D1", 2)[0])
+    # Two detectors give two singles and one pair.
+    assert _binomial_tails([[0, 1]], "error(1) D0 D1", 2)[1] == 3
 
 
 def _check_program_statistics(rates, shots):
@@ -280,15 +354,26 @@ def _check_program_statistics(rates, shots):
     events, _ = model.detection_events(results)
     dem = model.build_dem(**rates)
     width = len(json.loads(model.circuit.get_meta("detectors")))
-    singles, pairs = _binomial_maxima(events, dem, width)
-    print(f"Statistics {rates}, shots={shots}: max |z| singles={singles:.6f}, pairs={pairs:.6f}")
-    # Seeded null maxima: all-channel 3.224/3.783, p1=0 2.522/4.028,
-    # prep-only 1.919/4.290 (singles/pairs). Swapping D X0/X1 at all-channel
-    # 0.002 gives 8.494/13.849 (2000 shots, program seed 712, DEM seed 42).
-    # At p1=0, other channels 0.005, 1000 shots, the same swap passes: 3.915/4.028.
-    # The all-channel case is load-bearing for mapping mutations.
-    assert singles < 5.5
-    assert pairs < 5.5
+    worst, m = _binomial_tails(events, dem, width)
+    assert m == width + width * (width - 1) // 2
+    min_p = min(item[3] for item in worst)
+    single, pair = worst
+    details = "; ".join(
+        f"{label}: observed={observed}, expected={expected:.9g}, p={p_value:.9g}"
+        for label, (_, observed, expected, p_value) in (
+            (f"single D{single[0][0]}", single),
+            (f"pair D{pair[0][0]}/D{pair[0][1]}", pair),
+        )
+    )
+    print(f"Statistics {rates}, shots={shots}: {details}; min p={min_p:.9g}, m*min p={m * min_p:.9g}")
+    # Seed 712 null min p / m*min p (m=406):
+    # p1=0, 1000 shots: 0.00505012124 / 2.05034922;
+    # all-channel 0.002, 2000 shots: 0.000409021146 / 0.166062585;
+    # prep-only 0.005, 2000 shots: 0.00222934445 / 0.905113846.
+    # Swapping D X0/X1 gives m*min p=8.13400227e-11 for all-channel
+    # noise and 0.00357439221 for p1=0. The latter still passes; the
+    # all-channel case remains load-bearing for that mapping mutation.
+    assert min_p >= 1e-4 / m, f"min p={min_p:.9g} < alpha/m={1e-4 / m:.9g} (Bonferroni m={m}, alpha=1e-4): {details}"
 
 
 @pytest.mark.parametrize("p1", [0.0, 0.002])

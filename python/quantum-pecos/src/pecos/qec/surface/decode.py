@@ -73,7 +73,7 @@ from pecos._traced_circuit import (
 )
 from pecos._value_provenance import known_provenance_traces
 from pecos.qec._idle_noise import _translate_structured_idle_noise
-from pecos.qec.measurement_layout import abstract_result_refs
+from pecos.qec.measurement_layout import abstract_result_refs, named_result_slots
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 
 if TYPE_CHECKING:
@@ -84,6 +84,7 @@ if TYPE_CHECKING:
 
     from pecos import Array
     from pecos.decoders import DecoderSpec
+    from pecos.qec.dem_spec import Detector, Observable
     from pecos.qec.measurement_layout import ResultRef
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
@@ -940,6 +941,8 @@ def _measurement_index_remap_for_orders(
     same measured qubit occurrences. This helper binds each measurement by
     ``(qubit, occurrence_count_for_that_qubit)`` so metadata can follow a pure
     scheduling reorder without accepting dropped/extra/wrong measurements.
+    This requires identical allocation and reuse in both circuits; it is not
+    a mapping from abstract generator qubits to compiled Guppy qubits.
     """
     from collections import Counter, defaultdict
 
@@ -1026,13 +1029,11 @@ def _surface_runtime_measurement_remap_from_result_traces(
         msg = f"expected {num_measurements} abstract measurement refs, got {len(abstract_refs)}"
         raise ValueError(msg)
 
-    occurrence_by_tag: dict[str, int] = {}
+    slots = named_result_slots(abstract_refs)
     remap: dict[int, int] = {}
     for abstract_index, ref in enumerate(abstract_refs):
         if ref[0] == "scalar":
-            _, name = ref
-            occurrence = occurrence_by_tag.get(name, 0)
-            occurrence_by_tag[name] = occurrence + 1
+            name, occurrence = slots[abstract_index]
             try:
                 remap[abstract_index] = scalar_trace_ids[name][occurrence]
             except (KeyError, IndexError) as exc:
@@ -1063,7 +1064,6 @@ def _validate_surface_array_slot_provenance(
     array_trace_ids: Mapping[str, list[list[int]]],
 ) -> None:
     """Compare collected-array IDs against any emitted per-element evidence."""
-    unbound_final_slots: set[int] = set()
     for trace in known_provenance_traces(result_traces):
         name = trace.get("name")
         values = trace.get("values")
@@ -1075,8 +1075,8 @@ def _validate_surface_array_slot_provenance(
             continue
         element = int(element_text)
         if base_name == "final" and not result_ids:
-            unbound_final_slots.add(element)
-            continue
+            msg = f"final measurement slot {name!r} has no per-element provenance"
+            raise ValueError(msg)
         if len(result_ids) != 1:
             continue
         base_arrays = array_trace_ids.get(base_name)
@@ -1086,21 +1086,6 @@ def _validate_surface_array_slot_provenance(
             msg = (
                 f"runtime result tag {base_name!r}[{element}] has measurement id {base_arrays[0][element]}, "
                 f"but {name!r} certifies {result_ids[0]}"
-            )
-            raise ValueError(msg)
-
-    if unbound_final_slots:
-        final_arrays = array_trace_ids.get("final")
-        if not final_arrays:
-            msg = "final measurement slots have no scalar provenance or aggregate result IDs"
-            raise ValueError(msg)
-        final_ids = final_arrays[0]
-        expected_ids = list(range(final_ids[0], final_ids[0] + len(final_ids)))
-        if final_ids != expected_ids:
-            msg = (
-                "final aggregate result IDs must be contiguous in ascending source order when "
-                "per-element provenance is unavailable; got "
-                f"{final_ids}"
             )
             raise ValueError(msg)
 
@@ -1120,9 +1105,6 @@ def _index_surface_result_trace_ids(
         if _is_surface_sideband_result_tag(name):
             continue
         if len(values) != len(result_ids):
-            if not result_ids and name.startswith("final:meas:"):
-                # The aggregate tag below is validated against source order.
-                continue
             if not result_ids and name in {"init_synx", "init_synz", "synx", "synz"}:
                 # Legacy traces may omit aggregate syndrome IDs. Their
                 # per-measurement scalar sidebands still supply the binding.
@@ -4852,3 +4834,73 @@ def sample_pauli_activations_from_guppy(
         basis=basis,
         twirl=twirl,
     )
+
+
+def surface_memory_dem_spec(
+    distance: int,
+    num_rounds: int,
+    basis: str,
+    *,
+    ancilla_budget: int | None = None,
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
+) -> tuple[list[Detector], list[Observable]]:
+    """Return named detector and observable specs independent of compiled emission order."""
+    import json
+
+    from pecos.qec.dem_spec import Detector, Observable, result_ref
+    from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+    from pecos.qec.surface.patch import SurfacePatch
+
+    circuit = generate_tick_circuit_from_patch(
+        SurfacePatch.create(distance=distance),
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        add_typed_annotations=False,
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
+    )
+    # Abstract record offsets belong to this schedule, not compiled emission
+    # order. Transport them through generator-owned tags just as Helix does.
+    refs = [
+        result_ref(tag, occurrence=occurrence)
+        for tag, occurrence in named_result_slots(_surface_abstract_measurement_result_refs(circuit))
+    ]
+    detector_entries = json.loads(circuit.get_meta("detectors") or "[]")
+    observable_entries = json.loads(circuit.get_meta("observables") or "[]")
+
+    def records_of(entry: Mapping[str, Any], kind: str) -> list[int]:
+        records = entry.get("records")
+        if not isinstance(records, list) or not records:
+            msg = (
+                f"surface builder emitted a {kind} entry without positional 'records' "
+                f"({entry.get('id')!r}); surface_memory_dem_spec cannot convert it"
+            )
+            raise ValueError(msg)
+        return [int(record) for record in records]
+
+    detectors = []
+    for entry in detector_entries:
+        metadata = {key: value for key, value in entry.items() if key not in {"id", "records", "coords"}}
+        detectors.append(
+            Detector(
+                *(refs[record] for record in records_of(entry, "detector")),
+                id=int(entry["id"]),
+                coords=entry.get("coords"),
+                metadata=metadata or None,
+            ),
+        )
+    observables = []
+    for entry in observable_entries:
+        metadata = {key: value for key, value in entry.items() if key not in {"id", "records"}}
+        observables.append(
+            Observable(
+                *(refs[record] for record in records_of(entry, "observable")),
+                id=int(entry["id"]),
+                metadata=metadata or None,
+            ),
+        )
+    return detectors, observables

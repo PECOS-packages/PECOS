@@ -40,6 +40,16 @@ Save this as `arithmetic.wat` next to your Python script:
 Declare the export in Guppy. The default Helios WASM platform represents Guppy
 `int` as a signed 64-bit WASM integer:
 
+```hidden-python
+import re
+from pathlib import Path
+
+# Stage the WAT shown above beside the temporary script used by the doc tests.
+_guide = Path("docs/user-guide/guppy-wasm.md").read_text()
+_wat = re.search(r"`{3}wat\n(.*?)`{3}", _guide, re.DOTALL).group(1)
+Path(__file__).with_name("arithmetic.wat").write_text(_wat)
+```
+
 ```python
 from pathlib import Path
 from guppylang import guppy
@@ -75,6 +85,7 @@ and binary WASM bytes are accepted.
 
 ## PECOS `sim()`
 
+<!--continuation-->
 ```python
 import pecos as pc
 
@@ -89,6 +100,7 @@ the wrapper, before `sim()` lowers the program.
 
 ## Standalone Selene
 
+<!--continuation-->
 ```python
 from pecos_selene_wasm import build
 from selene_sim import Quest

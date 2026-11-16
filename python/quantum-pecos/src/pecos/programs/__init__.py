@@ -102,6 +102,8 @@ class HugrPackage(Protocol):
 
 def _hugr_to_program(data: bytes, *, wasm_modules: Mapping[str, bytes] | None = None) -> "CompiledQis":
     """Lower a HUGR envelope to the shared executable program representation."""
+    if wasm_modules is None:
+        return pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(data))
     return pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(data, wasm_modules=wasm_modules))
 
 

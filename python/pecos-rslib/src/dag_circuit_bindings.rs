@@ -2505,7 +2505,8 @@ impl PyTickCircuit {
     /// Updates insert only selected free batches. Other modes publish the complete
     /// prepared tick; replacement retains unrelated target tick attributes.
     /// Payload, conflict, bounds and signature checks precede mutation.
-    fn _apply_tick(
+    #[pyo3(name = "_apply_tick")]
+    fn apply_tick(
         &mut self,
         request: &Self,
         index: usize,
@@ -2875,7 +2876,8 @@ impl PyTickCircuit {
     // --- Tick-level and gate-level metadata setters (by index) ---
 
     /// Clear QuantumCircuit operations while retaining unrelated tick metadata.
-    fn _clear_tick(&mut self, tick_idx: usize) {
+    #[pyo3(name = "_clear_tick")]
+    fn clear_tick(&mut self, tick_idx: usize) {
         if let Some(tick) = self.inner.get_tick_mut(tick_idx) {
             let indices: Vec<_> = (0..tick.len()).collect();
             tick.remove_gates(&indices);
@@ -3641,7 +3643,7 @@ impl PyTickHandle {
             .borrow(py)
             .inner
             .get_tick(self.tick_idx)
-            .map(|tick| {
+            .map_or_else(Vec::new, |tick| {
                 tick.gate_batches()
                     .iter()
                     .map(|gate| PyGate {
@@ -3649,7 +3651,6 @@ impl PyTickHandle {
                     })
                     .collect()
             })
-            .unwrap_or_default()
     }
 
     /// Set metadata on every batch of the last insertion, or on an empty tick.

@@ -255,8 +255,7 @@ impl NoiseSpec for NoisePerGate {
     fn noise_after_gate(&self, i: usize, _: GateType, _: &[usize]) -> Vec<NoiseInjection> {
         self.0
             .get(i)
-            .map(|noise| noise.injections.clone())
-            .unwrap_or_default()
+            .map_or_else(Vec::new, |noise| noise.injections.clone())
     }
 
     fn exact_noise_after_gate(&self, i: usize, _: GateType, _: &[usize]) -> GateNoise {

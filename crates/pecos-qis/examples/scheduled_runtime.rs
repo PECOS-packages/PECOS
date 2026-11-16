@@ -1,4 +1,9 @@
-//! Run with `cargo run -p pecos-qis --example scheduled_runtime -- soft-rz idle-z`.
+//! Prepare the libraries and run from the workspace root:
+//! ```sh
+//! runtime_dir=$(cargo run --locked -p pecos-cli -- qis-runtime --profile debug)
+//! export PECOS_QIS_FFI_PATH="$runtime_dir" PECOS_SELENE_DIR="$runtime_dir"
+//! cargo run --locked -p pecos-qis --example scheduled_runtime -- soft-rz idle-z
+//! ```
 #[cfg(feature = "selene")]
 #[path = "../tests/support/scheduled_execution.rs"]
 mod scheduled_execution;

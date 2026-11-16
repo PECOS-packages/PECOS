@@ -1,7 +1,7 @@
 //! Build script for LDPC decoder integration
 
 use log::info;
-use pecos_build::{Manifest, Result, ensure_dep_ready, report_cache_config};
+use pecos_build::{Error, Manifest, Result, ensure_dep_ready, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -251,6 +251,53 @@ fn fix_uninitialized_pointers(src_cpp_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn fix_osd_dense_combination_sweep(src_cpp_dir: &Path) -> Result<()> {
+    // osd_dense.hpp (used by the LSD decoder for each cluster) has the same COMBINATION_SWEEP
+    // overflow as osd.hpp: candidates have size k (the cluster's non-pivot columns), but the
+    // pair loops run to osd_order and write candidate[i] and candidate[j]. A cluster with
+    // k < lsd_order writes past the vector. A pair with i < k <= j repeats the single-bit
+    // candidate e_i; with both indices >= k, the first k entries are all zero and reproduce
+    // the LSD-0 solution. Neither can win because selection uses strict <, so clamping to k
+    // preserves results and removes the out-of-bounds writes.
+    const UPSTREAM: &str = "                for (auto i = 0; i < this->osd_order; i++) {\n                    for (auto j = 0; j < this->osd_order; j++) {";
+    const PATCHED: &str = "                // PECOS FIX: clamp to k to prevent buffer overflow when osd_order > k\n                int max_order = (this->osd_order < k) ? this->osd_order : k;\n                for (auto i = 0; i < max_order; i++) {\n                    for (auto j = 0; j < max_order; j++) {";
+    let path = src_cpp_dir.join("osd_dense.hpp");
+    let content = fs::read_to_string(&path).map_err(|error| {
+        Error::Config(format!(
+            "Cannot read {}: {error}; check the path and permissions",
+            path.display()
+        ))
+    })?;
+    if content.contains(PATCHED) {
+        return Ok(());
+    }
+    if content.matches(UPSTREAM).count() != 1 {
+        return Err(Error::Config(format!(
+            "{} does not contain the expected COMBINATION_SWEEP loop exactly once; \
+             the pinned ldpc source changed, so update fix_osd_dense_combination_sweep in build_ldpc.rs",
+            path.display()
+        )));
+    }
+    // The source lives in the shared ~/.pecos/deps cache: write a process-private file and
+    // rename it over the original so a concurrent build never reads a partial file.
+    let temporary = path.with_extension(format!("hpp.pecos-{}.tmp", std::process::id()));
+    fs::write(&temporary, content.replace(UPSTREAM, PATCHED)).map_err(|error| {
+        Error::Config(format!(
+            "Cannot write {}: {error}; check the path and permissions",
+            temporary.display()
+        ))
+    })?;
+    fs::rename(&temporary, &path).map_err(|error| {
+        Error::Config(format!(
+            "Cannot rename {} to {}: {error}; check the path and permissions",
+            temporary.display(),
+            path.display()
+        ))
+    })?;
+    info!("Fixed buffer overflow in dense OSD COMBINATION_SWEEP");
+    Ok(())
+}
+
 fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
     let src_cpp_dir = ldpc_dir.join("src_cpp");
     let include_dir = ldpc_dir.join("include");
@@ -266,6 +313,9 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
 
     // Fix uninitialized pointers that cause heap corruption on Windows
     fix_uninitialized_pointers(&src_cpp_dir)?;
+
+    // Fix out-of-bounds writes in the LSD decoder's dense OSD
+    fix_osd_dense_combination_sweep(&src_cpp_dir)?;
 
     // Build the cxx bridge first to generate headers
     let mut build = cxx_build::bridge("src/bridge.rs");

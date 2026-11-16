@@ -111,7 +111,7 @@ def test_sim_guppy_can_use_selene_engine_via_qis_path(policy: str) -> None:
     assert len(results["measurement_0"]) == 10
 
 
-def _run_selene_cwd_probe(tmp_path: Path, cargo_target_dir: Path | None = None) -> None:
+def _run_selene_cwd_probe(tmp_path: Path) -> None:
     probe = tmp_path / "selene_cwd_probe.py"
     probe.write_text(
         textwrap.dedent(
@@ -139,8 +139,6 @@ def _run_selene_cwd_probe(tmp_path: Path, cargo_target_dir: Path | None = None) 
         encoding="utf-8",
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith(("PECOS", "CARGO"))}
-    if cargo_target_dir is not None:
-        env["CARGO_TARGET_DIR"] = str(cargo_target_dir)
 
     subprocess.run(
         [sys.executable, str(probe)],
@@ -157,21 +155,11 @@ def test_selene_engine_is_cwd_independent(tmp_path: Path) -> None:
     _run_selene_cwd_probe(tmp_path)
 
 
-def test_selene_engine_uses_plugin_when_cargo_target_is_empty(tmp_path: Path) -> None:
-    """An empty explicit Cargo target forces the module-relative runtime fallback."""
-    empty_cargo_target = tmp_path / "empty-cargo-target"
-    empty_cargo_target.mkdir()
-
-    _run_selene_cwd_probe(tmp_path, empty_cargo_target)
-
-
 @pytest.mark.parametrize("operation", ["run", "run_with_workers", "build", "capture_operation_trace"])
 def test_qis_default_runtime_is_resolved_lazily(tmp_path: Path, operation: str) -> None:
     """QIS configuration needs no runtime; execution resolves the default."""
     from pecos_rslib import pecos_rslib as native
 
-    empty_cargo_target = tmp_path / "empty-cargo-target"
-    empty_cargo_target.mkdir()
     probe = tmp_path / "qis_lazy_runtime_probe.py"
     probe.write_text(
         textwrap.dedent(
@@ -224,7 +212,6 @@ def test_qis_default_runtime_is_resolved_lazily(tmp_path: Path, operation: str) 
         encoding="utf-8",
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith(("PECOS", "CARGO"))}
-    env["CARGO_TARGET_DIR"] = str(empty_cargo_target)
     completed = subprocess.run(
         [sys.executable, str(probe), operation, native.__file__],
         cwd=tmp_path,

@@ -6,6 +6,31 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
+  a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs
+  `libxml2.so.2`), is now reported as invalid. `pecos llvm ensure --managed`
+  reinstalls it, and `pecos install llvm` asks for `--force`. Validation now runs
+  the managed `clang`, because `llvm-config` does not load `libLLVM` and kept
+  reporting such a copy as ready.
+
+- **Fixed:** The BP+LSD decoder no longer writes past the end of an OSD candidate
+  vector when a cluster has fewer free columns than `lsd_order`. The vendored
+  `ldpc` dense OSD now limits its pair search to the cluster size, as PECOS
+  already did for the BP+OSD decoder; decoding results are unchanged. GCC 15
+  debug builds (Ubuntu 26.04) aborted on this out-of-bounds write.
+
+- **Breaking:** QIS and Selene development/test runtimes now use Cargo-reported
+  artifacts instead of implicit Cargo build-directory searches (including on
+  Rust 1.100). Use `just build-debug` for Python, `just rstest debug` for Rust,
+  or set `PECOS_QIS_FFI_PATH` and `PECOS_SELENE_DIR` to the directory printed by
+  `pecos qis-runtime --profile debug` (`--tests` includes the Rust fixture).
+  Staged files use canonical platform names regardless of the names Cargo reports.
+  `pecos run` and `pecos compile` require explicitly prepared libraries.
+  These override directories are searched only for the exact library file
+  name, never `deps/` or Cargo hash-suffixed files, and a set
+  `PECOS_SELENE_DIR` that lacks the library is now an error instead of falling
+  back to the bundled runtime.
+
 - **Deprecated:** Core `GateType::MeasureLeaked` is now `GateType::MeasureZLeaked`
   (wire value 105 is unchanged); its deprecated associated-const alias works in
   values and patterns but cannot be `use`-imported. The builders

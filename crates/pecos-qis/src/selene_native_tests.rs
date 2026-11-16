@@ -545,12 +545,7 @@ fn emitted_custom_events_require_default_acknowledgement_on_every_route() {
         }
         0
     }
-    let executable = std::env::current_exe().unwrap();
-    let source = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let source = crate::test_env::runtime_fixture();
     // Isolate the fixture's descriptor slot from other parallel descriptor tests.
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join(source.file_name().unwrap());
@@ -950,12 +945,7 @@ fn scheduled_release_polls_between_native_submissions_without_barriers() {
         let original = ORIGINAL.get().unwrap();
         unsafe { (original.global_barrier_fn)(instance, delay) }
     }
-    let executable = std::env::current_exe().unwrap();
-    let source = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let source = crate::test_env::runtime_fixture();
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join(source.file_name().unwrap());
     std::fs::copy(source, &plugin).unwrap();
@@ -1349,7 +1339,6 @@ mod measurement_followups {
     #[test]
     fn engine_reads_runtime_values_and_processes_end_feedback() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         for mode in [0, 1, 2, 3] {
             with_descriptor(|mut runtime| {
                 runtime.reset().unwrap();
@@ -1747,7 +1736,6 @@ mod measurement_followups {
     #[test]
     fn engine_waits_for_custom_request_feedback_before_resuming_program() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         with_descriptor(|mut runtime| {
             runtime.reset().unwrap();
             RELEASE.set(0);
@@ -1820,7 +1808,6 @@ mod measurement_followups {
     #[test]
     fn engine_waits_for_refcount_feedback_before_resuming_program() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         with_descriptor(|mut runtime| {
             runtime.reset().unwrap();
             RELEASE.set(0);
@@ -1893,12 +1880,10 @@ mod measurement_followups {
     }
 
     fn with_descriptor(run: impl FnOnce(SeleneRuntime)) {
-        let executable = std::env::current_exe().unwrap();
-        let source = crate::selene_runtimes::find_library_in_dir(
-            executable.parent().unwrap(),
-            pecos_qis_test_runtime::LIBRARY_NAME,
-        )
-        .unwrap();
+        let lock = crate::test_env::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let source = crate::test_env::runtime_fixture_locked(&lock);
         let directory = tempfile::tempdir().unwrap();
         let plugin = directory.path().join(source.file_name().unwrap());
         std::fs::copy(source, &plugin).unwrap();

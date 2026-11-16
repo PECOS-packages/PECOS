@@ -366,7 +366,7 @@ def test_extraction_signature():
     assert list(inspect.signature(extract_detection_events_and_observables).parameters) == ["tick_circuit", "results"]
 
 
-@pytest.mark.parametrize("correction", ["physical", "record"])
+@pytest.mark.parametrize("correction", ["physical", "frame", "record"])
 @pytest.mark.parametrize("count", [1, 2])
 def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, correction):
     import pecos
@@ -425,7 +425,7 @@ def test_mask_extraction_on_program_rows(sz_program, monkeypatch, count, correct
     assert events == [[]] * 64
     decision_xors = [decisions if count == 1 else sum(decisions) % 2 for decisions in results["sz_correction"]]
     assert set(decision_xors) == {0, 1}
-    if correction == "physical":
+    if correction in ("physical", "frame"):
         # The program already applied the frame bit; the mask counts it twice.
         assert list(flips) == [[0] if decision else [] for decision in decision_xors]
     else:

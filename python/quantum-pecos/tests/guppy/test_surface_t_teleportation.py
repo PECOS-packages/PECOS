@@ -147,6 +147,7 @@ def test_teleportation_callees_preserve_patch_role_scopes(renderer):
         "consume_t_resource": set(),
         "correct_t_teleportation": {"data"},
         "apply_t_teleportation": {"data"},
+        "apply_t_teleportation_framed": {"data"},
         "make_t_teleportation": {"data", "anc"},
     }
     # Patch role of every syndrome round, keyed by caller and the patch variable it measures.

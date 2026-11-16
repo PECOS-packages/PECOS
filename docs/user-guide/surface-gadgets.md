@@ -1077,8 +1077,15 @@ With `correction="record"`, the factory outputs the same frame bit and applies
 no Z. Recording matches frame-tracking hardware, where a controller or a
 post-processor applies the frame bit. Mask extraction on recorded rows is exactly
 that post-processing: the mask's correction records apply the frame bit, with no
-extra step. The mode must be exactly `"physical"` or `"record"`; other values,
-including booleans, raise `ValueError`.
+extra step. With `correction="frame"`, the factory tracks the deferred logical Z
+in Guppy and invokes frame correction at readout. This Z-in/Z-out factory never
+sets the frame's x bit: its Z readout commutes with the deferred Z, so no readout
+bits flip. In noiseless execution, `final_data` is the same in all three modes,
+shot for shot. Frame mode changes a readout only when its basis is flipped by
+the deferred Pauli, as in the signed X-readout witness and mask-extraction
+fixture. All three modes output `sz_correction`. The mode must be exactly
+`"physical"`, `"frame"`, or `"record"`; other values, including booleans, raise
+`ValueError`.
 
 The builder circuit never executes the correction. Its deterministic X/Y
 observable masks absorb the correction records. Observables export the crossed
@@ -1086,9 +1093,13 @@ ancilla labels as `crossed_teleportations`; a future executed-run transcription
 will use them to remove each crossed teleportation's readout and resource-sign
 records and XOR its resource-sign reference into the observable reference.
 That transcription does not exist yet. Applying mask extraction to rows from
-a program that executed the correction counts it twice. In physical mode, noise on
-the conditional Z gates is a small omission from the static builder circuit and
-its DEM.
+a signed X/Y-readout program that executed the correction or corrected its
+readout in frame mode counts it twice. Frame groups with physical for mask
+extraction because both have already resolved the Pauli's effect on that
+readout; record leaves it for the mask. The shipped factory's commuting Z
+readout is unchanged in all modes and does not demonstrate this distinction.
+In physical mode, noise on the conditional Z gates is a small omission from the
+static builder circuit and its DEM.
 
 That observable inherits the injection's distance-1 character. Its error model
 contains one mechanism that flips it with no detector firing, and that
@@ -1239,13 +1250,19 @@ performed.
   are also available.
 - `consume_t_resource(data, resource)`: transversal CX and destructive resource
   readout, returning its **raw** logical-Z parity. The resource may come from an
-  external factory; both patches must have canonical unswapped orientation, +1 stabilizers,
-  and no pending logical Pauli frame. It leaves the data register alive.
+  external factory; both patches must have canonical unswapped orientation.
+  The resource must have +1 X and Z checks and zero logical frame. For the
+  subsequent T correction, the data must have +1 Z checks; its X-check signs
+  may be arbitrary. It leaves the data register alive. Use
+  `apply_t_teleportation_framed` when the data carries a pending frame.
 - `correct_t_teleportation(data, decoded_outcome, dagger)`: perform the conditional
   logical S/S-dagger correction after the caller supplies the decoded parity.
 - `apply_t_teleportation(data, resource, dagger)`: compose consumption and correction
-  using raw parity. This convenience function assumes noiseless measurements
-  and canonical input code states.
+  using raw parity. This convenience function assumes noiseless measurements,
+  no pending data frame, and the orientation and check-sign preconditions above.
+- `apply_t_teleportation_framed(data, resource, frame, dagger)`: consume a canonical
+  zero-frame resource using raw parity adjusted by the data's X frame, apply the
+  physical S/S-dagger correction, and update the borrowed data frame.
 
 Raw injection, hook injection, and T teleportation are rendered by
 `pecos.guppy_gen.surface_teleportation`; all public factories remain available
@@ -1512,7 +1529,9 @@ assert callable(program.compile)
 
 !!! note "Resource and correction limits"
     The S factory uses a projected Y resource and executes its conditional Z
-    correction by default, or records the frame bit with `correction="record"`.
+    correction by default, tracks the deferred Z with `correction="frame"`,
+    or records the frame bit with `correction="record"`. Its commuting Z readout
+    is unchanged by that Z in every mode.
     The T **placeholder** remains entirely Clifford (no T gate, no magic resource,
     no conditional S correction).
     The executable T factory above is a separate adaptive implementation.
@@ -1521,6 +1540,51 @@ assert callable(program.compile)
     Chen, Chen, Lu and Pan ([arXiv:2412.01391](https://arxiv.org/abs/2412.01391))
     describe a mid-cycle fold-transversal logical SZ, available separately as
     the [fold round gadget](#fold-transversal-sz), outside these protocol factories.
+
+### Guppy logical Pauli frame
+
+Protocol, standalone T, and hook modules include `PauliFrame(x: bool, z: bool)`:
+a pending logical `X^x Z^z` on one patch, ignoring global phase. Create one with
+`PauliFrame(False, False)` at preparation. Helpers borrow and mutate the frame;
+program authors call them alongside the corresponding physical operations.
+`frame_h` swaps x and z, `frame_s` sets `z = z XOR x` for S or S-dagger, and
+`frame_cx(ctrl, tgt)` sets `tgt.x = tgt.x XOR ctrl.x` and
+`ctrl.z = ctrl.z XOR tgt.z`. These are the sign-free rules in the Rust decoder's
+`crates/pecos-decoder-core/src/clifford_frame.rs`.
+
+`frame_sz_teleportation(frame, decision)` applies the S rule, then XORs the
+deferred Z byproduct into z. Its decision needs no frame adjustment. The SZ
+factory's `correction="frame"` mode uses this helper and invokes frame correction
+before emitting `final_data`, with the same tags as physical mode. Its deferred
+Z commutes with its Z readout, so that correction flips no bits. A program that
+reads X instead uses `frame_correct_x_readout` to resolve the deferred Z.
+The fold round's logical sign and partner-syndrome bookkeeping remain separate
+from these two frame bits.
+
+Readout helpers mutate the borrowed measurement array. In canonical orientation,
+`frame_correct_z_readout` flips logical-X support bits when x is set, and
+`frame_correct_x_readout` flips logical-Z support bits when z is set. Each
+correction has even overlap with the measured stabilizers and odd overlap with
+the readout's logical operator. After `transversal_h` and `frame_h`, select the
+`_swapped` variants: Z readout flips the original logical-Z support; X readout
+flips the original logical-X support. Orientation is static in the program, not
+a frame field. Keep interacting patches in the same orientation: transversal
+CX between a swapped and a canonical patch is not a logical CX.
+
+For a pending data frame, `apply_t_teleportation_framed(data, resource, frame,
+dagger)` uses `decision = raw XOR frame.x`, performs the physical correction,
+and sets `frame.z = frame.z XOR (frame.x AND decision)`. The decision needs x
+because CX(data, resource) propagates the data's X to the resource's Z readout.
+The rule holds for both T and T-dagger. Both patches must have canonical
+unswapped orientation. The data must have +1 Z checks, while its X-check signs
+may be arbitrary. The fold-S correction's logical sign includes the product of
+the current Z checks, so random Z signs can add an untracked logical sign;
+requiring +1 Z checks fixes that product to +1. Random X signs, such as those
+left by SZ teleportation on `prepare_injected_y()`, do not invalidate the T
+correction. These check signs are separate from the logical frame bits.
+The resource must have +1 X and Z checks and zero logical frame. This helper
+uses noiseless raw parity; decoded decisions with a frame are not supported
+in this phase.
 
 ### Cross-form measurement check
 

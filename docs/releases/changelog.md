@@ -24,6 +24,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   gates no longer use a two-qubit weight lookup just because a node contains two
   qubits. Preparation and idle location batches are also split per
   qubit, and idle residuals identify the correct instance's location.
+- **Fixed:** Influence-map samplers reject probability slices with the wrong length
+  with a configuration error instead of panicking or silently accepting extra entries.
 - **Fixed:** `LookupDecoder` selects custom Pauli weights by gate kind, preserving
   preparation and measurement rates, and enumerates batched gate instances as
   independent channels. Its shared rate computation no longer assigns p1 noise to

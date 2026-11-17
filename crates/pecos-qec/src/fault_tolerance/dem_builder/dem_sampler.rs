@@ -451,12 +451,14 @@ impl SamplingEngine {
     ///
     /// # Panics
     ///
-    /// Panics if a gate event has no corresponding fault location.
+    /// Panics if a noise-channel residual's location index exceeds `u32::MAX`,
+    /// the largest index representable in residual metadata.
     ///
     /// # Errors
     ///
     /// Returns the structured unsupported-gate diagnostic retained by the
-    /// influence map, or a configuration error for an invalid replacement mode
+    /// influence map, or a configuration error if the probability slice length differs
+    /// from `influence_map.locations.len()`, for an invalid replacement mode,
     /// or an invalid noise or signature channel, including repeated qubits at a gate location.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
@@ -464,6 +466,14 @@ impl SamplingEngine {
         noise: &super::NoiseConfig,
     ) -> Result<Self, super::DemBuilderError> {
         use pecos_core::gate_type::GateType;
+
+        if per_location_probs.len() != influence_map.locations.len() {
+            return Err(super::DemBuilderError::ConfigurationError(format!(
+                "per-location probability length mismatch: received {}, expected {}; pass one probability per influence-map location",
+                per_location_probs.len(),
+                influence_map.locations.len(),
+            )));
+        }
 
         if let Some(error) = influence_map.unsupported_gate() {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
@@ -512,7 +522,7 @@ impl SamplingEngine {
 
         for loc in gate_locs.iter().flat_map(GateFaultLocation::gate_instances) {
             let loc_idx = loc.location_index();
-            let p = super::sampler::gate_location_prob_from_locations(&loc, per_location_probs);
+            let p = super::sampler::gate_location_prob(&loc, per_location_probs);
             if p == 0.0 {
                 continue;
             }

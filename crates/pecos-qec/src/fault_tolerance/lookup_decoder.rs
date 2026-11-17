@@ -33,8 +33,7 @@
 //! ```
 
 use super::dem_builder::sampler::{
-    compute_location_probs_from_noise as compute_location_probs,
-    gate_location_prob_from_locations as gate_location_prob,
+    compute_location_probs_from_noise as compute_location_probs, gate_location_prob,
 };
 use super::dem_builder::{DemBuilderError, NoiseConfig, validate_idle_noise_targets};
 use super::propagator::dag::{DagFaultInfluenceMap, GateFaultLocation};

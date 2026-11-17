@@ -617,7 +617,8 @@ impl DemSampler {
     ///
     /// Returns [`DetectorValidationError::UnsupportedGate`] if the influence
     /// map came from a circuit Pauli propagation cannot faithfully represent,
-    /// or [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
+    /// or [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration,
+    /// including a probability slice length different from `influence_map.locations.len()`.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
@@ -1631,8 +1632,8 @@ pub(crate) fn compute_location_probs_from_noise(
         .collect()
 }
 
-/// Get the per-qubit error probability for a gate fault location.
-pub(crate) fn gate_location_prob_from_locations(
+/// Return the rate of the gate instance's first-operand location.
+pub(crate) fn gate_location_prob(
     loc: &super::super::propagator::dag::GateFaultLocation<'_>,
     loc_probs: &[f64],
 ) -> f64 {

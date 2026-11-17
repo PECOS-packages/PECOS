@@ -629,6 +629,7 @@ fn general_noise_null_semantics_are_preserved() {
     for json in [
         r#"{"measurement":{"readout":null}}"#,
         r#"{"idle":{"linear_model":null,"linear_rate":null}}"#,
+        r#"{"two_qubit":{"angle_coefficients":null}}"#,
         r#"{"single_qubit":{"probability":null,"pauli_model":null}}"#,
     ] {
         assert!(
@@ -640,6 +641,8 @@ fn general_noise_null_semantics_are_preserved() {
         "null",
         r#"{"measurement":null}"#,
         r#"{"single_qubit":{"hooks_before":null}}"#,
+        r#"{"single_qubit":{"hooks_after":null}}"#,
+        r#"{"single_qubit":{"hooks_before":[{"kind":"pauli_leakage","probability":null,"events":{"X":1.0}}]}}"#,
         r#"{"noiseless_gates":null}"#,
     ] {
         assert!(GeneralNoiseConfig::from_json(json).is_err(), "{json}");

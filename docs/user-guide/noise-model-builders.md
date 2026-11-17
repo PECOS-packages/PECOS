@@ -355,20 +355,20 @@ noise = general_noise().with_readout(
 ```
 
 Rust accepts `ReadoutMatrix::new(flavor, &rows)?` followed by
-`GeneralNoiseModelBuilder::with_readout(matrix)`, with nested `BTreeMap<String, ...>` rows.
-Calling `with_readout` again replaces that flavor's entire matrix; other flavors accumulate.
-A JSON object at `measurement.readout` replaces all builder readout matrices, including when
-it is `{}`; omitting the key preserves existing matrices. Optional parameters, including
-scalar probabilities, maps such as `pauli_model` and `readout`, and `angle_coefficients`,
-treat explicit JSON `null` as unset; the Selene plugin relies on this rule for unset
-parameters. Section objects such as
-`measurement`, the lists `hooks_before`, `hooks_after`, and `noiseless_gates`, and
-fields inside a hook entry (including its `probability`) reject `null`. Thus
-`"readout": null` keeps any earlier readout matrices, while `"readout": {}` clears them.
-Flavor names use the shared, case-insensitive gate parser (`Measure` is an alias of `MZ`).
-Two JSON names resolving to one flavor are rejected. Configure `MZ` for `MPZ`; other
-measurement bases and non-measurement gates have no readout matrix. The new heralds have
-no QASM, PHIR, QIS, Selene, or SLR source syntax.
+`GeneralNoiseModelBuilder::with_readout(matrix)`, with nested `BTreeMap<String, ...>`
+rows. Calling `with_readout` again replaces that flavor's entire matrix; other flavors
+accumulate. A JSON object at `measurement.readout` replaces all builder readout
+matrices, including when it is `{}`; omitting the key preserves existing matrices.
+Optional parameters, including scalar probabilities, maps such as `pauli_model` and
+`readout`, and `angle_coefficients`, treat explicit JSON `null` as unset; the Selene
+plugin relies on this rule for unset parameters. Section objects such as `measurement`,
+the lists `hooks_before`, `hooks_after`, and `noiseless_gates`, and fields inside a hook
+entry (including its `probability`) reject `null`. Thus `"readout": null` keeps any
+earlier readout matrices, while `"readout": {}` clears them. Flavor names use the
+shared, case-insensitive gate parser (`Measure` is an alias of `MZ`). Two JSON names
+resolving to one flavor are rejected. Configure `MZ` for `MPZ`; other measurement bases
+and non-measurement gates have no readout matrix. The new heralds have no QASM, PHIR,
+QIS, Selene, or SLR source syntax.
 
 Missing outcomes have probability zero. Each supplied row must be nonempty, use outcomes
 in its flavor's alphabet, and contain finite probabilities in `[0, 1]` whose sum is within

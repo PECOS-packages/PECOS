@@ -3603,13 +3603,23 @@ class decoders:
     def bp_lsd(
         *,
         error_rate: float | None = ...,
-        max_iter: int = ...,
-        bp_schedule: str = ...,
-        ms_scaling_factor: float | None = ...,
-        lsd_order: int = ...,
-        bits_per_step: int = ...,
+        max_iter: int | None = ...,
+        bp_schedule: str | None = ...,
+        ms_scaling_factor: float | None = 0.625,
+        lsd_order: int | None = ...,
+        bits_per_step: int | None = ...,
         random_schedule_seed: int | None = ...,
-    ) -> decoders.DecoderSpec: ...
+        bp_method: str | None = ...,
+    ) -> decoders.DecoderSpec:
+        """Paper defaults; ms_scaling_factor=None selects product-sum.
+
+        Explicit bp_method overrides that selection; minimum_sum with None uses 0.625.
+        Product-sum ignores scaling.
+        lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+        bits_per_step=0 grows all candidates.
+        """
+        ...
+
     @staticmethod
     def fusion_blossom(
         *, correlated: bool = ..., solver: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
@@ -3842,7 +3852,8 @@ class decoders:
         Args:
             pcm: Sparse parity check matrix.
             error_rate: Channel error probability: a single float applied to every column,
-                or one probability per column.
+                or one probability per column. Raw LDPC priors must be finite and strictly
+                in (0, 1); DEM-built decoders handle endpoints exactly.
 
         Example:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
@@ -3902,7 +3913,12 @@ class decoders:
 
             Args:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
-                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                error_rate: Uniform probability per original DEM error line, before merging
+                    identical detector and observable sets. A group of k lines receives the
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
                 ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
@@ -3923,7 +3939,8 @@ class decoders:
         Args:
             pcm: Sparse parity check matrix.
             error_rate: Channel error probability: a single float applied to every column,
-                or one probability per column.
+                or one probability per column. Raw LDPC priors must be finite and strictly
+                in (0, 1); DEM-built decoders handle endpoints exactly.
 
         Example:
             >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
@@ -3938,11 +3955,18 @@ class decoders:
             error_rate: float | Sequence[float],
         ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpLsdBuilder:
-            """Set maximum BP iterations (default: 100)."""
+            """Set maximum BP iterations (default: 30)."""
             ...
 
         def bp_method(self, val: str) -> decoders.BpLsdBuilder:
-            """Set BP algorithm: "product_sum" or "minimum_sum" (default: "product_sum")."""
+            """Set BP algorithm: "product_sum" or "minimum_sum" (default: "minimum_sum")."""
+            ...
+
+        def ms_scaling_factor(self, val: float | None) -> decoders.BpLsdBuilder:
+            """Set scaling (default: 0.625); None selects product-sum.
+
+            Explicit bp_method overrides this; minimum_sum with None uses 0.625.
+            """
             ...
 
         def schedule(self, val: str) -> decoders.BpLsdBuilder:
@@ -3950,12 +3974,11 @@ class decoders:
             ...
 
         def lsd_order(self, val: int) -> decoders.BpLsdBuilder:
-            """Set LSD order parameter (default: 0)."""
+            """Set LSD order (default: 0): 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order."""
             ...
 
         def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
-            """Set bits added per cluster-growth step (default: 0 = grow all
-            candidate bits each step)."""
+            """Bits grown per step (default: 1); 0 grows all candidates."""
             ...
 
         def build(self) -> decoders.BpLsdDecoder:
@@ -3976,18 +3999,30 @@ class decoders:
             error_rate: float | None = ...,
             max_iter: int | None = ...,
             bp_schedule: str | None = ...,
-            ms_scaling_factor: float | None = ...,
+            ms_scaling_factor: float | None = 0.625,
             random_schedule_seed: int | None = ...,
+            *,
+            bp_method: str | None = ...,
+            bits_per_step: int | None = ...,
+            lsd_order: int | None = ...,
         ) -> decoders.DemAwareDecoder:
             """Build BP+LSD from a detector error model.
 
             Args:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
-                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                error_rate: Uniform probability per original DEM error line, before merging
+                    identical detector and observable sets. A group of k lines receives the
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
-                ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
-                    accuracy at negligible runtime cost. ``None`` preserves product-sum BP.
+                bp_method: "minimum_sum" (default) or "product_sum".
+                ms_scaling_factor: Default 0.625; None selects product-sum. Explicit bp_method
+                    overrides this; minimum_sum with None uses 0.625, product_sum ignores scaling.
+                bits_per_step: Bits grown per step (default: 1); 0 grows all candidates.
+                lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
                 random_schedule_seed: Makes randomized scheduling reproducible without changing its runtime bound.
             """
             ...
@@ -4170,7 +4205,15 @@ class decoders:
         def __repr__(self) -> str: ...
 
     class DemAwareDecoder:
-        """DEM-aware wrapper over a check-matrix decoder."""
+        """DEM-aware wrapper over a check-matrix decoder.
+
+        Relay-BP, min-sum BP, BP-OSD and BP-LSD reduce probability-0/1
+        mechanisms exactly after overrides and merging, keeping original counts
+        in num_mechanisms and repr. Empty reduced support raises ValueError.
+        decode_syndrome validates length and binary values, applies both biases,
+        and raises ValueError naming the lowest fired dead detector and count.
+        Declared-but-unused detectors are included. Union-find does not reduce.
+        """
 
         @staticmethod
         def from_dem(
@@ -4178,14 +4221,26 @@ class decoders:
             decoder_type: str = ...,
             error_rate: float | None = ...,
             max_iter: int | None = ...,
+            *,
+            bp_method: str | None = ...,
+            ms_scaling_factor: float | None = 0.625,
+            bits_per_step: int | None = ...,
+            lsd_order: int | None = ...,
         ) -> decoders.DemAwareDecoder:
-            """Build a DEM decoder. None uses 100 iterations for iterative families.
+            """Build a DEM decoder. None uses 30 iterations for BP+LSD, 100 for BP-OSD/min-sum.
+
+            BP+LSD options: bp_method="minimum_sum", ms_scaling_factor=0.625,
+            bits_per_step=1 (0 grows all candidates).
+            lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+            None scaling selects product-sum; explicit bp_method overrides it.
+            minimum_sum with None uses 0.625; product_sum ignores scaling.
+            These keywords require decoder_type="bp_lsd".
 
             Relay-BP and union_find reject explicit max_iter. For Relay-BP,
             use pre_iter / set_max_iter through its builder or spec factory.
 
             error_rate is a uniform probability per original DEM error line; None uses
-            DEM probabilities. For relay_bp and min_sum_bp, it applies before merging
+            DEM probabilities. For relay_bp, min_sum_bp, bp_osd and bp_lsd, it applies before merging
             identical detector and observable sets. A group of k lines receives the
             k-fold independent XOR of the rate.
             """
@@ -4289,7 +4344,10 @@ class decoders:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
                 error_rate: Uniform probability per original DEM error line, before merging
                     identical detector and observable sets. A group of k lines receives the
-                    k-fold independent XOR of this rate. None uses DEM probabilities before merging.
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
                 seed: Makes relay sampling reproducible without increasing its runtime bound.
             """
@@ -4387,7 +4445,10 @@ class decoders:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
                 error_rate: Uniform probability per original DEM error line, before merging
                     identical detector and observable sets. A group of k lines receives the
-                    k-fold independent XOR of this rate. None uses DEM probabilities before merging.
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
             """

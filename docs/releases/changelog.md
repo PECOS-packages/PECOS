@@ -32,6 +32,37 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   record-less Z heralds or transparent gates.
 - **Fixed:** `PerGateTypeNoise::to_neo_channel` returns an error naming an unmapped gate
   instead of panicking. `GeneralNoiseConfig` JSON rejects duplicate object keys at any depth.
+- **Breaking:** DEM-built Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind
+  now handle probability-0 and probability-1 mechanisms exactly by reducing
+  support and applying fixed syndrome/observable biases. Construction fails when
+  no uncertain error mechanism remains after support reduction (including
+  `error_rate=0`). A biased syndrome firing dead detectors, including
+  declared-but-unused detectors, raises `InvalidSyndrome`, naming the lowest
+  index and count; this aborts a batch. Python `DemAwareDecoder` raises
+  `ValueError` for empty reduced support and invalid syndromes.
+  `StructuredDemDecoder.decode_syndrome` raises `ValueError` for fired dead
+  detectors and non-binary input, but `RuntimeError` for wrong lengths. On
+  spec-built paths, empty reduced support raises `RuntimeError` when the decoder
+  is built (for the logical-subgraph, logical-algorithm and logical-circuit
+  decoders, in their constructors). `SampleBatch.decode`, `DemSampler` decoding
+  and the logical decoders' `decode`/`decode_count` raise `RuntimeError` for
+  fired dead detectors; `SampleBatch.compare_decoders` counts them as
+  decode-error outcomes for those shots. Wrappers validate syndrome
+  length and binary values before applying biases. Raw BP-OSD, BP-LSD,
+  soft-information BP and BeliefFind builders now reject endpoint priors and
+  require finite values in `(0, 1)`; MBP is unchanged. Product-sum check updates
+  bound saturated tanh products so check-to-bit messages remain finite; all
+  other products are unchanged. `belief_matching`, experimental BP-trellis, and
+  the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
+  perturbed ensemble members retain their existing prior clamp.
+- **Breaking:** Native Relay-BP and min-sum now flip bits whose posterior is
+  exactly zero (using `<= 0`, matching relay-bp and ldpc). PECOS always floors
+  the stored prior that seeds messages and memory at magnitude `4e-5`, as
+  relay-bp does when `min_log_prior_ratio` is set (its default is `None`).
+  The sign is preserved except that zero becomes positive, so priors of exactly
+  one half no longer sit at a tie. Nothing downstream is floored again.
+  Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
+  Native Relay-BP and min-sum decoding results can change.
 
 - **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
   a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs
@@ -82,6 +113,35 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
   GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
 
+- **Breaking:** BP+LSD now grows clusters from the most likely bits. The order
+  was inverted for every `bits_per_step`, including 0, because insertion order
+  fixes the column order, the pivots and the solution. Results change.
+- **Breaking:** Every BP+LSD construction path now defaults to the BP+LSD paper
+  settings: minimum-sum BP with scaling 0.625, at most 30 iterations, parallel
+  scheduling, one bit per growth step, and LSD-0 (`lsd_order=0`, no
+  reprocessing). A positive `lsd_order` selects OSD-CS reprocessing of that
+  order. The Python `BpLsdBuilder` previously grew clusters to the requested
+  positive order but solved them with OSD-0: order affected results without
+  reprocessing. The raw Rust builder infers the method unless one is set.
+  Both the builder and `BpLsdDecoder::new` reject `Off` at every order and
+  reject `Osd0` with a positive order.
+- **Breaking:** BP+LSD settings on the Python side: `BpLsdBuilder` gains
+  `ms_scaling_factor` (`build` previously used 1.0); `BpLsdDecoder.from_dem`
+  gains `bp_method`, `bits_per_step` and `lsd_order`;
+  `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` gains those and
+  `ms_scaling_factor`. On every Python
+  BP+LSD path an explicit `ms_scaling_factor=None` selects product-sum, an
+  explicit `bp_method` overrides that (`"product_sum"`/`"ps"` ignores the
+  scaling, `"minimum_sum"`/`"ms"` with None uses 0.625), and `bits_per_step=0`
+  grows all candidates each step. Invalid `bp_method` or `schedule` values on
+  `BpLsdBuilder` now raise in the setter rather than in `build`, and a
+  non-numeric `ms_scaling_factor` in `from_dem` or the `bp_lsd` spec factory
+  raises `ValueError` instead of `TypeError`.
+  Non-integer or negative `lsd_order` and `bits_per_step` now raise `ValueError`
+  on the builder, DEM constructors and spec factory. Previously, builder
+  negatives raised `OverflowError`, non-integers raised `TypeError` on both
+  builder and spec factory, and spec negatives already raised `ValueError`.
+  The DEM constructors did not accept these keywords before.
 - **Breaking:** Named-result measurement identity now comes from a compile-time
   shadow pass instead of read adjacency, so reordered reads and copied arrays
   retain exact measurement IDs. `NamedResultTrace` gains `provenance` and
@@ -90,9 +150,26 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and the native DEM builder accepts exact ID permutations while retaining
   bijection and physical-outcome checks. Fixes SZZ final readout binding (#498).
 
-- Relay-BP and min-sum decoders built from a DEM merge mechanisms with identical
-  detector and observable sets using independent-XOR probabilities. This improves
-  decoding of repeated symptoms, such as stim's flattened multi-round DEMs.
+- **Breaking:** Relay-BP, min-sum, BP-OSD and BP-LSD decoders built from a DEM
+  merge mechanisms with identical detector and observable sets using
+  independent-XOR probabilities. This improves decoding of repeated symptoms,
+  such as stim's flattened multi-round DEMs; BP-OSD and BP-LSD results change on such DEMs, and their `max_iter=0`
+  ("one iteration per column") counts merged columns. `error_rate` applies to each
+  original line before merging. Union-find and other decoders are unchanged.
+- **Breaking:** BP-OSD, BP-LSD, soft-information BP, BeliefFind and MBP reject a
+  non-finite or out-of-[0, 1] error rate or channel probability (and MBP a
+  non-finite or negative XYZ bias): Python DEM constructors raise `ValueError`
+  naming `error_rate`, Rust `DecoderSpec` builds return `DecoderError::MatrixError`,
+  and the raw LDPC constructors return `LdpcError::InvalidInput` naming `error_rate`,
+  the `error_channel` entry or the `xyz_bias` entry (`ValueError` from the Python `BpOsdBuilder` /
+  `BpLsdBuilder`). They previously decoded with meaningless priors.
+- **Breaking:** The LDPC decoder classes in `pecos_rslib.decoders` (the raw
+  builders and decoders, and `DemAwareDecoder`) raise `ValueError` instead of
+  `RuntimeError` for input errors that the Rust layer detects
+  (`LdpcError::InvalidInput`), such as an invalid prior, a channel of the wrong
+  length, or a union-find syndrome of the wrong length. Errors raised by the C++
+  core remain `RuntimeError`; BP-OSD and BP-LSD check the syndrome length there.
+  Decoders built from a `DecoderSpec` keep their exception types.
 - **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
   results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
   of decode order, batch splitting and worker count, enabling parallel batches.

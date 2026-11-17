@@ -168,8 +168,8 @@ fn build_single(
         DecoderSpec::PerturbedFusionBlossomCorrelated(config) => {
             build_perturbed_fusion_blossom(dem, config)
         }
-        DecoderSpec::BpOsd(config) => build_bp_osd(dem, config),
-        DecoderSpec::BpLsd(config) => build_bp_lsd(dem, config),
+        DecoderSpec::BpOsd(config) => Ok(build_bp_osd(dem, config)?),
+        DecoderSpec::BpLsd(config) => Ok(build_bp_lsd(dem, config)?),
         DecoderSpec::BeliefFind => build_belief_find(dem),
         DecoderSpec::UnionFind => build_union_find(dem),
         DecoderSpec::RelayBp(config) => Ok(build_relay_bp(dem, config)?),
@@ -250,10 +250,8 @@ fn unavailable<T>(family: &'static str, required_feature: &'static str) -> Resul
 
 #[cfg(any(
     feature = "pymatching",
-    feature = "tesseract",
     feature = "fusion-blossom",
     feature = "ldpc",
-    feature = "relay-bp",
     feature = "mwpf"
 ))]
 fn internal(error: impl std::fmt::Display) -> DecoderError {
@@ -740,7 +738,7 @@ fn dem_matrix(
 }
 
 #[cfg(feature = "ldpc")]
-fn ldpc_bp_schedule(schedule: SpecBpSchedule) -> LdpcBpSchedule {
+pub(super) fn ldpc_bp_schedule(schedule: SpecBpSchedule) -> LdpcBpSchedule {
     match schedule {
         SpecBpSchedule::Serial => LdpcBpSchedule::Serial,
         SpecBpSchedule::Parallel => LdpcBpSchedule::Parallel,
@@ -752,12 +750,11 @@ fn ldpc_bp_schedule(schedule: SpecBpSchedule) -> LdpcBpSchedule {
 fn build_bp_osd(
     dem: &str,
     config: &BpOsdConfig,
-) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    let (matrix, sparse) = dem_matrix(dem)?;
-    let priors = config.error_rate.map_or_else(
-        || matrix.error_priors.clone(),
-        |rate| vec![rate; matrix.num_mechanisms],
-    );
+) -> Result<Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::BpOsdDecoder>>, DecoderError>
+{
+    let (matrix, support) = merged_dem_matrix(dem, config.error_rate)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
+    let sparse = crate::SparseMatrix::from_dense(&matrix.check_matrix.view());
     let bp_method = if config.ms_scaling_factor.is_some() {
         crate::BpMethod::MinimumSum
     } else {
@@ -771,7 +768,7 @@ fn build_bp_osd(
     let decoder = crate::BpOsdDecoder::new(
         &sparse,
         None,
-        Some(&priors),
+        Some(&matrix.error_priors),
         config.max_iter,
         bp_method,
         ldpc_bp_schedule(config.bp_schedule),
@@ -785,7 +782,9 @@ fn build_bp_osd(
     )
     .map_err(internal)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -801,31 +800,25 @@ fn build_bp_osd(
 fn build_bp_lsd(
     dem: &str,
     config: &BpLsdConfig,
-) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    let (matrix, sparse) = dem_matrix(dem)?;
-    let priors = config.error_rate.map_or_else(
-        || matrix.error_priors.clone(),
-        |rate| vec![rate; matrix.num_mechanisms],
-    );
+) -> Result<Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::BpLsdDecoder>>, DecoderError>
+{
+    let (matrix, support) = merged_dem_matrix(dem, config.error_rate)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
+    let sparse = crate::SparseMatrix::from_dense(&matrix.check_matrix.view());
     let bp_method = if config.ms_scaling_factor.is_some() {
         crate::BpMethod::MinimumSum
     } else {
         crate::BpMethod::ProductSum
     };
-    let lsd_method = if config.lsd_order == 0 {
-        crate::OsdMethod::Off
-    } else {
-        crate::OsdMethod::OsdCs
-    };
     let decoder = crate::BpLsdDecoder::new(
         &sparse,
         None,
-        Some(&priors),
+        Some(&matrix.error_priors),
         config.max_iter,
         bp_method,
         ldpc_bp_schedule(config.bp_schedule),
         config.ms_scaling_factor.unwrap_or(1.0),
-        lsd_method,
+        crate::bp_lsd_defaults::lsd_method_for_order(config.lsd_order),
         config.lsd_order,
         config.bits_per_step,
         crate::InputVectorType::Syndrome,
@@ -835,7 +828,9 @@ fn build_bp_lsd(
     )
     .map_err(internal)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -849,7 +844,9 @@ fn build_bp_lsd(
 
 #[cfg(feature = "ldpc")]
 fn build_belief_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    let (matrix, sparse) = dem_matrix(dem)?;
+    let (matrix, support) = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
+    let sparse = crate::SparseMatrix::from_dense(&matrix.check_matrix.view());
     let decoder = crate::BeliefFindDecoder::new(
         &sparse,
         None,
@@ -866,7 +863,9 @@ fn build_belief_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
     )
     .map_err(internal)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -901,13 +900,22 @@ fn build_union_find(_dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
     unavailable("union_find", "ldpc")
 }
 
-#[cfg(feature = "relay-bp")]
-fn relay_dem_matrix(
+/// DEM check matrix for the BP families that merge duplicate symptoms
+/// (Relay-BP, min-sum, BP-OSD, BP-LSD). A uniform `error_rate` replaces every
+/// original line's probability before merging, so a group of k identical lines
+/// receives the k-fold independent XOR of the rate.
+#[cfg(any(feature = "relay-bp", feature = "ldpc"))]
+fn merged_dem_matrix(
     dem: &str,
     error_rate: Option<f64>,
 ) -> Result<pecos_decoder_core::DemCheckMatrix, DecoderError> {
     let mut matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem)?;
     if let Some(rate) = error_rate {
+        if !(0.0..=1.0).contains(&rate) {
+            return Err(DecoderError::MatrixError(format!(
+                "error_rate must be finite and in [0, 1], got {rate}"
+            )));
+        }
         matrix.error_priors.fill(rate);
     }
     Ok(matrix.merge_duplicate_symptoms())
@@ -921,7 +929,8 @@ fn build_relay_bp(
     Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::RelayBpDecoder>>,
     DecoderError,
 > {
-    let matrix = relay_dem_matrix(dem, config.error_rate)?;
+    let (matrix, support) = merged_dem_matrix(dem, config.error_rate)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
     let stopping = match config.stopping_criterion {
         RelayStoppingCriterion::PreIter => crate::StoppingCriterion::PreIter,
         RelayStoppingCriterion::All => crate::StoppingCriterion::All,
@@ -946,7 +955,9 @@ fn build_relay_bp(
         .build()
         .map_err(DecoderError::from)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -966,7 +977,8 @@ fn build_min_sum_bp(
     Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::MinSumBpDecoder>>,
     DecoderError,
 > {
-    let matrix = relay_dem_matrix(dem, config.error_rate)?;
+    let (matrix, support) = merged_dem_matrix(dem, config.error_rate)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
     let decoder = crate::MinSumBpBuilder::new(&matrix.check_matrix.view())
         .error_priors(&matrix.error_priors)
         .max_iter(config.max_iter)
@@ -974,7 +986,9 @@ fn build_min_sum_bp(
         .build()
         .map_err(DecoderError::from)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -1436,6 +1450,106 @@ fn build_ensemble(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn bp_lsd_spec_growth_options_reach_inner_decoder() {
+        let dem = "error(0.1) D0\nerror(0.1) D1 L0\nerror(0.1) D0 D1";
+        for (order, method) in [(0, crate::OsdMethod::Osd0), (2, crate::OsdMethod::OsdCs)] {
+            for bits in [0, 2] {
+                // Also covers the settings produced by the Python bp_lsd factory.
+                let built = build_bp_lsd(
+                    dem,
+                    &BpLsdConfig {
+                        lsd_order: order,
+                        bits_per_step: bits,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(built.decoder.lsd_order(), order);
+                assert_eq!(built.decoder.lsd_method(), method);
+                let expected_bits = if bits == 0 {
+                    built.decoder.bit_count()
+                } else {
+                    bits
+                };
+                assert_eq!(built.decoder.bits_per_step(), expected_bits);
+            }
+        }
+    }
+
+    #[cfg(all(feature = "relay-bp", feature = "ldpc"))]
+    #[test]
+    fn exact_support_spec_paths() {
+        let dem = "error(1) D0 L0\nerror(0) D1 L1\nerror(0.1) D2 L2\nerror(1) L65\ndetector D3";
+        for name in ["relay_bp", "min_sum_bp", "bp_osd", "bp_lsd", "belief_find"] {
+            let spec = DecoderSpec::parse(name).unwrap();
+            let mut decoder = spec.build(&DecodeModel::SingleDem(dem.into())).unwrap();
+            let obs = decoder.decode_obs(&[1, 0, 1, 0]).unwrap();
+            assert!(obs.get(0) && obs.get(2) && obs.get(65), "{name}");
+            assert!(!obs.get(1), "{name}");
+            let error = decoder.decode_obs(&[1, 1, 0, 1]).unwrap_err();
+            assert!(
+                matches!(&error, DecoderError::InvalidSyndrome(message) if message.contains("detector 1") && message.contains("2 dead detectors")),
+                "{name}: {error}"
+            );
+            assert!(matches!(
+                decoder.decode_obs(&[0]),
+                Err(DecoderError::InvalidDimensions { .. })
+            ));
+            assert!(matches!(
+                decoder.decode_obs(&[2, 0, 0, 0]),
+                Err(DecoderError::InvalidSyndrome(_))
+            ));
+            assert!(matches!(
+                spec.build(&DecodeModel::SingleDem(String::new())),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+        }
+        for rate in [0.0, 1.0] {
+            assert!(matches!(
+                build_relay_bp(
+                    dem,
+                    &RelayBpConfig {
+                        error_rate: Some(rate),
+                        ..Default::default()
+                    }
+                ),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+            assert!(matches!(
+                build_min_sum_bp(
+                    dem,
+                    &MinSumBpConfig {
+                        error_rate: Some(rate),
+                        ..Default::default()
+                    }
+                ),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+            assert!(matches!(
+                build_bp_osd(
+                    dem,
+                    &BpOsdConfig {
+                        error_rate: Some(rate),
+                        ..Default::default()
+                    }
+                ),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+            assert!(matches!(
+                build_bp_lsd(
+                    dem,
+                    &BpLsdConfig {
+                        error_rate: Some(rate),
+                        ..Default::default()
+                    }
+                ),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+        }
+    }
+
     // Structural regression guards: inspect the actual decoder built by each spec path.
     #[cfg(feature = "relay-bp")]
     #[test]
@@ -1457,12 +1571,121 @@ mod tests {
         assert_eq!(decoder.dem.observable_matrix.ncols(), 2);
     }
 
+    // Red/green: BP-OSD and BP-LSD merge duplicates and apply overrides per original line.
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn bp_osd_lsd_spec_merge_duplicates_before_building() {
+        let dem = "error(0.1) D0 D1 L0\nerror(0.2) D0 D1 L0\nerror(0.3) D2 L1";
+        let osd = build_bp_osd(
+            dem,
+            &BpOsdConfig {
+                error_rate: Some(0.25),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let lsd = build_bp_lsd(
+            dem,
+            &BpLsdConfig {
+                error_rate: Some(0.25),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for (bits, matrix) in [
+            (osd.decoder.bit_count(), &osd.dem),
+            (lsd.decoder.bit_count(), &lsd.dem),
+        ] {
+            assert_eq!(bits, 2);
+            assert_eq!(matrix.num_mechanisms, 2);
+            assert_eq!(matrix.observable_matrix.ncols(), 2);
+            assert_eq!(matrix.error_priors, [0.375, 0.25]);
+        }
+        for spec in [
+            DecoderSpec::BpOsd(BpOsdConfig::default()),
+            DecoderSpec::BpLsd(BpLsdConfig::default()),
+        ] {
+            let mut decoder = spec.build(&DecodeModel::SingleDem(dem.into())).unwrap();
+            for (syndrome, expected) in [([1, 1, 0], 1), ([0, 0, 1], 2), ([1, 1, 1], 3)] {
+                assert_eq!(
+                    decoder.decode_obs(&syndrome).unwrap().to_u64(),
+                    Some(expected)
+                );
+            }
+        }
+    }
+
+    // Compatibility: without duplicates, BP-OSD/LSD match the unmerged raw-matrix path.
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn unique_dem_bp_osd_lsd_compatibility() {
+        // On [1, 1] the DEM priors favour columns 0 + 2 (observables 0 and 1) and a
+        // uniform 0.15 favours column 1 (observable 1), so a dropped override shows.
+        let dem = "error(0.4) D0 L0\nerror(0.01) D0 D1 L1\nerror(0.4) D1 L1";
+        for error_rate in [None, Some(0.15)] {
+            let matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem).unwrap();
+            let priors =
+                error_rate.map_or_else(|| matrix.error_priors.clone(), |rate| vec![rate; 3]);
+            let sparse = crate::SparseMatrix::from_dense(&matrix.check_matrix.view());
+            let raw_osd = crate::BpOsdDecoder::new(
+                &sparse,
+                None,
+                Some(&priors),
+                100,
+                crate::BpMethod::ProductSum,
+                LdpcBpSchedule::Parallel,
+                1.0,
+                crate::OsdMethod::Osd0,
+                0,
+                crate::InputVectorType::Syndrome,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let raw_lsd = crate::BpLsdBuilder::new(&sparse)
+                .error_channel(priors.clone())
+                .build()
+                .unwrap();
+            let mut originals: [Box<dyn ObservableDecoder>; 2] = [
+                Box::new(pecos_decoder_core::CheckMatrixObservableDecoder::new(
+                    raw_osd,
+                    matrix.clone(),
+                )),
+                Box::new(pecos_decoder_core::CheckMatrixObservableDecoder::new(
+                    raw_lsd, matrix,
+                )),
+            ];
+            let specs = [
+                DecoderSpec::BpOsd(BpOsdConfig {
+                    error_rate,
+                    ..Default::default()
+                }),
+                DecoderSpec::BpLsd(BpLsdConfig {
+                    error_rate,
+                    ..Default::default()
+                }),
+            ];
+            for (original, spec) in originals.iter_mut().zip(specs) {
+                let mut merged = spec.build(&DecodeModel::SingleDem(dem.into())).unwrap();
+                for syndrome in [[0, 0], [1, 0], [0, 1], [1, 1]] {
+                    assert_eq!(
+                        merged.decode_obs(&syndrome).unwrap().to_u64(),
+                        original.decode_obs(&syndrome).unwrap().to_u64()
+                    );
+                }
+                let expected = if error_rate.is_some() { 2 } else { 3 };
+                assert_eq!(merged.decode_obs(&[1, 1]).unwrap().to_u64(), Some(expected));
+            }
+        }
+    }
+
     // Red/green: overrides apply per original line and both wrappers use merged observables.
     #[cfg(feature = "relay-bp")]
     #[test]
     fn relay_family_merges_before_building_decoder_and_observable_map() {
         let dem = "error(0.1) D0 D1 L0\nerror(0.2) D0 D1 L0\nerror(0.3) D2 L1";
-        let matrix = relay_dem_matrix(dem, Some(0.25)).unwrap();
+        let matrix = merged_dem_matrix(dem, Some(0.25)).unwrap();
         assert_eq!(matrix.error_priors, [0.375, 0.25]);
         assert_eq!(matrix.num_mechanisms, 2);
         for spec in [
@@ -2150,8 +2373,34 @@ mod tests {
         ] {
             assert!(matches!(
                 spec.build(&model),
-                Err(DecoderError::MatrixError(_))
+                Err(DecoderError::MatrixError(message))
+                    if message.contains("error_rate must be finite and in [0, 1]")
             ));
+        }
+    }
+
+    // Red/green: the DEM helper rejects a non-probability override before merging.
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn bp_osd_lsd_reject_invalid_error_rate() {
+        let model = DecodeModel::SingleDem(DEM.to_string());
+        for rate in [f64::NAN, f64::INFINITY, -0.1, 1.5] {
+            for spec in [
+                DecoderSpec::BpOsd(BpOsdConfig {
+                    error_rate: Some(rate),
+                    ..Default::default()
+                }),
+                DecoderSpec::BpLsd(BpLsdConfig {
+                    error_rate: Some(rate),
+                    ..Default::default()
+                }),
+            ] {
+                assert!(matches!(
+                    spec.build(&model),
+                    Err(DecoderError::MatrixError(message))
+                        if message.contains("error_rate must be finite and in [0, 1]")
+                ));
+            }
         }
     }
 

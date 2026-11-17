@@ -331,19 +331,11 @@ DecodingResult decode_bp_lsd(
         throw std::runtime_error("LSD decoding requires syndrome input. Please use InputVectorType::Syndrome when LSD is enabled.");
     }
 
-    // Convert log probability ratios to bit weights
-    std::vector<double> bit_weights(pcm->n);
-    for (size_t i = 0; i < bit_weights.size(); i++) {
-        double llr = bp_decoder->log_prob_ratios[i];
-        // Convert LLR to probability that bit is 1
-        bit_weights[i] = 1.0 / (1.0 + std::exp(llr));
-    }
-
-    // Run LSD
+    // Run LSD with BP LLRs: ascending weight order grows the most likely bits first.
     auto lsd_decoder = static_cast<lsd::LsdDecoder*>(decoder.lsd_decoder);
     auto lsd_result = lsd_decoder->lsd_decode(
         input_vec,
-        bit_weights,
+        bp_decoder->log_prob_ratios,
         decoder.bits_per_step,
         true  // is_on_the_fly
     );

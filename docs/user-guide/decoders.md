@@ -201,6 +201,27 @@ println!("Converged: {}", result.converged);
 
 Localized version of OSD for better scaling with large codes.
 
+BP+LSD builders, specs and DEM constructors default to minimum-sum BP, scaling
+factor 0.625, at most 30 iterations, parallel scheduling, one bit per growth step,
+and order 0. `lsd_order`: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+The raw Rust builder permits explicit reprocessing methods. Both the builder
+and `BpLsdDecoder::new` reject `Off` at every order, because LSD always runs, and
+reject `Osd0` with a positive order. At order 0 every accepted method (`Osd0`,
+`OsdCs`, `OsdE`) runs LSD-0.
+
+Cluster growth ranks BP log-probability ratios in ascending order, choosing more
+likely errors first. `bits_per_step=0` grows all candidate bits each step; their
+insertion order still affects pivots and the solution.
+
+Python `BpLsdBuilder` exposes `.bp_method(...)`, `.ms_scaling_factor(...)`,
+`.bits_per_step(...)` and `.lsd_order(...)`. `BpLsdDecoder.from_dem`, the `bp_lsd`
+spec factory and `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` accept
+these settings as keywords. Scaling defaults to 0.625; explicit `None` selects
+product-sum. An explicit `bp_method="product_sum"` (alias `"ps"`) ignores scaling;
+`bp_method="minimum_sum"` (alias `"ms"`) with `None` uses 0.625. These rules also
+apply to the Python builder. Rust specs use `ms_scaling_factor: None` to select
+product-sum.
+
 ```rust
 use pecos_decoders::BpLsdDecoder;
 
@@ -209,6 +230,8 @@ let mut decoder = BpLsdDecoder::builder(&pcm)
     .bits_per_step(1)
     .lsd_order(10)
     .build()?;
+
+assert_eq!(decoder.lsd_method(), pecos_decoders::OsdMethod::OsdCs);
 
 let result = decoder.decode(&syndrome.view())?;
 ```

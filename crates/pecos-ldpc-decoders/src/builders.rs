@@ -219,7 +219,7 @@ pub struct BpLsdBuilder<'a> {
     bp_method: BpMethod,
     bp_schedule: BpSchedule,
     ms_scaling_factor: f64,
-    lsd_method: OsdMethod,
+    lsd_method: Option<OsdMethod>,
     lsd_order: usize,
     bits_per_step: usize,
     input_vector_type: InputVectorType,
@@ -235,13 +235,13 @@ impl<'a> BpLsdBuilder<'a> {
             pcm,
             error_rate: None,
             error_channel: None,
-            max_iter: 0,
-            bp_method: BpMethod::ProductSum,
-            bp_schedule: BpSchedule::Parallel,
-            ms_scaling_factor: 1.0,
-            lsd_method: OsdMethod::Off,
-            lsd_order: 0,
-            bits_per_step: 0,
+            max_iter: crate::bp_lsd_defaults::MAX_ITER,
+            bp_method: crate::bp_lsd_defaults::BP_METHOD,
+            bp_schedule: crate::bp_lsd_defaults::BP_SCHEDULE,
+            ms_scaling_factor: crate::bp_lsd_defaults::MS_SCALING_FACTOR,
+            lsd_method: None,
+            lsd_order: crate::bp_lsd_defaults::LSD_ORDER,
+            bits_per_step: crate::bp_lsd_defaults::BITS_PER_STEP,
             input_vector_type: InputVectorType::Syndrome,
             omp_thread_count: None,
             serial_schedule_order: None,
@@ -287,19 +287,22 @@ impl<'a> BpLsdBuilder<'a> {
         self
     }
 
-    /// Set the LSD method
+    /// Set an explicit LSD method. `Off` is rejected because LSD always runs, and
+    /// `Osd0` requires order zero. At order zero every accepted method (`Osd0`,
+    /// `OsdCs`, `OsdE`) runs LSD-0.
     pub fn lsd_method(mut self, method: OsdMethod) -> Self {
-        self.lsd_method = method;
+        self.lsd_method = Some(method);
         self
     }
 
-    /// Set the LSD order
+    /// Set the LSD order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep
+    /// (OSD-CS) reprocessing of that order. An explicit method overrides this rule.
     pub fn lsd_order(mut self, order: usize) -> Self {
         self.lsd_order = order;
         self
     }
 
-    /// Set bits per step for LSD
+    /// Set bits per step for LSD (0 grows all candidate bits each step)
     pub fn bits_per_step(mut self, bits: usize) -> Self {
         self.bits_per_step = bits;
         self
@@ -335,6 +338,9 @@ impl<'a> BpLsdBuilder<'a> {
     ///
     /// Returns `LdpcError` if configuration is invalid.
     pub fn build(self) -> Result<crate::BpLsdDecoder> {
+        let method = self
+            .lsd_method
+            .unwrap_or_else(|| crate::bp_lsd_defaults::lsd_method_for_order(self.lsd_order));
         crate::BpLsdDecoder::new(
             self.pcm,
             self.error_rate,
@@ -343,7 +349,7 @@ impl<'a> BpLsdBuilder<'a> {
             self.bp_method,
             self.bp_schedule,
             self.ms_scaling_factor,
-            self.lsd_method,
+            method,
             self.lsd_order,
             self.bits_per_step,
             self.input_vector_type,
@@ -730,6 +736,43 @@ mod tests {
             .build();
 
         assert!(decoder.is_ok());
+    }
+
+    #[test]
+    fn test_bp_lsd_builder_order_resolves_method_and_rejects_contradictions() {
+        let pcm = test_pcm();
+        let decoder = BpLsdBuilder::new(&pcm)
+            .error_rate(0.1)
+            .lsd_order(3)
+            .build()
+            .unwrap();
+        assert_eq!(decoder.lsd_order(), 3);
+        assert_eq!(decoder.lsd_method(), OsdMethod::OsdCs);
+        for (method, order) in [
+            (OsdMethod::Off, 0),
+            (OsdMethod::Off, 3),
+            (OsdMethod::Osd0, 3),
+        ] {
+            let error = BpLsdBuilder::new(&pcm)
+                .error_rate(0.1)
+                .lsd_method(method)
+                .lsd_order(order)
+                .build()
+                .err()
+                .unwrap();
+            assert!(matches!(error, crate::LdpcError::InvalidInput(_)));
+            let message = error.to_string();
+            assert!(message.contains(&format!("lsd_method {method:?}")));
+            assert!(message.contains(&format!("lsd_order {order}")));
+            if method == OsdMethod::Off {
+                assert!(message.contains("LSD cannot be disabled"));
+                assert!(message.contains(
+                    "use Osd0 with lsd_order 0 for LSD-0, or OsdCs/OsdE with a positive order for reprocessing"
+                ));
+            } else {
+                assert!(message.contains("use OsdCs or OsdE for reprocessing, or lsd_order 0"));
+            }
+        }
     }
 
     // Red/green: every prior-taking builder rejects a non-probability, rate or channel.

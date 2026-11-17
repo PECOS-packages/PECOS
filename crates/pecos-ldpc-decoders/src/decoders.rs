@@ -357,7 +357,11 @@ impl BpLsdDecoder {
         crate::builders::BpLsdBuilder::new(pcm)
     }
 
-    /// Create a new BP+LSD decoder
+    /// Create a new BP+LSD decoder.
+    ///
+    /// `Off` is rejected because LSD always runs. `Osd0` requires order zero;
+    /// positive orders require a reprocessing method (`OsdCs` or `OsdE`). At order
+    /// zero every accepted method (`Osd0`, `OsdCs`, `OsdE`) runs LSD-0.
     ///
     /// # Errors
     ///
@@ -380,6 +384,18 @@ impl BpLsdDecoder {
         serial_schedule_order: Option<&[i32]>,
         random_schedule_seed: Option<i32>,
     ) -> Result<Self, LdpcError> {
+        if lsd_method == OsdMethod::Off {
+            return Err(LdpcError::InvalidInput(format!(
+                "lsd_method Off with lsd_order {lsd_order}: LSD cannot be disabled; use Osd0 with lsd_order 0 for LSD-0, or OsdCs/OsdE with a positive order for reprocessing"
+            )));
+        }
+
+        if lsd_method == OsdMethod::Osd0 && lsd_order > 0 {
+            return Err(LdpcError::InvalidInput(format!(
+                "lsd_method Osd0 with lsd_order {lsd_order}: use OsdCs or OsdE for reprocessing, or lsd_order 0"
+            )));
+        }
+
         // Validate input type - LSD requires syndrome input
         if input_vector_type != InputVectorType::Syndrome {
             return Err(LdpcError::InvalidInput(
@@ -539,7 +555,7 @@ impl BpLsdDecoder {
         }
     }
 
-    /// Get the LSD order
+    /// Get the LSD order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     #[must_use]
     pub fn lsd_order(&self) -> usize {
         usize::try_from(ffi::get_lsd_order_lsd(&self.inner)).unwrap_or(0)
@@ -637,7 +653,7 @@ pub struct LsdStatistics {
     pub elapsed_time: u64,
     /// LSD method used
     pub lsd_method: OsdMethod,
-    /// LSD order parameter
+    /// LSD order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     pub lsd_order: usize,
 }
 

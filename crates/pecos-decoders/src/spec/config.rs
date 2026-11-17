@@ -171,7 +171,9 @@ impl Default for BpOsdConfig {
     }
 }
 
-/// BP+LSD construction options.
+/// BP+LSD construction options, mirroring the paper settings in
+/// `pecos_ldpc_decoders::bp_lsd_defaults` without requiring the optional backend.
+/// The `spec_and_raw_builder_use_shared_paper_defaults` test keeps them equal.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BpLsdConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
@@ -180,8 +182,11 @@ pub struct BpLsdConfig {
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,
+    /// `None` selects product-sum; `Some` selects minimum-sum with this factor.
     pub ms_scaling_factor: Option<f64>,
+    /// 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     pub lsd_order: usize,
+    /// Bits grown per step; zero grows all candidate bits.
     pub bits_per_step: usize,
     pub random_schedule_seed: Option<i32>,
 }
@@ -190,11 +195,11 @@ impl Default for BpLsdConfig {
     fn default() -> Self {
         Self {
             error_rate: None,
-            max_iter: 100,
+            max_iter: 30,
             bp_schedule: BpSchedule::Parallel,
-            ms_scaling_factor: None,
+            ms_scaling_factor: Some(0.625),
             lsd_order: 0,
-            bits_per_step: 0,
+            bits_per_step: 1,
             random_schedule_seed: None,
         }
     }
@@ -444,4 +449,40 @@ impl Default for BeamSearchConfig {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EnsembleConfig {
     pub members: Vec<DecoderSpec>,
+}
+
+#[cfg(all(test, feature = "ldpc"))]
+mod bp_lsd_tests {
+    use super::BpLsdConfig;
+    use pecos_ldpc_decoders::{BpLsdBuilder, SparseMatrix, bp_lsd_defaults as defaults};
+
+    #[test]
+    fn spec_and_raw_builder_use_shared_paper_defaults() {
+        let pcm = SparseMatrix::from_coo(2, 3, vec![0, 0, 1, 1], vec![0, 1, 1, 2]).unwrap();
+        let raw = BpLsdBuilder::new(&pcm).error_rate(0.1).build().unwrap();
+        let spec = BpLsdConfig::default();
+        assert_eq!(raw.max_iter(), defaults::MAX_ITER);
+        assert_eq!(spec.max_iter, defaults::MAX_ITER);
+        assert_eq!(raw.bp_method(), defaults::BP_METHOD);
+        assert_eq!(raw.bp_schedule(), defaults::BP_SCHEDULE);
+        assert_eq!(
+            super::super::build::ldpc_bp_schedule(spec.bp_schedule),
+            defaults::BP_SCHEDULE
+        );
+        assert_eq!(spec.error_rate, None);
+        assert_eq!(spec.random_schedule_seed, None);
+        assert_eq!(
+            raw.ms_scaling_factor().to_bits(),
+            defaults::MS_SCALING_FACTOR.to_bits()
+        );
+        assert_eq!(
+            spec.ms_scaling_factor.map(f64::to_bits),
+            Some(defaults::MS_SCALING_FACTOR.to_bits())
+        );
+        assert_eq!(raw.lsd_method(), defaults::LSD_METHOD);
+        assert_eq!(raw.lsd_order(), defaults::LSD_ORDER);
+        assert_eq!(spec.lsd_order, defaults::LSD_ORDER);
+        assert_eq!(raw.bits_per_step(), defaults::BITS_PER_STEP);
+        assert_eq!(spec.bits_per_step, defaults::BITS_PER_STEP);
+    }
 }

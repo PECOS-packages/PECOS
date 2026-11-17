@@ -55,6 +55,35 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
   GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
 
+- **Breaking:** BP+LSD now grows clusters from the most likely bits. The order
+  was inverted for every `bits_per_step`, including 0, because insertion order
+  fixes the column order, the pivots and the solution. Results change.
+- **Breaking:** Every BP+LSD construction path now defaults to the BP+LSD paper
+  settings: minimum-sum BP with scaling 0.625, at most 30 iterations, parallel
+  scheduling, one bit per growth step, and LSD-0 (`lsd_order=0`, no
+  reprocessing). A positive `lsd_order` selects OSD-CS reprocessing of that
+  order. The Python `BpLsdBuilder` previously grew clusters to the requested
+  positive order but solved them with OSD-0: order affected results without
+  reprocessing. The raw Rust builder infers the method unless one is set.
+  Both the builder and `BpLsdDecoder::new` reject `Off` at every order and
+  reject `Osd0` with a positive order.
+- **Breaking:** BP+LSD settings on the Python side: `BpLsdBuilder` gains
+  `ms_scaling_factor` (`build` previously used 1.0); `BpLsdDecoder.from_dem`
+  gains `bp_method`, `bits_per_step` and `lsd_order`;
+  `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` gains those and
+  `ms_scaling_factor`. On every Python
+  BP+LSD path an explicit `ms_scaling_factor=None` selects product-sum, an
+  explicit `bp_method` overrides that (`"product_sum"`/`"ps"` ignores the
+  scaling, `"minimum_sum"`/`"ms"` with None uses 0.625), and `bits_per_step=0`
+  grows all candidates each step. Invalid `bp_method` or `schedule` values on
+  `BpLsdBuilder` now raise in the setter rather than in `build`, and a
+  non-numeric `ms_scaling_factor` in `from_dem` or the `bp_lsd` spec factory
+  raises `ValueError` instead of `TypeError`.
+  Non-integer or negative `lsd_order` and `bits_per_step` now raise `ValueError`
+  on the builder, DEM constructors and spec factory. Previously, builder
+  negatives raised `OverflowError`, non-integers raised `TypeError` on both
+  builder and spec factory, and spec negatives already raised `ValueError`.
+  The DEM constructors did not accept these keywords before.
 - **Breaking:** Named-result measurement identity now comes from a compile-time
   shadow pass instead of read adjacency, so reordered reads and copied arrays
   retain exact measurement IDs. `NamedResultTrace` gains `provenance` and

@@ -275,6 +275,18 @@ class TestSparseMatrix:
 class TestBpOsdDecoder:
     """Tests for BpOsdDecoder via BpOsdBuilder."""
 
+    def test_invalid_bp_method_rejected_at_build(self) -> None:
+        """An unknown BP method fails at build, quoting the value and every accepted spelling."""
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
+
+        builder = BpOsdBuilder(SparseMatrix([[1]]), error_rate=0.01).bp_method("bad")
+        with pytest.raises(ValueError, match="bp_method") as exc_info:
+            builder.build()
+        message = str(exc_info.value)
+        assert repr("bad") in message
+        for spelling in ["minimum_sum", "product_sum", "ms", "ps"]:
+            assert repr(spelling) in message
+
     def test_create_decoder(self) -> None:
         """Test construction via builder."""
         from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix

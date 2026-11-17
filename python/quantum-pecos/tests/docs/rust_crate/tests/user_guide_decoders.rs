@@ -65,6 +65,8 @@ let mut decoder = BpLsdDecoder::builder(&pcm)
     .lsd_order(10)
     .build()?;
 
+assert_eq!(decoder.lsd_method(), pecos_decoders::OsdMethod::OsdCs);
+
 let result = decoder.decode(&syndrome.view())?;
     Ok(())
 }

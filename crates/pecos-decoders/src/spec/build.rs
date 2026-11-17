@@ -738,7 +738,7 @@ fn dem_matrix(
 }
 
 #[cfg(feature = "ldpc")]
-fn ldpc_bp_schedule(schedule: SpecBpSchedule) -> LdpcBpSchedule {
+pub(super) fn ldpc_bp_schedule(schedule: SpecBpSchedule) -> LdpcBpSchedule {
     match schedule {
         SpecBpSchedule::Serial => LdpcBpSchedule::Serial,
         SpecBpSchedule::Parallel => LdpcBpSchedule::Parallel,
@@ -806,11 +806,6 @@ fn build_bp_lsd(
     } else {
         crate::BpMethod::ProductSum
     };
-    let lsd_method = if config.lsd_order == 0 {
-        crate::OsdMethod::Off
-    } else {
-        crate::OsdMethod::OsdCs
-    };
     let decoder = crate::BpLsdDecoder::new(
         &sparse,
         None,
@@ -819,7 +814,7 @@ fn build_bp_lsd(
         bp_method,
         ldpc_bp_schedule(config.bp_schedule),
         config.ms_scaling_factor.unwrap_or(1.0),
-        lsd_method,
+        crate::bp_lsd_defaults::lsd_method_for_order(config.lsd_order),
         config.lsd_order,
         config.bits_per_step,
         crate::InputVectorType::Syndrome,
@@ -1439,6 +1434,34 @@ fn build_ensemble(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn bp_lsd_spec_growth_options_reach_inner_decoder() {
+        let dem = "error(0.1) D0\nerror(0.1) D1 L0\nerror(0.1) D0 D1";
+        for (order, method) in [(0, crate::OsdMethod::Osd0), (2, crate::OsdMethod::OsdCs)] {
+            for bits in [0, 2] {
+                // Also covers the settings produced by the Python bp_lsd factory.
+                let built = build_bp_lsd(
+                    dem,
+                    &BpLsdConfig {
+                        lsd_order: order,
+                        bits_per_step: bits,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(built.decoder.lsd_order(), order);
+                assert_eq!(built.decoder.lsd_method(), method);
+                let expected_bits = if bits == 0 {
+                    built.decoder.bit_count()
+                } else {
+                    bits
+                };
+                assert_eq!(built.decoder.bits_per_step(), expected_bits);
+            }
+        }
+    }
+
     // Structural regression guards: inspect the actual decoder built by each spec path.
     #[cfg(feature = "relay-bp")]
     #[test]
@@ -1532,23 +1555,10 @@ mod tests {
                 None,
             )
             .unwrap();
-            let raw_lsd = crate::BpLsdDecoder::new(
-                &sparse,
-                None,
-                Some(&priors),
-                100,
-                crate::BpMethod::ProductSum,
-                LdpcBpSchedule::Parallel,
-                1.0,
-                crate::OsdMethod::Off,
-                0,
-                0,
-                crate::InputVectorType::Syndrome,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
+            let raw_lsd = crate::BpLsdBuilder::new(&sparse)
+                .error_channel(priors.clone())
+                .build()
+                .unwrap();
             let mut originals: [Box<dyn ObservableDecoder>; 2] = [
                 Box::new(pecos_decoder_core::CheckMatrixObservableDecoder::new(
                     raw_osd,

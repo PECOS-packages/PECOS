@@ -7,7 +7,7 @@ use ndarray::ArrayView2;
 
 /// Default leg-zero memory strength. Relay legs use sampled or explicit strengths.
 /// Setting gamma0 to None makes only leg zero memoryless.
-pub const DEFAULT_GAMMA0: f64 = 0.65;
+pub const DEFAULT_GAMMA0: f64 = 0.35;
 
 /// Builder for `RelayBpDecoder`
 ///
@@ -85,7 +85,8 @@ impl<'a> RelayBpBuilder<'a> {
         self
     }
 
-    /// Set leg-zero memory strength (default: Some(0.65)).
+    /// Set leg-zero memory strength (default: `Some(DEFAULT_GAMMA0)`).
+    /// See [`DEFAULT_GAMMA0`].
     /// None makes leg zero memoryless; relay legs keep their own memory strengths.
     #[must_use]
     pub fn gamma0(mut self, gamma0: Option<f64>) -> Self {

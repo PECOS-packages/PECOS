@@ -3630,7 +3630,7 @@ class decoders:
         error_rate: float | None = ...,
         alpha: float | None = ...,
         alpha_iteration_scaling_factor: float = ...,
-        gamma0: float | None = ...,
+        gamma0: float | None = 0.35,
         pre_iter: int = ...,
         num_sets: int = ...,
         set_max_iter: int = ...,
@@ -3640,6 +3640,7 @@ class decoders:
     ) -> decoders.DecoderSpec:
         """Native Relay-BP, deterministic per (seed, syndrome).
 
+        gamma0 defaults to 0.35.
         gamma0=None makes leg zero memoryless; relay legs retain memory.
         alpha=0.0 selects dynamic scaling; None means unit scaling.
         alpha_iteration_scaling_factor must be finite and > 0.
@@ -4275,7 +4276,7 @@ class decoders:
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set leg-zero memory strength (default: 0.65).
+            """Set leg-zero memory strength (default: 0.35).
 
             None makes leg zero memoryless; relay legs retain their sampled memory.
             """

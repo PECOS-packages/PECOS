@@ -405,6 +405,12 @@ For a fixed configuration, decoding is a deterministic function of `(seed, syndr
 Decode order, batch splitting and worker count cannot change a result; serial and
 parallel batch decoding are supported.
 
+The default leg-zero memory strength is `gamma0=0.35`, defined by
+`pecos_relay_bp::DEFAULT_GAMMA0`. In PECOS sweeps, 0.35 was the measured best
+on surface, color and gross codes. The paper used 0.125 for gross and 0.35 for
+surface; set `gamma0` explicitly to reproduce the paper. The default
+`gamma_dist_interval=(-0.24, 0.66)` is the paper's gross-code interval.
+
 Use `pre_iter` for leg zero and `set_max_iter` for each of the `num_sets` relay
 legs. Relay has no `max_iter` option, including `RelayBpDecoder.from_dem`;
 the generic `DemAwareDecoder.from_dem` rejects explicit `max_iter` for Relay.

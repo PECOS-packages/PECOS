@@ -2973,8 +2973,8 @@ impl PyRelayBpBuilder {
         slf
     }
 
-    /// Set leg-zero memory strength (default: 0.65). None makes leg zero
-    /// memoryless; relay legs keep their sampled memory strengths.
+    /// Set leg-zero memory strength (default: 0.35).
+    /// None makes leg zero memoryless; relay legs keep their sampled memory strengths.
     ///
     /// Returns:
     ///     Self for method chaining.

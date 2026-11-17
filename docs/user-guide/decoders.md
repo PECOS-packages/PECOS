@@ -190,11 +190,13 @@ In Python, `DemAwareDecoder` (including convenience `from_dem` constructors)
 raises `ValueError` for empty reduced support, fired dead detectors, wrong
 lengths, and non-binary syndromes. `StructuredDemDecoder.decode_syndrome` raises
 `ValueError` for fired dead detectors and non-binary input, but `RuntimeError`
-for wrong lengths. Empty reduced support on spec-built paths raises
-`RuntimeError`. Other spec-built Python surfaces (`SampleBatch.decode`,
-`DemSampler` decoding, logical-subgraph, logical-algorithm and logical-circuit
-`decode`/`decode_count`, and decoder comparison) raise `RuntimeError` for fired
-dead detectors or empty reduced support; a batch error aborts the batch.
+for wrong lengths. On spec-built paths, empty reduced support raises
+`RuntimeError` when the decoder is built (for the logical-subgraph,
+logical-algorithm and logical-circuit decoders, in their constructors).
+`SampleBatch.decode`, `DemSampler` decoding and the logical decoders'
+`decode`/`decode_count` raise `RuntimeError` for fired dead detectors, which
+aborts the batch; `SampleBatch.compare_decoders` instead counts them as
+decode-error outcomes for those shots.
 
 Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
 priors strictly in `(0, 1)`; MBP is unchanged. Their product-sum check update

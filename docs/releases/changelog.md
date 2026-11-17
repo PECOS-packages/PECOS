@@ -15,12 +15,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   index and count; this aborts a batch. Python `DemAwareDecoder` raises
   `ValueError` for empty reduced support and invalid syndromes.
   `StructuredDemDecoder.decode_syndrome` raises `ValueError` for fired dead
-  detectors and non-binary input, but `RuntimeError` for wrong lengths. Empty
-  reduced support on spec-built paths raises `RuntimeError`. Other spec-built
-  Python surfaces (`SampleBatch.decode`, `DemSampler` decoding,
-  logical-subgraph, logical-algorithm and logical-circuit
-  `decode`/`decode_count`, and decoder comparison) raise `RuntimeError` for
-  fired dead detectors or empty reduced support. Wrappers validate syndrome
+  detectors and non-binary input, but `RuntimeError` for wrong lengths. On
+  spec-built paths, empty reduced support raises `RuntimeError` when the decoder
+  is built (for the logical-subgraph, logical-algorithm and logical-circuit
+  decoders, in their constructors). `SampleBatch.decode`, `DemSampler` decoding
+  and the logical decoders' `decode`/`decode_count` raise `RuntimeError` for
+  fired dead detectors; `SampleBatch.compare_decoders` counts them as
+  decode-error outcomes for those shots. Wrappers validate syndrome
   length and binary values before applying biases. Raw BP-OSD, BP-LSD,
   soft-information BP and BeliefFind builders now reject endpoint priors and
   require finite values in `(0, 1)`; MBP is unchanged. Product-sum check updates

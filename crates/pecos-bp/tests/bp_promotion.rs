@@ -34,10 +34,8 @@ struct PromotionFixture {
 
 // Captured from pecos-uf-decoder/src/mini_bp.rs at a7af1e588 before the
 // implementation moved crates. The cases pin zero-iteration, flooding,
-// serial, and the >=6-iteration EWAInit paths. Refreshed for the native prior
-// magnitude floor: the error(0.5) mechanism now starts at +4e-5, which changes
-// its own zero-iteration belief and propagates through connected messages.
-const FLOORED_PROMOTION_FIXTURES: [PromotionFixture; 6] = [
+// serial, and the >=6-iteration EWAInit paths.
+const PRE_PROMOTION_FIXTURES: [PromotionFixture; 6] = [
     PromotionFixture {
         syndrome: [0, 0, 0, 0],
         iterations: 0,
@@ -48,7 +46,7 @@ const FLOORED_PROMOTION_FIXTURES: [PromotionFixture; 6] = [
             4_600_228_237_266_466_083,
             4_612_682_095_399_216_500,
             4_606_240_122_066_615_758,
-            4_541_027_782_865_676_529,
+            0,
             4_629_137_466_983_448_576,
         ],
     },
@@ -58,11 +56,11 @@ const FLOORED_PROMOTION_FIXTURES: [PromotionFixture; 6] = [
         serial: false,
         posterior_bits: [
             4_615_009_897_182_140_011,
-            4_608_795_490_656_054_753,
-            13_827_195_460_848_415_614,
-            4_612_169_915_963_855_579,
-            4_606_240_347_246_597_127,
-            4_608_637_953_865_169_077,
+            4_608_795_378_066_064_068,
+            13_827_195_235_668_434_244,
+            4_612_169_859_668_860_237,
+            4_606_240_122_066_615_758,
+            4_608_637_773_721_183_982,
             4_629_137_466_983_448_576,
         ],
     },
@@ -71,12 +69,12 @@ const FLOORED_PROMOTION_FIXTURES: [PromotionFixture; 6] = [
         iterations: 5,
         serial: false,
         posterior_bits: [
-            4_616_824_180_813_744_714,
-            4_612_772_327_043_747_251,
-            13_834_539_028_169_047_759,
-            4_614_632_398_093_890_110,
-            4_610_536_594_737_351_886,
-            4_612_079_592_249_984_231,
+            4_616_824_137_156_046_395,
+            4_612_772_222_837_049_545,
+            13_834_538_819_755_652_347,
+            4_614_632_360_329_047_982,
+            4_610_536_441_559_920_256,
+            4_612_079_460_430_909_568,
             4_629_137_466_983_448_576,
         ],
     },
@@ -85,12 +83,12 @@ const FLOORED_PROMOTION_FIXTURES: [PromotionFixture; 6] = [
         iterations: 5,
         serial: true,
         posterior_bits: [
-            4_617_146_191_502_256_494,
-            4_613_379_065_134_390_077,
-            13_835_398_289_199_190_492,
-            4_614_908_275_977_268_528,
-            4_611_780_938_972_821_018,
-            4_612_614_282_371_173_107,
+            4_617_146_141_481_849_060,
+            4_613_378_948_369_012_257,
+            13_835_398_173_110_397_208,
+            4_614_908_232_143_345_217,
+            4_611_780_850_137_401_864,
+            4_612_614_139_529_345_710,
             4_629_137_466_983_448_576,
         ],
     },
@@ -99,12 +97,12 @@ const FLOORED_PROMOTION_FIXTURES: [PromotionFixture; 6] = [
         iterations: 6,
         serial: false,
         posterior_bits: [
-            4_618_266_892_009_420_954,
-            4_615_705_952_908_721_583,
-            4_615_101_234_192_994_729,
-            4_616_295_981_315_152_887,
-            4_612_933_162_219_654_380,
-            13_838_383_673_256_253_731,
+            4_618_266_947_953_514_113,
+            4_615_706_092_554_912_435,
+            4_615_101_373_839_185_582,
+            4_616_296_009_642_864_701,
+            4_612_933_259_521_655_288,
+            13_838_383_818_924_061_210,
             4_629_137_466_983_448_576,
         ],
     },
@@ -113,25 +111,25 @@ const FLOORED_PROMOTION_FIXTURES: [PromotionFixture; 6] = [
         iterations: 7,
         serial: true,
         posterior_bits: [
-            4_618_452_376_631_751_592,
-            4_616_137_131_422_347_610,
-            4_615_361_628_431_883_320,
-            4_616_412_220_205_433_308,
-            4_613_356_155_224_562_520,
-            13_838_659_856_612_447_261,
+            4_618_452_438_281_817_700,
+            4_616_137_273_858_435_077,
+            4_615_361_769_219_560_688,
+            4_616_412_249_689_813_738,
+            4_613_356_255_446_979_550,
+            13_838_660_022_657_093_308,
             4_629_137_466_983_448_576,
         ],
     },
 ];
 
 #[test]
-fn posteriors_match_the_floored_promotion_bit_fixture() {
+fn posteriors_match_the_pre_promotion_bit_fixture() {
     let dcm = DemCheckMatrix::from_dem_str(DEM).unwrap();
     let graph = BpGraph::from_dcm(&dcm);
     let mut scratch = BpScratch::new(&graph);
     let mut posterior = vec![0.0; graph.mechanism_count()];
 
-    for fixture in FLOORED_PROMOTION_FIXTURES {
+    for fixture in PRE_PROMOTION_FIXTURES {
         min_sum_bp_into(
             &graph,
             &fixture.syndrome,

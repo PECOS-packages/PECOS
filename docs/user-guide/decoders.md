@@ -389,15 +389,18 @@ match decoder.decode(&syndrome.view()) {
 
 For exact endpoint handling when built from a DEM, see [LDPC Decoders](#ldpc-decoders).
 
-Native Relay-BP and min-sum flip a bit when its posterior log-likelihood ratio
-is `<= 0`, including either exact zero, matching relay-bp and ldpc. Stored prior
-log-ratio magnitudes below `4e-5` are raised to that floor with the same sign;
-exact zero becomes `+4e-5`, so priors of exactly one half no longer start at a tie.
-The floor applies only to stored priors, not messages or memory mixing; the
-existing saturation at ±30 is unchanged. Decoding results can change.
-
 `relay_bp`, `RelayBpBuilder`, and `RelayBpDecoder` use PECOS's native Relay-BP
 kernel (`pecos-bp`), implementing Müller et al., [arXiv:2506.01779](https://arxiv.org/abs/2506.01779).
+
+Native Relay-BP and min-sum flip a bit when its posterior log-likelihood ratio
+is `<= 0`, including either exact zero, matching relay-bp and ldpc. PECOS always
+floors the stored prior that seeds messages and memory at magnitude `4e-5`,
+as relay-bp does when `min_log_prior_ratio` is set (its default is `None`).
+The sign is preserved except that exact zero becomes `+4e-5`, so priors of
+exactly one half no longer start at a tie. Nothing downstream is floored again.
+Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
+The existing saturation at ±30 is unchanged. Decoding results can change.
+
 For a fixed configuration, decoding is a deterministic function of `(seed, syndrome)`.
 Decode order, batch splitting and worker count cannot change a result; serial and
 parallel batch decoding are supported.

@@ -23,9 +23,9 @@
 //! five additional logical errors. Every shot checks the expected leg count.
 //!
 //! Known non-bitwise differences: floating-point summation order; prior
-//! magnitude flooring (native 4e-5); saturation
-//! (external `f64::MAX`, native 30); and check-message sign at -0.0 (external uses
-//! `is_sign_negative`, native counts -0.0 as positive).
+//! magnitude flooring (native 4e-5); saturation (external `f64::MAX`, native 30);
+//! and check-message sign at -0.0 (external uses `is_sign_negative`, native counts
+//! -0.0 as positive).
 //!
 //! c7's external failed-shot correction is stale from a previous decode when
 //! `pre_iter = 0`. Compare flags, iterations and jointly converged corrections

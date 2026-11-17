@@ -20,10 +20,12 @@
 //! syndrome check after each iteration guarantees no unsatisfied correction
 //! is reported as converged. Hard decisions flip bits whose posterior is
 //! non-positive, including either exact zero, matching relay-bp and ldpc.
-//! Stored prior LLRs use [`crate::MIN_LOG_PRIOR_RATIO_MAGNITUDE`] to keep
-//! half-probability priors off the tie; memory mixing and messages are unchanged.
+//! PECOS always floors the stored prior that seeds messages and memory at
+//! [`MIN_LOG_PRIOR_RATIO_MAGNITUDE`], as relay-bp does when its opt-in
+//! `min_log_prior_ratio` is set (default: `None`). Nothing downstream is floored
+//! again. Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
 
-use crate::{BpGraph, LLR_SATURATION};
+use crate::{BpGraph, LLR_SATURATION, MIN_LOG_PRIOR_RATIO_MAGNITUDE};
 use pecos_decoder_core::errors::DecoderError;
 use pecos_random::PecosRng;
 
@@ -156,6 +158,8 @@ pub struct RelayOutcome {
 pub struct RelayBp {
     graph: BpGraph,
     config: RelayConfig,
+    // Floored once for message and memory seeding; graph priors remain raw for costs.
+    bp_prior: Vec<f64>,
     posterior: Vec<f64>,
     gamma: Vec<f64>,
     bias: Vec<f64>,
@@ -179,7 +183,14 @@ impl RelayBp {
 
         let num_vars = graph.mechanism_count();
         let num_edges = graph.edge_count();
+        let bp_prior = graph
+            .prior_llrs()
+            .iter()
+            .copied()
+            .map(floor_bp_prior)
+            .collect();
         Ok(Self {
+            bp_prior,
             graph,
             config,
             posterior: vec![0.0; num_vars],
@@ -221,7 +232,7 @@ impl RelayBp {
             )));
         }
 
-        self.posterior.copy_from_slice(self.graph.prior_llrs());
+        self.posterior.copy_from_slice(&self.bp_prior);
         let mut rng = PecosRng::seed_from_u64(shot_seed);
 
         let mut legs = Vec::new();
@@ -330,7 +341,7 @@ impl RelayBp {
         self.c_to_v.fill(0.0);
         for variable in 0..self.graph.mechanism_count() {
             for &(_, message) in self.graph.var_entries(variable) {
-                self.v_to_c[message as usize] = self.graph.prior_llrs()[variable];
+                self.v_to_c[message as usize] = self.bp_prior[variable];
             }
         }
     }
@@ -362,7 +373,7 @@ impl RelayBp {
 
     fn compute_bias(&mut self) {
         for variable in 0..self.graph.mechanism_count() {
-            let prior = self.graph.prior_llrs()[variable];
+            let prior = self.bp_prior[variable];
             self.bias[variable] = prior + self.gamma[variable] * (self.posterior[variable] - prior);
         }
     }
@@ -441,6 +452,19 @@ impl RelayBp {
             .zip(self.graph.prior_llrs())
             .map(|(&bit, &prior)| f64::from(bit) * prior)
             .sum()
+    }
+}
+
+/// Floor only the stored prior that seeds BP, mapping either zero to positive.
+fn floor_bp_prior(llr: f64) -> f64 {
+    if llr.abs() < MIN_LOG_PRIOR_RATIO_MAGNITUDE {
+        if llr < 0.0 {
+            -MIN_LOG_PRIOR_RATIO_MAGNITUDE
+        } else {
+            MIN_LOG_PRIOR_RATIO_MAGNITUDE
+        }
+    } else {
+        llr
     }
 }
 
@@ -605,7 +629,7 @@ fn update_variable_serial(
 
 #[cfg(test)]
 mod tests {
-    use super::{Alpha, RelayBp, RelayConfig, Schedule, StopRule, message_sign};
+    use super::{Alpha, RelayBp, RelayConfig, Schedule, StopRule, floor_bp_prior, message_sign};
     use crate::{BpGraph, LLR_SATURATION};
     use pecos_decoder_core::dem::DemCheckMatrix;
     use pecos_decoder_core::errors::DecoderError;
@@ -667,8 +691,43 @@ mod tests {
     }
 
     #[test]
+    fn bp_prior_floor_preserves_sign_and_other_values() {
+        for zero in [0.0_f64, -0.0] {
+            assert_eq!(floor_bp_prior(zero).to_bits(), 4e-5_f64.to_bits());
+        }
+        for (llr, expected) in [(1e-6, 4e-5_f64), (-1e-6, -4e-5_f64)] {
+            assert_eq!(floor_bp_prior(llr).to_bits(), expected.to_bits());
+        }
+        for llr in [-30.0_f64, -1.0, -4e-5, 4e-5, 1.0, 30.0] {
+            assert_eq!(floor_bp_prior(llr).to_bits(), llr.to_bits());
+        }
+    }
+
+    #[test]
+    fn half_prior_correction_has_zero_raw_cost() {
+        let matrix = ndarray::arr2(&[[1, 0], [0, 1]]);
+        let graph = BpGraph::from_dense_check_matrix(matrix.view(), &[0.5, 0.1]).unwrap();
+        let raw_cost = (9.0_f64).ln();
+        for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
+            let mut decoder = RelayBp::new(graph.clone(), one_iteration_config(schedule)).unwrap();
+            let outcome = decoder.decode(&[1, 1], 0).unwrap();
+            assert!(outcome.converged);
+            assert_eq!(outcome.correction, vec![1, 1]);
+            assert_eq!(decoder.correction_weight().to_bits(), raw_cost.to_bits());
+            assert_eq!(outcome.legs[0].weight, Some(raw_cost));
+            assert_eq!(outcome.weight, Some(raw_cost));
+            let half_only = decoder.decode(&[1, 0], 0).unwrap();
+            assert!(half_only.converged);
+            assert_eq!(half_only.correction, vec![1, 0]);
+            assert_eq!(half_only.legs[0].weight, Some(0.0));
+            assert_eq!(half_only.weight, Some(0.0));
+        }
+    }
+
+    #[test]
     fn decode_half_priors_stopping_set() {
         // Upstream relay-bp fixture: one check over three half-prior bits.
+        // Passes on the dev `< 0` base; fails with `<= 0` only, without the floor.
         let matrix = ndarray::arr2(&[[1, 1, 1]]);
         let syndrome = [0];
         let graph = BpGraph::from_dense_check_matrix(matrix.view(), &[0.5; 3]).unwrap();
@@ -691,13 +750,6 @@ mod tests {
                     .unwrap();
                 assert!(outcome.converged);
                 assert_eq!(outcome.correction, vec![0, 0, 0]);
-                for (row, &expected) in matrix.outer_iter().zip(&syndrome) {
-                    let parity = row
-                        .iter()
-                        .zip(&outcome.correction)
-                        .fold(0, |parity, (&entry, &bit)| parity ^ (entry & bit));
-                    assert_eq!(parity, expected);
-                }
             }
         }
     }

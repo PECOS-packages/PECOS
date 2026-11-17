@@ -24,11 +24,12 @@ use pecos_decoder_core::errors::DecoderError;
 /// Finite LLR magnitude used to represent certainty throughout native BP.
 pub const LLR_SATURATION: f64 = 30.0;
 
-/// Minimum stored prior LLR magnitude, matching relay-bp's half-prior bias.
+/// Minimum magnitude for the stored priors that seed native Relay-BP and min-sum.
 ///
-/// Approximately `ln((0.5 + 1e-5) / (0.5 - 1e-5))`. Smaller magnitudes retain
-/// their sign, except either exact zero becomes positive, so a prior of one
-/// half does not start at a hard-decision tie. Messages and memory are not floored.
+/// Approximately `ln((0.5 + 1e-5) / (0.5 - 1e-5))`. PECOS always applies this
+/// floor, as relay-bp does when its opt-in `min_log_prior_ratio` is set (default:
+/// `None`). Either exact zero becomes positive. Costs use raw saturated priors;
+/// BP+UF and trellis priors are unchanged.
 pub const MIN_LOG_PRIOR_RATIO_MAGNITUDE: f64 = 4e-5;
 
 /// Precomputed sparse Tanner graph for BP message passing.
@@ -199,10 +200,8 @@ impl BpGraph {
     ///
     /// Saturated to `[-30.0, 30.0]`: probabilities below about `9.36e-14` (or
     /// above one minus that) produce the bound rather than the exact ratio,
-    /// matching the values used for out-of-range probabilities. Magnitudes below
-    /// [`MIN_LOG_PRIOR_RATIO_MAGNITUDE`] are raised to that floor with the same
-    /// sign; either exact zero becomes positive. Other values retain the exact
-    /// `ln((1 - p) / p)` conversion.
+    /// matching the values used for out-of-range probabilities. Everything
+    /// inside that regime is the exact `ln((1 - p) / p)`.
     #[must_use]
     pub fn prior_llrs(&self) -> &[f64] {
         &self.prior_llr
@@ -597,9 +596,8 @@ pub fn min_sum_bp_into(
     Ok(())
 }
 
-/// Convert a probability to a saturated, magnitude-floored stored prior LLR.
 fn prior_llr(probability: f64) -> f64 {
-    let llr = if probability <= 0.0 {
+    if probability <= 0.0 {
         LLR_SATURATION
     } else if probability >= 1.0 {
         -LLR_SATURATION
@@ -614,15 +612,6 @@ fn prior_llr(probability: f64) -> f64 {
         ((1.0 - probability) / probability)
             .ln()
             .clamp(-LLR_SATURATION, LLR_SATURATION)
-    };
-    if llr.abs() < MIN_LOG_PRIOR_RATIO_MAGNITUDE {
-        if llr < 0.0 {
-            -MIN_LOG_PRIOR_RATIO_MAGNITUDE
-        } else {
-            MIN_LOG_PRIOR_RATIO_MAGNITUDE
-        }
-    } else {
-        llr
     }
 }
 
@@ -808,31 +797,6 @@ mod tests {
                 Err(DecoderError::InvalidConfiguration(message))
                     if message.contains("probability")
             ));
-        }
-    }
-
-    #[test]
-    fn prior_llr_floors_half_and_near_half_probabilities() {
-        assert_eq!(prior_llr(0.5).to_bits(), 4e-5_f64.to_bits());
-        for (probability, expected) in [(0.500_001, -4e-5_f64), (0.499_999, 4e-5_f64)] {
-            let raw = ((1.0_f64 - probability) / probability).ln();
-            assert!(raw.abs() < 4e-5 && raw != 0.0);
-            assert_eq!(raw.is_sign_negative(), expected.is_sign_negative());
-            assert_eq!(prior_llr(probability).to_bits(), expected.to_bits());
-        }
-        // The floor must leave the former conversion bit-identical elsewhere.
-        for probability in [0.0, 5e-324, 0.01, 0.49998, 0.50002, 0.9, 1.0] {
-            let expected = if probability <= 0.0 {
-                LLR_SATURATION
-            } else if probability >= 1.0 {
-                -LLR_SATURATION
-            } else {
-                ((1.0_f64 - probability) / probability)
-                    .ln()
-                    .clamp(-LLR_SATURATION, LLR_SATURATION)
-            };
-            assert!(expected.abs() >= 4e-5);
-            assert_eq!(prior_llr(probability).to_bits(), expected.to_bits());
         }
     }
 

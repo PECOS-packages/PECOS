@@ -20,8 +20,10 @@
 //!
 //! Algorithm (log-likelihood ratios, positive means "no error"):
 //!
-//! - `prior[v] = ln((1 - p_v) / p_v)` clamped to `[-30, 30]`, exactly
-//!   `BpGraph::prior_llrs`.
+//! - `raw_prior[v] = ln((1 - p_v) / p_v)` clamped to `[-30, 30]`, exactly
+//!   `BpGraph::prior_llrs`, supplies costs. `prior[v]` is its BP-seeding copy,
+//!   always magnitude-floored at 4e-5 with sign preserved and either zero made
+//!   positive. Relay-bp applies this floor only when `min_log_prior_ratio` is set.
 //! - Leg 0 starts with posterior `P = prior`, `gamma[v] = gamma0` for every
 //!   variable. Leg `r >= 1` keeps `P` from the end of leg `r - 1` and draws a
 //!   fresh `gamma[v]` per variable (explicit here, cycling through the
@@ -49,7 +51,7 @@
 //!   correction is never reported as converged.
 //! - After every iteration the hard decision is `e[v] = (P[v] <= 0)`. A leg
 //!   stops early when `H e == s`; the leg is then "converged" and its weight
-//!   is the signed prior-LLR cost `sum_v e[v] * prior[v]` (lower is more
+//!   is the signed prior-LLR cost `sum_v e[v] * raw_prior[v]` (lower is more
 //!   likely; a mechanism with probability above 0.5 lowers the cost).
 //! - `Alpha::Constant` scales every iteration equally. `Alpha::Dynamic` uses
 //!   `1.0 - 2_f64.powf(-(i / scaling_factor))` for one-based iteration
@@ -93,6 +95,7 @@ fn sign(x: f64) -> f64 {
 struct Reference {
     checks: Vec<Vec<usize>>, // check -> variables
     vars: Vec<Vec<usize>>,   // variable -> checks
+    raw_prior: Vec<f64>,
     prior: Vec<f64>,
     posterior: Vec<f64>,
     gamma: Vec<f64>,
@@ -113,11 +116,24 @@ impl Reference {
                 vars[v].push(c);
             }
         }
+        let bp_prior: Vec<f64> = prior
+            .iter()
+            .map(|&value| {
+                if value.abs() >= 4e-5 {
+                    value
+                } else if value < 0.0 {
+                    -4e-5
+                } else {
+                    4e-5
+                }
+            })
+            .collect();
         Self {
             checks,
             vars,
-            prior: prior.to_vec(),
-            posterior: prior.to_vec(),
+            raw_prior: prior.to_vec(),
+            posterior: bp_prior.clone(),
+            prior: bp_prior,
             gamma: vec![0.0; n],
             bias: vec![0.0; n],
             c2v: vec![vec![0.0; n]; m],
@@ -240,7 +256,7 @@ impl Reference {
 
     fn weight(&self, e: &[u8]) -> f64 {
         e.iter()
-            .zip(&self.prior)
+            .zip(&self.raw_prior)
             .map(|(&b, &p)| f64::from(b) * p)
             .sum()
     }

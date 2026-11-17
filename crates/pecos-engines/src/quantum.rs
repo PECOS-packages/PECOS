@@ -726,6 +726,14 @@ impl ScheduledBackend {
         for gate in gates {
             gate.validate().map_err(PecosError::Input)?;
             check_qubit_capacity(gate.gate_type, &gate.qubits, self.capacity)?;
+            if matches!(
+                gate.gate_type,
+                GateType::MeasureZLost | GateType::MeasureZLeakedLost
+            ) {
+                return Err(crate::scheduled_frame::unsupported_scheduled_gate(
+                    gate.gate_type,
+                ));
+            }
             if !self.clifford {
                 continue;
             }
@@ -733,8 +741,6 @@ impl ScheduledBackend {
                 GateType::PZ
                 | GateType::MZ
                 | GateType::MeasureZLeaked
-                | GateType::MeasureZLost
-                | GateType::MeasureZLeakedLost
                 | GateType::X
                 | GateType::Y
                 | GateType::Z
@@ -1928,19 +1934,28 @@ mod tests {
     use std::f64::consts::FRAC_1_SQRT_2;
 
     #[test]
-    fn scheduled_backend_directly_admits_all_z_heralds() {
-        for flavor in [
-            GateType::MeasureZLeaked,
-            GateType::MeasureZLost,
-            GateType::MeasureZLeakedLost,
-        ] {
+    fn scheduled_backend_rejects_unencoded_heralds() {
+        for clifford in [false, true] {
             let backend = ScheduledBackend {
                 capacity: 1,
-                clifford: true,
+                clifford,
             };
             backend
-                .validate(&[Gate::simple(flavor, vec![0.into()])], false)
+                .validate(&[Gate::measure_z_leaked(&[0])], false)
                 .unwrap();
+            for flavor in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+                let error = backend
+                    .validate(&[Gate::simple(flavor, vec![0.into()])], false)
+                    .expect_err("scheduled wire has no opcode for this herald")
+                    .to_string();
+                assert!(error.contains(&flavor.to_string()), "{error}");
+                assert!(
+                    error.contains(
+                        "use MeasureZLeaked (which cannot herald loss) or a non-scheduled engine"
+                    ),
+                    "{error}"
+                );
+            }
         }
     }
 

@@ -1639,9 +1639,7 @@ pub(crate) fn replay_measurement_history(
                 }
                 // Collapse without advancing record indices; later observations
                 // re-root any hidden outcome onto a recorded measurement.
-                GateType::MeasureZLeaked
-                | GateType::MeasureZLost
-                | GateType::MeasureZLeakedLost => sim.mz_unrecorded(&qs),
+                gate if gate.is_recordless_z_measurement() => sim.mz_unrecorded(&qs),
                 GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => {
                     if gate.gate_type == GateType::MX {
                         sim.h(&qs);

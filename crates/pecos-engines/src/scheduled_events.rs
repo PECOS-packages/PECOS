@@ -538,16 +538,24 @@ impl ScheduledEventModel {
             return Err(processing_error("cloned event session requires reset"));
         }
         let batches = decode_event_batches(input)?;
-        let source = self
-            .source_timeline
-            .prepare(
-                &self.inner.config,
-                batches
-                    .iter()
-                    .map(ScheduledEventBatch::source_gates)
-                    .collect(),
-            )?
-            .timeline;
+        let source = self.source_timeline.admit_decoded_source(
+            &self.inner.config,
+            batches.iter().map(|batch| {
+                let gates = batch.operations.iter().filter_map(|op| match op {
+                    ScheduledEventOp::Gate(g) => Some(g.as_ref()),
+                    ScheduledEventOp::Custom { .. } => None,
+                });
+                (
+                    [
+                        batch.runtime_shot_id,
+                        batch.batch_index,
+                        batch.start_nanos,
+                        batch.duration_nanos,
+                    ],
+                    gates,
+                )
+            }),
+        )?;
         Ok(AdmittedEvents { batches, source })
     }
     pub(crate) fn prepare(

@@ -27,6 +27,17 @@ pub struct ReadoutMatrix {
 }
 
 impl ReadoutMatrix {
+    /// Resolve a readout gate name, including the core gate aliases.
+    ///
+    /// # Errors
+    /// Returns an error naming an unknown name and the supported flavors.
+    /// [`Self::new`] validates whether the resolved gate can own a matrix.
+    pub fn parse_flavor(name: &str) -> Result<GateType, PecosError> {
+        name.parse().map_err(|message| PecosError::Input(format!(
+            "invalid readout flavor {name:?}: {message}; use MZ, MeasureZLeaked, MeasureZLost, or MeasureZLeakedLost"
+        )))
+    }
+
     /// Validate and compile the supplied rows. Missing outcomes have weight zero.
     ///
     /// # Errors
@@ -47,28 +58,20 @@ impl ReadoutMatrix {
             GateType::MeasureZLost => &[0, 1, 3],
             GateType::MeasureZLeakedLost => &[0, 1, 2, 3],
             GateType::MPZ => {
-                return Err(invalid(
-                    "<flavor>",
-                    flavor.to_string(),
-                    "MPZ uses MZ's readout matrix; configure MZ",
-                ));
+                return Err(PecosError::Input(format!(
+                    "readout {flavor}: MPZ uses MZ's readout matrix; configure MZ"
+                )));
             }
             _ => {
-                return Err(invalid(
-                    "<flavor>",
-                    flavor.to_string(),
-                    &format!(
-                        "{flavor} has no readout matrix; flavors are MZ, MeasureZLeaked, MeasureZLost, MeasureZLeakedLost"
-                    ),
-                ));
+                return Err(PecosError::Input(format!(
+                    "readout {flavor}: {flavor} has no readout matrix; flavors are MZ, MeasureZLeaked, MeasureZLost, MeasureZLeakedLost"
+                )));
             }
         };
         if rows.is_empty() {
-            return Err(invalid(
-                "<flavor>",
-                "{}".into(),
-                "configure at least one row",
-            ));
+            return Err(PecosError::Input(format!(
+                "readout {flavor}: invalid value {{}}; configure at least one row"
+            )));
         }
         let mut compiled = std::array::from_fn(|_| None);
         for (row, weights) in rows {

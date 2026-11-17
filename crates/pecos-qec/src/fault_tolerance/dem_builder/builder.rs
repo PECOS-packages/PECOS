@@ -1372,7 +1372,7 @@ impl<'a> DemBuilder<'a> {
                 sim.mz(qubits);
                 sim.h(qubits);
             }
-            GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost => {
+            gate if gate.is_recordless_z_measurement() => {
                 require(1)?;
                 sim.mz_unrecorded(qubits);
             }
@@ -1615,8 +1615,10 @@ impl<'a> DemBuilder<'a> {
                 // MPZ takes its measurement-half fault here; the prepare-half
                 // needs an after-location the location model does not yet give
                 // measurements (tracked on the MP* issue).
-                GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ
-                    if loc.before && self.measurement_rate_for_loc(loc) > 0.0 =>
+                gate_type
+                    if gate_type.consumes_measurement_record()
+                        && loc.before
+                        && self.measurement_rate_for_loc(loc) > 0.0 =>
                 {
                     self.process_meas_fault_source_tracked(
                         loc_idx,

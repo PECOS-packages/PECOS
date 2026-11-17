@@ -69,7 +69,9 @@ def test_readout_rejects_boolean_probability(value: bool) -> None:
 
 
 @pytest.mark.parametrize("value", ["not a number", None])
-def test_readout_rejects_non_numeric_probability_with_context(value: str | None) -> None:
+def test_readout_rejects_non_numeric_probability_with_context(
+    value: str | None,
+) -> None:
     with pytest.raises(ValueError, match="numeric probability") as caught:
         general_noise().with_readout("Measure", {"0": {"1": value}})
     message = str(caught.value)
@@ -80,3 +82,18 @@ def test_readout_rejects_non_numeric_probability_with_context(value: str | None)
 def test_readout_accepts_integer_probability() -> None:
     noise = general_noise().with_readout("MZ", {"0": {"1": 1}})
     assert sim(program()).noise(noise).run(1).to_dict()["c"] == [1]
+
+
+def test_unknown_readout_flavor_names_choices() -> None:
+    with pytest.raises(ValueError, match="typo") as caught:
+        general_noise().with_readout("typo", {"0": {"0": 1}})
+    for part in ["typo", "use MZ, MeasureZLeaked, MeasureZLost, or MeasureZLeakedLost"]:
+        assert part in str(caught.value)
+
+
+@pytest.mark.parametrize(("rows", "key", "row"), [({7: {"0": 1}}, "7", "7"), ({"0": {8: 1}}, "8", '"0"')])
+def test_non_string_keys_name_key_and_row(rows: dict, key: str, row: str) -> None:
+    with pytest.raises(ValueError, match="MZ") as caught:
+        general_noise().with_readout("MZ", rows)
+    for part in ["MZ", key, f"row {row}", "str"]:
+        assert part in str(caught.value)

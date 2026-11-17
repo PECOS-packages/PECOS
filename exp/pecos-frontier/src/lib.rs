@@ -22,6 +22,7 @@
 //! decoder. Its input-order defaults remain those of that port.
 
 pub mod recovery;
+pub mod windowed;
 
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};

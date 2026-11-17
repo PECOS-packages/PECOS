@@ -111,10 +111,7 @@ fn sampled_twin(circuit: &TickCircuit) -> (TickCircuit, Vec<usize>) {
             let mut gate = batch.as_gate().clone();
             if gate.gate_type.consumes_measurement_record() {
                 record_columns.extend(column..column + gate.qubits.len());
-            } else if matches!(
-                gate.gate_type,
-                GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost
-            ) {
+            } else if gate.gate_type.is_recordless_z_measurement() {
                 gate = Gate::mz(&gate.qubits);
             }
             if gate.gate_type.consumes_measurement_record() {
@@ -173,7 +170,7 @@ fn vecset_history(
                     }
                 }
             }
-            GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost => {
+            gate if gate.is_recordless_z_measurement() => {
                 sim.mz_unrecorded(&qubits);
             }
             other => panic!("unexpected generated gate {other:?}"),

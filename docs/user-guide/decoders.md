@@ -174,6 +174,39 @@ let pcm = SparseMatrix::from_coo(2, 4, rows, cols)?;
 
 ### LDPC Decoders
 
+DEM-built Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind handle
+probability-0 and probability-1 mechanisms exactly: impossible mechanisms are
+removed, and certain mechanisms contribute fixed syndrome and observable biases.
+Reduction follows any uniform `error_rate` override and duplicate merging
+(BeliefFind does not merge duplicates). Detector and observable indices stay the
+same. Construction fails if no uncertain error mechanism remains after support
+reduction, including with `error_rate=0`. A biased syndrome that fires a
+detector that no uncertain error mechanism can flip raises an error naming the
+lowest such index and the number that fired. This includes declared-but-unused
+detectors and aborts batch decoding. Syndrome lengths and binary values are
+checked before applying biases.
+
+In Python, `DemAwareDecoder` (including convenience `from_dem` constructors)
+raises `ValueError` for empty reduced support, fired dead detectors, wrong
+lengths, and non-binary syndromes. `StructuredDemDecoder.decode_syndrome` raises
+`ValueError` for fired dead detectors and non-binary input, but `RuntimeError`
+for wrong lengths. On spec-built paths, empty reduced support raises
+`RuntimeError` when the decoder is built (for the logical-subgraph,
+logical-algorithm and logical-circuit decoders, in their constructors).
+`SampleBatch.decode`, `DemSampler` decoding and the logical decoders'
+`decode`/`decode_count` raise `RuntimeError` for fired dead detectors, which
+aborts the batch; `SampleBatch.compare_decoders` instead counts them as
+decode-error outcomes for those shots.
+
+Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
+priors strictly in `(0, 1)`; MBP is unchanged. Their product-sum check update
+bounds saturated tanh products to the closest double below one in magnitude,
+keeping check-to-bit messages finite; other products are unchanged.
+`belief_matching`, experimental BP-trellis, and the `pecos_uf` `bp` and
+`bp_serial` presets retain native ±30 saturation. Perturbed ensemble members
+retain their probability clamp, so only the anchor member receives the exact
+original bias.
+
 #### BP-OSD Decoder
 
 Combines belief propagation with ordered statistics decoding post-processing.
@@ -201,6 +234,27 @@ println!("Converged: {}", result.converged);
 
 Localized version of OSD for better scaling with large codes.
 
+BP+LSD builders, specs and DEM constructors default to minimum-sum BP, scaling
+factor 0.625, at most 30 iterations, parallel scheduling, one bit per growth step,
+and order 0. `lsd_order`: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+The raw Rust builder permits explicit reprocessing methods. Both the builder
+and `BpLsdDecoder::new` reject `Off` at every order, because LSD always runs, and
+reject `Osd0` with a positive order. At order 0 every accepted method (`Osd0`,
+`OsdCs`, `OsdE`) runs LSD-0.
+
+Cluster growth ranks BP log-probability ratios in ascending order, choosing more
+likely errors first. `bits_per_step=0` grows all candidate bits each step; their
+insertion order still affects pivots and the solution.
+
+Python `BpLsdBuilder` exposes `.bp_method(...)`, `.ms_scaling_factor(...)`,
+`.bits_per_step(...)` and `.lsd_order(...)`. `BpLsdDecoder.from_dem`, the `bp_lsd`
+spec factory and `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` accept
+these settings as keywords. Scaling defaults to 0.625; explicit `None` selects
+product-sum. An explicit `bp_method="product_sum"` (alias `"ps"`) ignores scaling;
+`bp_method="minimum_sum"` (alias `"ms"`) with `None` uses 0.625. These rules also
+apply to the Python builder. Rust specs use `ms_scaling_factor: None` to select
+product-sum.
+
 ```rust
 use pecos_decoders::BpLsdDecoder;
 
@@ -209,6 +263,8 @@ let mut decoder = BpLsdDecoder::builder(&pcm)
     .bits_per_step(1)
     .lsd_order(10)
     .build()?;
+
+assert_eq!(decoder.lsd_method(), pecos_decoders::OsdMethod::OsdCs);
 
 let result = decoder.decode(&syndrome.view())?;
 ```
@@ -331,8 +387,20 @@ match decoder.decode(&syndrome.view()) {
 
 ## Native Relay-BP
 
+For exact endpoint handling when built from a DEM, see [LDPC Decoders](#ldpc-decoders).
+
 `relay_bp`, `RelayBpBuilder`, and `RelayBpDecoder` use PECOS's native Relay-BP
 kernel (`pecos-bp`), implementing Müller et al., [arXiv:2506.01779](https://arxiv.org/abs/2506.01779).
+
+Native Relay-BP and min-sum flip a bit when its posterior log-likelihood ratio
+is `<= 0`, including either exact zero, matching relay-bp and ldpc. PECOS always
+floors the stored prior that seeds messages and memory at magnitude `4e-5`,
+as relay-bp does when `min_log_prior_ratio` is set (its default is `None`).
+The sign is preserved except that exact zero becomes `+4e-5`, so priors of
+exactly one half no longer start at a tie. Nothing downstream is floored again.
+Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
+The existing saturation at ±30 is unchanged. Decoding results can change.
+
 For a fixed configuration, decoding is a deterministic function of `(seed, syndrome)`.
 Decode order, batch splitting and worker count cannot change a result; serial and
 parallel batch decoding are supported.

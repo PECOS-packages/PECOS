@@ -81,6 +81,7 @@ pub use self::config::GeneralNoiseConfig;
 mod default;
 mod loss;
 mod readout;
+mod unique_json;
 use self::loss::MeasurementState;
 pub use self::loss::{LossSite, QubitLoss, QubitLossBuilder};
 pub use self::readout::ReadoutMatrix;

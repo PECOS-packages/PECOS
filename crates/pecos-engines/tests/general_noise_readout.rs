@@ -278,8 +278,16 @@ fn validation_names_flavor_row_value_and_fix() {
         let error = ReadoutMatrix::new(flavor, input).unwrap_err().to_string();
         let required = [
             flavor.to_string(),
-            format!("row {row:?}"),
-            format!("invalid value {value}"),
+            if row == "<flavor>" {
+                format!("readout {flavor}:")
+            } else {
+                format!("row {row:?}")
+            },
+            if row == "<flavor>" {
+                value.into()
+            } else {
+                format!("invalid value {value}")
+            },
             fix.into(),
         ];
         let missing: Vec<_> = required
@@ -480,5 +488,163 @@ fn json_readout_errors_preserve_the_users_flavor_key() {
         r#"column "2" = 1"#,
     ] {
         assert!(error.contains(part), "{error} lacks {part}");
+    }
+}
+
+#[test]
+fn readout_flavor_errors_have_no_fake_row() {
+    for (gate, input) in [
+        (GateType::MPZ, rows(r#"{"0":{"0":1}}"#)),
+        (GateType::MX, rows(r#"{"0":{"0":1}}"#)),
+        (GateType::MZ, Rows::new()),
+    ] {
+        let error = ReadoutMatrix::new(gate, &input).unwrap_err().to_string();
+        assert!(!error.contains("<flavor>"), "{error}");
+    }
+}
+
+#[test]
+fn json_readout_non_objects_name_location_value_and_fix() {
+    let mut failures = Vec::new();
+    for value in ["5", "true", "null", "[]", "\"bad\""] {
+        for depth in 0..3 {
+            if depth == 0 && value == "null" {
+                continue; // An optional readout:null intentionally means omission.
+            }
+            let readout = match depth {
+                0 => value.to_string(),
+                1 => format!(r#"{{"MZ":{value}}}"#),
+                _ => format!(r#"{{"MZ":{{"0":{value}}}}}"#),
+            };
+            let json = format!(r#"{{"measurement":{{"readout":{readout}}}}}"#);
+            let error = GeneralNoiseConfig::from_json(&json)
+                .unwrap_err()
+                .to_string();
+            let location = match depth {
+                0 => "readout",
+                1 => "readout MZ",
+                _ => "readout MZ row \"0\"",
+            };
+            for part in [location, value, "use an object"] {
+                if !error.contains(part) {
+                    failures.push(format!("{json}: missing {part} in {error}"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn json_readout_non_numbers_name_cell_and_fix() {
+    for value in ["true", "null", "\"bad\"", "[]", "{}"] {
+        let json = format!(r#"{{"measurement":{{"readout":{{"MZ":{{"0":{{"1":{value}}}}}}}}}}}"#);
+        let error = GeneralNoiseConfig::from_json(&json)
+            .unwrap_err()
+            .to_string();
+        for part in [
+            "MZ",
+            "row \"0\"",
+            "column \"1\"",
+            value,
+            "numeric probability",
+        ] {
+            assert!(error.contains(part), "missing {part} in {error}");
+        }
+    }
+}
+
+#[test]
+fn general_noise_rejects_duplicate_keys_at_every_depth() {
+    for (json, key, path) in [
+        (
+            r#"{"measurement":{"readout":{"MZ":{"0":{"1":1}},"MZ":{"0":{"0":1}}}}}"#,
+            "MZ",
+            "measurement.readout",
+        ),
+        (
+            r#"{"measurement":{"readout":{"MZ":{"0":{"1":1},"0":{"0":1}}}}}"#,
+            "0",
+            "MZ",
+        ),
+        (
+            r#"{"measurement":{"readout":{"MZ":{"0":{"1":0,"1":1}}}}}"#,
+            "1",
+            "MZ",
+        ),
+        (
+            r#"{"idle":{"linear_model":{"X":0,"X":1}}}"#,
+            "X",
+            "idle.linear_model",
+        ),
+        (
+            r#"{"measurement":{"crosstalk_model":{"X":0,"X":1}}}"#,
+            "X",
+            "measurement.crosstalk_model",
+        ),
+        (
+            r#"{"single_qubit":{"hooks_before":[{"kind":"pauli_leakage","probability":1,"events":{"X":0,"X":1}}]}}"#,
+            "X",
+            "events",
+        ),
+        (r#"{"idle":{},"idle":{}}"#, "idle", "$"),
+    ] {
+        // Exercise Deserialize directly as well as the convenience JSON entry point.
+        let error = serde_json::from_str::<GeneralNoiseConfig>(json)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("duplicate") && error.contains(key) && error.contains(path),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn general_noise_null_semantics_are_preserved() {
+    let scalar = GeneralNoiseConfig::from_json(r#"{"single_qubit":{"probability":null}}"#)
+        .unwrap()
+        .apply_to(builder().with_p1(0.1))
+        .unwrap()
+        .build();
+    assert_eq!(scalar.probabilities().3.to_bits(), 0.1_f64.to_bits());
+
+    let configured = builder()
+        .with_readout(matrix(GateType::MZ, r#"{"0":{"1":1.0}}"#))
+        .with_readout(matrix(GateType::MeasureZLost, r#"{"0":{"3":1.0}}"#));
+    let gates = [Gate::mz(&[0]), Gate::measure_z_lost(&[1])];
+    for (json, expected, has_readout) in [
+        ("{}", [1, 3], true),
+        (r#"{"measurement":{"readout":null}}"#, [1, 3], true),
+        (r#"{"measurement":{"readout":{}}}"#, [0, 0], false),
+    ] {
+        let mut model = GeneralNoiseConfig::from_json(json)
+            .unwrap()
+            .apply_to(configured.clone())
+            .unwrap()
+            .build();
+        assert_eq!(model.has_configured_readout(), has_readout, "{json}");
+        assert_eq!(run(&mut model, &gates).0, expected, "{json}");
+    }
+    for json in [
+        r#"{"measurement":{"readout":null}}"#,
+        r#"{"idle":{"linear_model":null,"linear_rate":null}}"#,
+        r#"{"two_qubit":{"angle_coefficients":null}}"#,
+        r#"{"single_qubit":{"probability":null,"pauli_model":null}}"#,
+    ] {
+        assert!(
+            GeneralNoiseConfig::from_json(json).unwrap().build().is_ok(),
+            "{json}"
+        );
+    }
+    for json in [
+        "null",
+        r#"{"measurement":null}"#,
+        r#"{"single_qubit":{"hooks_before":null}}"#,
+        r#"{"single_qubit":{"hooks_after":null}}"#,
+        r#"{"single_qubit":{"hooks_before":[{"kind":"pauli_leakage","probability":null,"events":{"X":1.0}}]}}"#,
+        r#"{"noiseless_gates":null}"#,
+    ] {
+        assert!(GeneralNoiseConfig::from_json(json).is_err(), "{json}");
     }
 }

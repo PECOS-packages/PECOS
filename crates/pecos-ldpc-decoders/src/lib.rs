@@ -13,6 +13,8 @@ use ndarray::Array1;
 use std::os::raw::c_int;
 use thiserror::Error;
 
+pub mod bp_lsd_defaults;
+
 // Internal modules
 mod bridge;
 pub mod builders;

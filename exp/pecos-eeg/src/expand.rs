@@ -202,10 +202,7 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
         // "free" is resource bookkeeping with no stabilizer effect, and a
         // reused qubit reappears behind an explicit prep the expansion keeps.
         // Z heralds have no record and cannot be represented here.
-        if matches!(
-            gate.gate_type,
-            GateType::MeasureZLeaked | GateType::MeasureZLost | GateType::MeasureZLeakedLost
-        ) {
+        if gate.gate_type.is_recordless_z_measurement() {
             return Err(EegBuildError::UnsupportedMeasurement {
                 gate_type: gate.gate_type,
             });

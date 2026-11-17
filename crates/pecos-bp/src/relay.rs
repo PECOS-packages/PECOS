@@ -25,9 +25,18 @@
 //! `min_log_prior_ratio` is set (default: `None`). Nothing downstream is floored
 //! again. Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
 
-use crate::{BpGraph, LLR_SATURATION, MIN_LOG_PRIOR_RATIO_MAGNITUDE};
+use crate::{BpGraph, LLR_SATURATION};
 use pecos_decoder_core::errors::DecoderError;
 use pecos_random::PecosRng;
+
+/// Minimum magnitude for priors that seed native Relay-BP and `MinSumBpDecoder`,
+/// which runs [`RelayBp`]. This floor does not apply to [`crate::min_sum_bp_into`].
+///
+/// Approximately `ln((0.5 + 1e-5) / (0.5 - 1e-5))`. PECOS always applies this
+/// floor, as relay-bp does when its opt-in `min_log_prior_ratio` is set (default:
+/// `None`). Either exact zero becomes positive. Costs use raw saturated priors;
+/// BP+UF and trellis priors are unchanged.
+pub const MIN_LOG_PRIOR_RATIO_MAGNITUDE: f64 = 4e-5;
 
 /// Message-passing update schedule used within each Relay-BP leg.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

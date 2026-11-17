@@ -24,14 +24,6 @@ use pecos_decoder_core::errors::DecoderError;
 /// Finite LLR magnitude used to represent certainty throughout native BP.
 pub const LLR_SATURATION: f64 = 30.0;
 
-/// Minimum magnitude for the stored priors that seed native Relay-BP and min-sum.
-///
-/// Approximately `ln((0.5 + 1e-5) / (0.5 - 1e-5))`. PECOS always applies this
-/// floor, as relay-bp does when its opt-in `min_log_prior_ratio` is set (default:
-/// `None`). Either exact zero becomes positive. Costs use raw saturated priors;
-/// BP+UF and trellis priors are unchanged.
-pub const MIN_LOG_PRIOR_RATIO_MAGNITUDE: f64 = 4e-5;
-
 /// Precomputed sparse Tanner graph for BP message passing.
 ///
 /// The graph uses CSR-style flat arrays and is intended to be constructed once

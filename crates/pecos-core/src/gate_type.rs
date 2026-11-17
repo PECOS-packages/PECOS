@@ -106,6 +106,10 @@ pub enum GateType {
     MeasureFree = 106,
     /// Measure +Z, then prepare |0> (measure-and-prepare; the MP* family)
     MPZ = 107,
+    /// Measure Z with alphabet {0, 1, 3}, where 3 means lost.
+    MeasureZLost = 108,
+    /// Measure Z with alphabet {0, 1, 2, 3}, where 2 means leaked and 3 means lost.
+    MeasureZLeakedLost = 109,
     // TODO: MPauli instead of the other variants?
     /// Prepare the +1 eigenstate of X.
     PX = 130,
@@ -480,6 +484,8 @@ impl TryFrom<u8> for GateType {
             105 => GateType::MeasureZLeaked,
             106 => GateType::MeasureFree,
             107 => GateType::MPZ,
+            108 => GateType::MeasureZLost,
+            109 => GateType::MeasureZLeakedLost,
             130 => GateType::PX,
             134 => GateType::PZ,
             135 => GateType::QAlloc,
@@ -593,16 +599,26 @@ impl GateType {
     /// end up sharing a record. Use this predicate rather than spelling the gate
     /// types out, so there is one place to change.
     ///
-    /// `MeasureZLeaked` is a measurement to `Gate::validate` and collapses the
-    /// qubit, but it produces no classical result and so consumes no record.
+    /// `MeasureZLeaked`, `MeasureZLost`, and `MeasureZLeakedLost` are measurements
+    /// to `Gate::validate` and collapse the qubit, but consume no classical record.
     /// Record-producing gates and their bases are defined by [`Self::measured_pauli`].
     #[must_use]
     pub const fn consumes_measurement_record(self) -> bool {
         self.measured_pauli().is_some()
     }
 
+    /// Whether this gate collapses in Z without consuming a measurement record.
+    #[must_use]
+    pub const fn is_recordless_z_measurement(self) -> bool {
+        matches!(
+            self,
+            Self::MeasureZLeaked | Self::MeasureZLost | Self::MeasureZLeakedLost
+        )
+    }
+
     /// Returns the Pauli basis of a gate that produces a measurement record.
-    /// Record-less gates, including `MeasureZLeaked`, return `None`.
+    /// Record-less gates, including `MeasureZLeaked`, `MeasureZLost`, and
+    /// `MeasureZLeakedLost`, return `None`.
     #[must_use]
     pub const fn measured_pauli(self) -> Option<crate::Pauli> {
         match self {
@@ -654,6 +670,8 @@ impl GateType {
             | GateType::MX
             | GateType::MZ
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::MeasCrosstalkGlobalPayload
@@ -720,6 +738,8 @@ impl GateType {
             | GateType::MX
             | GateType::MZ
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::PX
@@ -882,6 +902,8 @@ impl fmt::Display for GateType {
             GateType::MX => write!(f, "MX"),
             GateType::MZ => write!(f, "MZ"),
             GateType::MeasureZLeaked => write!(f, "MeasureZLeaked"),
+            GateType::MeasureZLost => write!(f, "MeasureZLost"),
+            GateType::MeasureZLeakedLost => write!(f, "MeasureZLeakedLost"),
             GateType::MeasureFree => write!(f, "MeasureFree"),
             GateType::MPZ => write!(f, "MPZ"),
             GateType::PX => write!(f, "PX"),
@@ -959,6 +981,8 @@ impl std::str::FromStr for GateType {
             "MEASURE" | "MEASUREZ" | "MZ" | "MEASURE Z" => Ok(GateType::MZ),
             "MEASUREFREE" | "MZFREE" => Ok(GateType::MeasureFree),
             "MEASUREZLEAKED" | "MEASURELEAKED" => Ok(GateType::MeasureZLeaked),
+            "MEASUREZLOST" => Ok(GateType::MeasureZLost),
+            "MEASUREZLEAKEDLOST" => Ok(GateType::MeasureZLeakedLost),
             "MPZ" => Ok(GateType::MPZ),
             "PX" | "INIT |+>" => Ok(GateType::PX),
             "PREP" | "PZ" | "INIT" | "INIT |0>" | "RESET" => Ok(GateType::PZ),
@@ -981,6 +1005,22 @@ impl std::str::FromStr for GateType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recordless_z_measurements_have_exact_membership() {
+        for value in u8::MIN..=u8::MAX {
+            if let Ok(gate) = GateType::try_from(value) {
+                assert_eq!(
+                    gate.is_recordless_z_measurement(),
+                    [105, 108, 109].contains(&value)
+                );
+                if gate.is_recordless_z_measurement() {
+                    assert!(!gate.consumes_measurement_record());
+                    assert_eq!(gate.measured_pauli(), None);
+                }
+            }
+        }
+    }
 
     #[test]
     fn measurement_bases_match_record_gates() {

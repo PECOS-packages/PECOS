@@ -554,6 +554,19 @@ impl IntoNoiseModel for ScheduledNoise {
         Ok(Box::new(self.build_model()))
     }
 }
+
+pub(crate) fn unsupported_scheduled_gate(gate_type: GateType) -> PecosError {
+    let fix = if matches!(
+        gate_type,
+        GateType::MeasureZLost | GateType::MeasureZLeakedLost
+    ) {
+        "; the scheduled wire carries only MeasureZLeaked among Z heralds; use MeasureZLeaked (which cannot herald loss) or a non-scheduled engine"
+    } else {
+        ""
+    };
+    error(&format!("unsupported scheduled gate: {gate_type}{fix}"))
+}
+
 pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> {
     g.validate().map_err(|s| error(&s))?;
     let (code, n, angles) = match g.gate_type {
@@ -566,7 +579,7 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> 
         GateType::PZ => (5, 1, 0),
         GateType::MZ => (6, 1, 0),
         GateType::MeasureZLeaked => (7, 1, 0),
-        _ => return Err(error("unsupported scheduled gate")),
+        _ => return Err(unsupported_scheduled_gate(g.gate_type)),
     };
     if g.qubits.len() != n
         || g.angles.len() != angles
@@ -1284,6 +1297,22 @@ mod timing_tests {
         let max_source_gates = (MAX_SCHEDULE_BYTES - 16) / 40;
         assert!(u32::try_from(16 + 96 * max_source_gates).is_ok());
         assert!(u32::try_from(3 * max_source_gates).is_ok());
+    }
+
+    #[test]
+    fn scheduled_fields_herald_error_gives_repair_guidance() {
+        assert!(fields(&Gate::measure_z_leaked(&[0])).is_ok());
+        for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let error = fields(&Gate::simple(gate, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            for part in [
+                &gate.to_string(),
+                "use MeasureZLeaked (which cannot herald loss) or a non-scheduled engine",
+            ] {
+                assert!(error.contains(part), "missing {part} in {error}");
+            }
+        }
     }
 
     #[test]

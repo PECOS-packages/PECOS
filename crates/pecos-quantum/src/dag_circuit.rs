@@ -529,7 +529,7 @@ impl From<MeasRef> for usize {
 ///   stale rather than being wrong from the start. Removal is tracked with
 ///   tombstones, so this genuinely means `remove_gate` ran;
 /// - a **record-less** id names a measurement that exists but produces no
-///   classical result (`MeasureZLeaked` with a supplied id), so nothing that
+///   classical result (a Z herald with a supplied id), so nothing that
 ///   reads records can use it;
 /// - an **inconsistent** id means the circuit's bookkeeping and its gates
 ///   disagree, and the only safe reaction is to stop.
@@ -770,6 +770,8 @@ fn supports_measurement_target(gate_type: GateType) -> bool {
             | GateType::MZ
             | GateType::MeasureFree
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MPZ
     )
 }
@@ -920,7 +922,7 @@ impl DagCircuit {
     ///   or held twice. This indicates internal corruption; stop trusting the
     ///   circuit.
     /// - [`MeasResolveError::RecordLess`] -- the id names a measurement that
-    ///   consumes no measurement record (`MeasureZLeaked` carrying a supplied
+    ///   consumes no measurement record (a Z herald carrying a supplied
     ///   id). It is a real measurement, but nothing that reads records can
     ///   resolve through it.
     ///
@@ -1073,11 +1075,10 @@ impl DagCircuit {
     /// numbering -- and those ids are reserved so a later minted id cannot
     /// collide.
     ///
-    /// Ids are minted only for `MZ | MeasureFree`, matching every site that
-    /// decides which gates consume a measurement record, `TickCircuit`
-    /// conversion in both directions included. Ids *supplied* on a
-    /// `MeasureZLeaked` are still reserved, so admitting the type later means
-    /// changing only which types are minted for.
+    /// Ids are minted only for gates that consume a measurement record,
+    /// matching `TickCircuit` conversion in both directions. Ids *supplied*
+    /// on any Z herald are still reserved, so admitting those types later
+    /// means changing only which types are minted for.
     ///
     /// Nothing is reserved until the whole gate has been checked: a rejected
     /// gate must not leave its ids burned, or a later legitimate use of the same
@@ -5253,7 +5254,11 @@ mod measurement_id_tests {
             .filter(|g| {
                 matches!(
                     g.gate_type,
-                    GateType::MZ | GateType::MeasureFree | GateType::MeasureZLeaked
+                    GateType::MZ
+                        | GateType::MeasureFree
+                        | GateType::MeasureZLeaked
+                        | GateType::MeasureZLost
+                        | GateType::MeasureZLeakedLost
                 )
             })
             .flat_map(|g| g.meas_ids.iter().map(|id| id.index()))
@@ -5462,7 +5467,7 @@ mod measurement_id_tests {
                 id: MeasId::from_raw(7),
                 node: leaked_node,
             }),
-            "a MeasureLeaked's supplied id names a real but record-less measurement"
+            "a Z herald's supplied id names a real but record-less measurement"
         );
 
         let held = refs[0].meas_id;
@@ -5504,47 +5509,58 @@ mod measurement_id_tests {
         }
     }
 
-    /// `MeasureZLeaked` is a measurement to `Gate::validate`, but the 46 sites
-    /// that decide which gates consume a measurement record exclude it. Minting
+    /// Z heralds are measurements to `Gate::validate` but consume no record. Minting
     /// here would hand out ids that `TickCircuit` allocates no record for, so
     /// the two sides would disagree about which id belongs to which
     /// measurement.
     #[test]
     fn measure_leaked_is_not_minted_an_id() {
-        let mut circuit = DagCircuit::new();
-        circuit.pz(&[0, 1]);
-        let leaked = circuit.add_gate_auto_wire(Gate::measure_z_leaked(&[0usize]));
-        let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut circuit = DagCircuit::new();
+            circuit.pz(&[0, 1]);
+            let leaked = circuit.add_gate_auto_wire(Gate::simple(flavor, vec![0.into()]));
+            let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
 
-        assert!(
-            circuit.gate(leaked).unwrap().meas_ids.is_empty(),
-            "MeasureLeaked must not be minted an id while the record-bearing \
+            assert!(
+                circuit.gate(leaked).unwrap().meas_ids.is_empty(),
+                "{flavor} must not be minted an id while the record-bearing \
              predicate elsewhere excludes it"
-        );
-        assert_eq!(
-            circuit.gate(measured).unwrap().meas_ids[0],
-            MeasId::from_raw(0),
-            "and it must not consume an id that a real measurement needs"
-        );
-        assert_eq!(circuit.num_measurement_ids(), 1);
+            );
+            assert_eq!(
+                circuit.gate(measured).unwrap().meas_ids[0],
+                MeasId::from_raw(0),
+                "and it must not consume an id that a real measurement needs"
+            );
+            assert_eq!(circuit.num_measurement_ids(), 1);
+        }
     }
 
-    /// An id supplied on a `MeasureZLeaked` is still reserved, so admitting the
+    /// An id supplied on a record-less Z herald is still reserved, so admitting the
     /// type later means changing only which gate types are minted for.
     #[test]
     fn a_supplied_measure_leaked_id_is_still_reserved() {
-        let mut circuit = DagCircuit::new();
-        circuit.pz(&[0, 1]);
-        let mut leaked = Gate::measure_z_leaked(&[0usize]);
-        leaked.meas_ids = smallvec::smallvec![MeasId::from_raw(0)];
-        circuit.add_gate_auto_wire(leaked);
-        let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut circuit = DagCircuit::new();
+            circuit.pz(&[0, 1]);
+            let mut leaked = Gate::simple(flavor, vec![0.into()]);
+            leaked.meas_ids = smallvec::smallvec![MeasId::from_raw(0)];
+            circuit.add_gate_auto_wire(leaked);
+            let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
 
-        assert_eq!(
-            circuit.gate(measured).unwrap().meas_ids[0],
-            MeasId::from_raw(1),
-            "minting must not reuse an id a MeasureLeaked already holds"
-        );
+            assert_eq!(
+                circuit.gate(measured).unwrap().meas_ids[0],
+                MeasId::from_raw(1),
+                "minting must not reuse an id {flavor} already holds"
+            );
+        }
     }
 
     /// The counter cannot reject a supplied id that sits *below* it, so

@@ -424,7 +424,7 @@ fn map_noise_to_neo(
             return Err(PecosError::Input(
                 "This GeneralNoiseModel configuration uses features beyond the simple \
                  probability subset (leakage, seepage, idle, crosstalk, scales, custom \
-                 emission distributions, or noiseless gates), which are not yet mapped to \
+                 emission distributions, readout matrices, or noiseless gates), which are not yet mapped to \
                  the neo stack. Use .stack(SimStack::Engines) or configure sim_neo() \
                  directly with a neo noise model."
                     .to_string(),

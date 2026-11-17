@@ -1936,6 +1936,8 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         GateType::MX
         | GateType::MZ
         | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::PX
@@ -2037,6 +2039,15 @@ mod tests {
     use pecos_core::unitary_rep::{CX, H, I, Is, RX, RZ, SWAP, SZ, T, X, Y, Z};
     use pecos_random::PecosRng;
     use std::f64::consts::PI;
+
+    #[test]
+    fn heralds_are_not_unitary_matrices() {
+        for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let panic = std::panic::catch_unwind(|| gate_to_matrix(gate, &[0], 1)).unwrap_err();
+            let message = panic.downcast_ref::<String>().unwrap();
+            assert!(message.contains(&gate.to_string()) && message.contains("not a unitary gate"));
+        }
+    }
 
     // This is numerical equality of the phase-fixed matrices, not equivalence
     // modulo global phase. The tolerance covers roundoff accumulated by T^8

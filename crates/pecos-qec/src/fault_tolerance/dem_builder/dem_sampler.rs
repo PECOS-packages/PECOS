@@ -62,7 +62,9 @@
 //! let (det_events, dem_output_flips) = sampler.sample_batch(100, &mut rng);
 //! ```
 
-use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
+use crate::fault_tolerance::propagator::{
+    DagFaultInfluenceMap, GateFaultLocation, GateNoiseKind, Pauli, gate_noise_kind,
+};
 use pecos_core::prelude::GateType;
 use pecos_random::{PecosRng, RngProbabilityExt, nth_derived_seed};
 use rand_core::Rng;
@@ -449,12 +451,14 @@ impl SamplingEngine {
     ///
     /// # Panics
     ///
-    /// Panics if a gate event has no corresponding fault location.
+    /// Panics if a noise-channel residual's location index exceeds `u32::MAX`,
+    /// the largest index representable in residual metadata.
     ///
     /// # Errors
     ///
     /// Returns the structured unsupported-gate diagnostic retained by the
-    /// influence map, or a configuration error for an invalid replacement mode
+    /// influence map, or a configuration error if the probability slice length differs
+    /// from `influence_map.locations.len()`, for an invalid replacement mode,
     /// or an invalid noise or signature channel, including repeated qubits at a gate location.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
@@ -462,6 +466,14 @@ impl SamplingEngine {
         noise: &super::NoiseConfig,
     ) -> Result<Self, super::DemBuilderError> {
         use pecos_core::gate_type::GateType;
+
+        if per_location_probs.len() != influence_map.locations.len() {
+            return Err(super::DemBuilderError::ConfigurationError(format!(
+                "per-location probability length mismatch: received {}, expected {}; pass one probability per influence-map location",
+                per_location_probs.len(),
+                influence_map.locations.len(),
+            )));
+        }
 
         if let Some(error) = influence_map.unsupported_gate() {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
@@ -506,11 +518,11 @@ impl SamplingEngine {
                     loc.node, loc.qubits
                 )));
             }
-            let p = super::sampler::gate_location_prob_from_locations(
-                loc,
-                per_location_probs,
-                &influence_map.locations,
-            );
+        }
+
+        for loc in gate_locs.iter().flat_map(GateFaultLocation::gate_instances) {
+            let loc_idx = loc.location_index();
+            let p = super::sampler::gate_location_prob(&loc, per_location_probs);
             if p == 0.0 {
                 continue;
             }
@@ -524,11 +536,7 @@ impl SamplingEngine {
 
             let is_idle = loc.gate_type == GateType::Idle;
             if is_idle {
-                let duration = influence_map
-                    .locations
-                    .iter()
-                    .find(|l| l.node == loc.node && l.before == loc.before)
-                    .map_or(0.0, |l| l.idle_duration);
+                let duration = influence_map.locations[loc_idx].idle_duration;
                 let families = noise.try_idle_channel_families(duration).map_err(|error| {
                     super::DemBuilderError::ConfigurationError(error.to_string())
                 })?;
@@ -563,13 +571,6 @@ impl SamplingEngine {
                     .clone()
                     .unwrap_or_else(DemMechanism::empty);
                 debug_assert_eq!(y, x.xor(&z));
-                let loc_idx = influence_map
-                    .locations
-                    .iter()
-                    .position(|candidate| {
-                        candidate.node == loc.node && candidate.before == loc.before
-                    })
-                    .expect("idle gate location must have a fault location");
 
                 for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
                     let channel_weight = probabilities.total();
@@ -629,11 +630,11 @@ impl SamplingEngine {
             }
 
             // Get per-event probabilities based on gate type and noise config
-            let n_qubits = loc.num_qubits();
-            let custom_weights = if n_qubits == 1 {
-                noise.p1_weights.as_ref()
-            } else {
-                noise.p2_weights.as_ref()
+            let gate_kind = gate_noise_kind(loc.gate_type);
+            let custom_weights = match gate_kind {
+                GateNoiseKind::Single => noise.p1_weights.as_ref(),
+                GateNoiseKind::Two => noise.p2_weights.as_ref(),
+                _ => None,
             };
 
             let event_weights: Vec<f64> = if let Some(weights) = custom_weights {
@@ -641,7 +642,7 @@ impl SamplingEngine {
                 events
                     .iter()
                     .map(|event| {
-                        let weight = if n_qubits == 2 {
+                        let weight = if gate_kind == GateNoiseKind::Two {
                             weights.two_qubit_weight_for_on(
                                 loc.clifford,
                                 &event.pauli,
@@ -662,12 +663,7 @@ impl SamplingEngine {
                 vec![per_event; events.len()]
             };
 
-            let loc_idx = influence_map
-                .locations
-                .iter()
-                .position(|candidate| candidate.node == loc.node && candidate.before == loc.before)
-                .expect("gate event must have a fault location");
-            let channel_kind = if n_qubits == 2 {
+            let channel_kind = if gate_kind == GateNoiseKind::Two {
                 NoiseChannelKind::TwoQubitGate
             } else {
                 NoiseChannelKind::SingleQubitGate
@@ -2347,9 +2343,11 @@ impl<'a> SamplingEngineBuilder<'a> {
                         );
                     }
                 }
-                GateType::MZ | GateType::MeasureFree | GateType::MPZ
+                gate_type
                     // Measurement errors: only "before" locations (X error = bit flip)
-                    if loc.before =>
+                    if gate_type != GateType::MX
+                        && gate_type.consumes_measurement_record()
+                        && loc.before =>
                 {
                     let p = self.measurement_rate_for_location(loc);
                     if p > 0.0 {

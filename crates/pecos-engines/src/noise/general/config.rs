@@ -336,9 +336,42 @@ struct IdleConfig {
     scale: Option<f64>,
 }
 
+type ReadoutRows = BTreeMap<String, BTreeMap<String, f64>>;
+
+fn deserialize_readout<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<BTreeMap<String, ReadoutRows>>, D::Error> {
+    let input = Option::<Value>::deserialize(deserializer)?;
+    input.map(|value| {
+        let flavors = value.as_object().ok_or_else(|| serde::de::Error::custom(format!(
+            "readout: invalid value {value}; use an object mapping measurement flavors to row objects"
+        )))?;
+        flavors.iter().map(|(flavor, rows)| {
+            let row_map = rows.as_object().ok_or_else(|| serde::de::Error::custom(format!(
+                "readout {flavor}: invalid value {rows}; use an object mapping row names to probability objects"
+            )))?;
+            let rows = row_map.iter().map(|(row, columns)| {
+                let column_map = columns.as_object().ok_or_else(|| serde::de::Error::custom(format!(
+                    "readout {flavor} row {row:?}: invalid value {columns}; use an object mapping column names to numeric probabilities in [0, 1]"
+                )))?;
+                let columns = column_map.iter().map(|(column, value)| {
+                    let probability = value.as_f64().ok_or_else(|| serde::de::Error::custom(format!(
+                        "readout {flavor} row {row:?}: invalid value column {column:?} = {value}; use a numeric probability in [0, 1]"
+                    )))?;
+                    Ok((column.clone(), probability))
+                }).collect::<Result<_, D::Error>>()?;
+                Ok((row.clone(), columns))
+            }).collect::<Result<_, D::Error>>()?;
+            Ok((flavor.clone(), rows))
+        }).collect()
+    }).transpose()
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct MeasurementConfig {
+    #[serde(deserialize_with = "deserialize_readout")]
+    readout: Option<BTreeMap<String, ReadoutRows>>,
     p0_to_1: Option<f64>,
     p1_to_0: Option<f64>,
     global_crosstalk_probability: Option<f64>,
@@ -359,8 +392,7 @@ struct ScalingConfig {
 /// Device-neutral general-noise parameters shared by engine and plugin consumers.
 ///
 /// Unset fields preserve an existing builder's configuration when applied.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Debug, Default)]
 pub struct GeneralNoiseConfig {
     preparation: PreparationConfig,
     measurement: MeasurementConfig,
@@ -369,6 +401,26 @@ pub struct GeneralNoiseConfig {
     idle: IdleConfig,
     scaling: ScalingConfig,
     noiseless_gates: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for GeneralNoiseConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A remote derive keeps the public type's schema in one deserialization
+        // path, after duplicate detection has visited every nested object.
+        #[derive(Default, Deserialize)]
+        #[serde(remote = "GeneralNoiseConfig", default, deny_unknown_fields)]
+        struct Fields {
+            preparation: PreparationConfig,
+            measurement: MeasurementConfig,
+            single_qubit: GateConfig,
+            two_qubit: TwoQubitConfig,
+            idle: IdleConfig,
+            scaling: ScalingConfig,
+            noiseless_gates: Vec<String>,
+        }
+        let value = super::unique_json::deserialize(deserializer)?;
+        Fields::deserialize(value).map_err(serde::de::Error::custom)
+    }
 }
 
 impl GeneralNoiseConfig {
@@ -551,6 +603,26 @@ impl GeneralNoiseConfig {
         }
 
         let measurement = &self.measurement;
+        if let Some(readout) = &measurement.readout {
+            builder.clear_readout();
+            let mut flavors = BTreeMap::new();
+            for (name, rows) in readout {
+                let flavor = super::ReadoutMatrix::parse_flavor(name)?;
+                if let Some(previous) = flavors.insert(flavor, name) {
+                    return Err(input_error(format!(
+                        "readout keys {previous:?} and {name:?} both name {flavor}; configure each flavor once"
+                    )));
+                }
+                let matrix = super::ReadoutMatrix::new(flavor, rows).map_err(|error| {
+                    let message = match error {
+                        PecosError::Input(message) => message,
+                        other => other.to_string(),
+                    };
+                    input_error(format!("measurement.readout key {name:?}: {message}"))
+                })?;
+                builder = builder.with_readout(matrix);
+            }
+        }
         if let Some(value) = measurement.p0_to_1 {
             builder = builder.with_p_meas_0(value);
         }

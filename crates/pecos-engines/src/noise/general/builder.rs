@@ -84,6 +84,7 @@ pub struct GeneralNoiseModelBuilder {
     p2_hook_order_after_gate: Vec<HookChannel>,
     // global params
     noiseless_gates: Option<BTreeSet<GateType>>,
+    readout: BTreeMap<GateType, super::ReadoutMatrix>,
     seed: Option<u64>,
     scale: Option<f64>,
     leakage_scale: Option<f64>,
@@ -157,6 +158,7 @@ impl GeneralNoiseModelBuilder {
             p2_hook_order_after_gate: Vec::new(),
             // global params
             noiseless_gates: None,
+            readout: BTreeMap::new(),
             seed: None,
             scale: None,
             leakage_scale: None,
@@ -270,6 +272,7 @@ impl GeneralNoiseModelBuilder {
     fn build_validated(mut self) -> GeneralNoiseModel {
         // Start with the default noise model as a base
         let mut model = GeneralNoiseModel::default();
+        model.readout.clone_from(&self.readout);
 
         // global params
         // -----------------------------------------------------------------------------------------
@@ -1369,6 +1372,17 @@ impl GeneralNoiseModelBuilder {
         Ok(())
     }
 
+    /// Replace one flavor's readout matrix, retaining the other flavors.
+    #[must_use]
+    pub fn with_readout(mut self, matrix: super::ReadoutMatrix) -> Self {
+        self.readout.insert(matrix.flavor, matrix);
+        self
+    }
+
+    pub(super) fn clear_readout(&mut self) {
+        self.readout.clear();
+    }
+
     /// Validate cross-field configuration invariants.
     ///
     /// # Errors
@@ -1377,6 +1391,9 @@ impl GeneralNoiseModelBuilder {
     pub fn validate_configuration(&self) -> Result<(), String> {
         if let Some(message) = self.setter_error() {
             return Err(message.to_owned());
+        }
+        for matrix in self.readout.values() {
+            matrix.validate_without_loss()?;
         }
         let finite_non_negative = |value: f64| value.is_finite() && value >= 0.0;
         let probability = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
@@ -1694,6 +1711,7 @@ impl GeneralNoiseModelBuilder {
         let gates_default = self.noiseless_gates.as_ref().is_none_or(BTreeSet::is_empty);
 
         optional_features_off
+            && self.readout.is_empty()
             && custom_models_off
             && (allow_hooks || hooks_off)
             && scales_neutral

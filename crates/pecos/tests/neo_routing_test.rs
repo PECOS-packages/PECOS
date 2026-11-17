@@ -437,3 +437,25 @@ fn facade_sampling_workers_runs_parallel_on_both_stacks() {
         );
     }
 }
+
+#[test]
+fn neo_stack_rejects_readout_matrices() {
+    use pecos_engines::GateType;
+    use pecos_engines::noise::{GeneralNoiseModel, ReadoutMatrix};
+    use std::collections::BTreeMap;
+    let rows = BTreeMap::from([("0".into(), BTreeMap::from([("0".into(), 1.0)]))]);
+    let noise =
+        GeneralNoiseModel::builder().with_readout(ReadoutMatrix::new(GateType::MZ, &rows).unwrap());
+    let error = sim(deterministic_conditional_qasm())
+        .stack(SimStack::Neo)
+        .noise(noise)
+        .shots(1)
+        .run()
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("beyond the simple probability subset")
+            && error.contains("readout matrices"),
+        "{error}"
+    );
+}

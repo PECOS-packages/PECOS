@@ -72,6 +72,8 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::MX => "MX",
         GateType::MZ => "MZ",
         GateType::MeasureZLeaked => "ML",
+        GateType::MeasureZLost => "MLo",
+        GateType::MeasureZLeakedLost => "MLL",
         GateType::MeasureFree => "MF",
         GateType::MPZ => "MPZ",
         GateType::PX => "PX",
@@ -215,6 +217,8 @@ fn gate_color(gate_type: GateType) -> CellColor {
         GateType::Idle
         | GateType::I
         | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::QAlloc
@@ -245,9 +249,12 @@ fn gate_color(gate_type: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_family(gate_type: GateType) -> GateFamily {
     match gate_type {
-        GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree | GateType::MPZ => {
-            GateFamily::Measurement
-        }
+        GateType::MZ
+        | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost
+        | GateType::MeasureFree
+        | GateType::MPZ => GateFamily::Measurement,
         GateType::PZ | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
         _ => GateFamily::Default,
     }
@@ -600,6 +607,16 @@ pub(crate) fn build_diagram_or_empty(
 mod tests {
     use super::*;
     use pecos_core::Angle64;
+
+    #[test]
+    fn herald_labels_share_measurement_style() {
+        assert_eq!(gate_symbol(GateType::MeasureZLost), "MLo");
+        assert_eq!(gate_symbol(GateType::MeasureZLeakedLost), "MLL");
+        for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            assert_eq!(gate_color(gate), gate_color(GateType::MeasureZLeaked));
+            assert_eq!(gate_family(gate), gate_family(GateType::MeasureZLeaked));
+        }
+    }
 
     fn render_tick(build: impl FnOnce(&mut crate::TickCircuit)) -> String {
         let mut tc = crate::TickCircuit::new();

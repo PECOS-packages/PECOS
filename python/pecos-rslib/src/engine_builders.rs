@@ -28,7 +28,7 @@ use pecos_engines::noise::{
 };
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyBool;
+use pyo3::types::{PyBool, PyDict};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -1871,6 +1871,53 @@ impl PyGeneralNoiseModelBuilder {
     /// Set measurement error probability (asymmetric)
     fn with_measurement_probability(&self, p0: f64, p1: f64) -> PyResult<Self> {
         Self::from_setter(self.inner.clone().with_p_meas_0(p0).with_p_meas_1(p1))
+    }
+
+    /// Configure conditional readout rows for one Z-measurement flavor.
+    fn with_readout(&self, gate_name: &str, rows: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let gate_type = pecos_engines::noise::ReadoutMatrix::parse_flavor(gate_name)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let rows = rows.cast::<PyDict>().map_err(|error| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "readout {gate_name}: invalid value {rows}; use a dict of rows: {error}"
+            ))
+        })?;
+        let mut probabilities = BTreeMap::new();
+        for (row_key, columns) in rows.iter() {
+            let row = row_key.extract::<String>().map_err(|error| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "readout {gate_name} row {row_key}: invalid row key {row_key}; use a str key: {error}"
+                ))
+            })?;
+            let columns = columns.cast::<PyDict>().map_err(|error| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "readout {gate_name} row {row:?}: invalid value {columns}; use a dict of outcomes: {error}"
+                ))
+            })?;
+            let mut weights = BTreeMap::new();
+            for (column_key, value) in columns.iter() {
+                let column = column_key.extract::<String>().map_err(|error| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "readout {gate_name} row {row:?}: invalid column key {column_key}; use a str key: {error}"
+                    ))
+                })?;
+                if value.is_instance_of::<PyBool>() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "readout {gate_name} row {row:?}: invalid value column {column:?} = {value}; use a numeric probability, not bool"
+                    )));
+                }
+                let probability = value.extract::<f64>().map_err(|error| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "readout {gate_name} row {row:?}: invalid value column {column:?} = {value}; use a numeric probability: {error}"
+                    ))
+                })?;
+                weights.insert(column, probability);
+            }
+            probabilities.insert(row, weights);
+        }
+        let matrix = pecos_engines::noise::ReadoutMatrix::new(gate_type, &probabilities)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Self::from_setter(self.inner.clone().with_readout(matrix))
     }
 
     /// Add a noiseless gate

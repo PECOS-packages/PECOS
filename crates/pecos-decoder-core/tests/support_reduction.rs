@@ -1,3 +1,15 @@
+// Copyright 2026 The PECOS Developers
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License. You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License
+// is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+// or implied. See the License for the specific language governing permissions and limitations under
+// the License.
+
 use ndarray::{ArrayView1, arr2};
 use pecos_decoder_core::{
     CheckMatrixObservableDecoder, Decoder, DecoderError, DecodingResultTrait, DemCheckMatrix,
@@ -23,9 +35,9 @@ fn exact_support_reduction() {
     assert_eq!(reduced.error_priors, vec![0.2]);
     assert_eq!(reduced.check_matrix, arr2(&[[0], [0], [1], [0]]));
     assert_eq!(reduced.observable_matrix, arr2(&[[0], [1]]));
-    assert_eq!(support.syndrome_bias, vec![0, 1, 0, 0]);
-    assert_eq!(support.observable_bias.to_u64(), Some(2));
-    assert_eq!(support.dead_detectors, vec![0, 1, 3]);
+    assert_eq!(support.syndrome_bias(), vec![0, 1, 0, 0]);
+    assert_eq!(support.observable_bias().to_u64(), Some(2));
+    assert_eq!(support.dead_detectors(), vec![0, 1, 3]);
 }
 
 #[test]
@@ -39,9 +51,19 @@ fn exact_support_merge_and_override() {
         assert_eq!(matrix.num_mechanisms, 0);
         assert_eq!(matrix.check_matrix.dim(), (1, 0));
         assert_eq!(matrix.observable_matrix.dim(), (1, 0));
-        assert_eq!(support.syndrome_bias, vec![expected]);
-        assert_eq!(support.observable_bias.to_u64(), Some(u64::from(expected)));
-        assert_eq!(support.dead_detectors, vec![0]);
+        assert_eq!(
+            support.syndrome_bias(),
+            if expected == 0 {
+                vec![]
+            } else {
+                vec![expected]
+            }
+        );
+        assert_eq!(
+            support.observable_bias().to_u64(),
+            Some(u64::from(expected))
+        );
+        assert_eq!(support.dead_detectors(), vec![0]);
     }
     for rate in [0.0, 1.0] {
         let mut matrix =
@@ -50,10 +72,10 @@ fn exact_support_merge_and_override() {
         let (matrix, support) = matrix.merge_duplicate_symptoms().reduce_support();
         assert_eq!(matrix.num_mechanisms, 0);
         assert_eq!(
-            support.syndrome_bias,
-            vec![u8::from(rate.to_bits() == 1.0_f64.to_bits()); 2]
+            support.syndrome_bias(),
+            if rate >= 1.0 { vec![1; 2] } else { vec![] }
         );
-        assert_eq!(support.dead_detectors, vec![0, 1]);
+        assert_eq!(support.dead_detectors(), vec![0, 1]);
         assert!(matches!(
             matrix.ensure_nonempty_support(),
             Err(DecoderError::InvalidConfiguration(_))
@@ -90,7 +112,9 @@ fn exact_support_wrapper_methods_and_validation() {
     let matrix =
         DemCheckMatrix::from_dem_str("error(1) D0 L0\nerror(0.1) D1 L1\ndetector D2").unwrap();
     let (matrix, support) = matrix.reduce_support();
-    let mut decoder = CheckMatrixObservableDecoder::new(Echo, matrix.clone()).with_support(support);
+    let mut decoder = CheckMatrixObservableDecoder::new(Echo, matrix.clone())
+        .with_support(support)
+        .unwrap();
     assert_eq!(decoder.decode_to_observables(&[1, 1, 0]).unwrap(), 3);
     assert_eq!(
         decoder
@@ -127,4 +151,58 @@ fn exact_support_wrapper_methods_and_validation() {
     assert!(
         matches!(plain.decode_obs(&[0, 2, 0]), Err(DecoderError::InvalidSyndrome(message)) if message.contains("index 1") && message.contains('2'))
     );
+}
+
+#[test]
+fn certain_columns_xor_shared_detectors() {
+    let (_, support) = DemCheckMatrix::from_dem_str("error(1) D0 D1\nerror(1) D1 D2")
+        .unwrap()
+        .reduce_support();
+    assert_eq!(support.syndrome_bias(), vec![1, 0, 1]);
+}
+
+#[test]
+fn support_without_certain_columns_has_no_syndrome_bias() {
+    let (_, support) = DemCheckMatrix::from_dem_str("error(0) D0\nerror(0.1) D1")
+        .unwrap()
+        .reduce_support();
+    assert_eq!(support.syndrome_bias(), []);
+    assert_eq!(support.dead_detectors(), &[0]);
+}
+
+#[test]
+fn mismatched_support_is_rejected_without_panicking() {
+    let matrix = DemCheckMatrix::from_dem_str("error(0.1) D0").unwrap();
+    for text in ["error(1) D2", "error(0) D2"] {
+        let (_, support) = DemCheckMatrix::from_dem_str(text).unwrap().reduce_support();
+        assert!(
+            CheckMatrixObservableDecoder::new(Echo, matrix.clone())
+                .with_support(support.clone())
+                .is_err()
+        );
+        // Direct callers of the shared helper are also checked before indexing.
+        assert!(support.bias_syndrome(&mut [0], 1).is_err());
+    }
+}
+
+#[test]
+fn replacing_public_dem_resizes_buffer_and_checks_support() {
+    let small = DemCheckMatrix::from_dem_str("error(0.1) D0 L0").unwrap();
+    let large = DemCheckMatrix::from_dem_str("error(0.1) D1 L0\ndetector D2").unwrap();
+    let mut plain = CheckMatrixObservableDecoder::new(Echo, small.clone());
+    plain.dem = large.clone();
+    assert_eq!(plain.decode_to_observables(&[0, 1, 0]).unwrap(), 1);
+    plain.dem = DemCheckMatrix::from_dem_str("error(0.1) D1 L0").unwrap();
+    assert_eq!(plain.decode_to_observables(&[0, 1]).unwrap(), 1);
+    for text in [
+        "error(1) D2\nerror(0.1) D1 L0",
+        "error(0.1) D1 L0\ndetector D2",
+    ] {
+        let (matrix, support) = DemCheckMatrix::from_dem_str(text).unwrap().reduce_support();
+        let mut decoder = CheckMatrixObservableDecoder::new(Echo, matrix)
+            .with_support(support)
+            .unwrap();
+        decoder.dem = small.clone();
+        assert!(decoder.decode_obs(&[0]).is_err());
+    }
 }

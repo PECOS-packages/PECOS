@@ -3457,9 +3457,13 @@ impl DemDecoderConfig {
 
 /// DEM-aware decoder that wraps a check-matrix decoder.
 ///
-/// Parses a DEM string, extracts the check matrix and observable matrix,
-/// creates the inner decoder, and provides `decode_syndrome()` that returns
-/// `observable_flips` -- the same interface as `PyMatching` and Tesseract.
+/// Relay-BP, min-sum BP, BP-OSD and BP-LSD reduce probability-0/1 mechanisms
+/// exactly after overrides and merging, keeping original counts in
+/// `num_mechanisms` and repr. Empty reduced support raises `ValueError`.
+/// `decode_syndrome` validates length and binary values, applies both biases,
+/// and raises `ValueError` naming the lowest fired dead detector and count.
+/// Declared-but-unused detectors are included. Union-find does not reduce.
+/// The result provides `observable_flips`, like `PyMatching` and Tesseract.
 ///
 /// # Example
 ///
@@ -3824,7 +3828,7 @@ impl PyDemAwareDecoder {
         let mut observables = self
             .dem_check_matrix
             .observables_obsmask_from_correction(&correction);
-        observables ^= &self.support.observable_bias;
+        observables ^= self.support.observable_bias();
 
         Ok(PyDemAwareResult {
             observables,

@@ -505,6 +505,15 @@ mod tests {
     }
 
     #[test]
+    fn zero_error_rate_is_invalid() {
+        let mut config = config(1, 7);
+        config.error_rate = 0.0;
+        assert!(
+            matches!(validate_config(&config), Err(FaultDistanceUpperBoundError::InvalidErrorRate(rate)) if rate <= 0.0)
+        );
+    }
+
+    #[test]
     fn repetition_triad_upper_bound_reaches_three() {
         let dem = dem_from_effects(&[(vec![0, 1], vec![0]), (vec![0], vec![]), (vec![1], vec![])]);
         let result = randomized_fault_distance_upper_bound(&dem, &config(8, 7))

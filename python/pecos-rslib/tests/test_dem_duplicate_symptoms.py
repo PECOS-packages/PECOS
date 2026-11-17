@@ -112,5 +112,22 @@ def test_exact_support(family, convenience):
     with pytest.raises(ValueError, match="index 0.*2"):
         decoder.decode_syndrome([2, 0, 0, 0])
     for rate in [0.0, -0.0, 1.0]:
-        with pytest.raises(ValueError, match="no error mechanism with nonzero probability remains"):
+        with pytest.raises(ValueError, match="no uncertain error mechanism remains"):
             build(dem, error_rate=rate)
+
+
+def test_structured_decoder_dead_detector_is_value_error():
+    """Structured decoding preserves InvalidSyndrome as ValueError."""
+    from pecos_rslib import TickCircuit
+    from pecos_rslib.decoders import bp_osd
+    from pecos_rslib.qec import DetectorErrorModel
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().mz([0])
+    # D0 and D1 are declared by the sparse index, but have no mechanisms.
+    circuit.add_detector([-1], detector_id=2)
+    dem = DetectorErrorModel.from_circuit(circuit, p1=0, p2=0, p_meas=0.1, p_prep=0)
+    decoder = dem.build_decoder(bp_osd())
+    with pytest.raises(ValueError, match="detector 0 fired.*uncertain error mechanism"):
+        decoder.decode_syndrome([1, 0, 0])

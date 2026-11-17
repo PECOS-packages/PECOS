@@ -37,7 +37,7 @@ def assert_outcome(
         or (consumer == "DemAwareDecoder" and message == "dem contains no error mechanisms")
         or (
             consumer in {"DemAwareDecoder", "bp_osd"}
-            and message == "invalid configuration: no error mechanism with nonzero probability "
+            and message == "invalid configuration: no uncertain error mechanism "
             "remains after support reduction, for example because of error_rate=0"
         )
         or (

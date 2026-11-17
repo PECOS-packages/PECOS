@@ -299,6 +299,8 @@ fn fix_osd_dense_combination_sweep(src_cpp_dir: &Path) -> Result<()> {
 }
 
 fn bound_product_sum_messages(src_cpp_dir: &Path) -> Result<()> {
+    // Interior priors can round tanh products to +/-1, making the inverse infinite
+    // and subsequent BP arithmetic NaN. Bound both schedules before the inverse.
     const PARALLEL: &str = "                                e.check_to_bit_msg =\n                                        message_sign * std::log((1 + e.check_to_bit_msg) / (1 - e.check_to_bit_msg));";
     const SERIAL: &str = "                                e.check_to_bit_msg = pow(-1, syndrome[check_index]) *\n                                                     std::log((1 + e.check_to_bit_msg) / (1 - e.check_to_bit_msg));";
     const BOUND: &str = "                                // PECOS FIX: bound product-sum inverse; only x == +/-1 changes.\n                                // Every other representable tanh product is bit-identical.\n                                const double bound = std::nextafter(1.0, 0.0);\n                                if (e.check_to_bit_msg > bound) e.check_to_bit_msg = bound;\n                                if (e.check_to_bit_msg < -bound) e.check_to_bit_msg = -bound;\n";

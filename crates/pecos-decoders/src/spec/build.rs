@@ -1487,7 +1487,7 @@ mod tests {
             let mut decoder = spec.build(&DecodeModel::SingleDem(dem.into())).unwrap();
             let obs = decoder.decode_obs(&[1, 0, 1, 0]).unwrap();
             assert!(obs.get(0) && obs.get(2) && obs.get(65), "{name}");
-            assert!(!obs.get(1));
+            assert!(!obs.get(1), "{name}");
             let error = decoder.decode_obs(&[1, 1, 0, 1]).unwrap_err();
             assert!(
                 matches!(&error, DecoderError::InvalidSyndrome(message) if message.contains("detector 1") && message.contains("2 dead detectors")),
@@ -1503,7 +1503,7 @@ mod tests {
             ));
             assert!(matches!(
                 spec.build(&DecodeModel::SingleDem(String::new())),
-                Err(DecoderError::InvalidConfiguration(_))
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
             ));
         }
         for rate in [0.0, 1.0] {
@@ -1515,7 +1515,7 @@ mod tests {
                         ..Default::default()
                     }
                 ),
-                Err(DecoderError::InvalidConfiguration(_))
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
             ));
             assert!(matches!(
                 build_min_sum_bp(
@@ -1525,7 +1525,7 @@ mod tests {
                         ..Default::default()
                     }
                 ),
-                Err(DecoderError::InvalidConfiguration(_))
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
             ));
             assert!(matches!(
                 build_bp_osd(
@@ -1535,7 +1535,7 @@ mod tests {
                         ..Default::default()
                     }
                 ),
-                Err(DecoderError::InvalidConfiguration(_))
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
             ));
             assert!(matches!(
                 build_bp_lsd(
@@ -1545,7 +1545,7 @@ mod tests {
                         ..Default::default()
                     }
                 ),
-                Err(DecoderError::InvalidConfiguration(_))
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
             ));
         }
     }

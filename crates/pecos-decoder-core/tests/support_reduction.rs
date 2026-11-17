@@ -232,3 +232,13 @@ fn bias_length_mismatch_without_dead_detectors_is_configuration_error() {
         Err(DecoderError::InvalidConfiguration(_))
     ));
 }
+
+#[test]
+fn nonbinary_matrix_entries_fold_as_one() {
+    let mut matrix = DemCheckMatrix::from_dem_str("error(1) D0 D1\nerror(0.1) D0 D1").unwrap();
+    // Hand-built matrices can hold any nonzero byte; folding must stay binary.
+    matrix.check_matrix[[0, 0]] = 2;
+    matrix.check_matrix[[1, 0]] = 3;
+    let (_, support) = matrix.reduce_support();
+    assert_eq!(support.syndrome_bias(), &[1, 1]);
+}

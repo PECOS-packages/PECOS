@@ -484,7 +484,8 @@ impl DemCheckMatrix {
                     support.syndrome_bias.resize(self.num_detectors, 0);
                 }
                 for (row, &value) in self.check_matrix.column(column).indexed_iter() {
-                    support.syndrome_bias[row] ^= value;
+                    // Entries are 0/1 in DEM-built matrices; treat any nonzero entry as 1.
+                    support.syndrome_bias[row] ^= u8::from(value != 0);
                 }
                 for (row, &value) in self.observable_matrix.column(column).indexed_iter() {
                     if value != 0 {

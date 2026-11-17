@@ -3852,7 +3852,8 @@ class decoders:
         Args:
             pcm: Sparse parity check matrix.
             error_rate: Channel error probability: a single float applied to every column,
-                or one probability per column.
+                or one probability per column. Raw LDPC priors must be finite and strictly
+                in (0, 1); DEM-built decoders handle endpoints exactly.
 
         Example:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
@@ -3916,6 +3917,8 @@ class decoders:
                     identical detector and observable sets. A group of k lines receives the
                     k-fold independent XOR of this rate.
                     None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
                 ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
@@ -3936,7 +3939,8 @@ class decoders:
         Args:
             pcm: Sparse parity check matrix.
             error_rate: Channel error probability: a single float applied to every column,
-                or one probability per column.
+                or one probability per column. Raw LDPC priors must be finite and strictly
+                in (0, 1); DEM-built decoders handle endpoints exactly.
 
         Example:
             >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
@@ -4010,6 +4014,8 @@ class decoders:
                     identical detector and observable sets. A group of k lines receives the
                     k-fold independent XOR of this rate.
                     None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
                 bp_method: "minimum_sum" (default) or "product_sum".
@@ -4199,7 +4205,15 @@ class decoders:
         def __repr__(self) -> str: ...
 
     class DemAwareDecoder:
-        """DEM-aware wrapper over a check-matrix decoder."""
+        """DEM-aware wrapper over a check-matrix decoder.
+
+        Relay-BP, min-sum BP, BP-OSD and BP-LSD reduce probability-0/1
+        mechanisms exactly after overrides and merging, keeping original counts
+        in num_mechanisms and repr. Empty reduced support raises ValueError.
+        decode_syndrome validates length and binary values, applies both biases,
+        and raises ValueError naming the lowest fired dead detector and count.
+        Declared-but-unused detectors are included. Union-find does not reduce.
+        """
 
         @staticmethod
         def from_dem(
@@ -4332,6 +4346,8 @@ class decoders:
                     identical detector and observable sets. A group of k lines receives the
                     k-fold independent XOR of this rate.
                     None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
                 seed: Makes relay sampling reproducible without increasing its runtime bound.
             """
@@ -4431,6 +4447,8 @@ class decoders:
                     identical detector and observable sets. A group of k lines receives the
                     k-fold independent XOR of this rate.
                     None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
             """

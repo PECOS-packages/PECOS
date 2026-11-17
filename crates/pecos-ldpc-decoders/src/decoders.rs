@@ -14,26 +14,22 @@ use cxx::UniquePtr;
 use ndarray::{Array1, ArrayView1};
 use std::collections::BTreeMap;
 
-/// Helper function to prepare channel probabilities
+/// Prepare finite, strictly interior channel probabilities for raw LDPC kernels.
+/// DEM-built decoders handle certain and impossible mechanisms exactly through
+/// support reduction before reaching this boundary.
 fn prepare_channel_probs(
     pcm_cols: usize,
     error_rate: Option<f64>,
     error_channel: Option<&[f64]>,
 ) -> Result<Vec<f64>, LdpcError> {
-    // The C++ core takes log((1 - p) / p) unchecked, so only probabilities may pass.
-    // The range check also rejects NaN and infinities; `+ 0.0` turns -0.0 into
-    // +0.0, whose log-likelihood is +inf rather than NaN. The endpoints 0 and 1 stay
-    // legal, but a syndrome that such priors make impossible still yields NaN
-    // log-likelihoods in product-sum BP, as can priors within about 1e-16 of 0 or 1,
-    // through tanh saturation.
     match (error_rate, error_channel) {
         (Some(rate), None) => {
-            if !(0.0..=1.0).contains(&rate) {
+            if !(rate > 0.0 && rate < 1.0) {
                 return Err(LdpcError::InvalidInput(format!(
-                    "error_rate must be finite and in [0, 1], got {rate}"
+                    "error_rate must be finite and in (0, 1), got {rate}; DEM-built decoders handle certain and impossible mechanisms exactly"
                 )));
             }
-            Ok(vec![rate + 0.0; pcm_cols])
+            Ok(vec![rate; pcm_cols])
         }
         (None, Some(probs)) => {
             if probs.len() != pcm_cols {
@@ -44,13 +40,13 @@ fn prepare_channel_probs(
             if let Some((column, p)) = probs
                 .iter()
                 .enumerate()
-                .find(|(_, p)| !(0.0..=1.0).contains(*p))
+                .find(|(_, p)| !(**p > 0.0 && **p < 1.0))
             {
                 return Err(LdpcError::InvalidInput(format!(
-                    "error_channel[{column}] must be finite and in [0, 1], got {p}"
+                    "error_channel[{column}] must be finite and in (0, 1), got {p}; DEM-built decoders handle certain and impossible mechanisms exactly"
                 )));
             }
-            Ok(probs.iter().map(|p| p + 0.0).collect())
+            Ok(probs.to_vec())
         }
         (None, None) => Err(LdpcError::InvalidInput(
             "Either error_rate or error_channel must be provided".to_string(),

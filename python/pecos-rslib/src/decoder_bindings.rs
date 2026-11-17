@@ -3457,9 +3457,13 @@ impl DemDecoderConfig {
 
 /// DEM-aware decoder that wraps a check-matrix decoder.
 ///
-/// Parses a DEM string, extracts the check matrix and observable matrix,
-/// creates the inner decoder, and provides `decode_syndrome()` that returns
-/// `observable_flips` -- the same interface as `PyMatching` and Tesseract.
+/// Relay-BP, min-sum BP, BP-OSD and BP-LSD reduce probability-0/1 mechanisms
+/// exactly after overrides and merging, keeping original counts in
+/// `num_mechanisms` and repr. Empty reduced support raises `ValueError`.
+/// `decode_syndrome` validates length and binary values, applies both biases,
+/// and raises `ValueError` naming the lowest fired dead detector and count.
+/// Declared-but-unused detectors are included. Union-find does not reduce.
+/// The result provides `observable_flips`, like `PyMatching` and Tesseract.
 ///
 /// # Example
 ///
@@ -3475,6 +3479,7 @@ pub struct PyDemAwareDecoder {
     inner: InnerDecoder,
     dem_check_matrix: DemCheckMatrix,
     original_num_mechanisms: usize,
+    support: pecos_decoder_core::DemSupport,
 }
 
 impl PyDemAwareDecoder {
@@ -3514,9 +3519,16 @@ impl PyDemAwareDecoder {
         if let Some(rate) = config.error_rate() {
             dcm.error_priors.fill(rate);
         }
-        if merges_duplicates {
-            dcm = dcm.merge_duplicate_symptoms();
-        }
+        let support = if merges_duplicates {
+            let (reduced, support) = dcm.merge_duplicate_symptoms().reduce_support();
+            reduced
+                .ensure_nonempty_support()
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+            dcm = reduced;
+            support
+        } else {
+            pecos_decoder_core::DemSupport::default()
+        };
 
         // The check matrix shape and observable map are structural properties of
         // the DEM and are deliberately never accepted as caller overrides.
@@ -3595,6 +3607,7 @@ impl PyDemAwareDecoder {
             inner,
             dem_check_matrix: dcm,
             original_num_mechanisms,
+            support,
         })
     }
 }
@@ -3666,7 +3679,8 @@ impl PyDemAwareDecoder {
     /// * `error_rate` - Uniform probability per original DEM error line (default: use DEM probabilities).
     ///   For `relay_bp`, `min_sum_bp`, `bp_osd` and `bp_lsd`, this is applied before
     ///   merging identical detector and observable sets; a group of k lines receives the
-    ///   k-fold independent XOR of the rate.
+    ///   k-fold independent XOR of the rate. Endpoints are then reduced exactly.
+    ///   Construction raises `ValueError` if no uncertain error mechanism remains.
     /// * `max_iter` - None uses 30 for BP-LSD, 100 for BP-OSD and min-sum. Relay-BP and
     ///   union-find reject explicit values; use `pre_iter` / `set_max_iter` on
     ///   the Relay builder or spec factory to configure Relay iteration limits.
@@ -3776,7 +3790,13 @@ impl PyDemAwareDecoder {
     /// # Returns
     ///
     /// `DemAwareResult` with `observable_flips`, `converged`, and `iterations`.
-    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyDemAwareResult> {
+    ///
+    /// Raises `ValueError` for wrong length, non-binary input, or fired dead
+    /// detectors after biasing, including declared-but-unused detectors.
+    fn decode_syndrome(&mut self, mut syndrome: Vec<u8>) -> PyResult<PyDemAwareResult> {
+        self.support
+            .bias_syndrome(&mut syndrome, self.dem_check_matrix.num_detectors)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let arr = Array1::from_vec(syndrome);
         let (decoding, converged, iterations) = match &mut self.inner {
             InnerDecoder::BpOsd(d) => {
@@ -3805,9 +3825,10 @@ impl PyDemAwareDecoder {
 
         let correction: Vec<u8> = decoding.iter().map(|&v| v & 1).collect();
         // Wide packing: the u64 variant silently wraps observable bits at 64.
-        let observables = self
+        let mut observables = self
             .dem_check_matrix
             .observables_obsmask_from_correction(&correction);
+        observables ^= self.support.observable_bias();
 
         Ok(PyDemAwareResult {
             observables,

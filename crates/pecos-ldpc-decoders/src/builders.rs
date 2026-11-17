@@ -83,14 +83,16 @@ impl<'a> BpOsdBuilder<'a> {
         }
     }
 
-    /// Set uniform error rate for all bits
+    /// Set uniform error rate for all bits. Must be finite and strictly in (0, 1).
+    /// DEM-built decoders handle certain and impossible mechanisms exactly.
     pub fn error_rate(mut self, rate: f64) -> Self {
         self.error_rate = Some(rate);
         self.error_channel = None;
         self
     }
 
-    /// Set per-bit error probabilities
+    /// Set per-bit error probabilities, each finite and strictly in (0, 1).
+    /// DEM-built decoders handle certain and impossible mechanisms exactly.
     pub fn error_channel(mut self, probs: Vec<f64>) -> Self {
         self.error_channel = Some(probs);
         self.error_rate = None;
@@ -164,7 +166,7 @@ impl<'a> BpOsdBuilder<'a> {
     /// Returns `LdpcError` if:
     /// - Neither `error_rate` nor `error_channel` was set
     /// - `error_channel` length doesn't match matrix columns
-    /// - `error_rate` or an `error_channel` entry is not a probability in [0, 1]
+    /// - `error_rate` or an `error_channel` entry is not finite and strictly in (0, 1)
     /// - OSD is enabled but input type is not Syndrome
     pub fn build(self) -> Result<crate::BpOsdDecoder> {
         crate::BpOsdDecoder::new(
@@ -249,14 +251,16 @@ impl<'a> BpLsdBuilder<'a> {
         }
     }
 
-    /// Set uniform error rate for all bits
+    /// Set uniform error rate for all bits. Must be finite and strictly in (0, 1).
+    /// DEM-built decoders handle certain and impossible mechanisms exactly.
     pub fn error_rate(mut self, rate: f64) -> Self {
         self.error_rate = Some(rate);
         self.error_channel = None;
         self
     }
 
-    /// Set per-bit error probabilities
+    /// Set per-bit error probabilities, each finite and strictly in (0, 1).
+    /// DEM-built decoders handle certain and impossible mechanisms exactly.
     pub fn error_channel(mut self, probs: Vec<f64>) -> Self {
         self.error_channel = Some(probs);
         self.error_rate = None;
@@ -394,14 +398,16 @@ impl<'a> SoftInfoBpBuilder<'a> {
         }
     }
 
-    /// Set uniform error rate for all bits
+    /// Set uniform error rate for all bits. Must be finite and strictly in (0, 1).
+    /// DEM-built decoders handle certain and impossible mechanisms exactly.
     pub fn error_rate(mut self, rate: f64) -> Self {
         self.error_rate = Some(rate);
         self.error_channel = None;
         self
     }
 
-    /// Set per-bit error probabilities
+    /// Set per-bit error probabilities, each finite and strictly in (0, 1).
+    /// DEM-built decoders handle certain and impossible mechanisms exactly.
     pub fn error_channel(mut self, probs: Vec<f64>) -> Self {
         self.error_channel = Some(probs);
         self.error_rate = None;
@@ -595,14 +601,16 @@ impl<'a> BeliefFindBuilder<'a> {
         }
     }
 
-    /// Set uniform error rate for all bits
+    /// Set uniform error rate for all bits. Must be finite and strictly in (0, 1).
+    /// DEM-built decoders handle certain and impossible mechanisms exactly.
     pub fn error_rate(mut self, rate: f64) -> Self {
         self.error_rate = Some(rate);
         self.error_channel = None;
         self
     }
 
-    /// Set per-bit error probabilities
+    /// Set per-bit error probabilities, each finite and strictly in (0, 1).
+    /// DEM-built decoders handle certain and impossible mechanisms exactly.
     pub fn error_channel(mut self, probs: Vec<f64>) -> Self {
         self.error_channel = Some(probs);
         self.error_rate = None;
@@ -779,10 +787,10 @@ mod tests {
     #[test]
     fn test_builders_reject_invalid_priors() {
         let pcm = test_pcm();
-        for bad in [f64::NAN, f64::INFINITY, -0.1, 1.5] {
+        for bad in [0.0, -0.0, 1.0, f64::NAN, f64::INFINITY, -0.1, 1.5] {
             let channel = vec![0.01, 0.01, bad, 0.01];
-            let rate_message = "error_rate must be finite and in [0, 1]";
-            let channel_message = "error_channel[2] must be finite and in [0, 1]";
+            let rate_message = "error_rate must be finite and in (0, 1)";
+            let channel_message = "error_channel[2] must be finite and in (0, 1)";
             let results = [
                 (
                     BpOsdBuilder::new(&pcm).error_rate(bad).build().map(|_| ()),
@@ -842,17 +850,6 @@ mod tests {
                 );
             }
         }
-        for edge in [0.0, -0.0, 1.0] {
-            assert!(BpOsdBuilder::new(&pcm).error_rate(edge).build().is_ok());
-        }
-        // Red/green: -0.0 reaches the core as +0.0 (its log-likelihood would be NaN).
-        let rate = BpOsdBuilder::new(&pcm).error_rate(-0.0).build().unwrap();
-        let channel = BpOsdBuilder::new(&pcm)
-            .error_channel(vec![0.01, -0.0, 0.01, 0.01])
-            .build()
-            .unwrap();
-        assert!(rate.channel_probs().iter().all(|p| p.is_sign_positive()));
-        assert!(channel.channel_probs().iter().all(|p| p.is_sign_positive()));
     }
 
     #[test]

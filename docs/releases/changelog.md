@@ -6,6 +6,30 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** DEM-built Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind
+  now handle probability-0 and probability-1 mechanisms exactly by reducing
+  support and applying fixed syndrome/observable biases. Construction fails when
+  no uncertain error mechanism remains after support reduction (including
+  `error_rate=0`). A biased syndrome firing dead detectors, including
+  declared-but-unused detectors, raises `InvalidSyndrome`, naming the lowest
+  index and count; this aborts a batch. Python `DemAwareDecoder` raises
+  `ValueError` for empty reduced support and invalid syndromes.
+  `StructuredDemDecoder.decode_syndrome` raises `ValueError` for fired dead
+  detectors and non-binary input, but `RuntimeError` for wrong lengths. On
+  spec-built paths, empty reduced support raises `RuntimeError` when the decoder
+  is built (for the logical-subgraph, logical-algorithm and logical-circuit
+  decoders, in their constructors). `SampleBatch.decode`, `DemSampler` decoding
+  and the logical decoders' `decode`/`decode_count` raise `RuntimeError` for
+  fired dead detectors; `SampleBatch.compare_decoders` counts them as
+  decode-error outcomes for those shots. Wrappers validate syndrome
+  length and binary values before applying biases. Raw BP-OSD, BP-LSD,
+  soft-information BP and BeliefFind builders now reject endpoint priors and
+  require finite values in `(0, 1)`; MBP is unchanged. Product-sum check updates
+  bound saturated tanh products so check-to-bit messages remain finite; all
+  other products are unchanged. `belief_matching`, experimental BP-trellis, and
+  the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
+  perturbed ensemble members retain their existing prior clamp.
+
 - **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
   a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs
   `libxml2.so.2`), is now reported as invalid. `pecos llvm ensure --managed`

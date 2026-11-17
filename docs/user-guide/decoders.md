@@ -174,6 +174,39 @@ let pcm = SparseMatrix::from_coo(2, 4, rows, cols)?;
 
 ### LDPC Decoders
 
+DEM-built Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind handle
+probability-0 and probability-1 mechanisms exactly: impossible mechanisms are
+removed, and certain mechanisms contribute fixed syndrome and observable biases.
+Reduction follows any uniform `error_rate` override and duplicate merging
+(BeliefFind does not merge duplicates). Detector and observable indices stay the
+same. Construction fails if no uncertain error mechanism remains after support
+reduction, including with `error_rate=0`. A biased syndrome that fires a
+detector that no uncertain error mechanism can flip raises an error naming the
+lowest such index and the number that fired. This includes declared-but-unused
+detectors and aborts batch decoding. Syndrome lengths and binary values are
+checked before applying biases.
+
+In Python, `DemAwareDecoder` (including convenience `from_dem` constructors)
+raises `ValueError` for empty reduced support, fired dead detectors, wrong
+lengths, and non-binary syndromes. `StructuredDemDecoder.decode_syndrome` raises
+`ValueError` for fired dead detectors and non-binary input, but `RuntimeError`
+for wrong lengths. On spec-built paths, empty reduced support raises
+`RuntimeError` when the decoder is built (for the logical-subgraph,
+logical-algorithm and logical-circuit decoders, in their constructors).
+`SampleBatch.decode`, `DemSampler` decoding and the logical decoders'
+`decode`/`decode_count` raise `RuntimeError` for fired dead detectors, which
+aborts the batch; `SampleBatch.compare_decoders` instead counts them as
+decode-error outcomes for those shots.
+
+Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
+priors strictly in `(0, 1)`; MBP is unchanged. Their product-sum check update
+bounds saturated tanh products to the closest double below one in magnitude,
+keeping check-to-bit messages finite; other products are unchanged.
+`belief_matching`, experimental BP-trellis, and the `pecos_uf` `bp` and
+`bp_serial` presets retain native ±30 saturation. Perturbed ensemble members
+retain their probability clamp, so only the anchor member receives the exact
+original bias.
+
 #### BP-OSD Decoder
 
 Combines belief propagation with ordered statistics decoding post-processing.
@@ -353,6 +386,8 @@ match decoder.decode(&syndrome.view()) {
 ```
 
 ## Native Relay-BP
+
+For exact endpoint handling when built from a DEM, see [LDPC Decoders](#ldpc-decoders).
 
 `relay_bp`, `RelayBpBuilder`, and `RelayBpDecoder` use PECOS's native Relay-BP
 kernel (`pecos-bp`), implementing Müller et al., [arXiv:2506.01779](https://arxiv.org/abs/2506.01779).

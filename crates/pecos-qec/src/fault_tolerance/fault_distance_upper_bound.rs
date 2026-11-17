@@ -125,7 +125,7 @@ pub enum FaultDistanceUpperBoundError {
 fn validate_config(
     config: &FaultDistanceUpperBoundConfig,
 ) -> Result<(), FaultDistanceUpperBoundError> {
-    if !config.error_rate.is_finite() || !(0.0..1.0).contains(&config.error_rate) {
+    if !(config.error_rate > 0.0 && config.error_rate < 1.0) {
         return Err(FaultDistanceUpperBoundError::InvalidErrorRate(
             config.error_rate,
         ));
@@ -502,6 +502,15 @@ mod tests {
             osd_order: 0,
             omp_threads: 1,
         }
+    }
+
+    #[test]
+    fn zero_error_rate_is_invalid() {
+        let mut config = config(1, 7);
+        config.error_rate = 0.0;
+        assert!(
+            matches!(validate_config(&config), Err(FaultDistanceUpperBoundError::InvalidErrorRate(rate)) if rate <= 0.0)
+        );
     }
 
     #[test]

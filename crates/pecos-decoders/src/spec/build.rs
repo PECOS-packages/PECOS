@@ -752,7 +752,8 @@ fn build_bp_osd(
     config: &BpOsdConfig,
 ) -> Result<Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::BpOsdDecoder>>, DecoderError>
 {
-    let matrix = merged_dem_matrix(dem, config.error_rate)?;
+    let (matrix, support) = merged_dem_matrix(dem, config.error_rate)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
     let sparse = crate::SparseMatrix::from_dense(&matrix.check_matrix.view());
     let bp_method = if config.ms_scaling_factor.is_some() {
         crate::BpMethod::MinimumSum
@@ -781,7 +782,9 @@ fn build_bp_osd(
     )
     .map_err(internal)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -799,7 +802,8 @@ fn build_bp_lsd(
     config: &BpLsdConfig,
 ) -> Result<Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::BpLsdDecoder>>, DecoderError>
 {
-    let matrix = merged_dem_matrix(dem, config.error_rate)?;
+    let (matrix, support) = merged_dem_matrix(dem, config.error_rate)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
     let sparse = crate::SparseMatrix::from_dense(&matrix.check_matrix.view());
     let bp_method = if config.ms_scaling_factor.is_some() {
         crate::BpMethod::MinimumSum
@@ -824,7 +828,9 @@ fn build_bp_lsd(
     )
     .map_err(internal)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -838,7 +844,9 @@ fn build_bp_lsd(
 
 #[cfg(feature = "ldpc")]
 fn build_belief_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-    let (matrix, sparse) = dem_matrix(dem)?;
+    let (matrix, support) = pecos_decoder_core::DemCheckMatrix::from_dem_str(dem)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
+    let sparse = crate::SparseMatrix::from_dense(&matrix.check_matrix.view());
     let decoder = crate::BeliefFindDecoder::new(
         &sparse,
         None,
@@ -855,7 +863,9 @@ fn build_belief_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
     )
     .map_err(internal)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -919,7 +929,8 @@ fn build_relay_bp(
     Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::RelayBpDecoder>>,
     DecoderError,
 > {
-    let matrix = merged_dem_matrix(dem, config.error_rate)?;
+    let (matrix, support) = merged_dem_matrix(dem, config.error_rate)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
     let stopping = match config.stopping_criterion {
         RelayStoppingCriterion::PreIter => crate::StoppingCriterion::PreIter,
         RelayStoppingCriterion::All => crate::StoppingCriterion::All,
@@ -944,7 +955,9 @@ fn build_relay_bp(
         .build()
         .map_err(DecoderError::from)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -964,7 +977,8 @@ fn build_min_sum_bp(
     Box<pecos_decoder_core::CheckMatrixObservableDecoder<crate::MinSumBpDecoder>>,
     DecoderError,
 > {
-    let matrix = merged_dem_matrix(dem, config.error_rate)?;
+    let (matrix, support) = merged_dem_matrix(dem, config.error_rate)?.reduce_support();
+    matrix.ensure_nonempty_support()?;
     let decoder = crate::MinSumBpBuilder::new(&matrix.check_matrix.view())
         .error_priors(&matrix.error_priors)
         .max_iter(config.max_iter)
@@ -972,7 +986,9 @@ fn build_min_sum_bp(
         .build()
         .map_err(DecoderError::from)?;
     Ok(Box::new(
-        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix),
+        pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -1459,6 +1475,78 @@ mod tests {
                 };
                 assert_eq!(built.decoder.bits_per_step(), expected_bits);
             }
+        }
+    }
+
+    #[cfg(all(feature = "relay-bp", feature = "ldpc"))]
+    #[test]
+    fn exact_support_spec_paths() {
+        let dem = "error(1) D0 L0\nerror(0) D1 L1\nerror(0.1) D2 L2\nerror(1) L65\ndetector D3";
+        for name in ["relay_bp", "min_sum_bp", "bp_osd", "bp_lsd", "belief_find"] {
+            let spec = DecoderSpec::parse(name).unwrap();
+            let mut decoder = spec.build(&DecodeModel::SingleDem(dem.into())).unwrap();
+            let obs = decoder.decode_obs(&[1, 0, 1, 0]).unwrap();
+            assert!(obs.get(0) && obs.get(2) && obs.get(65), "{name}");
+            assert!(!obs.get(1), "{name}");
+            let error = decoder.decode_obs(&[1, 1, 0, 1]).unwrap_err();
+            assert!(
+                matches!(&error, DecoderError::InvalidSyndrome(message) if message.contains("detector 1") && message.contains("2 dead detectors")),
+                "{name}: {error}"
+            );
+            assert!(matches!(
+                decoder.decode_obs(&[0]),
+                Err(DecoderError::InvalidDimensions { .. })
+            ));
+            assert!(matches!(
+                decoder.decode_obs(&[2, 0, 0, 0]),
+                Err(DecoderError::InvalidSyndrome(_))
+            ));
+            assert!(matches!(
+                spec.build(&DecodeModel::SingleDem(String::new())),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+        }
+        for rate in [0.0, 1.0] {
+            assert!(matches!(
+                build_relay_bp(
+                    dem,
+                    &RelayBpConfig {
+                        error_rate: Some(rate),
+                        ..Default::default()
+                    }
+                ),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+            assert!(matches!(
+                build_min_sum_bp(
+                    dem,
+                    &MinSumBpConfig {
+                        error_rate: Some(rate),
+                        ..Default::default()
+                    }
+                ),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+            assert!(matches!(
+                build_bp_osd(
+                    dem,
+                    &BpOsdConfig {
+                        error_rate: Some(rate),
+                        ..Default::default()
+                    }
+                ),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
+            assert!(matches!(
+                build_bp_lsd(
+                    dem,
+                    &BpLsdConfig {
+                        error_rate: Some(rate),
+                        ..Default::default()
+                    }
+                ),
+                Err(DecoderError::InvalidConfiguration(message)) if message.contains("no uncertain error mechanism remains")
+            ));
         }
     }
 

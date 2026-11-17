@@ -180,28 +180,30 @@ removed, and certain mechanisms contribute fixed syndrome and observable biases.
 Reduction follows any uniform `error_rate` override and duplicate merging
 (BeliefFind does not merge duplicates). Detector and observable indices stay the
 same. Construction fails if no uncertain error mechanism remains after support
-reduction, including with `error_rate=0`. A biased syndrome that fires a detector
-that no uncertain error mechanism can flip raises an error naming the lowest
-such index and the number that fired; this
-includes declared-but-unused detectors and aborts batch decoding. Syndrome lengths
-and binary values are checked before applying biases.
+reduction, including with `error_rate=0`. A biased syndrome that fires a
+detector that no uncertain error mechanism can flip raises an error naming the
+lowest such index and the number that fired. This includes declared-but-unused
+detectors and aborts batch decoding. Syndrome lengths and binary values are
+checked before applying biases.
 
 In Python, `DemAwareDecoder` (including convenience `from_dem` constructors)
-raises `ValueError` for empty reduced support, fired dead detectors, wrong lengths,
-and non-binary syndromes. `StructuredDemDecoder.decode_syndrome` raises
-`ValueError` for fired dead detectors, but `RuntimeError` for wrong lengths.
-Empty reduced support on spec-built paths raises `RuntimeError`, as does a
-fired dead detector through `SampleBatch.decode`. These exception mappings differ
-by surface; the batch error aborts the batch.
+raises `ValueError` for empty reduced support, fired dead detectors, wrong
+lengths, and non-binary syndromes. `StructuredDemDecoder.decode_syndrome` raises
+`ValueError` for fired dead detectors and non-binary input, but `RuntimeError`
+for wrong lengths. Empty reduced support on spec-built paths raises
+`RuntimeError`. Other spec-built Python surfaces (`SampleBatch.decode`,
+`DemSampler` decoding, logical-subgraph, logical-algorithm and logical-circuit
+`decode`/`decode_count`, and decoder comparison) raise `RuntimeError` for fired
+dead detectors or empty reduced support; a batch error aborts the batch.
 
 Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
-priors strictly in `(0, 1)`; MBP is unchanged. Their product-sum
-check update bounds saturated tanh products to the closest double below one in
-magnitude, keeping check-to-bit messages finite; other products are unchanged.
+priors strictly in `(0, 1)`; MBP is unchanged. Their product-sum check update
+bounds saturated tanh products to the closest double below one in magnitude,
+keeping check-to-bit messages finite; other products are unchanged.
 `belief_matching`, experimental BP-trellis, and the `pecos_uf` `bp` and
-`bp_serial` presets retain native ±30 saturation.
-Perturbed ensemble members retain their probability clamp, so only the anchor
-member receives the exact original bias.
+`bp_serial` presets retain native ±30 saturation. Perturbed ensemble members
+retain their probability clamp, so only the anchor member receives the exact
+original bias.
 
 #### BP-OSD Decoder
 

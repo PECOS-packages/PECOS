@@ -326,7 +326,7 @@ pub struct DemSupport {
     syndrome_bias: Vec<u8>,
     /// XOR of the observable columns of certain mechanisms.
     observable_bias: crate::obs_mask::ObsMask,
-    /// Sorted indices of detector rows with no remaining mechanism.
+    /// Sorted indices of detector rows with no uncertain error mechanism.
     dead_detectors: Vec<usize>,
 }
 
@@ -343,7 +343,7 @@ impl DemSupport {
         &self.observable_bias
     }
 
-    /// Sorted detector indices with no uncertain mechanism.
+    /// Sorted detector indices with no uncertain error mechanism.
     #[must_use]
     pub fn dead_detectors(&self) -> &[usize] {
         &self.dead_detectors
@@ -351,10 +351,10 @@ impl DemSupport {
 
     fn validate_dimensions(&self, num_detectors: usize) -> Result<(), DecoderError> {
         if !self.syndrome_bias.is_empty() && self.syndrome_bias.len() != num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: num_detectors,
-                actual: self.syndrome_bias.len(),
-            });
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "support bias length {} does not match matrix detector count {num_detectors}; attach the support returned by `reduce_support` for this matrix",
+                self.syndrome_bias.len()
+            )));
         }
         if let Some(&index) = self
             .dead_detectors
@@ -362,7 +362,7 @@ impl DemSupport {
             .find(|&&index| index >= num_detectors)
         {
             return Err(DecoderError::InvalidConfiguration(format!(
-                "support dead detector index {index} must be below detector count {num_detectors}"
+                "support dead detector index {index} must be below matrix detector count {num_detectors}; attach the support returned by `reduce_support` for this matrix"
             )));
         }
         Ok(())
@@ -373,7 +373,8 @@ impl DemSupport {
     /// # Errors
     /// Returns `InvalidDimensions` for a wrong length and `InvalidSyndrome` for
     /// non-binary bytes or fired dead detectors (after applying the bias).
-    /// Invalid support dimensions are rejected before indexing the syndrome.
+    /// Returns `InvalidConfiguration` for mismatched support dimensions, before
+    /// indexing the syndrome.
     pub fn bias_syndrome(
         &self,
         syndrome: &mut [u8],
@@ -468,6 +469,8 @@ impl DemCheckMatrix {
     /// Consumes the matrix without changing detector or observable row indices.
     /// Certain columns contribute to both biases; impossible columns (including
     /// negative zero) contribute to neither. Call after any override and merging.
+    /// Priors must already be validated to [0, 1]; this method uses `<= 0.0`
+    /// and `>= 1.0` to identify impossible and certain mechanisms.
     #[must_use]
     pub fn reduce_support(mut self) -> (Self, DemSupport) {
         let mut support = DemSupport::default();
@@ -1031,8 +1034,8 @@ impl<D> CheckMatrixObservableDecoder<D> {
     /// Single, outcome and batch decoding all apply these biases in `decode_obs`.
     ///
     /// # Errors
-    /// Returns `InvalidDimensions` for a non-empty bias of the wrong length, or
-    /// `InvalidConfiguration` for a dead detector outside the matrix's row count.
+    /// Returns `InvalidConfiguration` for a non-empty bias of the wrong length
+    /// or a dead detector outside the matrix's row count.
     pub fn with_support(mut self, support: DemSupport) -> Result<Self, DecoderError> {
         support.validate_dimensions(self.dem.num_detectors)?;
         self.support = support;
@@ -1057,7 +1060,10 @@ where
         if self.syndrome_arr.len() != self.dem.num_detectors {
             self.syndrome_arr = ndarray::Array1::zeros(self.dem.num_detectors);
         }
-        let buffer = self.syndrome_arr.as_slice_mut().unwrap();
+        let buffer = self
+            .syndrome_arr
+            .as_slice_mut()
+            .expect("the syndrome buffer is a freshly allocated or resized contiguous Array1");
         buffer.copy_from_slice(syndrome);
         self.support.bias_syndrome(buffer, self.dem.num_detectors)?;
         let result = self

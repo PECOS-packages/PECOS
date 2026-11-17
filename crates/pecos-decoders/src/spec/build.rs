@@ -783,7 +783,8 @@ fn build_bp_osd(
     .map_err(internal)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)?,
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -828,7 +829,8 @@ fn build_bp_lsd(
     .map_err(internal)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)?,
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -862,7 +864,8 @@ fn build_belief_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
     .map_err(internal)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)?,
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -953,7 +956,8 @@ fn build_relay_bp(
         .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)?,
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 
@@ -983,7 +987,8 @@ fn build_min_sum_bp(
         .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)?,
+            .with_support(support)
+            .map_err(internal)?,
     ))
 }
 

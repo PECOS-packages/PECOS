@@ -175,13 +175,17 @@ fn mismatched_support_is_rejected_without_panicking() {
     let matrix = DemCheckMatrix::from_dem_str("error(0.1) D0").unwrap();
     for text in ["error(1) D2", "error(0) D2"] {
         let (_, support) = DemCheckMatrix::from_dem_str(text).unwrap().reduce_support();
-        assert!(
-            CheckMatrixObservableDecoder::new(Echo, matrix.clone())
-                .with_support(support.clone())
-                .is_err()
-        );
+        assert!(matches!(
+            CheckMatrixObservableDecoder::new(Echo, matrix.clone()).with_support(support.clone()),
+            Err(DecoderError::InvalidConfiguration(message))
+                if message.contains("matrix detector count 1")
+                    && message.contains("attach the support returned by `reduce_support` for this matrix")
+        ));
         // Direct callers of the shared helper are also checked before indexing.
-        assert!(support.bias_syndrome(&mut [0], 1).is_err());
+        assert!(matches!(
+            support.bias_syndrome(&mut [0], 1),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
     }
 }
 
@@ -203,6 +207,28 @@ fn replacing_public_dem_resizes_buffer_and_checks_support() {
             .with_support(support)
             .unwrap();
         decoder.dem = small.clone();
-        assert!(decoder.decode_obs(&[0]).is_err());
+        assert!(matches!(
+            decoder.decode_obs(&[0]),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
     }
+}
+
+#[test]
+fn bias_length_mismatch_without_dead_detectors_is_configuration_error() {
+    let (_, support) = DemCheckMatrix::from_dem_str("error(1) D0\nerror(0.1) D0")
+        .unwrap()
+        .reduce_support();
+    assert_eq!(support.syndrome_bias(), &[1]);
+    assert_eq!(support.dead_detectors(), []);
+    let matrix = DemCheckMatrix::from_dem_str("error(0.1) D0 D1").unwrap();
+    assert!(matches!(
+        CheckMatrixObservableDecoder::new(Echo, matrix).with_support(support.clone()),
+        Err(DecoderError::InvalidConfiguration(message))
+            if message == "support bias length 1 does not match matrix detector count 2; attach the support returned by `reduce_support` for this matrix"
+    ));
+    assert!(matches!(
+        support.bias_syndrome(&mut [0, 0], 2),
+        Err(DecoderError::InvalidConfiguration(_))
+    ));
 }

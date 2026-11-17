@@ -3680,7 +3680,7 @@ impl PyDemAwareDecoder {
     ///   For `relay_bp`, `min_sum_bp`, `bp_osd` and `bp_lsd`, this is applied before
     ///   merging identical detector and observable sets; a group of k lines receives the
     ///   k-fold independent XOR of the rate. Endpoints are then reduced exactly;
-    ///   no remaining uncertain mechanisms raises `ValueError`.
+    ///   Construction raises `ValueError` if no uncertain error mechanism remains.
     /// * `max_iter` - None uses 30 for BP-LSD, 100 for BP-OSD and min-sum. Relay-BP and
     ///   union-find reject explicit values; use `pre_iter` / `set_max_iter` on
     ///   the Relay builder or spec factory to configure Relay iteration limits.

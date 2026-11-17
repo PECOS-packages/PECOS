@@ -749,18 +749,14 @@ fn test_bplsd_constructor_validates_method_and_order() {
                 error,
                 pecos_ldpc_decoders::LdpcError::InvalidInput(_)
             ));
-            assert!(
-                error
-                    .to_string()
-                    .contains(&format!("lsd_method {method:?}"))
-            );
-            assert!(error.to_string().contains(&format!("lsd_order {order}")));
             let message = error.to_string();
+            assert!(message.contains(&format!("lsd_method {method:?}")));
+            assert!(message.contains(&format!("lsd_order {order}")));
             if method == OsdMethod::Off {
                 assert!(message.contains("LSD cannot be disabled"));
-                assert!(
-                    message.contains("use Osd0 for LSD-0, or OsdCs/OsdE with a positive order")
-                );
+                assert!(message.contains(
+                    "use Osd0 with lsd_order 0 for LSD-0, or OsdCs/OsdE with a positive order for reprocessing"
+                ));
             } else {
                 assert!(message.contains("use OsdCs or OsdE for reprocessing, or lsd_order 0"));
             }

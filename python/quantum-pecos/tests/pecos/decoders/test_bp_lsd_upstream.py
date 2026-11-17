@@ -199,3 +199,17 @@ def test_valid_numeric_options_do_not_call_repr() -> None:
     builder.bits_per_step(IntegerWithoutRepr(1)).lsd_order(IntegerWithoutRepr(0))
     builder.ms_scaling_factor(FloatWithoutRepr(0.5))
     assert builder.build() is not None
+
+
+@pytest.mark.parametrize("first", ["bp_method", "ms_scaling_factor", "bits_per_step"])
+def test_lsd_only_options_report_first_without_rendering_later(first) -> None:
+    """Non-LSD decoder types report the first LSD-only keyword without rendering later ones."""
+    from pecos_rslib.decoders import DemAwareDecoder
+
+    class Unrenderable:
+        def __repr__(self):
+            msg = "later argument must not be rendered"
+            raise AssertionError(msg)
+
+    with pytest.raises(ValueError, match=first):
+        DemAwareDecoder.from_dem("error(0.1) D0", "bp_osd", **{first: "bad", "lsd_order": Unrenderable()})

@@ -69,8 +69,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   reject `Osd0` with a positive order.
 - **Breaking:** BP+LSD settings on the Python side: `BpLsdBuilder` gains
   `ms_scaling_factor` (`build` previously used 1.0); `BpLsdDecoder.from_dem`
-  gains `bp_method`, `bits_per_step` and `lsd_order`; `DemAwareDecoder.from_dem(...,
-  decoder_type="bp_lsd")` gains those and `ms_scaling_factor`. On every Python
+  gains `bp_method`, `bits_per_step` and `lsd_order`;
+  `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` gains those and
+  `ms_scaling_factor`. On every Python
   BP+LSD path an explicit `ms_scaling_factor=None` selects product-sum, an
   explicit `bp_method` overrides that (`"product_sum"`/`"ps"` ignores the
   scaling, `"minimum_sum"`/`"ms"` with None uses 0.625), and `bits_per_step=0`

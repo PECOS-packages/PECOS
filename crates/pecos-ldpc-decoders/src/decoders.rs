@@ -359,9 +359,9 @@ impl BpLsdDecoder {
 
     /// Create a new BP+LSD decoder.
     ///
-    /// At order zero the method has no effect: LSD-0 runs.
-    /// `Off` is rejected because LSD always runs.
-    /// `Osd0` requires order zero; positive orders require a reprocessing method.
+    /// `Off` is rejected because LSD always runs. `Osd0` requires order zero;
+    /// positive orders require a reprocessing method (`OsdCs` or `OsdE`). At order
+    /// zero every accepted method (`Osd0`, `OsdCs`, `OsdE`) runs LSD-0.
     ///
     /// # Errors
     ///
@@ -386,7 +386,7 @@ impl BpLsdDecoder {
     ) -> Result<Self, LdpcError> {
         if lsd_method == OsdMethod::Off {
             return Err(LdpcError::InvalidInput(format!(
-                "lsd_method Off with lsd_order {lsd_order}: LSD cannot be disabled; use Osd0 for LSD-0, or OsdCs/OsdE with a positive order"
+                "lsd_method Off with lsd_order {lsd_order}: LSD cannot be disabled; use Osd0 with lsd_order 0 for LSD-0, or OsdCs/OsdE with a positive order for reprocessing"
             )));
         }
 

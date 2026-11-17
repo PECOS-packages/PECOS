@@ -1211,7 +1211,8 @@ fn uf_method(s: &str) -> Result<RustUfMethod, String> {
     }
 }
 
-/// Build a `ValueError` quoting the offending value's Python `repr()`.
+/// Build a `ValueError` quoting the offending value's Python `repr()`; if `repr()`
+/// itself raises, return that error instead. Callers invoke it only on failure.
 fn invalid_python_value(value: &Bound<'_, PyAny>, parameter: &str, requirement: &str) -> PyErr {
     match value.repr() {
         Ok(representation) => pyo3::exceptions::PyValueError::new_err(format!(

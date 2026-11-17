@@ -725,17 +725,3 @@ def test_native_bp_decode_batch(
     with pytest.raises(ValueError, match=r"num_shots.*check_count"):
         decoder.decode_batch(b"", sys.maxsize)
     assert decoder.decode_batch(flat, 50) == expected
-
-
-@pytest.mark.parametrize("first", ["bp_method", "ms_scaling_factor", "bits_per_step"])
-def test_lsd_only_options_report_first_without_rendering_later(first) -> None:
-    """Non-LSD decoder types report the first LSD-only keyword without rendering later ones."""
-    from pecos_rslib.decoders import DemAwareDecoder
-
-    class Unrenderable:
-        def __repr__(self):
-            msg = "later argument must not be rendered"
-            raise AssertionError(msg)
-
-    with pytest.raises(ValueError, match=first):
-        DemAwareDecoder.from_dem("error(0.1) D0", "bp_osd", **{first: "bad", "lsd_order": Unrenderable()})

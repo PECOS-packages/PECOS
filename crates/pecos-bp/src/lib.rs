@@ -15,5 +15,7 @@
 pub mod min_sum;
 pub mod relay;
 
-pub use min_sum::{BpGraph, BpScratch, LLR_SATURATION, min_sum_bp_into};
+pub use min_sum::{
+    BpGraph, BpScratch, LLR_SATURATION, MIN_LOG_PRIOR_RATIO_MAGNITUDE, min_sum_bp_into,
+};
 pub use relay::{Alpha, LegOutcome, RelayBp, RelayConfig, RelayOutcome, Schedule, StopRule};

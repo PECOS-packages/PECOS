@@ -22,8 +22,8 @@
 //! For c4, native must converge wherever the oracle did and have no more than
 //! five additional logical errors. Every shot checks the expected leg count.
 //!
-//! Known non-bitwise differences: floating-point summation order; hard
-//! decisions at exactly zero (external `<= 0`, native `< 0`); saturation
+//! Known non-bitwise differences: floating-point summation order; prior
+//! magnitude flooring (native 4e-5); saturation
 //! (external `f64::MAX`, native 30); and check-message sign at -0.0 (external uses
 //! `is_sign_negative`, native counts -0.0 as positive).
 //!
@@ -317,8 +317,8 @@ fn compare(name: &str, dcm: &DemCheckMatrix, shots: &[Shot]) -> Tally {
             tally.same_correction += usize::from(outcome.correction == external.correction);
         }
         // With no converged leg both sides report leg 0's hard decision (pre_iter >= 1).
-        // Raw bits differ at exact-zero ties (external `<= 0`, native `< 0`) and at
-        // near-zero posteriors whose sign follows summation order, so compare the
+        // Raw bits can differ at near-zero posteriors whose sign follows
+        // summation order or prior flooring, so compare the
         // observable prediction. c7's external failed-shot corrections are stale.
         if !outcome.converged && !external.converged && compare_logicals {
             tally.both_failed += 1;

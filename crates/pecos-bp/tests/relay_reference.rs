@@ -47,7 +47,7 @@
 //!   other and can tie against a zero-probability prior. No message is ever
 //!   infinite, and the syndrome check below guarantees an unsatisfied
 //!   correction is never reported as converged.
-//! - After every iteration the hard decision is `e[v] = (P[v] < 0)`. A leg
+//! - After every iteration the hard decision is `e[v] = (P[v] <= 0)`. A leg
 //!   stops early when `H e == s`; the leg is then "converged" and its weight
 //!   is the signed prior-LLR cost `sum_v e[v] * prior[v]` (lower is more
 //!   likely; a mechanism with probability above 0.5 lowers the cost).
@@ -183,7 +183,7 @@ impl Reference {
     }
 
     fn hard_decision(&self) -> Vec<u8> {
-        self.posterior.iter().map(|&p| u8::from(p < 0.0)).collect()
+        self.posterior.iter().map(|&p| u8::from(p <= 0.0)).collect()
     }
 
     fn satisfied(&self, e: &[u8], syndrome: &[u8]) -> bool {

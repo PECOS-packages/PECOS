@@ -29,6 +29,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   other products are unchanged. `belief_matching`, experimental BP-trellis, and
   the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
   perturbed ensemble members retain their existing prior clamp.
+- **Breaking:** Native Relay-BP and min-sum now flip bits whose posterior is
+  exactly zero (using `<= 0`, matching relay-bp and ldpc) and floor stored prior
+  log-ratio magnitudes at `4e-5`, preserving sign except that zero becomes
+  positive. Priors of exactly one half no longer sit at a tie; decoding results
+  can change.
 
 - **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
   a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs

@@ -18,7 +18,10 @@
 //! a message of certainty magnitude [`LLR_SATURATION`]. It competes like any
 //! other certain evidence and can tie against a zero-probability prior; the
 //! syndrome check after each iteration guarantees no unsatisfied correction
-//! is reported as converged.
+//! is reported as converged. Hard decisions flip bits whose posterior is
+//! non-positive, including either exact zero, matching relay-bp and ldpc.
+//! Stored prior LLRs use [`crate::MIN_LOG_PRIOR_RATIO_MAGNITUDE`] to keep
+//! half-probability priors off the tie; memory mixing and messages are unchanged.
 
 use crate::{BpGraph, LLR_SATURATION};
 use pecos_decoder_core::errors::DecoderError;
@@ -414,7 +417,7 @@ impl RelayBp {
 
     fn update_hard_decision_and_check(&mut self, syndrome: &[u8]) -> bool {
         for (decision, &posterior) in self.hard_decision.iter_mut().zip(&self.posterior) {
-            *decision = u8::from(posterior < 0.0);
+            *decision = u8::from(posterior <= 0.0);
         }
 
         for (check, &expected) in syndrome.iter().enumerate() {
@@ -643,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_posterior_has_zero_hard_decision() {
+    fn zero_posterior_has_one_hard_decision() {
         let dcm = DemCheckMatrix::from_dem_str("error(0) D0\n").unwrap();
         let graph = BpGraph::from_dcm(&dcm);
 
@@ -652,9 +655,50 @@ mod tests {
             let outcome = decoder.decode(&[1], 0).unwrap();
 
             assert_eq!(outcome.posterior[0].to_bits(), 0.0_f64.to_bits());
-            assert!(!outcome.converged);
-            assert_eq!(outcome.correction, vec![0]);
-            assert_eq!(outcome.weight, None);
+            assert!(outcome.converged);
+            assert_eq!(outcome.correction, vec![1]);
+            assert_eq!(outcome.weight, Some(LLR_SATURATION));
+
+            // Both IEEE zero signs use the same hard-decision rule.
+            decoder.posterior[0] = -0.0;
+            assert!(decoder.update_hard_decision_and_check(&[1]));
+            assert_eq!(decoder.hard_decision, vec![1]);
+        }
+    }
+
+    #[test]
+    fn decode_half_priors_stopping_set() {
+        // Upstream relay-bp fixture: one check over three half-prior bits.
+        let matrix = ndarray::arr2(&[[1, 1, 1]]);
+        let syndrome = [0];
+        let graph = BpGraph::from_dense_check_matrix(matrix.view(), &[0.5; 3]).unwrap();
+        for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
+            for config in [
+                RelayConfig {
+                    pre_iterations: 10,
+                    ..one_iteration_config(schedule)
+                },
+                RelayConfig {
+                    schedule,
+                    num_legs: 60,
+                    stop_rule: StopRule::Converged(3),
+                    ..RelayConfig::default()
+                },
+            ] {
+                let outcome = RelayBp::new(graph.clone(), config)
+                    .unwrap()
+                    .decode(&syndrome, 0)
+                    .unwrap();
+                assert!(outcome.converged);
+                assert_eq!(outcome.correction, vec![0, 0, 0]);
+                for (row, &expected) in matrix.outer_iter().zip(&syndrome) {
+                    let parity = row
+                        .iter()
+                        .zip(&outcome.correction)
+                        .fold(0, |parity, (&entry, &bit)| parity ^ (entry & bit));
+                    assert_eq!(parity, expected);
+                }
+            }
         }
     }
 
@@ -753,7 +797,7 @@ mod tests {
             outcome
                 .posterior
                 .iter()
-                .map(|p| u8::from(*p < 0.0))
+                .map(|p| u8::from(*p <= 0.0))
                 .collect::<Vec<_>>(),
             vec![0, 0]
         );

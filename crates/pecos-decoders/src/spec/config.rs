@@ -220,9 +220,9 @@ pub enum RelayStoppingCriterion {
 }
 
 /// Relay BP construction options.
+///
 /// The gamma0 default mirrors `pecos_relay_bp::DEFAULT_GAMMA0` without requiring
-/// the optional backend. Following `spec_and_raw_builder_use_shared_paper_defaults`,
-/// `spec_and_raw_relay_use_shared_gamma0_default` keeps them equal.
+/// the optional backend; a test keeps the two equal.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RelayBpConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.

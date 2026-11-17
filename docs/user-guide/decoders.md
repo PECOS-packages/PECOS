@@ -406,10 +406,12 @@ Decode order, batch splitting and worker count cannot change a result; serial an
 parallel batch decoding are supported.
 
 The default leg-zero memory strength is `gamma0=0.35`, defined by
-`pecos_relay_bp::DEFAULT_GAMMA0`. In PECOS sweeps, 0.35 was the measured best
-on surface, color and gross codes. The paper used 0.125 for gross and 0.35 for
-surface; set `gamma0` explicitly to reproduce the paper. The default
-`gamma_dist_interval=(-0.24, 0.66)` is the paper's gross-code interval.
+`pecos_relay_bp::DEFAULT_GAMMA0`. In PECOS sweeps at p = 0.005 it was the best
+or tied-best of the values tried on surface, color and gross codes: significantly
+better on surface d5 (Z), color d5 and gross X, tied on gross Z. The paper used
+0.125 for gross and 0.35 for surface; set `gamma0` explicitly to reproduce the
+paper. The default `gamma_dist_interval=(-0.24, 0.66)` is the paper's gross-code
+interval.
 
 Use `pre_iter` for leg zero and `set_max_iter` for each of the `num_sets` relay
 legs. Relay has no `max_iter` option, including `RelayBpDecoder.from_dem`;

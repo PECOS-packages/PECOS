@@ -497,8 +497,7 @@ fn fusion_blossom(correlated: bool, solver: &str, irreducible: &str) -> PyResult
     ))
 }
 
-/// Construct Relay-BP. Leg-zero memory defaults to 0.35 (`DEFAULT_GAMMA0`);
-/// pass None to disable leg-zero memory.
+/// Construct Relay-BP. Leg-zero memory defaults to 0.35; pass None to disable it.
 #[pyfunction]
 #[pyo3(
     signature = (*, error_rate=None, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=Some(pecos_decoders::RELAY_BP_DEFAULT_GAMMA0), pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion=PyRelayStoppingCriterion::default(), seed=0),

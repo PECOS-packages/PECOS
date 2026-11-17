@@ -38,8 +38,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
   Native Relay-BP and min-sum decoding results can change.
 - **Breaking:** Relay-BP now defaults to `gamma0=0.35` instead of 0.65 across
-  Rust and Python construction paths. Decoding results change with default
-  settings; set `gamma0=0.65` explicitly to retain the previous behavior.
+  the Rust (`pecos-relay-bp`, `DecoderSpec`) and Python construction paths.
+  Decoding results change with default settings; set `gamma0=0.65` explicitly to
+  retain the previous behavior. The low-level `pecos_bp::RelayConfig::default()`
+  keeps its paper operating point (gamma0 0.1).
 
 - **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
   a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs

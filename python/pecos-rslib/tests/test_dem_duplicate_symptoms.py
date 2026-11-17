@@ -89,3 +89,28 @@ def test_merged_families_reject_invalid_error_rate(family, error_rate, convenien
         build = functools.partial(DemAwareDecoder.from_dem, dem, family, error_rate=error_rate)
     with pytest.raises(ValueError, match="error_rate must be finite and in"):
         build()
+
+
+@pytest.mark.parametrize("family", sorted(CONVENIENCE))
+@pytest.mark.parametrize("convenience", [False, True])
+def test_exact_support(family, convenience):
+    """Endpoint support is exact, including wide observable-only biases."""
+    dem = "error(1) D0 L0\nerror(0) D1 L1\nerror(0.1) D2 L2\nerror(1) L65\ndetector D3"
+    build = (
+        CONVENIENCE[family].from_dem
+        if convenience
+        else functools.partial(DemAwareDecoder.from_dem, decoder_type=family)
+    )
+    decoder = build(dem)
+    assert decoder.num_mechanisms == 4
+    assert "mechanisms=4" in repr(decoder)
+    assert list(decoder.decode_syndrome([1, 0, 1, 0]).observable_flips) == [1, 0, 1] + [0] * 62 + [1]
+    with pytest.raises(ValueError, match="detector 1.*2 dead detectors"):
+        decoder.decode_syndrome([1, 1, 0, 1])
+    with pytest.raises(ValueError, match="expected 4, got 1"):
+        decoder.decode_syndrome([0])
+    with pytest.raises(ValueError, match="index 0.*2"):
+        decoder.decode_syndrome([2, 0, 0, 0])
+    for rate in [0.0, -0.0, 1.0]:
+        with pytest.raises(ValueError, match="no error mechanism with nonzero probability remains"):
+            build(dem, error_rate=rate)

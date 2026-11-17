@@ -36,6 +36,11 @@ def assert_outcome(
         or (consumer in FLAT_CONSUMERS and "requires a flattened dem:" in message)
         or (consumer == "DemAwareDecoder" and message == "dem contains no error mechanisms")
         or (
+            consumer in {"DemAwareDecoder", "bp_osd"}
+            and message == "invalid configuration: no error mechanism with nonzero probability "
+            "remains after support reduction, for example because of error_rate=0"
+        )
+        or (
             consumer == "pymatching"
             and text == "error(1) D0"
             and message

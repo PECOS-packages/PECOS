@@ -298,6 +298,52 @@ fn fix_osd_dense_combination_sweep(src_cpp_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn bound_product_sum_messages(src_cpp_dir: &Path) -> Result<()> {
+    const PARALLEL: &str = "                                e.check_to_bit_msg =\n                                        message_sign * std::log((1 + e.check_to_bit_msg) / (1 - e.check_to_bit_msg));";
+    const SERIAL: &str = "                                e.check_to_bit_msg = pow(-1, syndrome[check_index]) *\n                                                     std::log((1 + e.check_to_bit_msg) / (1 - e.check_to_bit_msg));";
+    const BOUND: &str = "                                // PECOS FIX: bound product-sum inverse; only x == +/-1 changes.\n                                // Every other representable tanh product is bit-identical.\n                                const double bound = std::nextafter(1.0, 0.0);\n                                if (e.check_to_bit_msg > bound) e.check_to_bit_msg = bound;\n                                if (e.check_to_bit_msg < -bound) e.check_to_bit_msg = -bound;\n";
+    let path = src_cpp_dir.join("bp.hpp");
+    let mut content = fs::read_to_string(&path).map_err(|error| {
+        Error::Config(format!(
+            "Cannot read {}: {error}; check the path and permissions",
+            path.display()
+        ))
+    })?;
+    let mut modified = false;
+    for upstream in [PARALLEL, SERIAL] {
+        let patched = format!("{BOUND}{upstream}");
+        if content.matches(&patched).count() == 1 && content.matches(upstream).count() == 1 {
+            continue;
+        }
+        if content.matches(upstream).count() != 1 || content.contains(&patched) {
+            return Err(Error::Config(format!(
+                "{} does not contain the expected product-sum inverse exactly once; the pinned ldpc source changed, so update bound_product_sum_messages in build_ldpc.rs",
+                path.display()
+            )));
+        }
+        content = content.replace(upstream, &patched);
+        modified = true;
+    }
+    if modified {
+        // Shared cache: publish atomically so other checkouts never read a partial header.
+        let temporary = path.with_extension(format!("hpp.pecos-{}.tmp", std::process::id()));
+        fs::write(&temporary, content).map_err(|error| {
+            Error::Config(format!(
+                "Cannot write {}: {error}; check the path and permissions",
+                temporary.display()
+            ))
+        })?;
+        fs::rename(&temporary, &path).map_err(|error| {
+            Error::Config(format!(
+                "Cannot rename {} to {}: {error}; check the path and permissions",
+                temporary.display(),
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
 fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
     let src_cpp_dir = ldpc_dir.join("src_cpp");
     let include_dir = ldpc_dir.join("include");
@@ -316,6 +362,7 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
 
     // Fix out-of-bounds writes in the LSD decoder's dense OSD
     fix_osd_dense_combination_sweep(&src_cpp_dir)?;
+    bound_product_sum_messages(&src_cpp_dir)?;
 
     // Build the cxx bridge first to generate headers
     let mut build = cxx_build::bridge("src/bridge.rs");

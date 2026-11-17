@@ -150,6 +150,8 @@ pub struct BpOsdConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
     /// A group of k identical symptoms receives the k-fold independent XOR of
     /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
+    /// Endpoint mechanisms are reduced exactly after merging; an empty reduced
+    /// model is invalid. Fired dead detectors return `InvalidSyndrome`.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,
@@ -179,6 +181,8 @@ pub struct BpLsdConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
     /// A group of k identical symptoms receives the k-fold independent XOR of
     /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
+    /// Endpoint mechanisms are reduced exactly after merging; an empty reduced
+    /// model is invalid. Fired dead detectors return `InvalidSyndrome`.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,
@@ -221,6 +225,8 @@ pub struct RelayBpConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
     /// A group of k identical symptoms receives the k-fold independent XOR of
     /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
+    /// Endpoint mechanisms are reduced exactly after merging; an empty reduced
+    /// model is invalid. Fired dead detectors return `InvalidSyndrome`.
     pub error_rate: Option<f64>,
     pub alpha: Option<f64>,
     pub alpha_iteration_scaling_factor: f64,
@@ -256,6 +262,8 @@ pub struct MinSumBpConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
     /// A group of k identical symptoms receives the k-fold independent XOR of
     /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
+    /// Endpoint mechanisms are reduced exactly after merging; an empty reduced
+    /// model is invalid. Fired dead detectors return `InvalidSyndrome`.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub alpha: Option<f64>,

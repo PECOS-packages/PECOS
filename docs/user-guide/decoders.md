@@ -174,6 +174,25 @@ let pcm = SparseMatrix::from_coo(2, 4, rows, cols)?;
 
 ### LDPC Decoders
 
+DEM-built Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind handle
+probability-0 and probability-1 mechanisms exactly: impossible mechanisms are
+removed, and certain mechanisms contribute fixed syndrome and observable biases.
+Reduction follows any uniform `error_rate` override and duplicate merging
+(BeliefFind does not merge duplicates). Detector and observable indices stay the
+same. Construction fails if no uncertain mechanism remains, including with
+`error_rate=0`. A biased syndrome that fires a detector with no remaining mechanism
+raises an error naming the lowest such index and the number that fired; this
+includes declared-but-unused detectors and aborts batch decoding. Python reports
+`ValueError`. Syndrome lengths and binary values are checked before applying biases.
+
+Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
+priors strictly in `(0, 1)`; MBP is unchanged. Their product-sum
+check update bounds saturated tanh products to the closest double below one in
+magnitude, keeping check-to-bit messages finite; other products are unchanged.
+`belief_matching` and experimental BP-trellis retain native ±30 saturation.
+Perturbed ensemble members retain their probability clamp, so only the anchor
+member receives the exact original bias.
+
 #### BP-OSD Decoder
 
 Combines belief propagation with ordered statistics decoding post-processing.
@@ -353,6 +372,8 @@ match decoder.decode(&syndrome.view()) {
 ```
 
 ## Native Relay-BP
+
+For exact endpoint handling when built from a DEM, see [LDPC Decoders](#ldpc-decoders).
 
 `relay_bp`, `RelayBpBuilder`, and `RelayBpDecoder` use PECOS's native Relay-BP
 kernel (`pecos-bp`), implementing Müller et al., [arXiv:2506.01779](https://arxiv.org/abs/2506.01779).

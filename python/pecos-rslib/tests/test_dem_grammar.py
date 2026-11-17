@@ -117,7 +117,10 @@ def test_tagged_mechanism_is_sampled_and_counted() -> None:
     sampler = DemSampler.from_dem_string(text)
     assert sampler.sample(seed=7) == ([True], [True])
     assert ParsedDem.from_string(text).num_mechanisms == 1
-    assert DemAwareDecoder.from_dem(text).num_mechanisms == 1
+    # Grammar and sampling accept certainty; BP construction needs uncertain support.
+    with pytest.raises(ValueError, match="no error mechanism with nonzero probability remains"):
+        DemAwareDecoder.from_dem(text)
+    assert DemAwareDecoder.from_dem(text + "\nerror(0.1) D1").num_mechanisms == 2
 
 
 def test_empty_probability_has_no_sampling_effect() -> None:

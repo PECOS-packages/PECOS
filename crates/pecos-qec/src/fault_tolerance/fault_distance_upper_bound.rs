@@ -125,7 +125,7 @@ pub enum FaultDistanceUpperBoundError {
 fn validate_config(
     config: &FaultDistanceUpperBoundConfig,
 ) -> Result<(), FaultDistanceUpperBoundError> {
-    if !config.error_rate.is_finite() || !(0.0..1.0).contains(&config.error_rate) {
+    if !(config.error_rate > 0.0 && config.error_rate < 1.0) {
         return Err(FaultDistanceUpperBoundError::InvalidErrorRate(
             config.error_rate,
         ));

@@ -274,6 +274,10 @@ debug = 1            # line tables only — minimal size impact
 [profile.native]
 inherits = "release"
 
+[workspace.lints.rust]
+# Kani proof harnesses live under `#[cfg(kani)]`; `cargo kani` sets the cfg.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [workspace.lints.clippy]
 suspicious = { level = "warn", priority = -1 }
 complexity = { level = "warn", priority = -1 }

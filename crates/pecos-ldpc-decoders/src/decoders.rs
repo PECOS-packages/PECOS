@@ -988,7 +988,8 @@ impl UnionFindDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome or LLR lengths don't match expected sizes,
+    /// Returns `LdpcError::InvalidInput` if the syndrome or LLR lengths don't match expected sizes
+    /// or an LLR is NaN (infinite LLRs are allowed),
     /// or `LdpcError::Ldpc` if the C++ decoder encounters an error.
     pub fn decode(
         &mut self,
@@ -1009,6 +1010,13 @@ impl UnionFindDecoder {
                 "LLR length {} does not match bit count {}",
                 llrs.len(),
                 self.bit_count()
+            )));
+        }
+
+        // NaN is not a valid sorting key; infinite weights remain valid.
+        if let Some(index) = llrs.iter().position(|llr| llr.is_nan()) {
+            return Err(LdpcError::InvalidInput(format!(
+                "LLR at index {index} is NaN"
             )));
         }
 
@@ -1173,7 +1181,8 @@ impl BeliefFindDecoder {
     /// # Errors
     ///
     /// Returns `LdpcError::InvalidInput` if the syndrome length doesn't match the check count,
-    /// or `LdpcError` if either the BP or Union Find decoding fails.
+    /// or `LdpcError::Ldpc` if BP produces a NaN log-probability ratio before
+    /// Union Find fallback or either decoding stage fails.
     ///
     /// # Panics
     ///
@@ -1197,6 +1206,11 @@ impl BeliefFindDecoder {
 
         // BP didn't converge, use Union Find with soft information from BP
         let llrs = self.bp_decoder.log_prob_ratios()?;
+        if let Some(bit) = llrs.iter().position(|llr| llr.is_nan()) {
+            return Err(LdpcError::Ldpc(format!(
+                "BP produced a NaN log-probability ratio for bit {bit}"
+            )));
+        }
         let llrs_slice = llrs.as_slice().expect("LLR array must be contiguous");
 
         // Union Find visits bits in ascending weight order, so lower means more

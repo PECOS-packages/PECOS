@@ -5,7 +5,7 @@
 
 import pytest
 from pecos_rslib import TickCircuit
-from pecos_rslib.decoders import DemAwareDecoder, bp_osd
+from pecos_rslib.decoders import DemAwareDecoder, bp_osd, pymatching, tesseract, tesseract_trellis
 from pecos_rslib.qec import DemSampler, DetectorErrorModel, LogicalSubgraphDecoder, SampleBatch
 
 DEM = "error(0.1) D0 L0\ndetector D1"
@@ -75,3 +75,30 @@ def test_comparison_build_input_error():
 def test_comparison_counts_dead_detector_errors():
     result = SampleBatch([[0, 1]], [0]).compare_decoders(DEM, "bp_osd", "bp_osd")
     assert result.dut_error_reference_error == 1
+
+
+@pytest.mark.parametrize(
+    ("spec", "length"),
+    [
+        pytest.param(pymatching(correlated=False), 1, id="pymatching-short"),
+        pytest.param(pymatching(correlated=False), 4, id="pymatching-long"),
+        pytest.param(tesseract(), 1, id="tesseract-short"),
+        pytest.param(tesseract(), 4, id="tesseract-long"),
+        pytest.param(tesseract_trellis(), 1, id="tesseract-trellis-short"),
+        pytest.param(tesseract_trellis(), 4, id="tesseract-trellis-long"),
+    ],
+)
+def test_structured_backend_wrong_length(spec, length):
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().mz([0])
+    circuit.add_detector([-1], detector_id=2)
+    dem = DetectorErrorModel.from_circuit(circuit, p1=0, p2=0, p_meas=0.1, p_prep=0)
+    decoder = dem.build_decoder(spec)
+    with pytest.raises(ValueError, match=f"expected 3, got {length}"):
+        decoder.decode_syndrome([0] * length)
+
+
+def test_spec_tesseract_rejects_wide_observables():
+    with pytest.raises(ValueError, match="at most 64"):
+        SampleBatch([[0]], [0]).decode("error(0.1) D0 L64", tesseract(), workers=1)

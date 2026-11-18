@@ -318,11 +318,10 @@ impl pecos_decoder_core::ObservableDecoder for CssUfDecoder {
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let split = self.x_num_detectors;
         if syndrome.len() < split {
-            return Err(DecoderError::DecodingFailed(format!(
-                "CssUfDecoder: syndrome length {} < x_num_detectors {}",
-                syndrome.len(),
-                split
-            )));
+            return Err(DecoderError::InvalidDimensions {
+                expected: split,
+                actual: syndrome.len(),
+            });
         }
         let x_syn = &syndrome[..split];
         let z_syn = &syndrome[split..];

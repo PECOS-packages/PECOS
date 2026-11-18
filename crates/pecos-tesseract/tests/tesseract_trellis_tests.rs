@@ -117,9 +117,14 @@ fn out_of_range_detector_is_an_input_error_like_astar() {
         .to_string();
     assert!(error.contains("out of range"), "{error}");
     assert!(astar.decode_detections(&fired.view()).is_err());
-    // The dense path sees the same guard: a syndrome wider than the model.
-    let error = trellis.decode_obs(&[0, 1]).err().unwrap().to_string();
-    assert!(error.contains("out of range"), "{error}");
+    // The dense path validates dimensions before extracting sparse detections.
+    assert!(matches!(
+        trellis.decode_obs(&[0, 1]),
+        Err(pecos_decoder_core::DecoderError::InvalidDimensions {
+            expected: 1,
+            actual: 2,
+        })
+    ));
 }
 
 #[test]

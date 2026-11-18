@@ -26,7 +26,7 @@ impl pecos_decoder_core::ObservableDecoder for MwpfDecoder {
     {
         let result = self
             .decode_syndrome(syndrome)
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
         Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
             result.observable_mask,
         ))

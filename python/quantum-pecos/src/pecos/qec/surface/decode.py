@@ -746,18 +746,18 @@ def generate_repetition_code_dem(
     # Spacelike edges (data qubit errors)
     for r in range(num_rounds):
         # First boundary
-        lines.append(f"error({p_data:.6f}) D{det_id(r, 0)} L0")
+        lines.append(f"error({p_data}) D{det_id(r, 0)} L0")
 
         # Internal edges
-        lines.extend(f"error({p_data:.6f}) D{det_id(r, c)} D{det_id(r, c + 1)}" for c in range(num_checks - 1))
+        lines.extend(f"error({p_data}) D{det_id(r, c)} D{det_id(r, c + 1)}" for c in range(num_checks - 1))
 
         # Last boundary
-        lines.append(f"error({p_data:.6f}) D{det_id(r, num_checks - 1)} L0")
+        lines.append(f"error({p_data}) D{det_id(r, num_checks - 1)} L0")
 
     # Timelike edges (measurement errors)
     if num_rounds > 1:
         lines.extend(
-            f"error({p_meas:.6f}) D{det_id(r, c)} D{det_id(r + 1, c)}"
+            f"error({p_meas}) D{det_id(r, c)} D{det_id(r + 1, c)}"
             for r in range(num_rounds - 1)
             for c in range(num_checks)
         )
@@ -856,19 +856,19 @@ def generate_surface_code_dem(
                 # Boundary data qubit - edge to boundary
                 stab_idx = stab_indices[0]
                 if affects_logical:
-                    lines.append(f"error({p_data:.6f}) D{det_id(r, stab_idx)} L0")
+                    lines.append(f"error({p_data}) D{det_id(r, stab_idx)} L0")
                 else:
-                    lines.append(f"error({p_data:.6f}) D{det_id(r, stab_idx)}")
+                    lines.append(f"error({p_data}) D{det_id(r, stab_idx)}")
             elif len(stab_indices) == 2:
                 # Internal data qubit - edge between two stabilizers
                 s1, s2 = stab_indices
                 if affects_logical:
                     lines.append(
-                        f"error({p_data:.6f}) D{det_id(r, s1)} D{det_id(r, s2)} L0",
+                        f"error({p_data}) D{det_id(r, s1)} D{det_id(r, s2)} L0",
                     )
                 else:
                     lines.append(
-                        f"error({p_data:.6f}) D{det_id(r, s1)} D{det_id(r, s2)}",
+                        f"error({p_data}) D{det_id(r, s1)} D{det_id(r, s2)}",
                     )
 
     # Timelike edges (measurement errors)
@@ -876,13 +876,13 @@ def generate_surface_code_dem(
     # For single-round: measurement errors are boundary edges (flip one detector)
     if num_rounds > 1:
         lines.extend(
-            f"error({p_meas:.6f}) D{det_id(r, stab.index)} D{det_id(r + 1, stab.index)}"
+            f"error({p_meas}) D{det_id(r, stab.index)} D{det_id(r + 1, stab.index)}"
             for r in range(num_rounds - 1)
             for stab in stabilizers
         )
     else:
         # Single round: measurement errors are boundary edges
-        lines.extend(f"error({p_meas:.6f}) D{det_id(0, stab.index)}" for stab in stabilizers)
+        lines.extend(f"error({p_meas}) D{det_id(0, stab.index)}" for stab in stabilizers)
 
     # Detector coordinates (x, y, t)
     # Use stabilizer index as spatial coordinate

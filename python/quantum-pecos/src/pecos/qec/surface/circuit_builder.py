@@ -3790,7 +3790,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
             det_str = " ".join(f"D{d}" for d in sorted(dets))
             obs_str = " ".join(f"L{o}" for o in sorted(obs))
             targets = f"{det_str} {obs_str}".strip()
-            lines.append(f"error({prob:.6g}) {targets}")
+            lines.append(f"error({prob}) {targets}")
 
     return "\n".join(lines)
 
@@ -4250,6 +4250,6 @@ def generate_dem_from_tick_circuit_via_autodetection(
             det_str = " ".join(f"D{d}" for d in sorted(dets))
             dem_output_str = " ".join(f"L{idx}" for idx in sorted(dem_outputs))
             targets = f"{det_str} {dem_output_str}".strip()
-            lines.append(f"error({prob:.6g}) {targets}")
+            lines.append(f"error({prob}) {targets}")
 
     return "\n".join(lines)

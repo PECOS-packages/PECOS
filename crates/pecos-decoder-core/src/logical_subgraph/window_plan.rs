@@ -98,6 +98,8 @@ impl LogicalSubgraphWindowPlan {
                 if let Some(c) = coords {
                     let cs: Vec<String> = c.iter().map(|v| format!("{v}")).collect();
                     let _ = writeln!(sub_dem, "detector({}) D{local}", cs.join(", "));
+                } else {
+                    let _ = writeln!(sub_dem, "detector D{local}");
                 }
             }
             for edge in &sg.graph.edges {
@@ -110,6 +112,9 @@ impl LogicalSubgraphWindowPlan {
                     let _ = write!(sub_dem, " L{obs}");
                 }
                 let _ = writeln!(sub_dem);
+            }
+            if let Some(last) = sg.graph.num_observables.checked_sub(1) {
+                let _ = writeln!(sub_dem, "logical_observable L{last}");
             }
             entries.push(PlanEntry {
                 observable_idx: sg.observable_idx,
@@ -219,6 +224,23 @@ fn window_count_for_times(times: &[f64], step: NonZeroUsize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subdem_retains_unconnected_dimensions() {
+        let graph = crate::DemMatchingGraph::from_dem_str(
+            "error(0.1) D0 L0\ndetector D1\nlogical_observable L2",
+        )
+        .unwrap();
+        let subgraph = LogicalSubgraph {
+            observable_idx: 0,
+            detector_map: vec![1, 0],
+            inverse_map: vec![Some(1), Some(0)],
+            graph,
+        };
+        let plan = LogicalSubgraphWindowPlan::new(&[subgraph], &[]);
+        let parsed = crate::DemMatchingGraph::from_dem_str(&plan.entries()[0].sub_dem).unwrap();
+        assert_eq!((parsed.num_detectors, parsed.num_observables), (2, 3));
+    }
 
     #[test]
     fn coordless_times_are_single_window() {

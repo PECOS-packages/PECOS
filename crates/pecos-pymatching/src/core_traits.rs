@@ -246,6 +246,24 @@ impl ObservableDecoder for PyMatchingDecoder {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn observable_batch_rejects_short_stride() {
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 L0\ndetector D2").unwrap();
+        assert!(matches!(
+            pecos_decoder_core::ObservableDecoder::decode_batch_to_observables(
+                &mut decoder,
+                &[0],
+                1,
+                1
+            ),
+            Err(pecos_decoder_core::DecoderError::InvalidDimensions {
+                expected: 3,
+                actual: 1
+            })
+        ));
+    }
+
     use super::*;
     use ndarray::{Array1, Array2};
 

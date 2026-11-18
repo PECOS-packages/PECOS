@@ -47,7 +47,12 @@ impl PyMatchingEdgeDecoder {
             &window.model.to_dem_string(),
             correlated,
         )
-        .map_err(DecoderError::from)?;
+        .map_err(|error| match error {
+            crate::PyMatchingError::Dem(error) => DecoderError::InternalError(format!(
+                "invalid internally generated window DEM: {error}"
+            )),
+            error => DecoderError::from(error),
+        })?;
         Ok(Self { decoder, edges })
     }
 }

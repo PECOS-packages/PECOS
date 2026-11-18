@@ -3412,6 +3412,12 @@ fn subgraph_to_dem_string(graph: &pecos_decoder_core::DemMatchingGraph) -> Strin
         }
         lines.push(format!("error({p}) {}", targets.join(" ")));
     }
+    if let Some(last) = graph.num_detectors.checked_sub(1) {
+        lines.push(format!("detector D{last}"));
+    }
+    if let Some(last) = graph.num_observables.checked_sub(1) {
+        lines.push(format!("logical_observable L{last}"));
+    }
     lines.join("\n")
 }
 
@@ -5664,15 +5670,25 @@ impl PyCssUfDecoder {
         true_obs_masks: Vec<u64>,
         x_num_detectors: usize,
     ) -> PyResult<usize> {
+        use pecos_decoder_core::{DecoderError, ObservableDecoder};
+        if x_num_detectors != self.inner.x_num_detectors() {
+            return Err(decoder_build_error_to_py(DecoderError::InvalidDimensions {
+                expected: self.inner.x_num_detectors(),
+                actual: x_num_detectors,
+            }));
+        }
+        if syndromes.len() != true_obs_masks.len() {
+            return Err(decoder_build_error_to_py(DecoderError::BatchSizeMismatch {
+                expected: syndromes.len(),
+                actual: true_obs_masks.len(),
+            }));
+        }
         let mut errors = 0;
         for (syn, &true_obs) in syndromes.iter().zip(true_obs_masks.iter()) {
-            let x_syn = &syn[..x_num_detectors.min(syn.len())];
-            let z_syn = &syn[x_num_detectors.min(syn.len())..];
-            let (x_obs, z_obs) = self
+            let predicted = self
                 .inner
-                .decode_css(x_syn, z_syn)
+                .decode_to_observables(syn)
                 .map_err(decoder_build_error_to_py)?;
-            let predicted = x_obs ^ z_obs;
             if predicted != true_obs {
                 errors += 1;
             }

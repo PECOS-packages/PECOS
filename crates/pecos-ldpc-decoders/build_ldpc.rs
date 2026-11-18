@@ -146,6 +146,8 @@ fn write_mbp_header(path: &Path, content: &str) -> Result<()> {
         ))
     })?;
     fs::rename(&temporary, path).map_err(|error| {
+        // A failed publication must not leave a stale process-private header.
+        let _ = fs::remove_file(&temporary);
         Error::Config(format!(
             "Cannot rename {} to {}: {error}; check the path and permissions",
             temporary.display(),
@@ -155,11 +157,22 @@ fn write_mbp_header(path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
-fn fix_mbp_iterate_methods(src_cpp_dir: &Path) -> Result<()> {
+fn fix_mbp(src_cpp_dir: &Path) -> Result<()> {
     let path = src_cpp_dir.join("mbp.hpp");
     let original = read_mbp_header(&path)?;
     let mut content = original.clone();
+    fix_mbp_iterate_methods(&mut content, &path)?;
+    fix_mbp_numeric_guards(&mut content, &path)?;
+    if content != original {
+        // Publish every MBP edit together. Concurrent first builds must never
+        // replace a fully patched header with a loops-only intermediate version.
+        write_mbp_header(&path, &content)?;
+        info!("Fixed MBP message passing and numeric guards");
+    }
+    Ok(())
+}
 
+fn fix_mbp_iterate_methods(content: &mut String, path: &Path) -> Result<()> {
     // Upgrade both the pinned pointer syntax and the old PECOS patch. The latter
     // used the correct iterator API but copied entries, losing every message write
     // and comparing addresses of locals instead of excluding the current edge.
@@ -169,7 +182,7 @@ fn fix_mbp_iterate_methods(src_cpp_dir: &Path) -> Result<()> {
             ("pcm->iterate_row_ptr(", "pcm->iterate_row(", 2),
             ("if (g != e)", "if (&g != &e)", 2),
         ] {
-            patch_mbp_fragment(&mut content, &path, upstream, patched, count)?;
+            patch_mbp_fragment(content, path, upstream, patched, count)?;
         }
         // Exact access counts also detect changes to the pinned pointer version.
         for (upstream, patched, count, existing) in [
@@ -190,7 +203,7 @@ fn fix_mbp_iterate_methods(src_cpp_dir: &Path) -> Result<()> {
                     path.display()
                 )));
             }
-            content = content.replace(upstream, patched);
+            *content = content.replace(upstream, patched);
         }
     }
     for (upstream, patched, count) in [
@@ -210,7 +223,7 @@ fn fix_mbp_iterate_methods(src_cpp_dir: &Path) -> Result<()> {
             2,
         ),
     ] {
-        patch_mbp_fragment(&mut content, &path, upstream, patched, count)?;
+        patch_mbp_fragment(content, path, upstream, patched, count)?;
     }
     if content.matches("if (&g != &e)").count() != 2
         || content.contains("for (auto e:")
@@ -222,27 +235,30 @@ fn fix_mbp_iterate_methods(src_cpp_dir: &Path) -> Result<()> {
             path.display()
         )));
     }
-    if content != original {
-        write_mbp_header(&path, &content)?;
-        info!("Fixed MBP iteration to update stored edge messages");
-    }
     Ok(())
 }
 
-fn fix_mbp_numeric_guards(src_cpp_dir: &Path) -> Result<()> {
-    let path = src_cpp_dir.join("mbp.hpp");
-    let original = read_mbp_header(&path)?;
-    let mut content = original.clone();
+fn fix_mbp_numeric_guards(content: &mut String, path: &Path) -> Result<()> {
+    // Upgrade either the original no-op guard or the previous zero-only fix.
+    const ORIGINAL: &str = "if (demoninator <= 0) {\n                                    stab_update_product = 1e-12;\n                                }";
+    const ZERO_ONLY: &str = "if (demoninator <= 0) {\n                                    demoninator = 1e-12;\n                                }";
+    const FLOOR: &str = "demoninator = std::max(demoninator, 1e-12);";
+    let previous = if content.contains(ORIGINAL) {
+        ORIGINAL
+    } else {
+        ZERO_ONLY
+    };
+    patch_mbp_fragment(content, path, previous, FLOOR, 2)?;
     for (upstream, patched, count) in [
+        (
+            "#include <iostream>\n",
+            "#include <algorithm>\n#include <iostream>\n",
+            1,
+        ),
         (
             "else if (stab_update_product <= -1) stab_update_product = 1 + 1e-8;",
             "else if (stab_update_product <= -1) stab_update_product = -(1 - 1e-8);",
             1,
-        ),
-        (
-            "if (demoninator <= 0) {\n                                    stab_update_product = 1e-12;\n                                }",
-            "if (demoninator <= 0) {\n                                    demoninator = 1e-12;\n                                }",
-            2,
         ),
         (
             "#include <utility>\n",
@@ -255,11 +271,7 @@ fn fix_mbp_numeric_guards(src_cpp_dir: &Path) -> Result<()> {
             1,
         ),
     ] {
-        patch_mbp_fragment(&mut content, &path, upstream, patched, count)?;
-    }
-    if content != original {
-        write_mbp_header(&path, &content)?;
-        info!("Fixed MBP numeric guards and NaN decisions");
+        patch_mbp_fragment(content, path, upstream, patched, count)?;
     }
     Ok(())
 }
@@ -456,9 +468,8 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
     // Fix header guard conflict between union_find.hpp and lsd.hpp
     fix_header_guard_conflict(&src_cpp_dir)?;
 
-    // Fix mbp.hpp iterate method names
-    fix_mbp_iterate_methods(&src_cpp_dir)?;
-    fix_mbp_numeric_guards(&src_cpp_dir)?;
+    // Publish all MBP fixes as one atomic cache update.
+    fix_mbp(&src_cpp_dir)?;
 
     // Fix MSVC compatibility issues
     fix_msvc_compatibility(&src_cpp_dir)?;

@@ -13,7 +13,8 @@ use ndarray::{Array1, Array2, ArrayView1};
 /// Validates MBP's error rate and XYZ weights and divides the weights by their sum.
 ///
 /// The C++ core builds `error_rate * bias` channel probabilities unchecked, so only a
-/// strictly interior probability and finite positive weights may pass.
+/// strictly interior probability and finite positive weights may pass. The prior
+/// ratio `(1-p)/p` must also be finite before the core takes its logarithm.
 fn mbp_channel(error_rate: f64, xyz_bias: [f64; 3]) -> Result<(f64, [f64; 3]), LdpcError> {
     if !error_rate.is_finite() || error_rate <= 0.0 || error_rate >= 1.0 {
         return Err(LdpcError::InvalidInput(format!(
@@ -43,9 +44,9 @@ fn mbp_channel(error_rate: f64, xyz_bias: [f64; 3]) -> Result<(f64, [f64; 3]), L
     let normalized_bias = weights.map(|weight| weight / weight_sum);
     for (index, weight) in normalized_bias.iter().enumerate() {
         let probability = error_rate * weight;
-        if probability <= 0.0 {
+        if probability <= 0.0 || !((1.0 - probability) / probability).is_finite() {
             return Err(LdpcError::InvalidInput(format!(
-                "error_rate * normalized xyz_bias[{index}] must be strictly positive, got {probability} \
+                "error_rate * normalized xyz_bias[{index}] must be strictly positive with a finite prior ratio (1-p)/p, got {probability} \
                  (error_rate={error_rate}, xyz_bias[{index}]={}); \
                  MBP needs a small positive weight for every Pauli; increase the weight or error_rate",
                 xyz_bias[index]
@@ -91,7 +92,8 @@ impl MbpDecoder {
     /// * `hz` - Z stabilizer matrix for CSS code
     /// * `error_rate` - Finite physical error rate strictly between 0 and 1
     /// * `xyz_bias` - Finite positive X, Y, Z weights (will be normalized); each resulting
-    ///   Pauli probability must remain strictly positive. For pure dephasing use tiny X/Y weights.
+    ///   Pauli probability must be positive with a finite `(1-p)/p` ratio. For pure
+    ///   dephasing use small positive X/Y weights that satisfy this condition.
     /// * `max_iter` - Maximum BP iterations (0 = n)
     /// * `bp_method` - BP method (product-sum or min-sum)
     /// * `ms_scaling_factor` - Scaling factor for min-sum
@@ -409,8 +411,7 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn test_mbp_corrects_every_single_qubit_pauli() {
+    fn assert_mbp_corrects_every_single_qubit_pauli(method: BpMethod, rate: f64) {
         let checks = steane_checks();
         let pcm = CssCode::new(checks.clone(), checks.clone())
             .unwrap()
@@ -425,17 +426,8 @@ mod tests {
                 })
                 .collect()
         };
-        let mut decoder = MbpDecoder::new(
-            &checks,
-            &checks,
-            0.05,
-            [1.0; 3],
-            100,
-            BpMethod::ProductSum,
-            1.0,
-            None,
-        )
-        .unwrap();
+        let mut decoder =
+            MbpDecoder::new(&checks, &checks, rate, [1.0; 3], 100, method, 0.75, None).unwrap();
         // Reuse the decoder to also exercise message initialization between syndromes.
         for qubit in 0..7 {
             for pauli in 1..=3 {
@@ -461,6 +453,16 @@ mod tests {
                 assert_eq!(decoded_paulis, decoded);
             }
         }
+    }
+
+    #[test]
+    fn test_mbp_corrects_every_single_qubit_pauli() {
+        assert_mbp_corrects_every_single_qubit_pauli(BpMethod::ProductSum, 0.05);
+    }
+
+    #[test]
+    fn test_mbp_min_sum_corrects_every_single_qubit_pauli() {
+        assert_mbp_corrects_every_single_qubit_pauli(BpMethod::MinimumSum, 0.1);
     }
 
     fn assert_invalid_channel(rate: f64, bias: [f64; 3], expected: &str) {
@@ -516,6 +518,20 @@ mod tests {
             [1.0; 3],
             "error_rate * normalized xyz_bias[0]",
         );
+    }
+
+    #[test]
+    fn test_mbp_rejects_overflowing_biased_prior() {
+        assert_invalid_channel(
+            0.1,
+            [f64::MAX, 1.0, 1.0],
+            "error_rate * normalized xyz_bias[1]",
+        );
+    }
+
+    #[test]
+    fn test_mbp_rejects_overflowing_low_rate_prior() {
+        assert_invalid_channel(1e-310, [1.0; 3], "error_rate * normalized xyz_bias[0]");
     }
 
     #[test]

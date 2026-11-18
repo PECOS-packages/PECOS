@@ -522,3 +522,20 @@ def test_relay_rejects_max_iter_and_is_history_independent() -> None:
         relay_bp(max_iter=20)
     spec = relay_bp(pre_iter=8, gamma0=None)
     assert not spec.history_dependent
+
+
+def test_relay_gamma0_default_matches_parser_and_explicit_value() -> None:
+    """The Python factory and feature-independent Rust spec share the default."""
+    assert relay_bp() == DecoderSpec.parse("relay_bp")
+    assert relay_bp() == relay_bp(gamma0=0.35)
+    assert relay_bp() != relay_bp(gamma0=None)
+    assert relay_bp() != relay_bp(gamma0=0.65)
+
+
+def test_relay_gamma0_signature_shows_the_default() -> None:
+    """The displayed signature default is the value the factory actually uses."""
+    from inspect import signature
+
+    shown = signature(relay_bp).parameters["gamma0"].default
+    assert shown == 0.35
+    assert relay_bp() == relay_bp(gamma0=shown)

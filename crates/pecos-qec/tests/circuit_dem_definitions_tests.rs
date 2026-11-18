@@ -226,11 +226,12 @@ fn circuit_builders_reject_non_string_attributes_and_wrong_counts() {
 }
 
 #[test]
-fn detector_annotation_coordinates_are_absent_three_or_error() {
+fn detector_annotation_coordinates_preserve_all_dimensions() {
     for coords in [
         vec![],
-        vec![1.0, 2.0, 3.0],
         vec![1.0],
+        vec![1.0, 2.0],
+        vec![1.0, 2.0, 3.0],
         vec![1.0, 2.0, 3.0, 4.0],
     ] {
         let mut dag = DagCircuit::new();
@@ -238,32 +239,18 @@ fn detector_annotation_coordinates_are_absent_three_or_error() {
         let measurements = dag.mz(&[0]);
         dag.detector_with_coords(&measurements, &coords).unwrap();
         let noise = NoiseConfig::new(0.0, 0.0, 0.125, 0.0);
-        let dem = DemBuilder::try_from_circuit_with_noise_config(&dag, noise.clone());
-        let sampler = DemSampler::from_circuit(&dag, &noise);
-        if coords.is_empty() || coords.len() == 3 {
-            assert_eq!(
-                dem.unwrap().detectors[0].coords,
-                if coords.is_empty() {
-                    None
-                } else {
-                    Some([1.0, 2.0, 3.0])
-                }
-            );
-            assert!(sampler.is_ok());
-        } else {
-            let error = dem.unwrap_err();
-            assert!(error.to_string().contains(&format!(
-                "detector id 0: coordinate length {}",
-                coords.len()
-            )));
-            assert!(
-                matches!(error, DemBuilderError::Definition(error) if matches!(*error, DefinitionError::InvalidDetectorCoordinates { id: 0, length } if length == coords.len()))
-            );
-            assert!(matches!(
-                sampler,
-                Err(DetectorValidationError::Definition(_))
-            ));
-        }
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&dag, noise.clone()).unwrap();
+        // Native annotations have no distinction between omitted and empty coordinates.
+        assert_eq!(
+            dem.detectors[0].coords,
+            (!coords.is_empty()).then(|| coords.clone())
+        );
+        assert!(DemSampler::from_circuit(&dag, &noise).is_ok());
+        // JSON retains an explicitly empty coordinate array as well as nonempty vectors.
+        let metadata = serde_json::json!([{"id": 0, "coords": coords, "records": [-1]}]);
+        dag.set_attr("detectors", Attribute::String(metadata.to_string()));
+        let combined = DemBuilder::try_from_circuit_with_noise_config(&dag, noise).unwrap();
+        assert_eq!(combined.detectors[0].coords, Some(coords));
     }
 }
 

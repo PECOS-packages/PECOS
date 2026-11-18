@@ -519,6 +519,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "selene")]
+    fn attaching_dynamic_program_does_not_execute_feedback_with_placeholder_results() {
+        let program = pecos_programs::Qis::from_string(include_str!(
+            "../../pecos-selene-runtime/tests/fixtures/feedback.ll"
+        ));
+        let builder = qis_engine()
+            .interface(crate::helios_interface_builder())
+            .runtime(crate::selene_runtimes::pecos_test_runtime(&[]))
+            .try_program(program)
+            .unwrap();
+        assert!(builder.interface.is_none());
+        builder.build().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "selene")]
+    fn attaching_dynamic_program_still_rejects_invalid_ir() {
+        let error = qis_engine()
+            .interface(crate::helios_interface_builder())
+            .runtime(crate::selene_runtimes::pecos_test_runtime(&[]))
+            .try_program(pecos_programs::Qis::from_string("not LLVM IR"))
+            .unwrap()
+            .build()
+            .err()
+            .expect("building must validate IR before execution");
+        assert!(error.to_string().contains("Failed to load QIS program"));
+    }
+
+    #[test]
     fn scheduled_modes_do_not_silently_disable_each_other() {
         use ScheduledTransport::{Off, V6, V7};
         let cases = [

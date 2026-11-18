@@ -26,6 +26,14 @@ pub struct QubitPair {
     pub second: i64,
 }
 
+/// A qubit handle and opaque classical scheduling dependency, in HUGR row order.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct QubitToken {
+    pub qubit: i64,
+    pub token: i64,
+}
+
 // Thread-local counter to prevent infinite loops in collection mode.
 // After MAX_COLLECTION_READS, `___read_future_bool` returns true to break out of
 // loops like "repeat_until_one" (while not result: ... result = measure(q)).
@@ -571,6 +579,85 @@ fn queue_trace_metadata(func_name: &str, key: String, value: String, qubit: Opti
     with_interface(|interface| {
         interface.queue_operation(Operation::TraceMetadata { metadata, qubit });
     });
+}
+
+/// Allocate and prepare |0> after an opaque compiler dependency.
+///
+/// This is the same allocate/reset sequence emitted for Guppy's `qubit()`.
+/// The token is not a qubit ID or runtime resource. Its value has no meaning.
+///
+/// # Safety
+/// Called from C/LLVM code with an initialized execution interface.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_qis_ordered_alloc_hugr(_token: i64) -> i64 {
+    checkpoint!(0);
+    let qubit = unsafe { ___qalloc() };
+    unsafe { ___reset(qubit) };
+    qubit
+}
+
+/// Prepare a qubit with required allocation provenance on its emitted reset.
+///
+/// This opt-in trace label follows the program-to-runtime qubit mapping. A
+/// runtime that removes the reset cannot silently certify its preparation time.
+///
+/// # Safety
+/// Called from C/LLVM code with an initialized execution interface.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_qis_ordered_alloc_tagged_hugr(_token: i64) -> i64 {
+    checkpoint!(0);
+    let qubit = unsafe { ___qalloc() };
+    let id = checked_ffi_id!(
+        stringify!(pecos_qis_ordered_alloc_tagged_hugr),
+        qubit,
+        usize
+    );
+    with_interface(|interface| {
+        interface.queue_operation(Operation::TraceMetadata {
+            metadata: TraceMetadata::from([
+                ("pecos_qec_allocation_id".into(), qubit.to_string()),
+                ("source_lowering_required".into(), "true".into()),
+            ]),
+            qubit: Some(id),
+        });
+    });
+    unsafe { ___reset(qubit) };
+    qubit
+}
+
+/// Join a live qubit and a classical ordering dependency without submitting work.
+///
+/// Both outputs depend on both inputs in HUGR. Keep this external to the compiled
+/// program: inlining its identity implementation would erase that dependency.
+///
+/// # Safety
+/// Called from C/LLVM code. Qubit must be a valid non-negative ID.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_qis_ordering_join_hugr(qubit: i64, token: i64) -> QubitToken {
+    checkpoint!(QubitToken { qubit, token });
+    let _ = checked_ffi_id!(stringify!(pecos_qis_ordering_join_hugr), qubit, usize);
+    QubitToken { qubit, token }
+}
+
+/// Depend on a measured Boolean without branching on it or changing its value.
+///
+/// # Safety
+/// Called from C/LLVM code; `outcome` must have the LLVM i1 / C Boolean ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_qis_ordering_observe_hugr(token: i64, _outcome: bool) -> i64 {
+    checkpoint!(token);
+    token
+}
+
+/// Request a runtime barrier even when no qubit is currently live.
+///
+/// # Safety
+/// Called from C/LLVM code with an initialized execution interface.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_qis_ordering_barrier_hugr(token: i64) -> i64 {
+    checkpoint!(token);
+    with_interface(|interface| interface.queue_operation(Operation::Barrier));
+    token
 }
 
 /// Attach source/runtime metadata to the next lowerable quantum operation.
@@ -2269,6 +2356,64 @@ mod tests {
     }
 
     // --- Measurement and reset tests ---
+
+    #[test]
+    fn test_ordering_helpers_preserve_tokens_without_quantum_work() {
+        setup_test();
+        for token in [i64::MIN, -1, 0, i64::MAX] {
+            let joined = unsafe { pecos_qis_ordering_join_hugr(17, token) };
+            assert_eq!(joined, QubitToken { qubit: 17, token });
+            for outcome in [false, true] {
+                assert_eq!(
+                    unsafe { pecos_qis_ordering_observe_hugr(token, outcome) },
+                    token
+                );
+            }
+        }
+        with_interface(|iface| assert_eq!(iface.operations, Vec::<Operation>::new()));
+        assert_eq!(unsafe { pecos_qis_ordering_barrier_hugr(-1) }, -1);
+        with_interface(|iface| assert_eq!(iface.operations, vec![Operation::Barrier]));
+    }
+
+    #[test]
+    fn test_ordered_allocation_is_allocate_then_reset() {
+        setup_test();
+        let q = unsafe { pecos_qis_ordered_alloc_hugr(0) };
+        let id = usize::try_from(q).unwrap();
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations,
+                vec![
+                    Operation::AllocateQubit { id },
+                    Operation::Quantum(QuantumOp::Reset(id)),
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn test_tagged_allocation_labels_its_reset_without_an_extra_quantum_operation() {
+        setup_test();
+        let q = unsafe { pecos_qis_ordered_alloc_tagged_hugr(0) };
+        let id = usize::try_from(q).unwrap();
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 3);
+            assert_eq!(iface.operations[0], Operation::AllocateQubit { id });
+            let Operation::TraceMetadata { metadata, qubit } = &iface.operations[1] else {
+                panic!("expected targeted allocation metadata");
+            };
+            assert_eq!(*qubit, Some(id));
+            assert_eq!(
+                metadata.get("pecos_qec_allocation_id"),
+                Some(&q.to_string())
+            );
+            assert_eq!(metadata.get("source_lowering_required").unwrap(), "true");
+            assert_eq!(
+                iface.operations[2],
+                Operation::Quantum(QuantumOp::Reset(id))
+            );
+        });
+    }
 
     #[test]
     fn test_measurement() {

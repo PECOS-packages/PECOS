@@ -1,6 +1,7 @@
 """The Python boundary owns compiler options, normalization and error propagation."""
 
 import re
+import sys
 
 import pytest
 import selene_hugr_qis_compiler
@@ -114,6 +115,7 @@ def _operation_shape(operation: object) -> tuple | None:
     return (kind, payload["id"])
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Native aggregate helper ABI adapter not implemented")
 def test_hosted_operations_keep_their_order_through_lowering() -> None:
     """Barriers and qubit-linked trace metadata stay in place around the gates
     they bracket, and measurement feedback drives the classical loop exactly

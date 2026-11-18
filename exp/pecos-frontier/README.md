@@ -96,6 +96,13 @@ and an explicit tag. `summary.json` separates decoder errors and truth denominat
 failure counts/rates are null when no successful shot has truth.
 Window mode also writes `resolved_window_models.json` with the projected models,
 mappings and exact orders.
+Full-DEM mode writes `full_dem_config.json` with schema
+`frontier-full-dem-config.v1`, model dimensions, all eight numerical settings,
+the committee policy and the internal column budget. `numeric_config.column_order`
+is the exact forward order; `backward_column_order` is its plain reverse. Both
+refer to zero-based mechanisms in the input DEM. Keep the input DEM and source
+revision with these outputs when archiving a run. Configuration files are written
+before event decoding; only `summary.json` indicates a completed cohort.
 
 To inspect geometry without running DP, use `resolve-windows MODEL CONFIG OUTPUT`.
 To decode the entire DEM, use `full-dem MODEL EVENTS OUTPUT`. These are local native

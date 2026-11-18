@@ -807,9 +807,9 @@ impl NoisyCcz {
         let mut seeds = PecosRng::seed_from_u64(seed);
         let mut noise = PecosRng::seed_from_u64(seeds.next_u64());
         let mut sim = PhasePoly::with_seed(self.prefix.num_qubits(), seeds.next_u64());
-        // Every numeric relay-BP setting is pinned to the current builder default, so a
-        // library default change cannot silently change results. Relay gammas are sampled
-        // from `gamma_dist_interval`.
+        // Every numeric relay-BP setting is pinned explicitly (gamma0 at 0.65, the library
+        // default before it became 0.35), so a library default change cannot silently
+        // change results. Relay gammas are sampled from `gamma_dist_interval`.
         let mut decoder = RelayBpDecoder::builder(&self.meta.view())
             .error_priors(&self.priors)
             .alpha(None)

@@ -7,6 +7,7 @@
 //! # Currently supported
 //!
 //! - [`Decoder`](pecos_decoder_core::Decoder) via [`ForeignDecoder`]
+//! - Experimental scheduled normalizers via [`scheduled_adapter::NativeScheduledAdapter`]
 //!
 //! # How it works
 //!
@@ -22,6 +23,7 @@ pub mod engine;
 pub mod ffi;
 #[cfg(feature = "neo")]
 pub mod gate_support;
+pub mod scheduled_adapter;
 pub mod simulator;
 pub mod version;
 

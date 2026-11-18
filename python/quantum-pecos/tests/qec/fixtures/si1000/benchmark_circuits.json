@@ -1,0 +1,552 @@
+{
+  "source": "https://doi.org/10.5281/zenodo.22820614",
+  "inventory_sha256": "e1dcd3d4935a6267bb6fed61f977f6a837c8eb605798a5a716de3c7bd37f9461",
+  "cases": [
+    {
+      "fixture": "planar_488_d11_r11_X_phase0_p0p0005.stim",
+      "sha256": "e9114d56103feb9548499b82c2a3cf9e2bd51fe06881034e9a6a0d5e4e160932",
+      "cell": {
+        "basis": "X",
+        "distance": 11,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 11,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d11_r11_X_phase0_p0p001.stim",
+      "sha256": "8ac7a01cc46cda5f902ee2a295511a715672809191102b96efca5278565cc148",
+      "cell": {
+        "basis": "X",
+        "distance": 11,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 11,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d11_r11_X_phase1_p0p0005.stim",
+      "sha256": "d85ff7b97a8c89461629b73bd599925e28a44428d95dc599b099bb6424243b8a",
+      "cell": {
+        "basis": "X",
+        "distance": 11,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 11,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d11_r11_X_phase1_p0p001.stim",
+      "sha256": "4027b0c342014b707cde8304c7325a2414608e0e3082135ca5b4645b35234c72",
+      "cell": {
+        "basis": "X",
+        "distance": 11,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 11,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d11_r11_Z_phase0_p0p0005.stim",
+      "sha256": "7a5cfa3a5fc447742c1226601f333b869294d7c69463e1de248f4e048adee9a9",
+      "cell": {
+        "basis": "Z",
+        "distance": 11,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 11,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d11_r11_Z_phase0_p0p001.stim",
+      "sha256": "84764f2b3817a249fea13f1f8f19a06dbe93a83e396011c5afb580aa102c35cd",
+      "cell": {
+        "basis": "Z",
+        "distance": 11,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 11,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d11_r11_Z_phase1_p0p0005.stim",
+      "sha256": "2fa3be2d37b70cf8a10c3569d690656fa5b57c493203687c9c96f36004485b2d",
+      "cell": {
+        "basis": "Z",
+        "distance": 11,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 11,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d11_r11_Z_phase1_p0p001.stim",
+      "sha256": "96b5ad1ada9508248961f98f01996a5c69f74204e9244f4d34b87c7efb03e8bf",
+      "cell": {
+        "basis": "Z",
+        "distance": 11,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 11,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d15_r15_X_phase0_p0p0005.stim",
+      "sha256": "01f4d44aee189531a8309037af1e7c0681725bc783f813d681cdd48038614308",
+      "cell": {
+        "basis": "X",
+        "distance": 15,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 15,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d15_r15_X_phase0_p0p001.stim",
+      "sha256": "c824e876d0f132f29aa909213c6b84a0b08011a2592ee7d39e41e2206ee5ba16",
+      "cell": {
+        "basis": "X",
+        "distance": 15,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 15,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d15_r15_X_phase1_p0p0005.stim",
+      "sha256": "b494b9cb355682cebfe1e7c37a8f00eed3fec754c851be1bfd09f9b1cad4450c",
+      "cell": {
+        "basis": "X",
+        "distance": 15,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 15,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d15_r15_X_phase1_p0p001.stim",
+      "sha256": "2822f561331307fab9658e653e2b24d11fc5e013af2b202620471eaf35257332",
+      "cell": {
+        "basis": "X",
+        "distance": 15,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 15,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d15_r15_Z_phase0_p0p0005.stim",
+      "sha256": "05d630aa023044aeb1c6071754ba670ff0fc95f092acd6bd1066ec882b5ab6b4",
+      "cell": {
+        "basis": "Z",
+        "distance": 15,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 15,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d15_r15_Z_phase0_p0p001.stim",
+      "sha256": "ccc4409a8d1be5dfd90fcc110c444a703124004bdd993d0bc941a05924bf311c",
+      "cell": {
+        "basis": "Z",
+        "distance": 15,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 15,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d15_r15_Z_phase1_p0p0005.stim",
+      "sha256": "3fca40e0edf10300a4cd2129e90e00c8c1e653e3d76c06e434b14a759255e871",
+      "cell": {
+        "basis": "Z",
+        "distance": 15,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 15,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d15_r15_Z_phase1_p0p001.stim",
+      "sha256": "ecf8cd3e30394b45d9922cc7a83fdefc57c5f32f919ad1595b5124b8fdcb046c",
+      "cell": {
+        "basis": "Z",
+        "distance": 15,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 15,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d3_r3_X_phase0_p0p0005.stim",
+      "sha256": "81d578dfc8e9a37b45f35aaafabd522f13a180995052ec617f73b7c97164466f",
+      "cell": {
+        "basis": "X",
+        "distance": 3,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 3,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d3_r3_X_phase0_p0p001.stim",
+      "sha256": "aa8fbd61320aafa76b94f9d1a6a6ad00f126b426b76c20142accb23479c95dcb",
+      "cell": {
+        "basis": "X",
+        "distance": 3,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 3,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d3_r3_X_phase1_p0p0005.stim",
+      "sha256": "675dad21e43d74778cc4b5129a71a6cc2a14aee12d5cac6b79794bd9592f9d0a",
+      "cell": {
+        "basis": "X",
+        "distance": 3,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 3,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d3_r3_X_phase1_p0p001.stim",
+      "sha256": "801100ef8bb77af00697eb1ed381561c575d34d75fb6a1719e4f8ee99237b519",
+      "cell": {
+        "basis": "X",
+        "distance": 3,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 3,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d3_r3_Z_phase0_p0p0005.stim",
+      "sha256": "49714fdbb6d8c44b20163ebbb4e9902315dff291e8ad0c1b1bba74b63e89e9ea",
+      "cell": {
+        "basis": "Z",
+        "distance": 3,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 3,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d3_r3_Z_phase0_p0p001.stim",
+      "sha256": "85b396d3c9682cbac9096767546671ccfbb777804c61784a59141863dbc95633",
+      "cell": {
+        "basis": "Z",
+        "distance": 3,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 3,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d3_r3_Z_phase1_p0p0005.stim",
+      "sha256": "e641d874f14e577248761bb876adbc05ed16eaefee82aa043f6e58eedb2e49d7",
+      "cell": {
+        "basis": "Z",
+        "distance": 3,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 3,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d3_r3_Z_phase1_p0p001.stim",
+      "sha256": "bec0a4901f68fcea5161a99c1334ae86a252d2a523aea83b24690f0d93b23768",
+      "cell": {
+        "basis": "Z",
+        "distance": 3,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 3,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d7_r7_X_phase0_p0p0005.stim",
+      "sha256": "513dbe6ea3c9f0dfcaafe959ec7e9ed489c327ec49058239ee37714052c693c9",
+      "cell": {
+        "basis": "X",
+        "distance": 7,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 7,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d7_r7_X_phase0_p0p001.stim",
+      "sha256": "fb933fdd941ce83d419282324e01d5a3d96779bdcea838ca63bfcd19069fa90d",
+      "cell": {
+        "basis": "X",
+        "distance": 7,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 7,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d7_r7_X_phase1_p0p0005.stim",
+      "sha256": "05ed782408da1d3b4c75cdc3ffa0abd6ef8b627a8693dfface04f7a68329f8a1",
+      "cell": {
+        "basis": "X",
+        "distance": 7,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 7,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d7_r7_X_phase1_p0p001.stim",
+      "sha256": "7f7d526aa275dfb1131d2793f92d1ab1ec989e3512b5f4e420b377a0c03cf80b",
+      "cell": {
+        "basis": "X",
+        "distance": 7,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 7,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d7_r7_Z_phase0_p0p0005.stim",
+      "sha256": "58d1074550c883735544ee9dafd251f8588c52e8cf5cd622602477d2bb852af4",
+      "cell": {
+        "basis": "Z",
+        "distance": 7,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 7,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d7_r7_Z_phase0_p0p001.stim",
+      "sha256": "690c807a2954d600f5ac2f419dcf8e0492ab540240320f890f3fbc0182647c07",
+      "cell": {
+        "basis": "Z",
+        "distance": 7,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 7,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "planar_488_d7_r7_Z_phase1_p0p0005.stim",
+      "sha256": "634aece0bad07777135ae77464c64a97d43f97fc0f785e0841ccfa9e67547fbe",
+      "cell": {
+        "basis": "Z",
+        "distance": 7,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.0005,
+        "rounds": 7,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "planar_488_d7_r7_Z_phase1_p0p001.stim",
+      "sha256": "8d9f1b1239f09befbffd1359a2510b46ba2c5ca5c94403732af0827deea14b08",
+      "cell": {
+        "basis": "Z",
+        "distance": 7,
+        "family": "planar_488",
+        "k": 1,
+        "p": 0.001,
+        "rounds": 7,
+        "start_phase": 1
+      }
+    },
+    {
+      "fixture": "torus_488_d12_r12_X_phase0_p0p0005.stim",
+      "sha256": "42b1eb8ea2da7e6cfb8fbaca7e80a1f89a01154c088e88d55bb69a2a3283c93a",
+      "cell": {
+        "basis": "X",
+        "distance": 12,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.0005,
+        "rounds": 12,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d12_r12_Z_phase0_p0p0005.stim",
+      "sha256": "09cb6a8d362048f1f7280e907d00ed494e0ccd4c64fc5a9b8b67f85751836df5",
+      "cell": {
+        "basis": "Z",
+        "distance": 12,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.0005,
+        "rounds": 12,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d4_r4_X_phase0_p0p0005.stim",
+      "sha256": "6f9a6c6e3a517bbd9678750f227f4e794ace359a55bc7b9eaf5ac7855a928ffc",
+      "cell": {
+        "basis": "X",
+        "distance": 4,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.0005,
+        "rounds": 4,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d4_r4_X_phase0_p0p001.stim",
+      "sha256": "dfe4432748479b5d914402c3813682c761d91526eb90acdfb90d5004e5949e4b",
+      "cell": {
+        "basis": "X",
+        "distance": 4,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.001,
+        "rounds": 4,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d4_r4_Z_phase0_p0p0005.stim",
+      "sha256": "1355fb36f336d8a6a226ff105fbe0ad05375ea1a716dbeba7f145530755c95b1",
+      "cell": {
+        "basis": "Z",
+        "distance": 4,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.0005,
+        "rounds": 4,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d4_r4_Z_phase0_p0p001.stim",
+      "sha256": "cf942447a86a698e8cb8837bf4a271bf1185b823ea5ff7ae868229c7d6305ecf",
+      "cell": {
+        "basis": "Z",
+        "distance": 4,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.001,
+        "rounds": 4,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d8_r8_X_phase0_p0p0005.stim",
+      "sha256": "12094d58e214f181e47105c0b759dd6dbfab60948b87a06a55cd4371dea23d45",
+      "cell": {
+        "basis": "X",
+        "distance": 8,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.0005,
+        "rounds": 8,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d8_r8_X_phase0_p0p001.stim",
+      "sha256": "c95b63f42df792f7665282b21a2a59488c869ac60cb60a5a230a5bc68f5378a3",
+      "cell": {
+        "basis": "X",
+        "distance": 8,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.001,
+        "rounds": 8,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d8_r8_Z_phase0_p0p0005.stim",
+      "sha256": "e24440a77be51ed2299b805c88316a5946b58ebf01fb46803b92e684b06b9e98",
+      "cell": {
+        "basis": "Z",
+        "distance": 8,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.0005,
+        "rounds": 8,
+        "start_phase": 0
+      }
+    },
+    {
+      "fixture": "torus_488_d8_r8_Z_phase0_p0p001.stim",
+      "sha256": "ea5d583533304d3a917fc40a158f9b2befed528affdcb8d7b1193d09188355a6",
+      "cell": {
+        "basis": "Z",
+        "distance": 8,
+        "family": "torus_488",
+        "k": 4,
+        "p": 0.001,
+        "rounds": 8,
+        "start_phase": 0
+      }
+    }
+  ]
+}

@@ -1,10 +1,18 @@
 """Guppy WASM compilation and real execution through the PECOS sim() stack."""
 
 import importlib.util
+import subprocess
+import sys
+from collections import Counter
 from pathlib import Path
 
 import pecos as pc
 import pytest
+from guppylang import guppy
+from guppylang.std.builtins import nat, result
+from guppylang.std.quantum import measure, qubit, x
+from guppylang_internals.decorator import wasm, wasm_module
+from guppylang_internals.error import GuppyError
 from hugr import ops
 from hugr.package import Package
 
@@ -22,10 +30,21 @@ def examples():
     return modules
 
 
+@pytest.fixture
+def arithmetic(examples):
+    module = pc.WasmForeignObject.from_file(examples["arithmetic"].WASM_PATH)
+    module.init()
+    try:
+        yield module
+    finally:
+        module.teardown()
+
+
 @pytest.mark.parametrize(
     ("name", "arguments", "expected"),
     [
         ("add", [2, 3], 5),
+        ("add", [0, 0], 0),
         ("add", [-7, 3], -4),
         ("add", [2**40, 3], 2**40 + 3),
         ("multiply", [5, 4], 20),
@@ -33,24 +52,65 @@ def examples():
         ("multiply", [0, 9], 0),
     ],
 )
-def test_direct_wasm(examples, name, arguments, expected):
-    module = pc.WasmForeignObject.from_file(examples["arithmetic"].WASM_PATH)
-    module.init()
-    try:
-        assert module.exec(name, arguments) == expected
-    finally:
-        module.teardown()
+def test_direct_wasm_arithmetic(arithmetic, name, arguments, expected) -> None:
+    """Exercise the real exports, including signed and wider-than-i32 values."""
+    assert arithmetic.exec(name, arguments) == expected
 
 
-def test_guppy_preserves_wasm_calls(examples):
-    package = Package.from_bytes(pc.Guppy(examples["arithmetic"].addition).hugr_bytes)
-    names = [
-        op.op_def().name
+def test_chained_wasm_calls(arithmetic) -> None:
+    total = arithmetic.exec("add", [2, 3])
+    assert arithmetic.exec("multiply", [total, 4]) == 20
+
+
+@pytest.mark.parametrize(
+    ("name", "exports"),
+    [("addition", ["add"]), ("chained_arithmetic", ["add", "multiply"]), ("conditional_x", ["add"])],
+)
+def test_guppy_wasm_hugr_roundtrip(examples, name, exports) -> None:
+    """PECOS's Guppy wrapper must preserve actual WASM calls and their context."""
+    program = pc.Guppy(getattr(examples["arithmetic"], name))
+    package = Package.from_bytes(program.hugr_bytes)
+    wasm_ops = [
+        op
         for graph in package.modules
         for node in graph
         if isinstance(op := graph[node].op, ops.ExtOp) and op.op_def().get_extension().name == "tket.wasm"
     ]
-    assert sorted(names) == sorted(["get_context", "lookup_by_name", "call", "read_result", "dispose_context"])
+    names = Counter(op.op_def().name for op in wasm_ops)
+    assert names == {
+        "get_context": 1,
+        "lookup_by_name": len(exports),
+        "call": len(exports),
+        "read_result": len(exports),
+        "dispose_context": 1,
+    }
+    assert [op.args[0].value for op in wasm_ops if op.op_def().name == "lookup_by_name"] == exports
+
+
+def test_missing_export_is_rejected(examples) -> None:
+    with pytest.raises(GuppyError, match="isn't exported"):
+
+        @wasm_module(str(examples["arithmetic"].WASM_PATH))
+        class MissingExport:
+            @wasm
+            def subtract(self, a: int, b: int) -> int: ...
+
+
+def test_wrong_signature_is_rejected(examples) -> None:
+    @wasm_module(str(examples["arithmetic"].WASM_PATH))
+    class WrongSignature:
+        @wasm
+        def add(self, a: int) -> int: ...
+
+    @guppy
+    def wrong_call() -> int:
+        arithmetic = WrongSignature(nat(0))
+        total = arithmetic.add(2)
+        arithmetic.discard()
+        return total
+
+    with pytest.raises(GuppyError, match="Wasm signature mismatch"):
+        wrong_call.compile()
 
 
 @pytest.mark.parametrize(
@@ -99,3 +159,52 @@ def test_pecos_state_and_error_recovery(examples):
     data = run(example.context_helpers)
     assert data["second"] == [2] * 4
     assert data["third"] == [3] * 4
+
+
+@pytest.mark.parametrize("backend", ["pecos", "selene"])
+def test_example_runs_from_another_directory(tmp_path, backend) -> None:
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    completed = subprocess.run(
+        [sys.executable, str(EXAMPLES / "arithmetic.py"), "--run", backend],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert f"{backend}: addition: {{'sum': [5, 5, 5, 5]}}" in completed.stdout
+    assert f"{backend}: chained_arithmetic: {{'product': [20, 20, 20, 20]}}" in completed.stdout
+    assert f"{backend}: conditional_x: {{'measured': [1, 1, 1, 1]}}" in completed.stdout
+
+
+@guppy
+def control_without_wasm() -> None:
+    """Verify both runners and result parsing independently of WASM support."""
+    result("sum", 5)
+    result("product", 20)
+    q = qubit()
+    x(q)
+    result("measured", measure(q).read())
+
+
+@pytest.mark.parametrize("backend", ["pecos", "selene"])
+def test_runtime_probe_control(tmp_path, backend) -> None:
+    """Keep the default compiler/runtime control separate from WASM configuration."""
+    if backend == "pecos":
+        data = pc.sim(pc.Guppy(control_without_wasm)).qubits(1).quantum(pc.state_vector()).seed(42).run(3).to_dict()
+        shots = [dict(zip(data, values, strict=True)) for values in zip(*data.values(), strict=True)]
+    else:
+        import selene_sim
+
+        instance = selene_sim.build(control_without_wasm.compile(), build_dir=tmp_path)
+        shots = [
+            dict(shot)
+            for shot in instance.run_shots(
+                simulator=selene_sim.Quest(),
+                n_qubits=1,
+                n_shots=3,
+                n_processes=1,
+                random_seed=42,
+            )
+        ]
+    assert shots == [{"sum": 5, "product": 20, "measured": 1}] * 3

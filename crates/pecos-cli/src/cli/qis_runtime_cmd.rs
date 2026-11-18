@@ -47,8 +47,14 @@ pub fn prepare(context: &BuildContext, tests: bool) -> Result<RuntimeArtifacts> 
         "pecos-qis/selene",
     ];
     if tests {
-        args.extend(["-p", "pecos-qis-test-runtime"]);
+        args.extend([
+            "-p",
+            "pecos-qis-test-runtime",
+            "-p",
+            "pecos-selene-runtime-plugin",
+        ]);
         libraries.insert("pecos_qis_test_runtime".into());
+        libraries.insert("pecos_selene_runtime_plugin".into());
     }
     args.extend(context.profile.cargo_args());
     let mut command = context.cargo(&args);

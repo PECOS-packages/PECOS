@@ -278,6 +278,38 @@ pub fn scheduled_event_idle_noise(
         inner: event_profile(profile.inner, adapter_factory, py)?,
     })
 }
+/// Attach an experimental native normalizer from an explicitly trusted library.
+/// Native code must obey pecos_scheduled_adapter.h; it is not sandboxed. Config
+/// bytes are copied into the immutable factory. No Python callbacks run per batch.
+#[pyfunction]
+#[pyo3(signature = (profile, library_path, *, config = None))]
+pub fn scheduled_native_adapter(
+    profile: Py<PyAny>,
+    library_path: std::path::PathBuf,
+    config: Option<&Bound<'_, PyBytes>>,
+    py: Python<'_>,
+) -> PyResult<PyScheduledEventIdleNoise> {
+    use pecos_foreign::scheduled_adapter::{MAX_CONFIG_BYTES, NativeScheduledAdapter};
+    let profile =
+        crate::engine_builders::extract_scheduled_idle(&profile, py).ok_or_else(|| {
+            PyTypeError::new_err("expected a checked scheduled idle or local noise profile")
+        })?;
+    let config = config.map_or(&[][..], |bytes| bytes.as_bytes());
+    if config.len() > MAX_CONFIG_BYTES {
+        return Err(PyValueError::new_err("native adapter configuration limit"));
+    }
+    let config = config.to_vec();
+    // SAFETY: this explicit native-plugin API requires the caller to supply a
+    // trusted library satisfying the documented C ABI and threading contract.
+    // Detach only after extracting owned values; no borrowed Python data escapes.
+    let adapter = py
+        .detach(move || unsafe { NativeScheduledAdapter::load(&library_path, &config) })
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(PyScheduledEventIdleNoise {
+        inner: adapter.with_noise(profile),
+    })
+}
+
 /// A per-shot adapter with the checked local fault profile.
 #[pyclass(name = "ScheduledEventLocalNoise", from_py_object)]
 #[derive(Clone)]
@@ -343,6 +375,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScheduledEventIdleZ>()?;
     m.add_class::<PyScheduledEventIdleNoise>()?;
     m.add_class::<PyScheduledEventLocalNoise>()?;
+    m.add_function(wrap_pyfunction!(scheduled_native_adapter, m)?)?;
     m.add_function(wrap_pyfunction!(scheduled_event_local_noise, m)?)?;
     m.add_function(wrap_pyfunction!(scheduled_event_idle_noise, m)?)?;
     m.add_function(wrap_pyfunction!(scheduled_event_idle_z, m)?)?;

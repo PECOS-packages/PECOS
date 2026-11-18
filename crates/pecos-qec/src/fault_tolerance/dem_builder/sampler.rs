@@ -38,7 +38,7 @@
 use super::dem_sampler::SamplingEngine;
 use super::types::{DemOutput, NoiseConfig, PerGateTypeNoise, is_two_qubit_noise_gate};
 use crate::fault_tolerance::propagator::{
-    DagFaultInfluenceMap, DemOutputKind, is_supported_prep_gate,
+    DagFaultInfluenceMap, DemOutputKind, GateNoiseKind, gate_noise_kind,
 };
 use pecos_core::prelude::GateType;
 use pecos_decoder_core::obs_mask::ObsMask;
@@ -487,6 +487,11 @@ impl DemSampler {
         circuit: &pecos_quantum::TickCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
+        if super::inline::tick_uses_inline_noise(circuit) {
+            let dem =
+                super::DemBuilder::try_from_tick_circuit_with_noise_config(circuit, noise.clone())?;
+            return Ok(Self::from_detector_error_model(&dem));
+        }
         if let Some(error) =
             crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
         {
@@ -513,11 +518,15 @@ impl DemSampler {
         circuit: &pecos_quantum::DagCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
-        // Build the DetectorErrorModel via DemBuilder (single code path for
-        // DEM computation), then convert to sampler.
         use super::builder::DemBuilder;
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        if super::inline::uses_inline_noise(circuit) {
+            let dem = super::inline::build_inline_dem(circuit, noise)?;
+            return Ok(Self::from_detector_error_model(&dem));
+        }
+        // Build the DetectorErrorModel via DemBuilder (single code path for
+        // DEM computation), then convert to sampler.
 
         let definitions =
             crate::fault_tolerance::circuit_definitions::definitions_from_dag_circuit(circuit)
@@ -617,7 +626,8 @@ impl DemSampler {
     ///
     /// Returns [`DetectorValidationError::UnsupportedGate`] if the influence
     /// map came from a circuit Pauli propagation cannot faithfully represent,
-    /// or [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
+    /// or [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration,
+    /// including a probability slice length different from `influence_map.locations.len()`.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
@@ -1605,8 +1615,15 @@ pub(crate) fn compute_location_probs_from_noise(
                     )
                 }
 
-                gate_type if is_supported_prep_gate(gate_type) => noise.p_prep,
-                GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => noise.p_meas,
+                gate_type if gate_noise_kind(gate_type) == GateNoiseKind::Prep => noise.p_prep,
+                gate_type if gate_noise_kind(gate_type) == GateNoiseKind::Measurement => {
+                    if gate_type.consumes_measurement_record() {
+                        noise.p_meas
+                    } else {
+                        0.0
+                    }
+                }
+                gate_type if gate_noise_kind(gate_type) == GateNoiseKind::Transparent => 0.0,
                 gate_type if is_two_qubit_noise_gate(gate_type) => {
                     noise.p2_rate_for_gate(loc.gate_type)
                 }
@@ -1624,22 +1641,353 @@ pub(crate) fn compute_location_probs_from_noise(
         .collect()
 }
 
-/// Get the per-qubit error probability for a gate fault location.
-pub(crate) fn gate_location_prob_from_locations(
+/// Return the rate of the gate instance's first-operand location.
+pub(crate) fn gate_location_prob(
     loc: &super::super::propagator::dag::GateFaultLocation<'_>,
     loc_probs: &[f64],
-    all_locations: &[super::super::propagator::dag::DagSpacetimeLocation],
 ) -> f64 {
-    for (i, l) in all_locations.iter().enumerate() {
-        if l.node == loc.node && l.before == loc.before {
-            return loc_probs[i];
-        }
-    }
-    0.0
+    loc_probs[loc.location_index()]
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn herald_raw_noise_matches_dem() {
+        for gate_type in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut circuit = pecos_quantum::TickCircuit::new();
+            circuit.tick().pz(&[0]);
+            circuit
+                .tick()
+                .try_add_gate(pecos_core::Gate::simple(gate_type, vec![0.into()]))
+                .unwrap();
+            circuit.tick().mz(&[0]);
+            let dag = pecos_quantum::DagCircuit::try_from(&circuit).unwrap();
+            let im = InfluenceBuilder::new(&dag).unwrap().build().unwrap();
+            let dem = super::super::DemBuilder::new(&im)
+                .with_noise(1.0, 0.0, 0.0, 0.0)
+                .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
+                .unwrap()
+                .build()
+                .unwrap();
+            let expected = DemSampler::from_detector_error_model(&dem).sample_statistics(256, 42);
+            let raw = DemSamplerBuilder::new(&im)
+                .with_noise(1.0, 0.0, 0.0, 0.0)
+                .raw_measurements()
+                .build()
+                .unwrap();
+            assert_eq!(expected.syndrome_count, 0);
+            assert_eq!(
+                raw.sample_statistics(256, 42).syndrome_count,
+                0,
+                "{gate_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn herald_measurement_noise_agrees_across_builders() {
+        use super::super::{DemBuilder, MemBuilder, PauliWeights};
+        for gate in [
+            GateType::MZ,
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut circuit = DagCircuit::new();
+            circuit.pz(&[0]);
+            circuit.add_gate_auto_wire(pecos_core::Gate::simple(gate, vec![0.into()]));
+            circuit.mz(&[0]);
+            let im = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+            // Unitary weights must not change the X-only measurement channel.
+            let noise = NoiseConfig::new(0.0, 0.0, 0.25, 0.0)
+                .set_p1_weights(PauliWeights::from([(pecos_core::pauli::Z(0), 1.0)]));
+            let dem = DemBuilder::new(&im)
+                .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
+                .unwrap()
+                .with_noise_config(noise.clone())
+                .build()
+                .unwrap();
+            let raw = DemSamplerBuilder::new(&im)
+                .with_noise_config(noise.clone())
+                .raw_measurements()
+                .build()
+                .unwrap();
+            let detector = DemSamplerBuilder::new(&im)
+                .with_noise_config(noise.clone())
+                .with_detectors(vec![vec![-1]], vec![])
+                .build()
+                .unwrap();
+            let mem = MemBuilder::new(&im)
+                .with_noise_config(noise)
+                .build()
+                .unwrap();
+            let mut rng = PecosRng::seed_from_u64(42);
+            let mut counts = [0; 4];
+            let dem_sampler = DemSampler::from_detector_error_model(&dem);
+            for _ in 0..4096 {
+                counts[0] += usize::from(*raw.sample(&mut rng).0.last().unwrap());
+                counts[1] += usize::from(detector.sample(&mut rng).0[0]);
+                counts[2] += usize::from(*mem.sample(&mut rng).last().unwrap());
+                // MZ has an extra record/detector; heralds have just the final MZ.
+                counts[3] += usize::from(*dem_sampler.sample(&mut rng).0.last().unwrap());
+            }
+            // MZ;MZ has two 1/4 faults (odd parity 3/8). A record-less
+            // herald carries no measurement fault, leaving only the final 1/4.
+            let bounds = if gate.consumes_measurement_record() {
+                1350..1720
+            } else {
+                850..1200
+            };
+            for count in counts {
+                assert!(bounds.contains(&count), "{gate}: {counts:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn transparent_raw_noise_matches_dem() {
+        let mut failures = Vec::new();
+        for gate_type in [
+            GateType::QFree,
+            GateType::MeasCrosstalkGlobalPayload,
+            GateType::MeasCrosstalkLocalPayload,
+        ] {
+            let mut circuit = DagCircuit::new();
+            let global = gate_type == GateType::MeasCrosstalkGlobalPayload;
+            circuit.add_gate_auto_wire(if global {
+                pecos_core::Gate::pz(&[0, 1])
+            } else {
+                pecos_core::Gate::pz(&[0])
+            });
+            let payload_qubit = usize::from(global);
+            circuit.add_gate_auto_wire(pecos_core::Gate::simple(
+                gate_type,
+                vec![payload_qubit.into()],
+            ));
+            circuit.mz(&[0]);
+            let im = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+            let locations: Vec<_> = im
+                .locations
+                .iter()
+                .filter(|loc| loc.gate_type == gate_type)
+                .collect();
+            assert_eq!(
+                locations.len(),
+                1,
+                "{gate_type:?} must have a physical location"
+            );
+            assert_eq!(locations[0].qubits.as_slice(), &[pecos_core::QubitId(0)]);
+            let noise = NoiseConfig::new(0.25, 0.0, 0.0, 0.0);
+            let index = im
+                .locations
+                .iter()
+                .position(|loc| loc.gate_type == gate_type)
+                .unwrap();
+            // Pin the location's rate even when its detector influence is empty,
+            // as it currently is for a global payload on a different operand.
+            let rate = compute_location_probs_from_noise(&im.locations, &noise)[index];
+            let dem = super::super::DemBuilder::new(&im)
+                .with_noise(0.25, 0.0, 0.0, 0.0)
+                .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(
+                DemSampler::from_detector_error_model(&dem)
+                    .sample_statistics(1024, 42)
+                    .syndrome_count,
+                0
+            );
+            let raw = DemSamplerBuilder::new(&im)
+                .with_noise(0.25, 0.0, 0.0, 0.0)
+                .raw_measurements()
+                .build()
+                .unwrap();
+            let flips = raw.sample_statistics(1024, 42).syndrome_count;
+            if rate > 0.0 || flips != 0 {
+                failures.push((gate_type, rate, flips));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "transparent gate (type, rate, flips) failures: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn tracked_pauli_metadata_has_no_fault_location() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        circuit.add_gate_auto_wire(pecos_core::Gate::simple(
+            GateType::TrackedPauliMeta,
+            vec![0.into()],
+        ));
+        circuit.mz(&[0]);
+        let im = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+        assert_eq!(im.locations.len(), 2);
+        assert!(
+            im.locations
+                .iter()
+                .all(|loc| loc.gate_type != GateType::TrackedPauliMeta)
+        );
+    }
+
+    #[test]
+    fn batched_idle_residuals_name_each_instance_location() {
+        use super::super::IdleNoiseFamily;
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2, 3]);
+        circuit.h(&[0, 1]);
+        circuit.cx(&[(0, 2), (1, 3)]);
+        circuit.add_gate_auto_wire(pecos_core::Gate::idle(1.0, vec![0.into(), 1.into()]));
+        circuit.cx(&[(0, 2), (1, 3)]);
+        circuit.h(&[0, 1]);
+        circuit.mz(&[0, 1, 2, 3]);
+        let im = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+        let expected: Vec<_> = im
+            .locations
+            .iter()
+            .enumerate()
+            .filter(|(_, loc)| loc.gate_type == GateType::Idle)
+            .map(|(index, _)| u32::try_from(index).unwrap())
+            .collect();
+        assert_eq!(expected.len(), 2);
+        let noise = NoiseConfig::default().set_idle_linear(IdleNoiseFamily::new(
+            1.0,
+            [("X".to_string(), 0.0075), ("Z".to_string(), 0.0225)].into(),
+        ));
+        let raw = DemSamplerBuilder::new(&im)
+            .with_noise_config(noise)
+            .raw_measurements()
+            .build()
+            .unwrap();
+        let dem = raw.to_detector_error_model();
+        let actual: Vec<_> = dem
+            .idle_noise_residuals()
+            .iter()
+            .map(|residual| residual.location_index)
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "each idle residual must name its own qubit location"
+        );
+    }
+
+    #[test]
+    fn batched_single_qubit_raw_weights_apply_independently() {
+        use super::super::PauliWeights;
+        for num_qubits in [2, 3] {
+            let qubits: Vec<_> = (0..num_qubits).collect();
+            let mut circuit = DagCircuit::new();
+            circuit.pz(&qubits);
+            circuit.add_gate_auto_wire(pecos_core::Gate::h(&qubits));
+            circuit.h(&qubits);
+            circuit.mz(&qubits);
+            let im = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+            assert!(
+                im.gate_fault_locations()
+                    .iter()
+                    .any(|loc| loc.gate_type == GateType::H && loc.num_qubits() == num_qubits)
+            );
+            let noise = NoiseConfig::new(0.25, 0.0, 0.0, 0.0)
+                .set_p1_weights(PauliWeights::from([(pecos_core::pauli::Z(0), 1.0)]));
+            let raw = DemSamplerBuilder::new(&im)
+                .with_noise_config(noise)
+                .raw_measurements()
+                .build()
+                .unwrap();
+            let mut rng = PecosRng::seed_from_u64(42);
+            let mut counts = vec![0; num_qubits];
+            let mut joint = 0;
+            for _ in 0..8192 {
+                let shot = raw.sample(&mut rng).0;
+                for (count, outcome) in counts.iter_mut().zip(&shot) {
+                    *count += usize::from(*outcome);
+                }
+                joint += usize::from(shot[0] && shot[1]);
+            }
+            for count in &counts {
+                assert!(
+                    (1800..2300).contains(count),
+                    "{num_qubits} qubits: {counts:?}"
+                );
+            }
+            assert!((390..650).contains(&joint), "independent faults: {joint}");
+        }
+    }
+
+    #[test]
+    fn batched_two_qubit_raw_weights_apply_per_pair() {
+        use super::super::PauliWeights;
+        use pecos_core::pauli::X;
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2, 3]);
+        circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 3), (1, 2)]));
+        circuit.mz(&[0, 1, 2, 3]);
+        let im = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+        let noise =
+            NoiseConfig::new(0.0, 0.25, 0.0, 0.0).set_p2_weights(PauliWeights::from([(X(0), 1.0)]));
+        let raw = DemSamplerBuilder::new(&im)
+            .with_noise_config(noise)
+            .raw_measurements()
+            .build()
+            .unwrap();
+        let mut rng = PecosRng::seed_from_u64(42);
+        let mut counts = [0; 2];
+        let mut joint = 0;
+        for _ in 0..8192 {
+            let shot = raw.sample(&mut rng).0;
+            assert!(
+                !shot[2] && !shot[3],
+                "faults must land only on controls 0 and 1: {shot:?}"
+            );
+            counts[0] += usize::from(shot[0]);
+            counts[1] += usize::from(shot[1]);
+            joint += usize::from(shot[0] && shot[1]);
+        }
+        for count in counts {
+            assert!((1800..2300).contains(&count), "pair counts: {counts:?}");
+        }
+        assert!(
+            (390..650).contains(&joint),
+            "independent pair faults: {joint}"
+        );
+    }
+
+    #[test]
+    fn herald_all_events_match_z_measurement() {
+        let mut circuit = pecos_quantum::TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        circuit
+            .tick()
+            .try_add_gate(pecos_core::Gate::measure_z_lost(&[0]))
+            .unwrap();
+        circuit.tick().mz(&[0]);
+        let dag = pecos_quantum::DagCircuit::try_from(&circuit).unwrap();
+        let im = InfluenceBuilder::new(&dag).unwrap().build().unwrap();
+        let locations = im.gate_fault_locations();
+        let herald = locations
+            .iter()
+            .find(|loc| loc.gate_type == GateType::MeasureZLost)
+            .unwrap();
+        let mz = locations
+            .iter()
+            .find(|loc| loc.gate_type == GateType::MZ)
+            .unwrap();
+        let paulis = |loc: &super::super::super::propagator::dag::GateFaultLocation<'_>| {
+            loc.all_events()
+                .unwrap()
+                .into_iter()
+                .map(|e| e.pauli)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paulis(herald), paulis(mz));
+    }
+
     #[test]
     fn diagonal_gates_cannot_reach_location_probability_defaults() {
         use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;

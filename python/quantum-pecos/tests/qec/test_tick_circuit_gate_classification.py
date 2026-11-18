@@ -120,7 +120,10 @@ def test_tick_circuit_stim_shared_transparent_gates(name: str) -> None:
     assert tick_circuit_to_stim(circuit_with_gate(name, [0])) == ""
 
 
-@pytest.mark.parametrize("name", ["MX", "MZ", "MPZ", "MeasureFree", "MeasureLeaked", "MeasureZLeaked"])
+@pytest.mark.parametrize(
+    "name",
+    ["MX", "MZ", "MPZ", "MeasureFree", "MeasureLeaked", "MeasureZLeaked", "MeasureZLost", "MeasureZLeakedLost"],
+)
 def test_with_noise_measurements_have_no_quantum_channel(name: str) -> None:
     noisy = circuit_with_gate(name, [0]).with_noise(p1=0.1, p_prep=0.1)
     assert not any(gate.is_channel() for _, gate in noisy.gate_batches())

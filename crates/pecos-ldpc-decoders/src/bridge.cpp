@@ -1,6 +1,8 @@
 #include "ldpc_ffi.h"
 #include "pecos-ldpc-decoders/src/bridge.rs.h"  // Include the generated cxx header
 #include <memory>
+#include <cmath>
+#include <string>
 #include <stdexcept>
 #include <vector>
 #include <set>
@@ -49,6 +51,15 @@ static bp::BpSparse* create_pcm_from_sparse(const SparseMatrixRepr& sparse) {
     }
 
     return pcm;
+}
+
+// NaN is not a valid sorting key. Infinite LLRs from subnormal priors are valid.
+static void reject_nan_llrs(const std::vector<double>& llrs) {
+    for (size_t bit = 0; bit < llrs.size(); ++bit) {
+        if (std::isnan(llrs[bit])) {
+            throw std::runtime_error("BP log-probability ratio for bit " + std::to_string(bit) + " is NaN");
+        }
+    }
 }
 
 // BP+OSD Decoder implementation
@@ -181,6 +192,7 @@ DecodingResult decode_bp_osd(
         throw std::runtime_error("OSD decoding requires syndrome input. Please use InputVectorType::Syndrome when OSD is enabled.");
     }
 
+    reject_nan_llrs(bp_decoder->log_prob_ratios);
     std::vector<double> log_prob_ratios(bp_decoder->log_prob_ratios);
     auto osd_decoder = static_cast<osd::OsdDecoder*>(decoder.osd_decoder);
     auto osd_result = osd_decoder->decode(input_vec, log_prob_ratios);
@@ -331,19 +343,13 @@ DecodingResult decode_bp_lsd(
         throw std::runtime_error("LSD decoding requires syndrome input. Please use InputVectorType::Syndrome when LSD is enabled.");
     }
 
-    // Convert log probability ratios to bit weights
-    std::vector<double> bit_weights(pcm->n);
-    for (size_t i = 0; i < bit_weights.size(); i++) {
-        double llr = bp_decoder->log_prob_ratios[i];
-        // Convert LLR to probability that bit is 1
-        bit_weights[i] = 1.0 / (1.0 + std::exp(llr));
-    }
+    reject_nan_llrs(bp_decoder->log_prob_ratios);
 
-    // Run LSD
+    // Run LSD with BP LLRs: ascending weight order grows the most likely bits first.
     auto lsd_decoder = static_cast<lsd::LsdDecoder*>(decoder.lsd_decoder);
     auto lsd_result = lsd_decoder->lsd_decode(
         input_vec,
-        bit_weights,
+        bp_decoder->log_prob_ratios,
         decoder.bits_per_step,
         true  // is_on_the_fly
     );

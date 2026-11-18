@@ -580,39 +580,45 @@ fn with_ids(mut gate: Gate, ids: &[usize]) -> Gate {
 
 #[test]
 fn only_record_consuming_measurements_take_positions() {
-    // MZ, MPZ and MeasureFree each consume a record; MeasureZLeaked does not,
-    // even when it carries a supplied id. Hand-derived emission: ids 10, 12, 13.
-    let mut circuit = TickCircuit::new();
-    circuit
-        .tick()
-        .try_add_gate(with_ids(Gate::mz(&[0]), &[10]))
-        .unwrap();
-    circuit
-        .tick()
-        .try_add_gate(with_ids(Gate::measure_z_leaked(&[1]), &[11]))
-        .unwrap();
-    circuit
-        .tick()
-        .try_add_gate(with_ids(Gate::mpz(&[2]), &[12]))
-        .unwrap();
-    circuit
-        .tick()
-        .try_add_gate(with_ids(
-            Gate::simple(
-                pecos_quantum::GateType::MeasureFree,
-                vec![pecos_quantum::QubitId::from(3usize)],
-            ),
-            &[13],
-        ))
-        .unwrap();
-    let expected = vec![
-        Some(MeasId::from_raw(10)),
-        Some(MeasId::from_raw(12)),
-        Some(MeasId::from_raw(13)),
-    ];
-    assert_eq!(tick_circuit_emission(&circuit), expected);
-    let dag = DagCircuit::try_from(&circuit).unwrap();
-    assert_eq!(dag_circuit_emission(&dag), expected);
+    for flavor in [
+        pecos_quantum::GateType::MeasureZLeaked,
+        pecos_quantum::GateType::MeasureZLost,
+        pecos_quantum::GateType::MeasureZLeakedLost,
+    ] {
+        // MZ, MPZ and MeasureFree each consume a record; Z heralds do not,
+        // even when they carry supplied ids. Hand-derived emission: ids 10, 12, 13.
+        let mut circuit = TickCircuit::new();
+        circuit
+            .tick()
+            .try_add_gate(with_ids(Gate::mz(&[0]), &[10]))
+            .unwrap();
+        circuit
+            .tick()
+            .try_add_gate(with_ids(Gate::simple(flavor, vec![1.into()]), &[11]))
+            .unwrap();
+        circuit
+            .tick()
+            .try_add_gate(with_ids(Gate::mpz(&[2]), &[12]))
+            .unwrap();
+        circuit
+            .tick()
+            .try_add_gate(with_ids(
+                Gate::simple(
+                    pecos_quantum::GateType::MeasureFree,
+                    vec![pecos_quantum::QubitId::from(3usize)],
+                ),
+                &[13],
+            ))
+            .unwrap();
+        let expected = vec![
+            Some(MeasId::from_raw(10)),
+            Some(MeasId::from_raw(12)),
+            Some(MeasId::from_raw(13)),
+        ];
+        assert_eq!(tick_circuit_emission(&circuit), expected);
+        let dag = DagCircuit::try_from(&circuit).unwrap();
+        assert_eq!(dag_circuit_emission(&dag), expected);
+    }
 }
 
 #[test]

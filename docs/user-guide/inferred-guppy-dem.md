@@ -281,6 +281,10 @@ Before calling the tool, check all of the following:
 2. Selected detector and observable outputs are Boolean XOR parities of those raw
    measurements. AND, OR, nonlinear expressions, constant-one offsets, and
    outputs independent of every measurement are rejected.
+   This restriction belongs to automatic output inference. Explicit static
+   definitions support offsets such as `Detector("raw_tag", 1)` and
+   `Observable("raw_tag", 1)` through `build_dem_from_guppy`; see the
+   [typed-definition workflow](../workflows/guppy-dem-decoding.md).
 3. Measurement values may affect classical parity calculations, but must not
    change the quantum gate schedule. Measurement-dependent quantum branches
    and repeated-until-success loops need a different analysis.

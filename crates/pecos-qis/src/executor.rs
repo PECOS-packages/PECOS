@@ -726,6 +726,42 @@ fn library_load_error(context: &str, error: &libloading::Error) -> InterfaceErro
     InterfaceError::ExecutionError(format!("{context}: {detail}"))
 }
 
+// Primitive-only handshake: do not inspect any runtime-owned Rust value until
+// this succeeds. A matching stamp detects stale builds, not arbitrary ABI safety.
+fn validate_qis_ffi_abi(library: &Library, path: &Path) -> Result<(), InterfaceError> {
+    type FingerprintFn = unsafe extern "C" fn(u32) -> u64;
+    const SYMBOL: &[u8] = b"pecos_qis_ffi_abi_fingerprint_v1\0";
+    let remedy = "Rebuild pecos-qis-ffi and the host/Python extension from the same checkout, \
+                  Rust toolchain, target, profile and build flags. Correct or unset \
+                  PECOS_QIS_FFI_PATH if it selects an older library, then restart the process.";
+    // SAFETY: The versioned export has a fixed-width integer-only C ABI.
+    let fingerprint = unsafe { library.get::<FingerprintFn>(SYMBOL) }.map_err(|_| {
+        InterfaceError::LoadError(format!(
+            "QIS FFI library {} has no compatible build fingerprint (missing pecos_qis_ffi_abi_fingerprint_v1). {remedy}",
+            path.display()
+        ))
+    })?;
+    let mut actual = [0_u64; 4];
+    for (index, word) in (0_u32..4).zip(&mut actual) {
+        // SAFETY: Only the declared primitive handshake is called, with valid indices.
+        *word = unsafe { fingerprint(index) };
+    }
+    let expected = pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT;
+    if actual != expected {
+        let hex = |words: [u64; 4]| {
+            let [a, b, c, d] = words;
+            format!("{a:016x}{b:016x}{c:016x}{d:016x}")
+        };
+        return Err(InterfaceError::LoadError(format!(
+            "QIS FFI library {} has an incompatible build fingerprint: expected {}, found {}. {remedy}",
+            path.display(),
+            hex(expected),
+            hex(actual)
+        )));
+    }
+    Ok(())
+}
+
 fn link_error_message(stdout: &[u8], stderr: &[u8]) -> String {
     // Clang and its platform linker can report errors on different streams.
     format!(
@@ -990,6 +1026,7 @@ impl QisHeliosInterface {
                     Ok((lib_global, lib)) => {
                         Self::validate_qis_ffi_abi(&lib)
                             .map_err(|error| format!("{error} ({})", lib_path.display()))?;
+                        validate_qis_ffi_abi(&lib, &lib_path).map_err(|error| error.to_string())?;
                         debug!("QIS FFI library singleton initialized successfully");
                         Ok(SharedLibrary {
                             _global_handle: std::mem::ManuallyDrop::new(lib_global),
@@ -4086,6 +4123,12 @@ attributes #0 = { "EntryPoint" }
             format!(
                 "int pecos_test_helper(void);\nint pecos_test_runtime(void) {{ return pecos_test_helper(); }}\nunsigned long long pecos_qis_ffi_abi_version(void) {{ return {}; }}\n",
                 pecos_qis_ffi_types::QIS_FFI_ABI_VERSION,
+            ) + &format!(
+                "unsigned long long pecos_qis_ffi_abi_fingerprint_v1(unsigned int i) {{ unsigned long long words[4] = {{ {}ULL, {}ULL, {}ULL, {}ULL }}; return i < 4 ? words[i] : 0; }}\n",
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[0],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[1],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[2],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[3],
             ),
         )
         .expect("write runtime source");
@@ -4602,3 +4645,6 @@ attributes #0 = { "EntryPoint" }
 
 #[cfg(test)]
 mod selene_tests;
+
+#[cfg(test)]
+mod abi_tests;

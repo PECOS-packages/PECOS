@@ -1,0 +1,70 @@
+{
+  "doi": "10.5281/zenodo.14238944",
+  "paper": "https://arxiv.org/abs/2412.14256v1",
+  "files": {
+    "d3_west_X_r03.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_west/X/r03/circuit_ideal.stim",
+      "sha256": "e49512e91e74a647b14527a2efa5fd7ad18658785424a4ecefdda8288694c56c"
+    },
+    "d3_west_X_r05.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_west/X/r05/circuit_ideal.stim",
+      "sha256": "a940fbafaa7327516f9be51a272b1c1008873517c053e65854f1cc04919d8890"
+    },
+    "d3_west_Z_r03.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_west/Z/r03/circuit_ideal.stim",
+      "sha256": "a1bceeab4fe1a3c9354fefc4f593c6a08dca9898b9f4431d017a74aa031bfe1c"
+    },
+    "d3_west_Z_r05.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_west/Z/r05/circuit_ideal.stim",
+      "sha256": "190dcb30fca3acfd6d8676e544e27ee639dc4edf51f7dd786ab2c0a907f384ed"
+    },
+    "d3_east_X_r03.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_east/X/r03/circuit_ideal.stim",
+      "sha256": "284134c58b56eb11843f9e9d7f1b195d4747460ba88dd775cd1acc6139cc8dc5"
+    },
+    "d3_east_X_r05.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_east/X/r05/circuit_ideal.stim",
+      "sha256": "b7c5e639c205d6e27255df6cf657e3ac9b069e733a0e6d111aaaef2e27113574"
+    },
+    "d3_east_Z_r03.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_east/Z/r03/circuit_ideal.stim",
+      "sha256": "d953124fa3f6e8e025c050d5465df4c0d9da0ebf77a35c41f41454abe08ea95e"
+    },
+    "d3_east_Z_r05.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_east/Z/r05/circuit_ideal.stim",
+      "sha256": "b620aad8df49055454951fa6e36b17534c345511e59d9e9287b6deaacf1d2660"
+    },
+    "d3_north_X_r03.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_north/X/r03/circuit_ideal.stim",
+      "sha256": "91ace1ca04bf809e56a26bd589db866583feea235df2270b78f2c59d6a242b24"
+    },
+    "d3_north_X_r05.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_north/X/r05/circuit_ideal.stim",
+      "sha256": "deef2797fb170c3a9c1690470ab9565d85991df01db26ebf8bc47ed88a512bef"
+    },
+    "d3_north_Z_r03.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_north/Z/r03/circuit_ideal.stim",
+      "sha256": "f1e000dd96437bd7ac4e6fff4b269983022edc8fe94c38e96d10b8d91073708a"
+    },
+    "d3_north_Z_r05.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d3_north/Z/r05/circuit_ideal.stim",
+      "sha256": "9c5f347d8248380b2594e1f09d9f74b318d0c5aa0a2381b6533b2e994811b58a"
+    },
+    "d5_X_r03.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d5/X/r03/circuit_ideal.stim",
+      "sha256": "635b8c62f5e43e94f8707c9b754a90e5f1c712c9f24f27b0149da7839da0de9e"
+    },
+    "d5_X_r05.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d5/X/r05/circuit_ideal.stim",
+      "sha256": "4ea150a038dcf7f5eba6e22409b92e75ec0ea5b91260f17e9252710453954dd5"
+    },
+    "d5_Z_r03.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d5/Z/r03/circuit_ideal.stim",
+      "sha256": "cfd9f2850bda1306ac2690fe53f11012e163f48955e4621d94841fa497cf40c9"
+    },
+    "d5_Z_r05.stim": {
+      "archive_path": "google_superdense_color_code_d3_d5/dataset_0/d5/Z/r05/circuit_ideal.stim",
+      "sha256": "ddd53e3dcc6da665229867c3d33f33cadb211784efb2c8da469565ae9170965c"
+    }
+  }
+}

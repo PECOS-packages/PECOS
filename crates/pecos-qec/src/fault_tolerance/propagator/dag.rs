@@ -72,8 +72,9 @@
 //! ```
 
 use super::{
-    DagPropagator, DetectorId, Direction, InfluenceRecorder, MeasurementId, Pauli,
-    PauliPropagationOutcome, UnsupportedGateError, apply_gate_unchecked, is_supported_prep_gate,
+    DagPropagator, DetectorId, Direction, GateNoiseKind, InfluenceRecorder, MeasurementId, Pauli,
+    PauliPropagationOutcome, UnsupportedGateError, apply_gate_unchecked, gate_noise_kind,
+    is_supported_prep_gate,
 };
 use pecos_core::gate_type::GateType;
 use pecos_core::{CliffordLowering, Gate, PauliString, QuarterPhase, QubitId};
@@ -1240,6 +1241,29 @@ impl FaultEffect {
 }
 
 impl GateFaultLocation<'_> {
+    /// First operand's location index. Constructed locations and instances are nonempty.
+    pub(crate) fn location_index(&self) -> usize {
+        self.qubit_loc_indices[0].1
+    }
+
+    /// Split a batched node into independent native gate instances for noise sampling.
+    pub(crate) fn gate_instances(&self) -> Vec<Self> {
+        let arity = self.gate_type.quantum_arity();
+        self.qubits
+            .chunks(arity)
+            .zip(self.qubit_loc_indices.chunks(arity))
+            .map(|(qubits, qubit_locs)| Self {
+                map: self.map,
+                node: self.node,
+                gate_type: self.gate_type,
+                clifford: self.clifford,
+                qubits: qubits.to_vec(),
+                before: self.before,
+                qubit_loc_indices: qubit_locs.to_vec(),
+            })
+            .collect()
+    }
+
     /// Number of qubits this gate acts on.
     #[must_use]
     pub fn num_qubits(&self) -> usize {
@@ -1331,14 +1355,14 @@ impl GateFaultLocation<'_> {
         &self,
     ) -> Result<Vec<pecos_core::PauliString>, pecos_core::ParsePauliStringError> {
         let physical: &[pecos_core::Pauli] = match self.gate_type {
-            // Z-basis prep/measurement: only X (bit-flip) fault.
-            GateType::PZ
-            | GateType::QAlloc
-            | GateType::MZ
-            | GateType::MeasureFree
-            | GateType::MPZ => &[pecos_core::Pauli::X],
-            // X-basis prep/measurement: only Z (phase-flip) fault.
             GateType::PX | GateType::MX => &[pecos_core::Pauli::Z],
+            gate if matches!(
+                gate_noise_kind(gate),
+                GateNoiseKind::Prep | GateNoiseKind::Measurement
+            ) =>
+            {
+                &[pecos_core::Pauli::X]
+            }
             // Unitary gates: all single-qubit Paulis.
             _ => &[
                 pecos_core::Pauli::X,
@@ -1405,14 +1429,14 @@ impl GateFaultLocation<'_> {
     fn active_paulis_per_qubit(&self) -> Vec<(QubitId, Vec<pecos_core::Pauli>)> {
         // Determine which Paulis are physical for this gate type
         let physical_paulis: &[Pauli] = match self.gate_type {
-            // Z-basis prep/measurement: only X (bit-flip) fault.
-            GateType::PZ
-            | GateType::QAlloc
-            | GateType::MZ
-            | GateType::MeasureFree
-            | GateType::MPZ => &[Pauli::X],
-            // X-basis prep/measurement: only Z (phase-flip) fault.
             GateType::PX | GateType::MX => &[Pauli::Z],
+            gate if matches!(
+                gate_noise_kind(gate),
+                GateNoiseKind::Prep | GateNoiseKind::Measurement
+            ) =>
+            {
+                &[Pauli::X]
+            }
             // Unitary gates: all single-qubit Paulis.
             _ => &[Pauli::X, Pauli::Y, Pauli::Z],
         };
@@ -1970,10 +1994,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                     continue;
                 }
 
-                let is_measurement = matches!(
-                    gate.gate_type,
-                    GateType::MZ | GateType::MX | GateType::MeasureFree | GateType::MPZ
-                );
+                let is_measurement = gate_noise_kind(gate.gate_type) == GateNoiseKind::Measurement;
 
                 // Convert QubitId to usize
                 let qubits: SmallVec<[usize; 2]> =

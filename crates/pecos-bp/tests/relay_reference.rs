@@ -20,8 +20,10 @@
 //!
 //! Algorithm (log-likelihood ratios, positive means "no error"):
 //!
-//! - `prior[v] = ln((1 - p_v) / p_v)` clamped to `[-30, 30]`, exactly
-//!   `BpGraph::prior_llrs`.
+//! - `raw_prior[v] = ln((1 - p_v) / p_v)` clamped to `[-30, 30]`, exactly
+//!   `BpGraph::prior_llrs`, supplies costs. `prior[v]` is its BP-seeding copy,
+//!   always magnitude-floored at 4e-5 with sign preserved and either zero made
+//!   positive. Relay-bp applies this floor only when `min_log_prior_ratio` is set.
 //! - Leg 0 starts with posterior `P = prior`, `gamma[v] = gamma0` for every
 //!   variable. Leg `r >= 1` keeps `P` from the end of leg `r - 1` and draws a
 //!   fresh `gamma[v]` per variable (explicit here, cycling through the
@@ -47,9 +49,9 @@
 //!   other and can tie against a zero-probability prior. No message is ever
 //!   infinite, and the syndrome check below guarantees an unsatisfied
 //!   correction is never reported as converged.
-//! - After every iteration the hard decision is `e[v] = (P[v] < 0)`. A leg
+//! - After every iteration the hard decision is `e[v] = (P[v] <= 0)`. A leg
 //!   stops early when `H e == s`; the leg is then "converged" and its weight
-//!   is the signed prior-LLR cost `sum_v e[v] * prior[v]` (lower is more
+//!   is the signed prior-LLR cost `sum_v e[v] * raw_prior[v]` (lower is more
 //!   likely; a mechanism with probability above 0.5 lowers the cost).
 //! - `Alpha::Constant` scales every iteration equally. `Alpha::Dynamic` uses
 //!   `1.0 - 2_f64.powf(-(i / scaling_factor))` for one-based iteration
@@ -67,7 +69,7 @@ use pecos_bp::relay::{Alpha, RelayBp, RelayConfig, Schedule, StopRule};
 use pecos_bp::{BpGraph, LLR_SATURATION};
 use pecos_decoder_core::dem::DemCheckMatrix;
 
-const TOY_DEMS: [&str; 5] = [
+const TOY_DEMS: [&str; 6] = [
     // Small graph with a degree-3 check and a boundary-like weight-1 column.
     "error(0.05) D0 D1 L0\nerror(0.1) D1 D2\nerror(0.02) D0 D2 L1\nerror(0.07) D2 D3\nerror(0.2) D3\nerror(0.03) D0 D1 D3\n",
     // Repetition-code-like chain with a hyperedge.
@@ -79,6 +81,9 @@ const TOY_DEMS: [&str; 5] = [
     // Priors above 0.5 (negative LLRs): the signed weight must prefer
     // selecting them, where an absolute weight would penalise them.
     "error(0.9) D0 D1\nerror(0.7) D1 D2 L0\nerror(0.05) D0 D2\nerror(0.6) D2\nerror(0.1) D0\n",
+    // Half prior distinguishes raw costs from all three floored seeding sites:
+    // posterior reset, leg-start messages, and memory bias.
+    "error(0.5) D0 D1\nerror(0.1) D0\nerror(0.2) D1\n",
 ];
 
 /// Index of the toy with the degree-1 check, and the mechanism that pins it.
@@ -93,6 +98,7 @@ fn sign(x: f64) -> f64 {
 struct Reference {
     checks: Vec<Vec<usize>>, // check -> variables
     vars: Vec<Vec<usize>>,   // variable -> checks
+    raw_prior: Vec<f64>,
     prior: Vec<f64>,
     posterior: Vec<f64>,
     gamma: Vec<f64>,
@@ -113,11 +119,24 @@ impl Reference {
                 vars[v].push(c);
             }
         }
+        let bp_prior: Vec<f64> = prior
+            .iter()
+            .map(|&value| {
+                if value.abs() >= 4e-5 {
+                    value
+                } else if value < 0.0 {
+                    -4e-5
+                } else {
+                    4e-5
+                }
+            })
+            .collect();
         Self {
             checks,
             vars,
-            prior: prior.to_vec(),
-            posterior: prior.to_vec(),
+            raw_prior: prior.to_vec(),
+            posterior: bp_prior.clone(),
+            prior: bp_prior,
             gamma: vec![0.0; n],
             bias: vec![0.0; n],
             c2v: vec![vec![0.0; n]; m],
@@ -183,7 +202,7 @@ impl Reference {
     }
 
     fn hard_decision(&self) -> Vec<u8> {
-        self.posterior.iter().map(|&p| u8::from(p < 0.0)).collect()
+        self.posterior.iter().map(|&p| u8::from(p <= 0.0)).collect()
     }
 
     fn satisfied(&self, e: &[u8], syndrome: &[u8]) -> bool {
@@ -240,7 +259,7 @@ impl Reference {
 
     fn weight(&self, e: &[u8]) -> f64 {
         e.iter()
-            .zip(&self.prior)
+            .zip(&self.raw_prior)
             .map(|(&b, &p)| f64::from(b) * p)
             .sum()
     }
@@ -416,6 +435,7 @@ fn check_against_reference(
         leg_zero_converged: 0,
         relayed_converged_after_failed_zero: 0,
     };
+    let mut half_prior_cost_seen = false;
     for dem in TOY_DEMS {
         let dcm = DemCheckMatrix::from_dem_str(dem).unwrap();
         let graph = BpGraph::from_dcm(&dcm);
@@ -501,6 +521,12 @@ fn check_against_reference(
                 assert!(leg.iterations >= usize::from(limit > 0) && leg.iterations <= limit);
                 assert_eq!(leg.converged, leg.correction.is_some());
                 assert_eq!(leg.converged, leg.weight.is_some());
+                if let Some(correction) = &leg.correction {
+                    half_prior_cost_seen |= correction
+                        .iter()
+                        .zip(&prior)
+                        .any(|(&bit, &raw_prior)| bit == 1 && raw_prior == 0.0);
+                }
                 assert_eq!(leg.correction, expected.legs_corrections[leg_index]);
                 assert_eq!(
                     leg.weight.map(f64::to_bits),
@@ -521,8 +547,12 @@ fn check_against_reference(
         coverage.distinct_syndromes += seen.len();
     }
     assert!(
+        half_prior_cost_seen,
+        "no converged leg selected a half-prior bit"
+    );
+    assert!(
         coverage.distinct_syndromes >= 12,
-        "the random syndromes collapsed: {} distinct over 24 draws",
+        "the random syndromes collapsed: {} distinct across toy DEM draws",
         coverage.distinct_syndromes
     );
     coverage

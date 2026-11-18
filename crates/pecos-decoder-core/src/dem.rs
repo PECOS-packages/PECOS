@@ -317,6 +317,99 @@ pub struct DemCheckMatrix {
     pub num_mechanisms: usize,
 }
 
+/// Exact affine offset and impossible detector rows after DEM support reduction.
+///
+/// The default is empty and does not infer any constraints from a matrix.
+#[derive(Debug, Clone, Default)]
+pub struct DemSupport {
+    /// One binary entry per detector when a certain column was folded; otherwise empty.
+    syndrome_bias: Vec<u8>,
+    /// XOR of the observable columns of certain mechanisms.
+    observable_bias: crate::obs_mask::ObsMask,
+    /// Sorted indices of detector rows with no uncertain error mechanism.
+    dead_detectors: Vec<usize>,
+}
+
+impl DemSupport {
+    /// Fixed detector flips, or an empty slice when no certain column was folded.
+    #[must_use]
+    pub fn syndrome_bias(&self) -> &[u8] {
+        &self.syndrome_bias
+    }
+
+    /// Fixed observable flips from certain mechanisms.
+    #[must_use]
+    pub fn observable_bias(&self) -> &crate::obs_mask::ObsMask {
+        &self.observable_bias
+    }
+
+    /// Sorted detector indices with no uncertain error mechanism.
+    #[must_use]
+    pub fn dead_detectors(&self) -> &[usize] {
+        &self.dead_detectors
+    }
+
+    fn validate_dimensions(&self, num_detectors: usize) -> Result<(), DecoderError> {
+        if !self.syndrome_bias.is_empty() && self.syndrome_bias.len() != num_detectors {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "support bias length {} does not match matrix detector count {num_detectors}; attach the support returned by `reduce_support` for this matrix",
+                self.syndrome_bias.len()
+            )));
+        }
+        if let Some(&index) = self
+            .dead_detectors
+            .iter()
+            .find(|&&index| index >= num_detectors)
+        {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "support dead detector index {index} must be below matrix detector count {num_detectors}; attach the support returned by `reduce_support` for this matrix"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate caller input, apply the fixed syndrome bias, and reject dead rows.
+    ///
+    /// # Errors
+    /// Returns `InvalidDimensions` for a wrong length and `InvalidSyndrome` for
+    /// non-binary bytes or fired dead detectors (after applying the bias).
+    /// Returns `InvalidConfiguration` for mismatched support dimensions, before
+    /// indexing the syndrome.
+    pub fn bias_syndrome(
+        &self,
+        syndrome: &mut [u8],
+        num_detectors: usize,
+    ) -> Result<(), DecoderError> {
+        if syndrome.len() != num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: num_detectors,
+                actual: syndrome.len(),
+            });
+        }
+        self.validate_dimensions(num_detectors)?;
+        if let Some((index, value)) = syndrome.iter().enumerate().find(|(_, value)| **value > 1) {
+            return Err(DecoderError::InvalidSyndrome(format!(
+                "syndrome index {index} must be 0 or 1, got {value}"
+            )));
+        }
+        for (value, bias) in syndrome.iter_mut().zip(&self.syndrome_bias) {
+            *value ^= bias;
+        }
+        let mut fired = self
+            .dead_detectors
+            .iter()
+            .copied()
+            .filter(|&index| syndrome[index] != 0);
+        if let Some(index) = fired.next() {
+            let count = 1 + fired.count();
+            return Err(DecoderError::InvalidSyndrome(format!(
+                "detector {index} fired but no uncertain error mechanism can flip it ({count} dead detectors fired)"
+            )));
+        }
+        Ok(())
+    }
+}
+
 impl DemCheckMatrix {
     /// Merge mechanisms with identical detector AND observable columns.
     ///
@@ -369,6 +462,70 @@ impl DemCheckMatrix {
             self.num_mechanisms = representatives.len();
         }
         self
+    }
+
+    /// Remove probability-zero and probability-one columns exactly.
+    ///
+    /// Consumes the matrix without changing detector or observable row indices.
+    /// Certain columns contribute to both biases; impossible columns (including
+    /// negative zero) contribute to neither. Call after any override and merging.
+    /// Priors must already be validated to [0, 1]; this method uses `<= 0.0`
+    /// and `>= 1.0` to identify impossible and certain mechanisms.
+    #[must_use]
+    pub fn reduce_support(mut self) -> (Self, DemSupport) {
+        let mut support = DemSupport::default();
+        let mut retained = Vec::new();
+        for (column, &probability) in self.error_priors.iter().enumerate() {
+            if probability <= 0.0 {
+                continue;
+            }
+            if probability >= 1.0 {
+                if support.syndrome_bias.is_empty() {
+                    support.syndrome_bias.resize(self.num_detectors, 0);
+                }
+                for (row, &value) in self.check_matrix.column(column).indexed_iter() {
+                    // Entries are 0/1 in DEM-built matrices; treat any nonzero entry as 1.
+                    support.syndrome_bias[row] ^= u8::from(value != 0);
+                }
+                for (row, &value) in self.observable_matrix.column(column).indexed_iter() {
+                    if value != 0 {
+                        support.observable_bias.toggle(row);
+                    }
+                }
+            } else {
+                retained.push(column);
+            }
+        }
+        if retained.len() != self.num_mechanisms {
+            self.check_matrix = self.check_matrix.select(ndarray::Axis(1), &retained);
+            self.observable_matrix = self.observable_matrix.select(ndarray::Axis(1), &retained);
+            self.error_priors = retained
+                .iter()
+                .map(|&column| self.error_priors[column])
+                .collect();
+            self.num_mechanisms = retained.len();
+        }
+        support.dead_detectors = self
+            .check_matrix
+            .outer_iter()
+            .enumerate()
+            .filter_map(|(row, values)| values.iter().all(|&value| value == 0).then_some(row))
+            .collect();
+        (self, support)
+    }
+
+    /// Require at least one mechanism before constructing a reduced BP kernel.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` when support reduction removed every column
+    /// or the original DEM contained no mechanisms.
+    pub fn ensure_nonempty_support(&self) -> Result<(), DecoderError> {
+        if self.num_mechanisms == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "no uncertain error mechanism remains after support reduction, for example because of error_rate=0".into()
+            ));
+        }
+        Ok(())
     }
 
     /// Parse a DEM string into check matrix form.
@@ -783,9 +940,13 @@ impl DemMatchingGraph {
 ///
 /// This is the proper way to use check-matrix decoders (BP+OSD, `UnionFind`,
 /// `RelayBP`, etc.) in a sample+decode loop. The wrapper:
-/// 1. Passes the syndrome to the inner decoder
-/// 2. Gets back a correction vector
-/// 3. Multiplies by the observable matrix to get the observable prediction
+/// 1. Validates syndrome length and binary values.
+/// 2. Applies an explicitly attached syndrome bias and rejects fired dead detectors.
+/// 3. Decodes and projects the correction through the observable matrix.
+/// 4. Applies the explicitly attached observable bias.
+///
+/// `new` uses empty support state; only `with_support` attaches reduction state.
+/// Single-shot, outcome and batch methods all use this validation and bias path.
 ///
 /// # Example
 ///
@@ -854,17 +1015,32 @@ pub struct CheckMatrixObservableDecoder<D> {
     pub dem: DemCheckMatrix,
     /// Reusable syndrome buffer (avoids per-shot ndarray allocation).
     syndrome_arr: ndarray::Array1<u8>,
+    support: DemSupport,
 }
 
 impl<D> CheckMatrixObservableDecoder<D> {
-    /// Create a new wrapper from a decoder and its DEM check matrix.
+    /// Create a wrapper without support biases or dead-detector constraints.
+    /// All wrappers validate syndrome dimensions and binary values before decoding.
     pub fn new(decoder: D, dem: DemCheckMatrix) -> Self {
         let len = dem.num_detectors;
         Self {
             decoder,
             dem,
             syndrome_arr: ndarray::Array1::zeros(len),
+            support: DemSupport::default(),
         }
+    }
+
+    /// Attach the explicit state returned by `DemCheckMatrix::reduce_support`.
+    /// Single, outcome and batch decoding all apply these biases in `decode_obs`.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a non-empty bias of the wrong length
+    /// or a dead detector outside the matrix's row count.
+    pub fn with_support(mut self, support: DemSupport) -> Result<Self, DecoderError> {
+        support.validate_dimensions(self.dem.num_detectors)?;
+        self.support = support;
+        Ok(self)
     }
 }
 
@@ -875,22 +1051,31 @@ where
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         use super::DecodingResultTrait;
 
-        // Copy syndrome into reusable buffer (no allocation after first call)
-        let len = syndrome.len();
-        if self.syndrome_arr.len() != len {
-            self.syndrome_arr = ndarray::Array1::zeros(len);
+        // Validate before XOR, including for wrappers constructed without reduction.
+        if syndrome.len() != self.dem.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.dem.num_detectors,
+                actual: syndrome.len(),
+            });
         }
-        self.syndrome_arr
+        if self.syndrome_arr.len() != self.dem.num_detectors {
+            self.syndrome_arr = ndarray::Array1::zeros(self.dem.num_detectors);
+        }
+        let buffer = self
+            .syndrome_arr
             .as_slice_mut()
-            .unwrap()
-            .copy_from_slice(syndrome);
+            .expect("the syndrome buffer is a freshly allocated or resized contiguous Array1");
+        buffer.copy_from_slice(syndrome);
+        self.support.bias_syndrome(buffer, self.dem.num_detectors)?;
         let result = self
             .decoder
             .decode(&self.syndrome_arr.view())
             .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
 
         let correction = result.correction();
-        Ok(self.dem.observables_obsmask_from_correction(correction))
+        let mut observables = self.dem.observables_obsmask_from_correction(correction);
+        observables ^= &self.support.observable_bias;
+        Ok(observables)
     }
 }
 

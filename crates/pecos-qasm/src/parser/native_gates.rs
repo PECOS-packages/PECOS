@@ -116,6 +116,8 @@ mod tests {
             | CoreGateType::MX
             | CoreGateType::MZ
             | CoreGateType::MeasureZLeaked
+            | CoreGateType::MeasureZLost
+            | CoreGateType::MeasureZLeakedLost
             | CoreGateType::MeasureFree
             | CoreGateType::MPZ
             | CoreGateType::PX

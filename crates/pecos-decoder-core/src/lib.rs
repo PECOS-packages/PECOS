@@ -67,7 +67,7 @@ pub use config::{
 };
 pub use dem::{
     CheckMatrixObservableDecoder, DemCheckMatrix, DemConfig, DemConfigBuilder, DemDecoder, DemInfo,
-    DemMatchingGraph, DetectorCoord, MatchingEdge, parse_detector_coords,
+    DemMatchingGraph, DemSupport, DetectorCoord, MatchingEdge, parse_detector_coords,
 };
 pub use errors::{ConfigError, DecoderError, ErrorConvert, GraphError, MatrixError};
 pub use matrix::{CheckMatrixConfig, CheckMatrixDecoder, SparseCheckMatrix};

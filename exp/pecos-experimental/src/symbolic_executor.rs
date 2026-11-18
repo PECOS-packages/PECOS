@@ -141,7 +141,8 @@ impl std::error::Error for SymbolicExecutionError {}
 /// - Single-qubit: I, X, Y, Z, H, SX, SY, SZ and their adjoints
 /// - Two-qubit: CX, CY, CZ, SXX, SYY, SZZ and their adjoints
 /// - Rotations at Clifford angles accepted by the shared lowering policy
-/// - Measurements: MX, MZ, `MeasureFree`, `MeasureZLeaked`
+/// - Measurements: MX, MZ, `MeasureFree`, and the Z heralds
+///   (`MeasureZLeaked`, `MeasureZLost`, `MeasureZLeakedLost`)
 /// - Preparations: PX, PZ, `QAlloc` (reset to |0⟩)
 /// - Measurement and reset: MPZ (measure Z, then reset to |0⟩)
 /// - Release, timing and metadata: `QFree`, `Idle`, `MeasCrosstalkGlobalPayload`,
@@ -363,7 +364,10 @@ pub(crate) fn named_action(
             reset: false,
             release: false,
         },
-        GateType::MZ | GateType::MeasureZLeaked => NamedAction::Measure {
+        GateType::MZ
+        | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost => NamedAction::Measure {
             x_basis: false,
             reset: false,
             release: false,
@@ -447,7 +451,11 @@ fn execute_named_gate(
             if x_basis {
                 sim.h(&[q]);
             }
-            sim.mz(&[q]);
+            if gate_type.is_recordless_z_measurement() {
+                sim.mz_unrecorded(&[q]);
+            } else {
+                sim.mz(&[q]);
+            }
             // Restore the X-basis eigenstate after the Z-basis projection.
             if x_basis {
                 sim.h(&[q]);
@@ -486,6 +494,26 @@ mod tests {
     use super::*;
     use pecos_quantum::DagCircuit;
     use pecos_simulators::SymbolicSparseStab;
+
+    #[test]
+    fn heralds_collapse_without_history_indices() {
+        for gate_type in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut circuit = DagCircuit::new();
+            circuit.h(&[0]);
+            circuit.add_gate_auto_wire(Gate::simple(gate_type, vec![0.into()]));
+            circuit.h(&[0]);
+            circuit.mz(&[0]);
+            let mut sim = SymbolicSparseStab::new(1);
+            execute_circuit_symbolic(&mut sim, &circuit).unwrap();
+            let history = sim.measurement_history();
+            assert_eq!(history.len(), 1, "{gate_type}");
+            assert!(!history[0].is_deterministic, "{gate_type} must collapse");
+        }
+    }
 
     #[test]
     fn diagonal_non_clifford_gates_are_rejected() {

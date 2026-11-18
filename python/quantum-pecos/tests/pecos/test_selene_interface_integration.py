@@ -229,7 +229,9 @@ def test_qis_trace_capture_supports_leakage_measurement_futures(tmp_path: Path) 
     probe.write_text(
         textwrap.dedent(
             """
+            import json
             import pecos
+            from pecos.visualization import circuit_diagram, inspect_circuit
             from guppylang import guppy
             from guppylang.std.builtins import result
             from guppylang.std.qsystem import measure_leaked
@@ -244,6 +246,31 @@ def test_qis_trace_capture_supports_leakage_measurement_futures(tmp_path: Path) 
 
             trace = pecos.capture_qis_operation_trace(measure_leakage, 1, seed=17)
             assert trace
+            # Capture -> saved JSON -> diagram must retain the leakage-aware gate.
+            saved_trace = json.loads(json.dumps(trace))
+            leakage_gates = [
+                gate for chunk in saved_trace for gate in chunk.get("lowered_quantum_ops", [])
+                if gate["gate_type"] == "MeasureZLeaked"
+            ]
+            assert leakage_gates
+            mid = leakage_gates[0]["measurement_result_ids"][0]
+            svg = str(circuit_diagram(saved_trace, show_measurement_ids=True))
+            assert f"MZ_L[m{mid}]" in svg
+            assert "Boolean projection" not in svg
+            tikz = str(circuit_diagram(saved_trace, format="tikz", show_measurement_ids=True))
+            assert "MZ" + chr(92) + f"_L[m{mid}]" in tikz
+            inspection = inspect_circuit(saved_trace, show_measurement_ids=True)
+            measurement = next(op for op in inspection.operations if op["gate_type"] == "MeasureZLeaked")
+            assert measurement["measurement_ids"] == [mid]
+            origin = measurement["metadata"]["_pecos_trace_origin"]
+            source_chunk = next(
+                chunk for chunk in saved_trace
+                if chunk["engine_trace_id"] == origin["engine_trace_id"]
+                and chunk["shot_index"] == origin["shot_index"]
+                and chunk["chunk_index"] == origin["chunk_index"]
+            )
+            assert source_chunk["lowered_quantum_ops"][origin["lowered_op_index"]] == leakage_gates[0]
+            assert f"MZ_L[m{mid}]" in inspection.svg
             assert any(
                 item.get("name") == "not leaked"
                 for chunk in trace
@@ -265,6 +292,7 @@ def test_qis_trace_capture_supports_leakage_measurement_futures(tmp_path: Path) 
         check=False,
         capture_output=True,
         text=True,
+        timeout=120,
     )
     assert completed.returncode == 0, completed.stderr
 
@@ -468,6 +496,28 @@ def test_custom_runtime_native_gate_declaration_is_forwarded(explicit: list[str]
     plugin = SimpleNamespace(library_file="custom.so", native_gates=["rxy", "rz", "rzz"])
     _configure_selene_runtime(builder, plugin, native_gates=explicit)
     assert builder.native_gates == (plugin.native_gates if explicit is None else explicit)
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_legacy_deferred_measurement_hint_is_not_forwarded(deferred: bool) -> None:
+    """Native runtimes use the upstream future protocol without an opt-in."""
+    from types import SimpleNamespace
+
+    from pecos._engine_builders import _configure_selene_runtime
+
+    class RecordingBuilder:
+        options: dict[str, object]
+
+        def selene_runtime_plugin(self, *_args: object, **kwargs: object) -> object:
+            self.options = kwargs
+            return self
+
+    builder = RecordingBuilder()
+    plugin = SimpleNamespace(library_file="custom.so")
+    if deferred:
+        plugin.defer_measurements = True
+    _configure_selene_runtime(builder, plugin)
+    assert "defer_measurements" not in builder.options
 
 
 def test_named_soft_rz_package_retains_native_gate_declaration(monkeypatch: pytest.MonkeyPatch) -> None:

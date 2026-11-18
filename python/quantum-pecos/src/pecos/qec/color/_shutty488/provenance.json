@@ -1,0 +1,30 @@
+{
+  "doi": "10.5281/zenodo.22820614",
+  "archive": "denser_planar_color_codes_source_v1.zip",
+  "files": {
+    "geometry.py": {
+      "upstream_path": "src/vendor/_triangle488/geometry.py",
+      "sha256": "ece92c51a82d426500a8a556068a4da37e152f603fa8c973ce87ca249477fa9d"
+    },
+    "cx_rule.py": {
+      "upstream_path": "src/vendor/_triangle488/reference/cx_rule.py",
+      "sha256": "326e1ee8c6aaa0930ce009ec492b05a4d38b238096af103b35461624a6a6e447"
+    },
+    "binary.py": {
+      "upstream_path": "src/vendor/_triangle488/reference/binary.py",
+      "sha256": "df3646f5e19866a33a9fb00c5aca8d2e21b768d500d8d386d9355950a4b5e652"
+    },
+    "ideal_css.py": {
+      "upstream_path": "src/vendor/_triangle488/reference/ideal_css.py",
+      "sha256": "4e5456189292969aa53d27d5d303828fe950a53a977c16a2dc98270bd6f4ad25"
+    },
+    "templates.json": {
+      "upstream_path": "src/vendor/_triangle488/reference/templates.json",
+      "sha256": "c28643edb30bd8df8166cafa93a271a88064d6b49461a3d8dacc2dc106ea370d"
+    },
+    "LICENSE": {
+      "upstream_path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    }
+  }
+}

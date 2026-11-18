@@ -220,6 +220,9 @@ pub enum RelayStoppingCriterion {
 }
 
 /// Relay BP construction options.
+///
+/// The gamma0 default mirrors `pecos_relay_bp::DEFAULT_GAMMA0` without requiring
+/// the optional backend; a test keeps the two equal.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RelayBpConfig {
     /// Uniform probability per original DEM error line, before duplicate merging.
@@ -245,7 +248,7 @@ impl Default for RelayBpConfig {
             error_rate: None,
             alpha: None,
             alpha_iteration_scaling_factor: 1.0,
-            gamma0: Some(0.65),
+            gamma0: Some(0.35),
             pre_iter: 80,
             num_sets: 300,
             set_max_iter: 60,
@@ -492,5 +495,15 @@ mod bp_lsd_tests {
         assert_eq!(spec.lsd_order, defaults::LSD_ORDER);
         assert_eq!(raw.bits_per_step(), defaults::BITS_PER_STEP);
         assert_eq!(spec.bits_per_step, defaults::BITS_PER_STEP);
+    }
+}
+
+#[cfg(all(test, feature = "relay-bp"))]
+mod relay_bp_tests {
+    #[test]
+    fn spec_and_raw_relay_use_shared_gamma0_default() {
+        let spec = super::RelayBpConfig::default();
+        assert_eq!(spec.gamma0, Some(pecos_relay_bp::DEFAULT_GAMMA0));
+        assert_eq!(spec.gamma0, pecos_relay_bp::RelayConfig::default().gamma0);
     }
 }

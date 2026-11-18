@@ -102,62 +102,165 @@ fn fix_header_guard_conflict(src_cpp_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Replace a pinned MBP fragment, accepting exactly one complete source version.
+fn patch_mbp_fragment(
+    content: &mut String,
+    path: &Path,
+    upstream: &str,
+    patched: &str,
+    count: usize,
+) -> Result<()> {
+    // Some patches retain the upstream anchor (includes and decision guards).
+    let old_count = content.replace(patched, "").matches(upstream).count();
+    let new_count = content.matches(patched).count();
+    if old_count == 0 && new_count == count {
+        return Ok(());
+    }
+    if old_count != count || new_count != 0 {
+        return Err(Error::Config(format!(
+            "{} does not contain the expected MBP fragment {count} time(s): {upstream:?}; \
+             the pinned ldpc source changed or is partially patched, so update the MBP fixes in build_ldpc.rs",
+            path.display()
+        )));
+    }
+    *content = content.replace(upstream, patched);
+    Ok(())
+}
+
+fn read_mbp_header(path: &Path) -> Result<String> {
+    fs::read_to_string(path).map_err(|error| {
+        Error::Config(format!(
+            "Cannot read {}: {error}; check the path and permissions",
+            path.display()
+        ))
+    })
+}
+
+fn write_mbp_header(path: &Path, content: &str) -> Result<()> {
+    // Shared cache: publish atomically so other checkouts never read a partial header.
+    let temporary = path.with_extension(format!("hpp.pecos-{}.tmp", std::process::id()));
+    fs::write(&temporary, content).map_err(|error| {
+        Error::Config(format!(
+            "Cannot write {}: {error}; check the path and permissions",
+            temporary.display()
+        ))
+    })?;
+    fs::rename(&temporary, path).map_err(|error| {
+        Error::Config(format!(
+            "Cannot rename {} to {}: {error}; check the path and permissions",
+            temporary.display(),
+            path.display()
+        ))
+    })?;
+    Ok(())
+}
+
 fn fix_mbp_iterate_methods(src_cpp_dir: &Path) -> Result<()> {
-    // Fix the mbp.hpp file to use correct iterate method names and syntax
-    // The mbp_sparse class calls iterate_column_ptr() and iterate_row_ptr()
-    // but these methods don't exist - should be iterate_column() and iterate_row()
-    // Also need to fix iterator usage from pointers to references
-    // Issue exists in commit 31cf9f33872f32579af1efbe1e84552d42b03ea8
-    let mbp_path = src_cpp_dir.join("mbp.hpp");
+    let path = src_cpp_dir.join("mbp.hpp");
+    let original = read_mbp_header(&path)?;
+    let mut content = original.clone();
 
-    if mbp_path.exists() {
-        let content = fs::read_to_string(&mbp_path)?;
-
-        // Only apply patch if not already applied
-        if content.contains("iterate_column_ptr(") || content.contains("iterate_row_ptr(") {
-            // First replace the method names
-            let mut fixed_content = content
-                .replace("iterate_column_ptr(", "iterate_column(")
-                .replace("iterate_row_ptr(", "iterate_row(");
-
-            // Now fix the iterator usage - these return references, not pointers
-            // We need to replace e-> with e. and g-> with g. in the iteration loops
-            let lines: Vec<&str> = fixed_content.lines().collect();
-            let mut new_lines = Vec::new();
-
-            for line in lines {
-                // Only replace -> with . for iterator variables in specific contexts
-                let mut new_line = line.to_string();
-                if line.contains("for (auto e:") || line.contains("for (auto g:") {
-                    // This is a for loop declaration, don't change
-                    new_lines.push(new_line);
-                } else if line.contains("if (g != e)") {
-                    // Need to change comparison to use addresses
-                    new_line = new_line.replace("if (g != e)", "if (&g != &e)");
-                    new_lines.push(new_line);
-                } else {
-                    // Replace e-> with e. and g-> with g. for iterator access
-                    new_line = new_line
-                        .replace("e->pauli", "e.pauli")
-                        .replace("e->qubit_to_stab_msgs", "e.qubit_to_stab_msgs")
-                        .replace("e->stab_to_qubit_msgs", "e.stab_to_qubit_msgs")
-                        .replace("e->row_index", "e.row_index")
-                        .replace("e->col_index", "e.col_index")
-                        .replace("g->pauli", "g.pauli")
-                        .replace("g->qubit_to_stab_msgs", "g.qubit_to_stab_msgs")
-                        .replace("g->stab_to_qubit_msgs", "g.stab_to_qubit_msgs")
-                        .replace("g->row_index", "g.row_index")
-                        .replace("g->col_index", "g.col_index");
-                    new_lines.push(new_line);
-                }
+    // Upgrade both the pinned pointer syntax and the old PECOS patch. The latter
+    // used the correct iterator API but copied entries, losing every message write
+    // and comparing addresses of locals instead of excluding the current edge.
+    if content.contains("iterate_column_ptr(") || content.contains("iterate_row_ptr(") {
+        for (upstream, patched, count) in [
+            ("pcm->iterate_column_ptr(", "pcm->iterate_column(", 5),
+            ("pcm->iterate_row_ptr(", "pcm->iterate_row(", 2),
+            ("if (g != e)", "if (&g != &e)", 2),
+        ] {
+            patch_mbp_fragment(&mut content, &path, upstream, patched, count)?;
+        }
+        // Exact access counts also detect changes to the pinned pointer version.
+        for (upstream, patched, count, existing) in [
+            ("e->pauli", "e.pauli", 3, 1),
+            ("e->qubit_to_stab_msgs", "e.qubit_to_stab_msgs", 4, 0),
+            ("e->stab_to_qubit_msgs", "e.stab_to_qubit_msgs", 8, 0),
+            ("e->row_index", "e.row_index", 2, 0),
+            ("g->pauli", "g.pauli", 4, 0),
+            ("g->qubit_to_stab_msgs", "g.qubit_to_stab_msgs", 4, 0),
+            ("g->col_index", "g.col_index", 1, 0),
+        ] {
+            if content.matches(upstream).count() != count
+                || content.matches(patched).count() != existing
+            {
+                return Err(Error::Config(format!(
+                    "{} has unexpected MBP pointer accesses for {upstream}; \
+                     update fix_mbp_iterate_methods in build_ldpc.rs for the pinned ldpc source",
+                    path.display()
+                )));
             }
-
-            fixed_content = new_lines.join("\n");
-            fs::write(&mbp_path, fixed_content)?;
-            info!("Fixed iterate method names and syntax in mbp.hpp");
+            content = content.replace(upstream, patched);
         }
     }
+    for (upstream, patched, count) in [
+        (
+            "for (auto e: pcm->iterate_column(i))",
+            "for (auto& e: pcm->iterate_column(i))",
+            1,
+        ),
+        (
+            "for (auto e: pcm->iterate_column(qubit))",
+            "for (auto& e: pcm->iterate_column(qubit))",
+            4,
+        ),
+        (
+            "for (auto g: pcm->iterate_row(stab_index))",
+            "for (auto& g: pcm->iterate_row(stab_index))",
+            2,
+        ),
+    ] {
+        patch_mbp_fragment(&mut content, &path, upstream, patched, count)?;
+    }
+    if content.matches("if (&g != &e)").count() != 2
+        || content.contains("for (auto e:")
+        || content.contains("for (auto g:")
+    {
+        return Err(Error::Config(format!(
+            "{} has unexpected MBP edge iteration or exclusion; \
+             update fix_mbp_iterate_methods in build_ldpc.rs for the pinned ldpc source",
+            path.display()
+        )));
+    }
+    if content != original {
+        write_mbp_header(&path, &content)?;
+        info!("Fixed MBP iteration to update stored edge messages");
+    }
+    Ok(())
+}
 
+fn fix_mbp_numeric_guards(src_cpp_dir: &Path) -> Result<()> {
+    let path = src_cpp_dir.join("mbp.hpp");
+    let original = read_mbp_header(&path)?;
+    let mut content = original.clone();
+    for (upstream, patched, count) in [
+        (
+            "else if (stab_update_product <= -1) stab_update_product = 1 + 1e-8;",
+            "else if (stab_update_product <= -1) stab_update_product = -(1 - 1e-8);",
+            1,
+        ),
+        (
+            "if (demoninator <= 0) {\n                                    stab_update_product = 1e-12;\n                                }",
+            "if (demoninator <= 0) {\n                                    demoninator = 1e-12;\n                                }",
+            2,
+        ),
+        (
+            "#include <utility>\n",
+            "#include <stdexcept>\n#include <string>\n#include <utility>\n",
+            1,
+        ),
+        (
+            "                    if (log_prob_ratios[w][qubit] < min) {",
+            "                    // PECOS FIX: reject NaN before the hard decision.\n                    if (std::isnan(log_prob_ratios[w][qubit])) {\n                        throw std::runtime_error(\n                            \"MBP log-probability ratio for qubit \" + std::to_string(qubit) +\n                            \" Pauli \" + std::to_string(w + 1) + \" is NaN\");\n                    }\n                    if (log_prob_ratios[w][qubit] < min) {",
+            1,
+        ),
+    ] {
+        patch_mbp_fragment(&mut content, &path, upstream, patched, count)?;
+    }
+    if content != original {
+        write_mbp_header(&path, &content)?;
+        info!("Fixed MBP numeric guards and NaN decisions");
+    }
     Ok(())
 }
 
@@ -355,6 +458,7 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
 
     // Fix mbp.hpp iterate method names
     fix_mbp_iterate_methods(&src_cpp_dir)?;
+    fix_mbp_numeric_guards(&src_cpp_dir)?;
 
     // Fix MSVC compatibility issues
     fix_msvc_compatibility(&src_cpp_dir)?;

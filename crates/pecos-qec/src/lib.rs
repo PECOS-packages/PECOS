@@ -114,8 +114,8 @@ pub use parity_check_matrix::{ParityCheckMatrix, ParityCheckMatrixError};
 pub use subsystem_distance::{SubsystemCodeError, subsystem_dressed_distance};
 
 pub use code_distance::{
-    StabilizerDistanceSearchOutcome, connected_cluster_code_distance, stabilizer_code_distance,
-    x_distance, z_distance,
+    LogicalSetEnumerationError, StabilizerDistanceSearchOutcome, connected_cluster_code_distance,
+    stabilizer_code_distance, undetectable_logical_sets, x_distance, z_distance,
 };
 
 pub use distance::{

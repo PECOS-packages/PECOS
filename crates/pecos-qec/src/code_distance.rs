@@ -19,9 +19,11 @@
 //! duplicating the connected-cluster enumeration.
 
 use crate::fault_tolerance::dem_builder::FaultMechanism;
-use crate::fault_tolerance::fault_distance::connected_cluster_mechanism_distance;
 #[cfg(test)]
 use crate::fault_tolerance::fault_distance::connected_cluster_mechanism_distance_at_weight;
+use crate::fault_tolerance::fault_distance::{
+    connected_cluster_mechanism_distance, undetectable_mechanism_sets,
+};
 use crate::{
     DistanceProblem, DistanceProblemError, DistanceResult, FaultDistanceResult, ParityCheckMatrix,
     StabilizerCodeSpec,
@@ -84,6 +86,102 @@ pub fn connected_cluster_code_distance(
     max_weight: usize,
 ) -> Option<FaultDistanceResult> {
     matrix_distance(h.matrix(), l.matrix(), max_weight)
+}
+
+/// A failed completeness precondition for enumerating undetectable logical sets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LogicalSetEnumerationError {
+    /// This column is zero in both matrices.
+    AllZeroColumn {
+        /// Index of the all-zero column.
+        column: usize,
+    },
+    /// A logical set is too light for complete enumeration at the requested weight.
+    LowWeightLogicalSet {
+        /// Minimum undetectable logical weight.
+        weight: usize,
+    },
+}
+
+impl std::fmt::Display for LogicalSetEnumerationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AllZeroColumn { column } => {
+                write!(f, "column {column} is all-zero in both H and L")
+            }
+            Self::LowWeightLogicalSet { weight } => write!(
+                f,
+                "an undetectable logical set of weight {weight} exists; complete enumeration at the requested weight is unsupported"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LogicalSetEnumerationError {}
+
+/// Returns every size-`weight` column set S with `H e_S = 0` and `L e_S != 0`.
+///
+/// Each set is sorted, appears once, and the result is lexicographically sorted.
+/// Seeds run in parallel, with deterministic per-seed sorting and deduplication.
+/// Completeness requires (1) no column zero in both matrices, (2) if `weight >= 2`,
+/// no weight-1 logical set, and (3) no logical set of weight at most `weight - 2`.
+/// All three conditions are checked before enumeration.
+///
+/// The Connected Cluster search of [arXiv:2603.22532](https://arxiv.org/abs/2603.22532)
+/// grows from the smallest column and branches on the lowest unsatisfied detector.
+/// Any completion must contain one of those branches. The only early stop is a
+/// detector-free proper prefix P of a target S. Write d for the minimum logical
+/// weight. If P flips an observable, then |P| >= d; the conditions force |P| = d
+/// and |S| = d+1. The remaining singleton is detector-free, hence either all-zero
+/// or a weight-1 logical, both excluded. Otherwise |P| >= 2 (no all-zero columns),
+/// and S minus P is a detector-free logical of weight <= |S|-2 <= d-1, also
+/// impossible. Peeling removes only columns with a detector no other remaining column has, and no
+/// undetectable set contains such a column.
+/// Thus enumeration is complete for weights d and d+1 when d >= 2, and returns
+/// an empty result below d. Weight zero also returns an empty result.
+///
+/// # Errors
+///
+/// Returns [`LogicalSetEnumerationError::AllZeroColumn`] for condition (1), or
+/// [`LogicalSetEnumerationError::LowWeightLogicalSet`] naming the minimum logical
+/// weight for conditions (2) and (3).
+///
+/// # Panics
+///
+/// Panics if the matrices have different widths or either row count exceeds the `u32` id space.
+pub fn undetectable_logical_sets(
+    h: &ParityCheckMatrix,
+    l: &ParityCheckMatrix,
+    weight: usize,
+) -> Result<Vec<Vec<usize>>, LogicalSetEnumerationError> {
+    let mechanisms = mechanisms_from_matrices(h.matrix(), l.matrix());
+    if let Some(column) = mechanisms
+        .iter()
+        .position(|mechanism| mechanism.detectors.is_empty() && mechanism.dem_outputs.is_empty())
+    {
+        return Err(LogicalSetEnumerationError::AllZeroColumn { column });
+    }
+    let num_outputs =
+        u32::try_from(l.matrix().num_rows()).expect("logical row count fits in the u32 id space");
+    if weight >= 2
+        && let Some(result) = connected_cluster_mechanism_distance(&mechanisms, num_outputs, 1)
+    {
+        return Err(LogicalSetEnumerationError::LowWeightLogicalSet {
+            weight: result.distance,
+        });
+    }
+    if let Some(result) =
+        connected_cluster_mechanism_distance(&mechanisms, num_outputs, weight.saturating_sub(2))
+    {
+        return Err(LogicalSetEnumerationError::LowWeightLogicalSet {
+            weight: result.distance,
+        });
+    }
+    Ok(undetectable_mechanism_sets(
+        &mechanisms,
+        num_outputs,
+        weight,
+    ))
 }
 
 /// Computes pure-X distance for a CSS-form stabilizer code.
@@ -265,6 +363,142 @@ mod tests {
     };
     use pecos_core::{PauliOperator, X, Xs, Y, Ys, Z, Zs};
     use std::time::Instant;
+
+    fn brute_force_logical_sets(
+        h: &ParityCheckMatrix,
+        l: &ParityCheckMatrix,
+        weight: usize,
+    ) -> Vec<Vec<usize>> {
+        let mut sets = Vec::new();
+        for mask in 0_usize..1 << h.num_qubits() {
+            if mask.count_ones() as usize != weight {
+                continue;
+            }
+            let set: Vec<_> = (0..h.num_qubits())
+                .filter(|column| mask & (1 << column) != 0)
+                .collect();
+            let parity = |matrix: &ParityCheckMatrix, row| {
+                set.iter()
+                    .fold(0, |sum, &column| sum ^ matrix.matrix().get(row, column))
+            };
+            if (0..h.num_checks()).all(|row| parity(h, row) == 0)
+                && (0..l.num_checks()).any(|row| parity(l, row) != 0)
+            {
+                sets.push(set);
+            }
+        }
+        sets.sort();
+        sets
+    }
+
+    #[test]
+    fn logical_sets_match_small_matrix_oracles() {
+        // Distance two and three, with nonempty d+1 sets in both cases.
+        // The first pair repeats its complete column 1 as column 4.
+        let cases = [
+            (
+                vec![vec![1, 1, 0, 1, 1], vec![0, 0, 1, 1, 0]],
+                vec![vec![1, 0, 0, 0, 0]],
+                2,
+            ),
+            (
+                vec![
+                    vec![1, 1, 0, 1, 0],
+                    vec![0, 1, 1, 0, 0],
+                    vec![0, 0, 0, 1, 1],
+                ],
+                vec![vec![1, 0, 0, 1, 0]],
+                3,
+            ),
+        ];
+        for (h, l, distance) in cases {
+            let h = ParityCheckMatrix::from_dense(h).unwrap();
+            let l = ParityCheckMatrix::from_dense(l).unwrap();
+            for weight in 0..=distance + 1 {
+                let expected = brute_force_logical_sets(&h, &l, weight);
+                if weight >= distance {
+                    assert_ne!(expected, Vec::<Vec<usize>>::new());
+                }
+                assert_eq!(undetectable_logical_sets(&h, &l, weight).unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn logical_sets_match_seeded_random_oracles() {
+        use rand::rngs::SmallRng;
+        use rand::{RngExt, SeedableRng};
+
+        let mut rng = SmallRng::seed_from_u64(0x0010_61CA_15E7);
+        for _ in 0..128 {
+            let n = rng.random_range(1..=8);
+            let mut h = vec![vec![0; n]; 3];
+            let mut l = vec![vec![0; n]; 2];
+            for column in 0..n {
+                // Exclude all-zero columns without constraining logical distance.
+                let signature = rng.random_range(1_u8..32);
+                for (row, values) in h.iter_mut().chain(&mut l).enumerate() {
+                    values[column] = (signature >> row) & 1;
+                }
+            }
+            let h = ParityCheckMatrix::from_dense(h).unwrap();
+            let l = ParityCheckMatrix::from_dense(l).unwrap();
+            let distance =
+                (1..=n).find(|&weight| !brute_force_logical_sets(&h, &l, weight).is_empty());
+            let limit = match distance {
+                Some(1) => 1,
+                Some(d) => d + 1,
+                None => n + 1,
+            };
+            for weight in 0..=limit {
+                assert_eq!(
+                    undetectable_logical_sets(&h, &l, weight).unwrap(),
+                    brute_force_logical_sets(&h, &l, weight)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn logical_sets_reject_all_zero_column() {
+        let h = ParityCheckMatrix::from_dense(vec![vec![1, 1, 0]]).unwrap();
+        let l = ParityCheckMatrix::from_dense(vec![vec![1, 0, 0]]).unwrap();
+        assert_eq!(
+            undetectable_logical_sets(&h, &l, 3),
+            Err(LogicalSetEnumerationError::AllZeroColumn { column: 2 })
+        );
+    }
+
+    #[test]
+    fn logical_sets_reject_weight_one_logical() {
+        let h = ParityCheckMatrix::from_dense(vec![vec![0, 0]]).unwrap();
+        let l = ParityCheckMatrix::from_dense(vec![vec![1, 0], vec![0, 1]]).unwrap();
+        assert_eq!(
+            undetectable_logical_sets(&h, &l, 2),
+            Err(LogicalSetEnumerationError::LowWeightLogicalSet { weight: 1 })
+        );
+    }
+
+    #[test]
+    fn logical_sets_reject_logical_at_weight_minus_two() {
+        let h = ParityCheckMatrix::from_dense(vec![vec![1, 1, 0, 0], vec![0, 0, 1, 1]]).unwrap();
+        let l = ParityCheckMatrix::from_dense(vec![vec![1, 0, 0, 0]]).unwrap();
+        assert_eq!(
+            undetectable_logical_sets(&h, &l, 4),
+            Err(LogicalSetEnumerationError::LowWeightLogicalSet { weight: 2 })
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "code-distance matrices must have matching widths")]
+    fn logical_sets_reject_mismatched_widths() {
+        undetectable_logical_sets(
+            &ParityCheckMatrix::zeros(1, 1),
+            &ParityCheckMatrix::zeros(1, 2),
+            0,
+        )
+        .unwrap();
+    }
 
     fn steane_spec() -> StabilizerCodeSpec {
         StabilizerCodeSpec::from_stabilizer_code(&StabilizerCode::steane()).unwrap()

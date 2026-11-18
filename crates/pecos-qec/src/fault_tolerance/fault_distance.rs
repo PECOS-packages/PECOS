@@ -19,6 +19,7 @@
 //! clusters avoids the blind subset enumeration used by the reference implementation.
 
 use super::dem_builder::{DetectorErrorModel, FaultMechanism};
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
@@ -130,6 +131,7 @@ struct ConnectedClusterSearch<'a> {
     logical_target: LogicalTarget,
     target_weight: usize,
     best: Option<Vec<usize>>,
+    collected: Option<BTreeSet<Vec<usize>>>,
 }
 
 impl ConnectedClusterSearch<'_> {
@@ -139,10 +141,7 @@ impl ConnectedClusterSearch<'_> {
                 continue;
             }
 
-            let mut cluster = vec![seed];
-            let mut members = BTreeSet::from([seed]);
-            let effect = self.mechanisms[seed].clone();
-            self.extend(seed, &mut cluster, &mut members, &effect);
+            self.search_seed(seed);
 
             // Every member added to a cluster is larger than its seed. Once the first seed with a
             // witness has been exhausted, later seeds cannot improve the sorted witness.
@@ -151,6 +150,13 @@ impl ConnectedClusterSearch<'_> {
             }
         }
         self.best
+    }
+
+    fn search_seed(&mut self, seed: usize) {
+        let mut cluster = vec![seed];
+        let mut members = BTreeSet::from([seed]);
+        let effect = self.mechanisms[seed].clone();
+        self.extend(seed, &mut cluster, &mut members, &effect);
     }
 
     fn extend(
@@ -168,9 +174,10 @@ impl ConnectedClusterSearch<'_> {
             // In the exact-weight search, a detector-free prefix below the target is already a
             // closed component. The remaining mechanisms would also have to be detector-free,
             // producing a proper detector-free component of the witness. One of the two parts
-            // carries the nonzero observable parity, contradicting minimum connectedness. The
+            // carries the nonzero observable parity, contradicting minimal weight. The
             // Connected Cluster method therefore rejects this prefix instead of reopening it
-            // (arXiv:2603.22532).
+            // (arXiv:2603.22532). Collect-all callers check the stronger completeness conditions
+            // proved in `code_distance::undetectable_logical_sets`.
             return;
         }
 
@@ -208,6 +215,10 @@ impl ConnectedClusterSearch<'_> {
         }
         let mut candidate = cluster.to_vec();
         candidate.sort_unstable();
+        if let Some(collected) = &mut self.collected {
+            collected.insert(candidate);
+            return;
+        }
         if self
             .best
             .as_ref()
@@ -263,8 +274,40 @@ impl<'a> ConnectedClusterProblem<'a> {
             logical_target,
             target_weight: weight,
             best: None,
+            collected: None,
         }
         .run()
+    }
+
+    fn all_witnesses_at_weight(
+        &self,
+        weight: usize,
+        logical_target: LogicalTarget,
+    ) -> Vec<Vec<usize>> {
+        if weight == 0 || weight > self.mechanisms.len() {
+            return Vec::new();
+        }
+        // Indexed parallel collection preserves seed order. Each set belongs only to its
+        // smallest column, so sorting and deduplicating within each seed suffices globally.
+        let per_seed: Vec<_> = (0..self.mechanisms.len())
+            .into_par_iter()
+            .map(|seed| {
+                let mut search = ConnectedClusterSearch {
+                    mechanisms: self.mechanisms,
+                    incidence: &self.incidence,
+                    active: &self.active,
+                    logical_target,
+                    target_weight: weight,
+                    best: None,
+                    collected: Some(BTreeSet::new()),
+                };
+                if self.active[seed] {
+                    search.search_seed(seed);
+                }
+                search.collected.expect("collect-all mode retains its set")
+            })
+            .collect();
+        per_seed.into_iter().flatten().collect()
     }
 
     fn distance(
@@ -291,6 +334,17 @@ pub(crate) fn connected_cluster_mechanism_distance(
 ) -> Option<FaultDistanceResult> {
     ConnectedClusterProblem::new(mechanisms)
         .distance(max_weight, LogicalTarget::AnyBelow(num_outputs))
+}
+
+/// The caller must check the completeness preconditions documented by
+/// `code_distance::undetectable_logical_sets` before collecting.
+pub(crate) fn undetectable_mechanism_sets(
+    mechanisms: &[FaultMechanism],
+    num_outputs: u32,
+    weight: usize,
+) -> Vec<Vec<usize>> {
+    ConnectedClusterProblem::new(mechanisms)
+        .all_witnesses_at_weight(weight, LogicalTarget::AnyBelow(num_outputs))
 }
 
 #[cfg(test)]
@@ -522,13 +576,11 @@ pub fn exhaustive_fault_distance(
 /// mechanism containing a detector that occurs in no other remaining mechanism, because such a
 /// detector cannot cancel in an undetectable set.
 ///
-/// Connected subsets are enumerated without duplicates using a deterministic Redelmeier-style
-/// scheme. The smallest mechanism index is the cluster seed, extensions are restricted to larger
-/// indices, and a candidate skipped at one recursion level is excluded from later sibling
-/// branches. Thus every connected set has exactly one seed and one construction branch. Search is
-/// by increasing weight, with the lexicographically smallest original-index witness retained at
-/// each weight. Entry `i` is restricted to witnesses that flip observable `i`, and is `None` when
-/// no such witness is found through `max_weight`.
+/// The smallest mechanism index is the cluster seed, and extensions are restricted to larger
+/// indices incident to the lowest unsatisfied detector. A set may be reached by several branch
+/// orders, all with the same seed. Search is by increasing weight, with the lexicographically
+/// smallest original-index witness retained at each weight. Entry `i` is restricted to witnesses
+/// that flip observable `i`, and is `None` when no such witness is found through `max_weight`.
 ///
 /// # Panics
 ///

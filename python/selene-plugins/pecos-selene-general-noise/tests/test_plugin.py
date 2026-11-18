@@ -232,8 +232,8 @@ def test_compensating_scales_are_order_independent() -> None:
 def test_matches_shared_pecos_builder_setters() -> None:
     workspace = Path(__file__).parents[4]
     builder_source = (workspace / "crates/pecos-engines/src/noise/general/builder.rs").read_text()
-    # The Selene general-noise adapter rejects readout matrices, so the plugin does not offer them.
-    selene_unsupported = {"with_readout"}
+    # The Selene general-noise adapter rejects readout matrices and qubit loss, so the plugin does not offer them.
+    selene_unsupported = {"with_readout", "with_loss"}
     rust_setters = (
         set(re.findall(r"pub fn ((?:with|add)_[a-zA-Z0-9_]+)", builder_source)) - {"with_seed"} - selene_unsupported
     )

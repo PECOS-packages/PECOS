@@ -1,4 +1,5 @@
-use super::HookChannel;
+use super::loss::LossScales;
+use super::{HookChannel, IdleRates};
 use crate::GateType;
 use crate::noise::weighted_sampler::{P2PauliLeakageWeightedStep, P2TransitionWeightedStep};
 use crate::noise::{
@@ -85,6 +86,7 @@ pub struct GeneralNoiseModelBuilder {
     // global params
     noiseless_gates: Option<BTreeSet<GateType>>,
     readout: BTreeMap<GateType, super::ReadoutMatrix>,
+    loss: Option<super::QubitLoss>,
     seed: Option<u64>,
     scale: Option<f64>,
     leakage_scale: Option<f64>,
@@ -159,6 +161,7 @@ impl GeneralNoiseModelBuilder {
             // global params
             noiseless_gates: None,
             readout: BTreeMap::new(),
+            loss: None,
             seed: None,
             scale: None,
             leakage_scale: None,
@@ -273,6 +276,7 @@ impl GeneralNoiseModelBuilder {
         // Start with the default noise model as a base
         let mut model = GeneralNoiseModel::default();
         model.readout.clone_from(&self.readout);
+        model.loss.clone_from(&self.loss);
 
         // global params
         // -----------------------------------------------------------------------------------------
@@ -349,6 +353,24 @@ impl GeneralNoiseModelBuilder {
         model.p1_hook_order_after_gate = self.p1_hook_order_after_gate.clone();
         model.p2_hook_order_before_gate = self.p2_hook_order_before_gate.clone();
         model.p2_hook_order_after_gate = self.p2_hook_order_after_gate.clone();
+        if let Some(loss) = &model.loss {
+            loss.compose(
+                super::LossSite::BeforeSingleQubit,
+                &mut model.p1_hook_order_before_gate,
+            );
+            loss.compose(
+                super::LossSite::AfterSingleQubit,
+                &mut model.p1_hook_order_after_gate,
+            );
+            loss.compose(
+                super::LossSite::BeforeTwoQubit,
+                &mut model.p2_hook_order_before_gate,
+            );
+            loss.compose(
+                super::LossSite::AfterTwoQubit,
+                &mut model.p2_hook_order_after_gate,
+            );
+        }
         model.p1_transition_channels_before_gate = self.p1_transition_channels_before_gate.clone();
         model.p1_transition_channels_after_gate = self.p1_transition_channels_after_gate.clone();
         model.p1_pauli_leakage_channels_before_gate =
@@ -1372,6 +1394,20 @@ impl GeneralNoiseModelBuilder {
         Ok(())
     }
 
+    /// Enable loss, replacing any previous loss configuration.
+    #[must_use]
+    pub fn with_loss(mut self, loss: super::QubitLoss) -> Self {
+        self.loss = Some(loss);
+        self
+    }
+
+    /// Disable loss, retaining other noise configuration.
+    #[must_use]
+    pub fn without_loss(mut self) -> Self {
+        self.loss = None;
+        self
+    }
+
     /// Replace one flavor's readout matrix, retaining the other flavors.
     #[must_use]
     pub fn with_readout(mut self, matrix: super::ReadoutMatrix) -> Self {
@@ -1392,8 +1428,10 @@ impl GeneralNoiseModelBuilder {
         if let Some(message) = self.setter_error() {
             return Err(message.to_owned());
         }
-        for matrix in self.readout.values() {
-            matrix.validate_without_loss()?;
+        if self.loss.is_none() {
+            for matrix in self.readout.values() {
+                matrix.validate_without_loss()?;
+            }
         }
         let finite_non_negative = |value: f64| value.is_finite() && value >= 0.0;
         let probability = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
@@ -1421,6 +1459,19 @@ impl GeneralNoiseModelBuilder {
         .all(finite_non_negative)
         {
             return Err("general-noise scale factors must be finite and non-negative".to_string());
+        }
+
+        let mut scaled_loss = self.loss.clone();
+        if let Some(loss) = &mut scaled_loss {
+            let scales = LossScales {
+                measurement: meas_scale * scale,
+                prep: prep_scale * scale,
+                idle: idle_scale * scale,
+                single_qubit: p1_scale * scale,
+                two_qubit: p2_scale * scale,
+            };
+            loss.validate_scaled(scales)?;
+            loss.scale(scales);
         }
 
         let (p_prep, p_meas_0, p_meas_1, p1, p2) = self.resolved_base_probabilities();
@@ -1537,10 +1588,13 @@ impl GeneralNoiseModelBuilder {
         GeneralNoiseModel::validate_idle_products(
             duration,
             "idle_after_2q",
-            linear_rate,
-            sine_rate,
+            IdleRates {
+                linear: linear_rate,
+                sine: sine_rate,
+                coherent: coherent_rate,
+                loss: scaled_loss.as_ref().map(|loss| loss.idle_rate),
+            },
             sine_model,
-            coherent_rate,
             coherent_model,
         )?;
         Ok(())
@@ -1712,6 +1766,7 @@ impl GeneralNoiseModelBuilder {
 
         optional_features_off
             && self.readout.is_empty()
+            && self.loss.is_none()
             && custom_models_off
             && (allow_hooks || hooks_off)
             && scales_neutral
@@ -1818,6 +1873,16 @@ impl GeneralNoiseModelBuilder {
         let emission_scale = self.emission_scale.unwrap_or(1.0);
         let p_meas_crosstalk_scale = self.p_meas_crosstalk_scale.unwrap_or(1.0);
         let p_prep_crosstalk_scale = self.p_prep_crosstalk_scale.unwrap_or(1.0);
+
+        if let Some(loss) = &mut model.loss {
+            loss.scale(LossScales {
+                measurement: meas_scale * scale,
+                prep: prep_scale * scale,
+                idle: idle_scale * scale,
+                single_qubit: p1_scale * scale,
+                two_qubit: p2_scale * scale,
+            });
+        }
 
         // Scale single-qubit gate error probability
         model.p1 *= p1_scale * scale;

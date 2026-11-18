@@ -394,6 +394,7 @@ struct ScalingConfig {
 /// Unset fields preserve an existing builder's configuration when applied.
 #[derive(Debug, Default)]
 pub struct GeneralNoiseConfig {
+    loss: Option<Value>,
     preparation: PreparationConfig,
     measurement: MeasurementConfig,
     single_qubit: GateConfig,
@@ -403,6 +404,13 @@ pub struct GeneralNoiseConfig {
     noiseless_gates: Vec<String>,
 }
 
+// Preserve a present JSON null so the shared loss parser reports its type error.
+fn present_loss<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
+}
+
 impl<'de> Deserialize<'de> for GeneralNoiseConfig {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // A remote derive keeps the public type's schema in one deserialization
@@ -410,6 +418,8 @@ impl<'de> Deserialize<'de> for GeneralNoiseConfig {
         #[derive(Default, Deserialize)]
         #[serde(remote = "GeneralNoiseConfig", default, deny_unknown_fields)]
         struct Fields {
+            #[serde(deserialize_with = "present_loss")]
+            loss: Option<Value>,
             preparation: PreparationConfig,
             measurement: MeasurementConfig,
             single_qubit: GateConfig,
@@ -444,6 +454,13 @@ impl GeneralNoiseConfig {
     ) -> Result<GeneralNoiseModelBuilder, PecosError> {
         if let Some(message) = builder.setter_error() {
             return Err(input_error(message));
+        }
+
+        if let Some(value) = &self.loss {
+            builder = match super::QubitLoss::from_json_value(value)? {
+                Some(loss) => builder.with_loss(loss),
+                None => builder.without_loss(),
+            };
         }
 
         if let Some(value) = self.scaling.overall {

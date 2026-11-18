@@ -316,12 +316,26 @@ impl LogicalAlgorithmDecoder {
     ///
     /// The `full_decoder` is typically an `LogicalSubgraphDecoder`
     /// built from the full circuit DEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] if the descriptor is
+    /// invalid or its segment detector total differs from the detector count
+    /// the full decoder reports.
     pub fn new(
         full_decoder: Box<dyn ObservableDecoder + Send + Sync>,
         descriptor: AlgorithmDescriptor,
     ) -> Result<Self, DecoderError> {
         descriptor.validate()?;
         descriptor.reject_unsupported_decision_points()?;
+        let total: usize = descriptor.segments.iter().map(|s| s.num_detectors).sum();
+        if let Some(decoder_detectors) = full_decoder.num_detectors()
+            && decoder_detectors != total
+        {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "algorithm descriptor segments total {total} detectors, but the full-circuit decoder expects {decoder_detectors}; build the descriptor and the decoder from the same circuit"
+            )));
+        }
         Ok(Self {
             full_decoder,
             descriptor,
@@ -329,7 +343,13 @@ impl LogicalAlgorithmDecoder {
     }
 
     /// Decode one shot using the full-circuit decoder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidDimensions`] if the syndrome length
+    /// differs from [`Self::total_detectors`], and propagates decoder failures.
     pub fn decode_shot(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+        check_total_detectors(self.total_detectors(), syndrome.len())?;
         self.full_decoder.decode_to_observables(syndrome)
     }
 
@@ -416,13 +436,26 @@ impl LogicalAlgorithmDecoder {
 }
 
 impl ObservableDecoder for LogicalAlgorithmDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.total_detectors())
+    }
+
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_shot(syndrome)
     }
 
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        check_total_detectors(self.total_detectors(), syndrome.len())?;
         self.full_decoder.decode_obs(syndrome)
     }
+}
+
+/// Reject a full-circuit syndrome whose length differs from the descriptor total.
+fn check_total_detectors(expected: usize, actual: usize) -> Result<(), DecoderError> {
+    if actual != expected {
+        return Err(DecoderError::InvalidDimensions { expected, actual });
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -469,7 +502,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 ///
 /// // Feed syndrome round by round
 /// for sparse_round in [vec![(0, 1)], vec![(1, 0)]] {
-///     stream.feed_sparse(&sparse_round);
+///     stream.feed_sparse(&sparse_round).unwrap();
 /// }
 ///
 /// // Decode at the end
@@ -504,26 +537,60 @@ impl StreamingLogicalDecoder {
         }
     }
 
-    /// Feed one detection event into the syndrome buffer.
-    #[inline]
-    pub fn feed_detection(&mut self, detector_idx: usize, value: u8) {
-        if detector_idx < self.total_detectors {
-            self.syndrome[detector_idx] = value;
+    /// Reject a detector index outside the full-circuit syndrome.
+    fn check_detector_index(&self, detector_idx: usize) -> Result<(), DecoderError> {
+        if detector_idx >= self.total_detectors {
+            return Err(DecoderError::InvalidNodeIndex {
+                index: detector_idx,
+                max: self.total_detectors,
+            });
         }
+        Ok(())
+    }
+
+    /// Feed one detection event into the syndrome buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidNodeIndex`] if `detector_idx` is not below
+    /// the total detector count.
+    #[inline]
+    pub fn feed_detection(&mut self, detector_idx: usize, value: u8) -> Result<(), DecoderError> {
+        self.check_detector_index(detector_idx)?;
+        self.syndrome[detector_idx] = value;
+        Ok(())
     }
 
     /// Feed a dense syndrome slice (all detectors, in order).
-    pub fn feed_dense(&mut self, syndrome: &[u8]) {
-        let len = syndrome.len().min(self.total_detectors);
-        self.syndrome[..len].copy_from_slice(&syndrome[..len]);
+    ///
+    /// The slice replaces the whole buffer, so no entry from an earlier shot
+    /// survives.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidDimensions`] if the slice length differs
+    /// from the total detector count; the buffer is left unchanged.
+    pub fn feed_dense(&mut self, syndrome: &[u8]) -> Result<(), DecoderError> {
+        check_total_detectors(self.total_detectors, syndrome.len())?;
+        self.syndrome.copy_from_slice(syndrome);
+        Ok(())
     }
 
     /// Feed sparse detection events: (`detector_index`, value) pairs.
-    pub fn feed_sparse(&mut self, detectors: &[(u32, u8)]) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidNodeIndex`] if any index is not below the
+    /// total detector count; no event of the round is applied in that case.
+    pub fn feed_sparse(&mut self, detectors: &[(u32, u8)]) -> Result<(), DecoderError> {
+        for &(det, _) in detectors {
+            self.check_detector_index(det as usize)?;
+        }
         for &(det, val) in detectors {
-            self.feed_detection(det as usize, val);
+            self.syndrome[det as usize] = val;
         }
         self.rounds_fed += 1;
+        Ok(())
     }
 
     /// Decode the accumulated syndrome using the full-circuit logical-subgraph decoder.
@@ -548,13 +615,13 @@ impl StreamingLogicalDecoder {
 
     /// Wide variant of [`Self::decode_shot`]: feed + flush as an [`ObsMask`].
     pub fn decode_shot_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        self.feed_dense(syndrome);
+        self.feed_dense(syndrome)?;
         self.flush_obs()
     }
 
     /// Decode a full syndrome at once (convenience for batch mode).
     pub fn decode_shot(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        self.feed_dense(syndrome);
+        self.feed_dense(syndrome)?;
         self.flush()
     }
 
@@ -710,10 +777,15 @@ impl LogicalCircuitDecoder {
     ///
     /// For offline/ion trap budgets: equivalent to full-circuit logical-subgraph decoder.
     /// For streaming budgets: decodes and commits each segment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidDimensions`] if the syndrome length
+    /// differs from [`Self::total_detectors`], and propagates strategy failures.
     pub fn decode_shot(&mut self, full_syndrome: &[u8]) -> Result<u64, DecoderError> {
+        check_total_detectors(self.total_detectors, full_syndrome.len())?;
         self.reset();
-        let len = full_syndrome.len().min(self.total_detectors);
-        self.syndrome[..len].copy_from_slice(&full_syndrome[..len]);
+        self.syndrome.copy_from_slice(full_syndrome);
 
         // Single decode of the full syndrome. The strategy handles
         // commitment internally if it supports it.
@@ -800,14 +872,18 @@ impl LogicalCircuitDecoder {
 }
 
 impl ObservableDecoder for LogicalCircuitDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.total_detectors)
+    }
+
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_shot(syndrome)
     }
 
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        check_total_detectors(self.total_detectors, syndrome.len())?;
         self.reset();
-        let len = syndrome.len().min(self.total_detectors);
-        self.syndrome[..len].copy_from_slice(&syndrome[..len]);
+        self.syndrome.copy_from_slice(syndrome);
         self.strategy.decode_obs(&self.syndrome)
     }
 }
@@ -1594,8 +1670,8 @@ mod tests {
         let mut streaming = StreamingLogicalDecoder::new(inner);
 
         // Feed individual detectors
-        streaming.feed_detection(1, 1);
-        streaming.feed_detection(3, 1);
+        streaming.feed_detection(1, 1).unwrap();
+        streaming.feed_detection(3, 1).unwrap();
         let result = streaming.flush().unwrap();
         assert_eq!(result, 0b01);
     }

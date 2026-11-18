@@ -188,13 +188,13 @@ def test_fusion_blossom_direct_constructors_reject_wide() -> None:
 
     h = np.zeros((1, 65), dtype=np.uint8)
     h[0, 64] = 1  # observable (column) 64 -> would overflow `1 << 64`
-    with pytest.raises(RuntimeError, match="64"):
+    with pytest.raises(ValueError, match="64"):
         FusionBlossomDecoder.from_check_matrix(h)
 
     d = FusionBlossomDecoder(num_nodes=2, num_observables=65)
-    with pytest.raises(RuntimeError, match="64"):
+    with pytest.raises(ValueError, match="64"):
         d.add_edge(0, 1, [64], 1.0)
-    with pytest.raises(RuntimeError, match="64"):
+    with pytest.raises(ValueError, match="64"):
         d.add_boundary_edge(0, [64], 1.0)
 
     # The 64-observable boundary (indices 0..63) must still construct fine.

@@ -59,6 +59,8 @@ pub struct WindowedLogicalSubgraphDecoder {
     subgraphs: Vec<SubgraphWindowed>,
     /// Reusable subgraph-local syndrome buffer (sized to the largest subgraph).
     local_syn: Vec<u8>,
+    /// Full-DEM detector count; every syndrome must have exactly this length.
+    num_detectors: usize,
 }
 
 impl WindowedLogicalSubgraphDecoder {
@@ -84,8 +86,13 @@ impl WindowedLogicalSubgraphDecoder {
         // coordinates, so the plan re-injects the full-DEM coords (mapped to
         // subgraph-local indices) into each sub-DEM, giving the time-based
         // windowing real detector times. Empty-region observables are dropped.
-        let full_coords = DemMatchingGraph::from_dem_str(dem)?.detector_coords;
-        Self::from_partition(&parts, &full_coords, window_config)
+        let full = DemMatchingGraph::from_dem_str(dem)?;
+        Self::from_partition(
+            &parts,
+            &full.detector_coords,
+            full.num_detectors,
+            window_config,
+        )
     }
 
     /// Build directly from a validated structured DEM and stabilizer coordinates.
@@ -102,12 +109,18 @@ impl WindowedLogicalSubgraphDecoder {
     ) -> Result<Self, DecoderError> {
         let parts =
             partition_structured_dem_by_logical_windowed(dem, stab_coords, max_time_radius)?;
-        Self::from_partition(&parts, &dem.detector_coords, window_config)
+        Self::from_partition(
+            &parts,
+            &dem.detector_coords,
+            dem.num_detectors,
+            window_config,
+        )
     }
 
     fn from_partition(
         parts: &[LogicalSubgraph],
         full_coords: &[Option<Vec<f64>>],
+        num_detectors: usize,
         window_config: WindowedConfig,
     ) -> Result<Self, DecoderError> {
         window_config.validate_step()?;
@@ -133,6 +146,7 @@ impl WindowedLogicalSubgraphDecoder {
         Ok(Self {
             subgraphs,
             local_syn: vec![0u8; max_local],
+            num_detectors,
         })
     }
 
@@ -150,6 +164,10 @@ impl WindowedLogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.num_detectors)
+    }
+
     /// Narrowing wrapper over [`Self::decode_obs`]; errors (rather than
     /// truncating) above 64 observables.
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
@@ -163,15 +181,17 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
     /// Decode every windowed per-observable subgraph and pack the flips into a
     /// wide [`ObsMask`] at each subgraph's GLOBAL observable index (no >64 cap).
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        if syndrome.len() != self.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual: syndrome.len(),
+            });
+        }
         let mut obs_mask = ObsMask::new();
         for sg in &mut self.subgraphs {
             let n = sg.num_local;
             for (local, &global) in sg.detector_map.iter().enumerate() {
-                self.local_syn[local] = if global < syndrome.len() {
-                    syndrome[global]
-                } else {
-                    0
-                };
+                self.local_syn[local] = syndrome[global];
             }
             // The subgraph decodes a single observable as its local bit 0; map
             // that back to this observable's global bit.
@@ -194,6 +214,7 @@ mod tests {
         let result = WindowedLogicalSubgraphDecoder::from_partition(
             &[],
             &[],
+            0,
             WindowedConfig { step: 0, buffer: 1 },
         );
         assert!(

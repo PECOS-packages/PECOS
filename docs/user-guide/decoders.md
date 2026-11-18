@@ -187,13 +187,18 @@ detectors and aborts batch decoding. Syndrome lengths and binary values are
 checked before applying biases.
 
 Python decoder surfaces raise `ValueError` for caller input errors, including
-empty reduced support, fired dead detectors, wrong syndrome lengths, non-binary
-syndromes, and invalid configuration. This applies to `DemAwareDecoder`,
+empty reduced support, fired dead detectors, wrong syndrome lengths, and invalid
+configuration. This applies to `DemAwareDecoder`,
 `StructuredDemDecoder.decode_syndrome`, spec builds, `SampleBatch.decode`,
-`DemSampler` decoding, and logical decoder constructors and `decode`/`decode_count`.
-Internal and backend execution failures remain `RuntimeError`. Input errors abort
-batch decoding; `SampleBatch.compare_decoders` instead counts per-shot decode
-errors as outcomes. `DemAwareDecoder.from_dem(..., "union_find", ...)` has no
+`DemSampler` decoding, logical decoder constructors and `decode`/`decode_count`,
+and the raw `pecos_rslib.decoders` classes. Only the families with support
+reduction (Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind) check syndrome
+values: they raise `ValueError` for a byte other than 0 or 1. The other families
+treat any nonzero byte as a fired detector. Internal and backend execution
+failures remain `RuntimeError`. Input errors abort batch decoding.
+`SampleBatch.compare_decoders` raises `ValueError` before decoding if either
+decoder's detector count differs from the batch, and otherwise counts per-shot
+decode errors as outcomes. `DemAwareDecoder.from_dem(..., "union_find", ...)` has no
 prior override: passing `error_rate` raises `ValueError`, even for a valid
 probability. The spec `union_find` uses DEM priors as edge weights.
 

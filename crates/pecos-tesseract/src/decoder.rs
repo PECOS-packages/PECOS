@@ -287,16 +287,18 @@ impl TesseractDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`TesseractError::InvalidInput`] if the detection array is not
-    /// contiguous or repeats a detector, or [`TesseractError::DecodingFailed`]
+    /// Returns [`TesseractError::Dem`] carrying
+    /// [`DecoderError::InvalidSyndrome`](pecos_decoder_core::DecoderError::InvalidSyndrome)
+    /// if the detection array is not contiguous or repeats a detector, or
+    /// [`TesseractError::DecodingFailed`]
     /// if the C++ decoder fails (including a detector index outside the model).
     pub fn decode_detections(
         &mut self,
         detections: &ArrayView1<u64>,
     ) -> Result<DecodingResult, TesseractError> {
-        let detections_slice = detections.as_slice().ok_or_else(|| {
-            TesseractError::InvalidInput("Detection array is not contiguous".to_string())
-        })?;
+        let detections_slice = detections
+            .as_slice()
+            .ok_or_else(|| invalid_detections("Detection array is not contiguous".to_string()))?;
         reject_repeated_detections(detections_slice)?;
 
         let result = ffi::decode_detections(self.inner.pin_mut(), detections_slice)
@@ -327,9 +329,9 @@ impl TesseractDecoder {
         detections: &ArrayView1<u64>,
         det_order: usize,
     ) -> Result<DecodingResult, TesseractError> {
-        let detections_slice = detections.as_slice().ok_or_else(|| {
-            TesseractError::InvalidInput("Detection array is not contiguous".to_string())
-        })?;
+        let detections_slice = detections
+            .as_slice()
+            .ok_or_else(|| invalid_detections("Detection array is not contiguous".to_string()))?;
         reject_repeated_detections(detections_slice)?;
 
         let result =
@@ -461,17 +463,22 @@ impl TesseractDecoder {
 ///
 /// # Errors
 ///
-/// Returns [`TesseractError::InvalidInput`] naming the repeated detector.
+/// Returns an [`invalid_detections`] error naming the repeated detector.
 pub(crate) fn reject_repeated_detections(detections: &[u64]) -> Result<(), TesseractError> {
     let mut sorted = detections.to_vec();
     sorted.sort_unstable();
     match sorted.windows(2).find(|pair| pair[0] == pair[1]) {
-        Some(pair) => Err(TesseractError::InvalidInput(format!(
+        Some(pair) => Err(invalid_detections(format!(
             "detector {} is repeated; detections must name each fired detector once",
             pair[0]
         ))),
         None => Ok(()),
     }
+}
+
+/// A caller-supplied detection array that is not a valid syndrome.
+pub(crate) fn invalid_detections(message: String) -> TesseractError {
+    TesseractError::Dem(pecos_decoder_core::DecoderError::InvalidSyndrome(message))
 }
 
 /// Validate the dense dimension before converting a syndrome to sparse detections.
@@ -545,6 +552,38 @@ pub struct ErrorInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_decoder_core::{DecoderError, ObservableDecoder};
+
+    const TWO_DETECTOR_DEM: &str = "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1";
+
+    #[test]
+    fn observable_decode_rejects_wrong_lengths() {
+        let mut decoder = TesseractDecoder::new(TWO_DETECTOR_DEM, TesseractConfig::default())
+            .expect("valid two-detector DEM");
+        for length in [0, 1, 3] {
+            let syndrome = vec![0; length];
+            assert!(matches!(
+                decoder.decode_obs(&syndrome),
+                Err(DecoderError::InvalidDimensions { expected: 2, actual }) if actual == length
+            ));
+        }
+        assert!(decoder.decode_obs(&[1, 0]).is_ok());
+    }
+
+    #[test]
+    fn dense_decode_rejects_wrong_lengths() {
+        let mut decoder = TesseractDecoder::new(TWO_DETECTOR_DEM, TesseractConfig::default())
+            .expect("valid two-detector DEM");
+        for length in [0, 1, 3] {
+            let syndrome = Array1::<u8>::zeros(length);
+            assert!(matches!(
+                Decoder::decode(&mut decoder, &syndrome.view()),
+                Err(TesseractError::Dem(DecoderError::InvalidDimensions { expected: 2, actual }))
+                    if actual == length
+            ));
+        }
+        assert!(Decoder::decode(&mut decoder, &Array1::from_vec(vec![1, 0]).view()).is_ok());
+    }
 
     #[test]
     fn dem_validation_precedes_backend_parsing() {

@@ -764,7 +764,7 @@ fn test_invalid_batch_decoding() {
         result2
             .unwrap_err()
             .to_string()
-            .contains("doesn't match expected size")
+            .contains("Batch buffer size mismatch")
     );
 
     // Test empty batch (should succeed with empty result)

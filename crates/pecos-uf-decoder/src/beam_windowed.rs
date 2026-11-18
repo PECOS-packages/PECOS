@@ -267,10 +267,20 @@ impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
 }
 
 impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.num_detectors)
+    }
+
     fn decode_obs(
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+        if syndrome.len() != self.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual: syndrome.len(),
+            });
+        }
         let k = self.beam_width;
         let commit_weight_max = self.commit_weight_max;
 
@@ -292,10 +302,7 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> 
             // independent — correction_effect is only used for Phase-2 residual).
             let mut window_syn = vec![0u8; window.num_local];
             for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                let gid = global_id as usize;
-                if gid < syndrome.len() {
-                    window_syn[local_id] = syndrome[gid];
-                }
+                window_syn[local_id] = syndrome[global_id as usize];
             }
 
             for hyp in &beam {
@@ -367,12 +374,11 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> 
         let mut predictions: Vec<u64> = Vec::with_capacity(beam.len());
         if let Some(ref mut residual_dec) = self.residual_decoder {
             for hyp in &beam {
-                let mut residual_syn = vec![0u8; self.num_detectors];
-                for (i, &s) in syndrome.iter().enumerate() {
-                    if i < self.num_detectors {
-                        residual_syn[i] = s ^ hyp.correction_effect[i];
-                    }
-                }
+                let residual_syn: Vec<u8> = syndrome
+                    .iter()
+                    .zip(&hyp.correction_effect)
+                    .map(|(&s, &c)| s ^ c)
+                    .collect();
                 let phase2_obs = residual_dec.decode_to_observables(&residual_syn)?;
                 predictions.push(hyp.obs_mask ^ phase2_obs);
             }

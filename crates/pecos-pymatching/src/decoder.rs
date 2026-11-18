@@ -937,7 +937,9 @@ impl PyMatchingDecoder {
     ///
     /// # Errors
     ///
-    /// Returns an error if detection events are invalid or decoding fails.
+    /// Returns [`PyMatchingError::InvalidSyndrome`] unless `detection_events`
+    /// has exactly [`Self::num_detectors`] entries (one per non-boundary node),
+    /// or an error if decoding fails.
     ///
     /// # Panics
     ///
@@ -945,14 +947,7 @@ impl PyMatchingDecoder {
     /// the value `(obs_mask >> i) & 1` is always 0 or 1, which fits in a `u8`.
     #[must_use = "The decoding result should be used"]
     pub fn decode(&mut self, detection_events: &[u8]) -> Result<DecodingResult> {
-        // Validate detection events length
-        let num_detectors = self.num_detectors();
-        if detection_events.len() > num_detectors {
-            return Err(PyMatchingError::InvalidSyndrome {
-                expected: num_detectors,
-                actual: detection_events.len(),
-            });
-        }
+        self.validate_syndrome(detection_events)?;
 
         // Use optimized method for ≤64 observables, extended method otherwise
         if self.config.num_observables <= OPTIMIZED_OBSERVABLE_LIMIT {
@@ -995,9 +990,11 @@ impl PyMatchingDecoder {
     /// A value of -1 in detector2 indicates matching to boundary
     ///
     /// # Errors
-    /// Returns an error if detection events are invalid or matching fails.
+    /// Returns [`PyMatchingError::InvalidSyndrome`] unless `detection_events`
+    /// has exactly [`Self::num_detectors`] entries, or an error if matching fails.
     #[must_use = "The matched pairs should be used"]
     pub fn decode_to_matched_pairs(&mut self, detection_events: &[u8]) -> Result<Vec<MatchedPair>> {
+        self.validate_syndrome(detection_events)?;
         let pairs = ffi::decode_to_matched_pairs(self.graph.pin_mut(), detection_events)?;
         Ok(pairs.into_iter().map(std::convert::Into::into).collect())
     }
@@ -1044,8 +1041,11 @@ impl PyMatchingDecoder {
     /// These are detector pairs that form edges, not detection event pairs
     ///
     /// # Errors
-    /// Returns an error if detection events are invalid or edge extraction fails.
+    /// Returns [`PyMatchingError::InvalidSyndrome`] unless `detection_events`
+    /// has exactly [`Self::num_detectors`] entries, or an error if edge
+    /// extraction fails.
     pub fn decode_to_edges(&mut self, detection_events: &[u8]) -> Result<Vec<MatchedPair>> {
+        self.validate_syndrome(detection_events)?;
         let edges = ffi::decode_to_edges(self.graph.pin_mut(), detection_events)?;
         Ok(edges.into_iter().map(std::convert::Into::into).collect())
     }
@@ -1076,9 +1076,9 @@ impl PyMatchingDecoder {
             });
         }
 
-        // Validate that num_detectors doesn't exceed actual detector count
+        // Every shot must carry exactly one entry per detector.
         let actual_detectors = self.num_detectors();
-        if num_detectors > actual_detectors {
+        if num_detectors != actual_detectors {
             return Err(PyMatchingError::InvalidSyndrome {
                 expected: actual_detectors,
                 actual: num_detectors,
@@ -1093,15 +1093,12 @@ impl PyMatchingDecoder {
         };
 
         if shots.len() != expected_size {
-            return Err(PyMatchingError::Configuration(format!(
-                "shots array length {} doesn't match expected size {} \
-                        (num_shots={}, num_detectors={}, bit_packed={})",
-                shots.len(),
-                expected_size,
-                num_shots,
-                num_detectors,
-                config.bit_packed_input
-            )));
+            return Err(PyMatchingError::Dem(
+                pecos_decoder_core::DecoderError::BatchSizeMismatch {
+                    expected: expected_size,
+                    actual: shots.len(),
+                },
+            ));
         }
 
         let result = ffi::decode_batch(
@@ -1739,8 +1736,9 @@ mod tests {
             .unwrap();
         decoder.set_boundary(&[4]);
 
-        // Test unpacked format with valid syndromes
-        let shots = vec![0, 0, 0, 0, 0, 0]; // 2 shots of 3 detectors each (all zero)
+        // Test unpacked format with valid syndromes: nodes 0..=3 are detectors
+        // and node 4 is the boundary.
+        let shots = vec![0; 8]; // 2 shots of 4 detectors each (all zero)
         let config = BatchConfig {
             bit_packed_input: false,
             bit_packed_output: false,
@@ -1749,7 +1747,7 @@ mod tests {
         let result = decoder
             .decode_batch_with_config(
                 &shots, 2, // num_shots
-                3, // num_detectors
+                4, // num_detectors
                 config,
             )
             .unwrap();
@@ -1769,7 +1767,7 @@ mod tests {
             .decode_batch_with_config(
                 &packed_shots,
                 2, // num_shots
-                3, // num_detectors
+                4, // num_detectors
                 packed_config,
             )
             .unwrap();

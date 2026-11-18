@@ -75,15 +75,22 @@ impl CommittedLogicalSubgraphDecoder {
     }
 
     fn decode_active_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        // Build masked syndrome: zero out committed detectors
-        let len = syndrome.len().min(self.num_detectors);
-        self.masked_syndrome[..len].copy_from_slice(&syndrome[..len]);
-        for i in 0..len {
-            if self.committed[i] {
-                self.masked_syndrome[i] = 0;
-            }
+        if syndrome.len() != self.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual: syndrome.len(),
+            });
         }
-        self.inner.decode_obs(&self.masked_syndrome[..len])
+        // Build masked syndrome: zero out committed detectors
+        for ((masked, &value), &committed) in self
+            .masked_syndrome
+            .iter_mut()
+            .zip(syndrome)
+            .zip(&self.committed)
+        {
+            *masked = if committed { 0 } else { value };
+        }
+        self.inner.decode_obs(&self.masked_syndrome)
     }
 
     /// Mark detectors in [start, end) as committed.

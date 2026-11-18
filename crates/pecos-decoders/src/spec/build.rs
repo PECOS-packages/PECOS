@@ -275,7 +275,9 @@ fn unavailable<T>(family: &'static str, required_feature: &'static str) -> Resul
     })
 }
 
-// The support and matrix are prepared together; a mismatch is an internal invariant failure.
+// Every use passes values derived from one parsed matrix: a support attached to
+// the matrix it was reduced from, or weighted union-find LLRs computed one per
+// column of that matrix. A rejection is an internal invariant failure.
 #[cfg(any(feature = "ldpc", feature = "relay-bp"))]
 fn internal(error: impl std::fmt::Display) -> DecoderError {
     DecoderError::InternalError(error.to_string())

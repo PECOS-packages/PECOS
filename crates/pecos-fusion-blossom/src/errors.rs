@@ -27,6 +27,10 @@ pub enum FusionBlossomError {
     /// Invalid check matrix
     #[error("Invalid check matrix: {0}")]
     InvalidCheckMatrix(String),
+
+    /// Internal failure in shared decoder machinery, not caused by caller input
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 /// Result type for Fusion Blossom operations
@@ -34,9 +38,27 @@ pub type Result<T> = std::result::Result<T, FusionBlossomError>;
 
 impl From<pecos_decoder_core::DecoderError> for FusionBlossomError {
     fn from(error: pecos_decoder_core::DecoderError) -> Self {
+        use pecos_decoder_core::DecoderError;
         match error {
-            pecos_decoder_core::DecoderError::InvalidDemSyntax(_) => Self::DemSyntax(error),
-            error => Self::Configuration(error.to_string()),
+            DecoderError::InvalidDemSyntax(_) => Self::DemSyntax(error),
+            DecoderError::InvalidConfiguration(_) | DecoderError::BackendUnavailable { .. } => {
+                Self::Configuration(error.to_string())
+            }
+            DecoderError::InvalidGraph(_)
+            | DecoderError::InvalidNodeIndex { .. }
+            | DecoderError::InvalidEdge(_) => Self::InvalidGraph(error.to_string()),
+            DecoderError::InvalidDimensions { .. }
+            | DecoderError::BatchSizeMismatch { .. }
+            | DecoderError::InvalidSyndrome(_) => Self::InvalidSyndrome(error.to_string()),
+            DecoderError::MatrixError(_) => Self::InvalidCheckMatrix(error.to_string()),
+            DecoderError::DecodingFailed(_) | DecoderError::ConvergenceFailure { .. } => {
+                Self::DecodingFailed(error.to_string())
+            }
+            DecoderError::InternalError(_)
+            | DecoderError::FfiError(_)
+            | DecoderError::NotImplemented(_)
+            | DecoderError::IoError(_)
+            | DecoderError::Other(_) => Self::Internal(error.to_string()),
         }
     }
 }
@@ -60,6 +82,9 @@ impl From<FusionBlossomError> for pecos_decoder_core::DecoderError {
             }
             FusionBlossomError::InvalidCheckMatrix(msg) => {
                 pecos_decoder_core::DecoderError::MatrixError(msg)
+            }
+            FusionBlossomError::Internal(msg) => {
+                pecos_decoder_core::DecoderError::InternalError(msg)
             }
         }
     }

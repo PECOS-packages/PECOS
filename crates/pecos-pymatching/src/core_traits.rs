@@ -192,12 +192,7 @@ impl ObservableDecoder for PyMatchingDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        if syndrome.len() != self.num_detectors() {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.num_detectors(),
-                actual: syndrome.len(),
-            });
-        }
+        // `decode` rejects any length other than `num_detectors`.
         let result = self.decode(syndrome).map_err(DecoderError::from)?;
         let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
         for (i, &v) in result.observable.iter().enumerate() {
@@ -248,6 +243,53 @@ impl ObservableDecoder for PyMatchingDecoder {
 mod tests {
     use super::*;
     use ndarray::{Array1, Array2};
+
+    fn assert_wrong_length(
+        result: &Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError>,
+        expected: usize,
+        actual: usize,
+    ) {
+        assert!(
+            matches!(
+                result,
+                Err(DecoderError::InvalidDimensions { expected: e, actual: a })
+                    if *e == expected && *a == actual
+            ),
+            "expected InvalidDimensions {{ expected: {expected}, actual: {actual} }}, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn observable_decode_rejects_short_and_long_syndromes() {
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 L0\nerror(0.1) D0 D1\ndetector D2")
+                .unwrap();
+        for length in [0, 2, 4] {
+            assert_wrong_length(
+                &pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &vec![0; length]),
+                3,
+                length,
+            );
+        }
+        assert!(pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &[0; 3]).is_ok());
+    }
+
+    #[test]
+    fn set_boundary_refreshes_detector_count() {
+        let mut decoder = crate::PyMatchingDecoder::from_dem(
+            "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1 D2",
+        )
+        .unwrap();
+        assert_eq!(decoder.num_detectors(), 3);
+        decoder.set_boundary(&[2]);
+        assert_eq!(decoder.num_detectors(), 2);
+        assert!(pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &[1, 0]).is_ok());
+        assert_wrong_length(
+            &pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &[1, 0, 0]),
+            2,
+            3,
+        );
+    }
 
     #[test]
     fn observable_batch_rejects_short_stride() {

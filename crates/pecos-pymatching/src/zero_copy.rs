@@ -50,7 +50,7 @@ impl PyMatchingDecoder {
     }
 
     /// Validate syndrome length
-    fn validate_syndrome(&self, syndrome: &[u8]) -> Result<()> {
+    pub(crate) fn validate_syndrome(&self, syndrome: &[u8]) -> Result<()> {
         let expected = self.num_detectors();
         if syndrome.len() != expected {
             return Err(crate::PyMatchingError::InvalidSyndrome {

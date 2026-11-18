@@ -3527,22 +3527,35 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
     crate::errors::decoder_error(&error, message)
 }
 
-/// Create an `ObservableDecoder` from a DEM string and decoder type name.
+/// Build an inner decoder for a sub-DEM generated here from the caller's DEM.
 ///
-/// This shared factory is used by decoder-object construction and comparison.
-fn create_observable_decoder(
-    dem: &str,
-    decoder_type: &str,
+/// The caller parses `spec` up front, so a bad spec string is reported as
+/// caller input before any sub-DEM exists. `InvalidConfiguration` and
+/// `BackendUnavailable` still come from the caller: the spec's options or
+/// missing backend, or the priors of the caller's DEM (for example an
+/// `error_rate=0` model leaves no uncertain mechanism in the reduced support).
+/// Any other failure means the generated text or graph was rejected, which is
+/// an internal error.
+fn build_subdem_decoder(
+    sub_dem: &str,
+    spec: &pecos_decoders::DecoderSpec,
 ) -> Result<Box<dyn pecos_decoders::ObservableDecoder>, pecos_decoders::DecoderError> {
-    let spec = pecos_decoders::DecoderSpec::parse(decoder_type)?;
+    use pecos_decoders::DecoderError;
     let model = spec.embedded_hybrid_full_dem().map_or_else(
-        || pecos_decoders::DecodeModel::SingleDem(dem.to_string()),
+        || pecos_decoders::DecodeModel::SingleDem(sub_dem.to_string()),
         |full| pecos_decoders::DecodeModel::HybridDem {
             full: full.to_string(),
-            decomposed: dem.to_string(),
+            decomposed: sub_dem.to_string(),
         },
     );
-    spec.build(&model)
+    spec.build(&model).map_err(|error| match error {
+        DecoderError::InvalidConfiguration(_)
+        | DecoderError::BackendUnavailable { .. }
+        | DecoderError::InternalError(_) => error,
+        error => DecoderError::InternalError(format!(
+            "failed to build a decoder for an internally generated sub-DEM: {error}"
+        )),
+    })
 }
 
 /// A loaded corpus's exact DEM text and its dense detector fault-sector labels.
@@ -4139,6 +4152,10 @@ impl PySampleBatch {
     /// Returns:
     ///     A `DecoderComparisonResult` containing the raw 3x3 counts and
     ///     headline DUT-only-failure and both-failed proportions.
+    ///
+    /// Raises:
+    ///     ValueError: If either decoder's model has a different detector
+    ///         count than this batch; checked once, before any shot is decoded.
     #[pyo3(signature = (dem, dut_decoder_type, reference_decoder_type, alpha=0.05, *, allow_dem_mismatch=false))]
     fn compare_decoders(
         &self,
@@ -4166,7 +4183,19 @@ impl PySampleBatch {
         let mut reference = reference_spec
             .build(&reference_prepared.model)
             .map_err(decoder_build_error_to_py)?;
-        let mut syndrome = vec![0u8; self.samples.num_detectors()];
+        // A width mismatch would fail every shot; reject it once instead of
+        // counting it as per-shot decode errors.
+        let batch_detectors = self.samples.num_detectors();
+        for (role, decoder) in [("DUT", &dut), ("reference", &reference)] {
+            if let Some(decoder_detectors) = decoder.num_detectors()
+                && decoder_detectors != batch_detectors
+            {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "SampleBatch has {batch_detectors} detectors, but the {role} decoder model has {decoder_detectors}"
+                )));
+            }
+        }
+        let mut syndrome = vec![0u8; batch_detectors];
         let counts = compare_decoder_outcomes(
             self.samples.num_shots(),
             &mut syndrome,
@@ -5777,18 +5806,19 @@ impl PyCssUfDecoder {
         true_obs_masks: Vec<u64>,
         x_num_detectors: usize,
     ) -> PyResult<usize> {
-        use pecos_decoder_core::{DecoderError, ObservableDecoder};
+        use pecos_decoder_core::ObservableDecoder;
         if x_num_detectors != self.inner.x_num_detectors() {
-            return Err(decoder_build_error_to_py(DecoderError::InvalidDimensions {
-                expected: self.inner.x_num_detectors(),
-                actual: x_num_detectors,
-            }));
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "x_num_detectors is {x_num_detectors}, but the decoder's X DEM has {} detectors; pass the X DEM's detector count",
+                self.inner.x_num_detectors()
+            )));
         }
         if syndromes.len() != true_obs_masks.len() {
-            return Err(decoder_build_error_to_py(DecoderError::BatchSizeMismatch {
-                expected: syndromes.len(),
-                actual: true_obs_masks.len(),
-            }));
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "true_obs_masks has {} entries, but syndromes has {}; pass one mask per syndrome",
+                true_obs_masks.len(),
+                syndromes.len()
+            )));
         }
         let mut errors = 0;
         for (syn, &true_obs) in syndromes.iter().zip(true_obs_masks.iter()) {
@@ -5896,13 +5926,15 @@ impl PyLogicalSubgraphDecoder {
             });
         }
 
+        let inner_spec =
+            pecos_decoders::DecoderSpec::parse(inner_decoder).map_err(decoder_parse_error_to_py)?;
         let inner = LogicalSubgraphDecoder::from_dem_windowed(
             dem,
             &rust_stab_coords,
             max_time_radius,
             |subgraph| {
                 let sub_dem = subgraph_to_dem_string(subgraph);
-                let decoder = create_observable_decoder(&sub_dem, inner_decoder)?;
+                let decoder = build_subdem_decoder(&sub_dem, &inner_spec)?;
                 Ok(Box::new(SendWrapper(decoder))
                     as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
             },
@@ -5931,9 +5963,11 @@ impl PyLogicalSubgraphDecoder {
     ) -> PyResult<Self> {
         use pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder;
 
+        let inner_spec =
+            pecos_decoders::DecoderSpec::parse(inner_decoder).map_err(decoder_parse_error_to_py)?;
         let inner = LogicalSubgraphDecoder::from_membership(dem, &membership, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
-            let decoder = create_observable_decoder(&sub_dem, inner_decoder)?;
+            let decoder = build_subdem_decoder(&sub_dem, &inner_spec)?;
             Ok(Box::new(SendWrapper(decoder))
                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
         })
@@ -6065,9 +6099,9 @@ impl PyLogicalSubgraphDecoder {
         let dem_str = dem.to_string();
         // Reuse the backend chosen at construction unless the caller overrides,
         // so parallel workers decode identically to the serial path.
-        let inner_str = inner_decoder
-            .unwrap_or(self.inner_decoder.as_str())
-            .to_string();
+        let inner_spec =
+            pecos_decoders::DecoderSpec::parse(inner_decoder.unwrap_or(&self.inner_decoder))
+                .map_err(decoder_parse_error_to_py)?;
         let n = batch.samples.num_shots();
 
         // Materialize row-major data for parallel decode.
@@ -6103,7 +6137,7 @@ impl PyLogicalSubgraphDecoder {
                         max_time_radius,
                         |subgraph| {
                             let sub_dem = subgraph_to_dem_string(subgraph);
-                            let d = create_observable_decoder(&sub_dem, &inner_str)?;
+                            let d = build_subdem_decoder(&sub_dem, &inner_spec)?;
                             Ok(Box::new(SendWrapper(d))
                                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
                         },
@@ -6507,12 +6541,13 @@ impl PyLogicalAlgorithmDecoder {
             });
         }
 
-        let inner_str = inner_decoder.to_string();
+        let inner_spec =
+            pecos_decoders::DecoderSpec::parse(inner_decoder).map_err(decoder_parse_error_to_py)?;
 
         // Build full-circuit logical-subgraph decoder from the full DEM
         let full_osd = LogicalSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
-            let d = create_observable_decoder(&sub_dem, &inner_str)?;
+            let d = build_subdem_decoder(&sub_dem, &inner_spec)?;
             Ok(Box::new(SendWrapper(d))
                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
         })
@@ -6559,13 +6594,21 @@ impl PyLogicalAlgorithmDecoder {
     // -- Streaming mode --
 
     /// Feed sparse detection events: list of (`detector_index`, value) pairs.
-    fn feed_sparse(&mut self, detectors: Vec<(u32, u8)>) {
-        self.inner.feed_sparse(&detectors);
+    ///
+    /// Raises ``ValueError`` if any index is not below the total detector count.
+    fn feed_sparse(&mut self, detectors: Vec<(u32, u8)>) -> PyResult<()> {
+        self.inner
+            .feed_sparse(&detectors)
+            .map_err(decoder_build_error_to_py)
     }
 
     /// Feed a dense syndrome (all detectors in order).
-    fn feed_dense(&mut self, syndrome: Vec<u8>) {
-        self.inner.feed_dense(&syndrome);
+    ///
+    /// Raises ``ValueError`` if the length differs from the total detector count.
+    fn feed_dense(&mut self, syndrome: Vec<u8>) -> PyResult<()> {
+        self.inner
+            .feed_dense(&syndrome)
+            .map_err(decoder_build_error_to_py)
     }
 
     /// Decode the accumulated syndrome. Call at segment boundaries or end.
@@ -6690,10 +6733,11 @@ impl PyLogicalCircuitDecoder {
         }
         let num_qubits = rust_sc.len();
 
-        let inner_str = inner_decoder.to_string();
+        let inner_spec =
+            pecos_decoders::DecoderSpec::parse(inner_decoder).map_err(decoder_parse_error_to_py)?;
         let full_osd = LogicalSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
-            let d = create_observable_decoder(&sub_dem, &inner_str)?;
+            let d = build_subdem_decoder(&sub_dem, &inner_spec)?;
             Ok(Box::new(SendWrapper(d))
                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
         })
@@ -6808,13 +6852,12 @@ impl PyLogicalCircuitDecoder {
                 effective_windowing = EffectiveWindowing::FullFallback.as_str().to_string();
                 actual_num_windows = vec![1usize; sub_dems.len()];
 
-                let fallback_inner = inner_decoder.to_string();
                 let wosd = WindowedLogicalSubgraphStrategy::new(
                     sub_dems,
                     det_maps,
                     obs_indices,
                     |dem_str| {
-                        let dec = create_observable_decoder(dem_str, &fallback_inner)?;
+                        let dec = build_subdem_decoder(dem_str, &inner_spec)?;
                         Ok(Box::new(SendWrapper(dec))
                             as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
                     },
@@ -7118,7 +7161,7 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
     let base = decoder_type.split(':').next().unwrap_or(decoder_type);
     // "perturbed" wraps an arbitrary inner decoder ("perturbed:K=15,inner=TYPE"),
     // so its requirement is the inner decoder's. `inner=` takes the rest of the
-    // string, matching how create_observable_decoder parses nested specs.
+    // string, matching how `DecoderSpec::parse` reads nested specs.
     if base == "perturbed" {
         let inner = decoder_type
             .split_once("inner=")

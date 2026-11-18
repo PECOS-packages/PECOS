@@ -44,9 +44,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   errors on spec-built, batch, sampler and logical paths, including wrong
   syndrome lengths and empty reduced support. This also covers `CssUfDecoder`
   construction, `decode_css`, `count_erasures` and `decode_count_batch`, as well
-  as raw `pecos_rslib.decoders` classes, classifying the first `DecoderError` in
-  their error chain (for example, PyMatching configuration errors). Internal
-  failures remain `RuntimeError`. `DemAwareDecoder.from_dem(..., "union_find")`
+  as raw `pecos_rslib.decoders` classes, which classify each backend error by its
+  `DecoderError` conversion (for example, `PyMatchingDecoder.from_dem` with an
+  invalid `error_probability`, or a wrong-length syndrome). Internal failures
+  remain `RuntimeError`. Logical-subgraph, windowed logical-subgraph,
+  logical-algorithm and logical-circuit decoders reject a syndrome whose length
+  differs from their detector count instead of zero-padding or truncating it, and
+  `SampleBatch.compare_decoders` rejects a detector-count mismatch before
+  decoding. `DemAwareDecoder.from_dem(..., "union_find")`
   rejects `error_rate` because this entry point has no prior override; the spec
   `union_find` uses DEM priors as edge weights. The Rust
   `CheckMatrixObservableDecoder` adapter now requires inner errors convertible
@@ -54,7 +59,23 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `WeightedUnionFindDecoder::new` now returns `Result` and rejects an LLR vector
   that is neither empty nor one entry per bit, and
   `CssUfDecoder::count_intersection_erasures` now returns `Result` and rejects
-  syndromes of the wrong length.
+  syndromes of the wrong length. `CssUfDecoder::x_num_detectors` is new.
+  `From<TesseractError> for DecoderError` maps `InvalidConfig` and `InvalidInput`
+  to `InvalidConfiguration`; Tesseract detection-array errors are now
+  `TesseractError::Dem(DecoderError::InvalidSyndrome)`. The `ObservableDecoder`
+  impls for Fusion Blossom, MWPF, PyMatching, Tesseract and weighted union-find
+  return typed variants instead of `DecodingFailed`. Wrong lengths are rejected
+  by `Decoder::decode` on both Tesseract decoders, `CssUfDecoder::decode_css`,
+  PyMatching `decode`, `decode_to_matched_pairs`, `decode_to_edges` and
+  `decode_batch_with_config` (previously only longer syndromes or strides), and
+  the logical-subgraph, logical-circuit and beam-search decoders.
+  `StreamingLogicalDecoder::feed_dense`, `feed_sparse` and `feed_detection` now
+  return `Result` and reject wrong lengths and out-of-range indices.
+  `LogicalAlgorithmDecoder::new` rejects a descriptor whose detector total
+  differs from its decoder's. `DecoderError::BatchSizeMismatch` now means a
+  flat batch buffer of the wrong byte count, and PyMatching reports that case
+  with it instead of `Configuration`. `FusionBlossomError` gains an `Internal`
+  variant for internal `DecoderError`s, which were previously `Configuration`.
 
 - **Fixed:** Logical-subgraph sub-DEMs now declare their full detector and
   observable widths, so spec families no longer reject shots whose last local

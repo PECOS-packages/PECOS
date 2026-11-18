@@ -49,8 +49,8 @@ pub enum DecoderError {
     #[error("Matrix error: {0}")]
     MatrixError(String),
 
-    /// Batch size mismatch
-    #[error("Batch size mismatch: expected {expected}, got {actual}")]
+    /// Flat batch buffer holds the wrong number of bytes
+    #[error("Batch buffer size mismatch: expected {expected} bytes, got {actual}")]
     BatchSizeMismatch { expected: usize, actual: usize },
 
     /// Invalid syndrome

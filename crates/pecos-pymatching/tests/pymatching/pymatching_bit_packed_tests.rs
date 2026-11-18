@@ -1192,7 +1192,7 @@ fn test_invalid_bit_packed_input_sizes() {
         result
             .unwrap_err()
             .to_string()
-            .contains("doesn't match expected size")
+            .contains("Batch buffer size mismatch")
     );
 
     // Test with too many bytes
@@ -1212,7 +1212,7 @@ fn test_invalid_bit_packed_input_sizes() {
         result
             .unwrap_err()
             .to_string()
-            .contains("doesn't match expected size")
+            .contains("Batch buffer size mismatch")
     );
 
     // Test with correct size (should work)

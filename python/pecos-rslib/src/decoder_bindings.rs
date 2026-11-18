@@ -43,27 +43,14 @@ use pyo3::prelude::*;
 
 use crate::observable_flips_bindings::PyObservableFlips;
 
-fn decoder_runtime_error_to_py(error: impl std::error::Error + 'static) -> PyErr {
-    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
-    while let Some(current) = source {
-        if let Some(decoder_error) = current.downcast_ref::<pecos_decoder_core::DecoderError>() {
-            return crate::errors::decoder_error(decoder_error, error.to_string());
-        }
-        if matches!(
-            current.downcast_ref::<pecos_decoders::LdpcError>(),
-            Some(pecos_decoders::LdpcError::InvalidInput(_))
-        ) || matches!(
-            current.downcast_ref::<pecos_decoders::TesseractError>(),
-            Some(
-                pecos_decoders::TesseractError::InvalidConfig(_)
-                    | pecos_decoders::TesseractError::InvalidInput(_)
-            )
-        ) {
-            return pyo3::exceptions::PyValueError::new_err(error.to_string());
-        }
-        source = current.source();
-    }
-    pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
+/// Classify a backend error through its `DecoderError` conversion, keeping the
+/// backend's own message.
+fn decoder_runtime_error_to_py<E>(error: E) -> PyErr
+where
+    E: std::fmt::Display + Into<pecos_decoder_core::DecoderError>,
+{
+    let message = error.to_string();
+    crate::errors::decoder_error(&error.into(), message)
 }
 
 fn explicit_decode_attribute_error(class_name: &str, name: &str) -> PyErr {
@@ -2424,7 +2411,7 @@ impl PyTesseractDecoder {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
             .build()
-            .map_err(decoder_runtime_error_to_py)?;
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let dem_str = &self.dem_string;
         let config = &self.config;
@@ -2698,7 +2685,7 @@ impl PyTesseractTrellisDecoder {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
             .build()
-            .map_err(decoder_runtime_error_to_py)?;
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let dem_str = &self.dem_string;
         let config = &self.config;

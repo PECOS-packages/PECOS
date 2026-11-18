@@ -227,7 +227,7 @@ def test_each_family_accepts_only_its_real_tuning_surface() -> None:
     ],
 )
 def test_invalid_dem_tuning_names_parameter(build: Callable[[], object], parameter: str) -> None:
-    with pytest.raises((ValueError, RuntimeError), match=parameter):
+    with pytest.raises(ValueError, match=parameter):
         build()
 
 

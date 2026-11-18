@@ -5,8 +5,15 @@
 #define BAD_DESCRIPTOR 0
 #endif
 static _Atomic uint64_t counts[4];
+/* Bounded test telemetry; read after workers join. No production ABI additions. */
+static _Atomic uint64_t contexts[64][3];
+static _Atomic uint32_t fail_next;
+void probe_fail_next_create(void) { atomic_store(&fail_next, 1); }
+uint64_t probe_context(uint32_t i, uint32_t field) {
+    return i < 64 && field < 3 ? atomic_load(&contexts[i][field]) : UINT64_MAX;
+}
 uint64_t probe_count(uint32_t i) { return i < 4 ? atomic_load(&counts[i]) : 0; }
-typedef struct { uint8_t mode; uint64_t next_batch, run, worker, shot; } Session;
+typedef struct { uint8_t mode; uint64_t next_batch, run, worker, shot; uint32_t fail; } Session;
 static int32_t create(const uint8_t *config, size_t size, uint64_t run, uint64_t worker, uint64_t shot, void **out) {
     *out = NULL;
     if (size != 1) return 15;
@@ -15,7 +22,14 @@ static int32_t create(const uint8_t *config, size_t size, uint64_t run, uint64_t
     Session *s = calloc(1, sizeof(*s));
     if (!s) return 17;
     s->mode = config[0]; s->run = run; s->worker = worker; s->shot = shot;
-    *out = s; atomic_fetch_add(&counts[0], 1);
+    *out = s;
+    s->fail = s->mode == 19 ? atomic_exchange(&fail_next, 0) : 0;
+    uint64_t slot = atomic_fetch_add(&counts[0], 1);
+    if (slot < 64) {
+        atomic_store(&contexts[slot][0], run);
+        atomic_store(&contexts[slot][1], worker);
+        atomic_store(&contexts[slot][2], shot);
+    }
     return config[0] == 4 ? 18 : 0;
 }
 static void destroy(void *instance) { free(instance); atomic_fetch_add(&counts[1], 1); }
@@ -46,6 +60,7 @@ static int32_t translate(void *instance, const PecosScheduledBatchV1 *batch, con
     atomic_fetch_add(&counts[3], 1);
     if (s->mode == 7) return 30;
     if (batch->batch_index != s->next_batch++) return 31;
+    if (s->fail) return 62;
     if (s->mode == 3) { sink->emit_source_gate(sink->context, batch->operation_count); return 0; }
     if (s->mode == 8) { const uint64_t w[5] = {2,0,1,0,0}; sink->emit_gate(sink->context,w); return 0; }
     if (s->mode == 9) { sink->emit_crosstalk(sink->context,0,NULL,SIZE_MAX); return 0; }
@@ -60,6 +75,9 @@ static int32_t translate(void *instance, const PecosScheduledBatchV1 *batch, con
         } else if (s->mode == 15 || s->mode == 16) {
             const uint64_t ids[1] = {0};
             if (sink->emit_crosstalk(sink->context, s->mode == 15 ? 0 : 1, ids, s->mode == 15 ? 1 : 0)) return 36;
+        } else if ((s->mode == 18 || s->mode == 19) && op.payload[0]) {
+            const uint64_t z[5] = {2,0,0,UINT64_C(1)<<63,0};
+            if (sink->emit_gate(sink->context,z)) return 37;
         } else if (op.payload[0]) {
             const uint64_t x[5] = {1,0,0,UINT64_C(1)<<63,0};
             if (sink->emit_gate(sink->context,x)) return 35;

@@ -1,7 +1,8 @@
 # Native scheduled batch adapters
 
 Status: experimental Rust/C implementation. Base: PECOS 8515186d.
-Python exposure and performance validation are not included in this milestone.
+Python exposure uses scheduled_native_adapter and the existing scheduled-noise wrapper.
+Performance and Windows execution validation remain separate milestones.
 
 Python batch adapters currently construct owned Python snapshots and output Gate
 objects at every validation/translation boundary. A native adapter should implement
@@ -12,7 +13,7 @@ No alternate simulator loop, timing reconstruction or offline trace is introduce
 ## Ownership and lifecycle
 
 The loader belongs in pecos-foreign, which already depends on pecos-engines and
-libloading. Python may expose a constructor returning the existing scheduled-event
+libloading. Python exposes a constructor returning the existing scheduled-event
 noise wrapper. Load an explicitly supplied trusted library path, resolve a distinct
 symbol, and retain the library in every factory and session until after destruction.
 Do not reuse the decoder/simulator plugin descriptor or a runtime's full error-model
@@ -98,7 +99,7 @@ Destroy returns void, is non-failing and must not unwind; it runs on both succes
 sessions while the library is still alive. Loading uses eager symbol resolution on
 POSIX. No result-string ownership or unbounded plugin error allocation is needed.
 
-## Acceptance before enabling a Python binding
+## Integration acceptance and remaining validation
 
 Use a separately compiled public synthetic C plugin; do not use in-process Rust-only
 fixtures as the sole ABI evidence. Cover descriptor rejection, null/failing create,

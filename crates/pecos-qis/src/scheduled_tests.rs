@@ -600,7 +600,7 @@ fn budget_rejected_batch_has_no_measurement_or_custom_effects() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("event transport limit"), "{error}");
-    assert!(runtime.emitted_measurements.is_empty());
+    assert!(runtime.emitted_measurements.slots.is_empty());
     assert_eq!(*delivered.lock().unwrap(), vec![0; accepted]);
 }
 
@@ -649,7 +649,7 @@ fn scheduled_internal_measurement_has_feedback_without_source_provenance() {
         pecos_qis_ffi_types::RUNTIME_OWNED_MEASUREMENT_ID
     );
     assert_eq!(
-        runtime.emitted_measurements[&measurement.program_result].front(),
+        runtime.emitted_measurements.slots[&measurement.program_result].front(),
         Some(&(901, false))
     );
 }

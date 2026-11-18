@@ -24,10 +24,6 @@ fn min_sum_subnormal_prior_produces_nan() {
         .unwrap();
     let result = decoder.decode(&arr1(&[1, 0]).view()).unwrap();
     let llrs = decoder.log_prob_ratios().unwrap();
-    println!(
-        "BP converged: {}; log_prob_ratios: {llrs:?}",
-        result.converged
-    );
     assert!(!result.converged);
     assert!(llrs[0].is_nan());
 }

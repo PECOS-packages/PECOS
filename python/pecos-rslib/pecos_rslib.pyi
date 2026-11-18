@@ -4243,7 +4243,8 @@ class decoders:
             error_rate is a uniform probability per original DEM error line; None uses
             DEM probabilities. For relay_bp, min_sum_bp, bp_osd and bp_lsd, it applies before merging
             identical detector and observable sets. A group of k lines receives the
-            k-fold independent XOR of the rate.
+            k-fold independent XOR of the rate. Union-find takes no priors and raises
+            ValueError for any explicit error_rate.
             """
             ...
 

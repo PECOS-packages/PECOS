@@ -46,10 +46,10 @@ use crate::observable_flips_bindings::PyObservableFlips;
 fn decoder_runtime_error_to_py(error: impl std::error::Error + 'static) -> PyErr {
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
     while let Some(current) = source {
+        if let Some(decoder_error) = current.downcast_ref::<pecos_decoder_core::DecoderError>() {
+            return crate::errors::decoder_error(decoder_error, error.to_string());
+        }
         if matches!(
-            current.downcast_ref::<pecos_decoder_core::DecoderError>(),
-            Some(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
-        ) || matches!(
             current.downcast_ref::<pecos_decoders::LdpcError>(),
             Some(pecos_decoders::LdpcError::InvalidInput(_))
         ) || matches!(
@@ -2826,15 +2826,13 @@ fn parse_stopping_criterion(s: &str) -> PyResult<RustStoppingCriterion> {
 
 /// Input errors from the native Relay / MinSum facade are Python value errors.
 fn relay_error_to_py(error: pecos_decoders::RelayBpError) -> PyErr {
-    use pecos_decoders::RelayBpError;
-    match error {
-        RelayBpError::Configuration(message)
-        | RelayBpError::InvalidMatrix(message)
-        | RelayBpError::InvalidSyndrome(message) => {
-            pyo3::exceptions::PyValueError::new_err(message)
-        }
-        RelayBpError::DecodingFailed(message) => pyo3::exceptions::PyRuntimeError::new_err(message),
-    }
+    let message = match &error {
+        pecos_decoders::RelayBpError::Configuration(message)
+        | pecos_decoders::RelayBpError::InvalidMatrix(message)
+        | pecos_decoders::RelayBpError::InvalidSyndrome(message)
+        | pecos_decoders::RelayBpError::DecodingFailed(message) => message.clone(),
+    };
+    crate::errors::decoder_error(&error.into(), message)
 }
 
 /// Shared flat-buffer adapter; syndrome validation remains owned by the decoder.
@@ -3484,8 +3482,7 @@ pub struct PyDemAwareDecoder {
 
 impl PyDemAwareDecoder {
     fn parse_dem(dem: &str) -> PyResult<DemCheckMatrix> {
-        let dcm = DemCheckMatrix::from_dem_str(dem)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let dcm = DemCheckMatrix::from_dem_str(dem).map_err(decoder_runtime_error_to_py)?;
 
         if dcm.num_mechanisms == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -3523,7 +3520,7 @@ impl PyDemAwareDecoder {
             let (reduced, support) = dcm.merge_duplicate_symptoms().reduce_support();
             reduced
                 .ensure_nonempty_support()
-                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+                .map_err(decoder_runtime_error_to_py)?;
             dcm = reduced;
             support
         } else {
@@ -3681,6 +3678,7 @@ impl PyDemAwareDecoder {
     ///   merging identical detector and observable sets; a group of k lines receives the
     ///   k-fold independent XOR of the rate. Endpoints are then reduced exactly.
     ///   Construction raises `ValueError` if no uncertain error mechanism remains.
+    ///   Union-find takes no priors and rejects explicit `error_rate` values.
     /// * `max_iter` - None uses 30 for BP-LSD, 100 for BP-OSD and min-sum. Relay-BP and
     ///   union-find reject explicit values; use `pre_iter` / `set_max_iter` on
     ///   the Relay builder or spec factory to configure Relay iteration limits.
@@ -3757,6 +3755,11 @@ impl PyDemAwareDecoder {
                 lsd_order,
             )?),
             DemDecoderType::UnionFind => {
+                if let Some(value) = error_rate {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "union_find has no error_rate (got {value}); union-find takes no priors; omit error_rate for union_find"
+                    )));
+                }
                 if let Some(value) = max_iter {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "union_find has no max_iter (got {value}); omit max_iter for union_find"
@@ -3796,7 +3799,7 @@ impl PyDemAwareDecoder {
     fn decode_syndrome(&mut self, mut syndrome: Vec<u8>) -> PyResult<PyDemAwareResult> {
         self.support
             .bias_syndrome(&mut syndrome, self.dem_check_matrix.num_detectors)
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+            .map_err(decoder_runtime_error_to_py)?;
         let arr = Array1::from_vec(syndrome);
         let (decoding, converged, iterations) = match &mut self.inner {
             InnerDecoder::BpOsd(d) => {

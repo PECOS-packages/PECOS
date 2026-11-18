@@ -186,17 +186,16 @@ lowest such index and the number that fired. This includes declared-but-unused
 detectors and aborts batch decoding. Syndrome lengths and binary values are
 checked before applying biases.
 
-In Python, `DemAwareDecoder` (including convenience `from_dem` constructors)
-raises `ValueError` for empty reduced support, fired dead detectors, wrong
-lengths, and non-binary syndromes. `StructuredDemDecoder.decode_syndrome` raises
-`ValueError` for fired dead detectors and non-binary input, but `RuntimeError`
-for wrong lengths. On spec-built paths, empty reduced support raises
-`RuntimeError` when the decoder is built (for the logical-subgraph,
-logical-algorithm and logical-circuit decoders, in their constructors).
-`SampleBatch.decode`, `DemSampler` decoding and the logical decoders'
-`decode`/`decode_count` raise `RuntimeError` for fired dead detectors, which
-aborts the batch; `SampleBatch.compare_decoders` instead counts them as
-decode-error outcomes for those shots.
+Python decoder surfaces raise `ValueError` for caller input errors, including
+empty reduced support, fired dead detectors, wrong syndrome lengths, non-binary
+syndromes, and invalid configuration. This applies to `DemAwareDecoder`,
+`StructuredDemDecoder.decode_syndrome`, spec builds, `SampleBatch.decode`,
+`DemSampler` decoding, and logical decoder constructors and `decode`/`decode_count`.
+Internal and backend execution failures remain `RuntimeError`. Input errors abort
+batch decoding; `SampleBatch.compare_decoders` instead counts per-shot decode
+errors as outcomes. Union-find takes no priors: passing `error_rate` to
+`DemAwareDecoder.from_dem(..., "union_find", ...)` raises `ValueError`, even for a
+valid probability.
 
 Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
 priors strictly in `(0, 1)`; MBP is unchanged. Their product-sum check update

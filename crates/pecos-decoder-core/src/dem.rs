@@ -936,7 +936,7 @@ impl DemMatchingGraph {
 }
 
 /// Generic wrapper that combines any [`Decoder`] with a [`DemCheckMatrix`]
-/// to implement [`ObservableDecoder`].
+/// to implement [`ObservableDecoder`], preserving errors convertible to [`DecoderError`].
 ///
 /// This is the proper way to use check-matrix decoders (BP+OSD, `UnionFind`,
 /// `RelayBP`, etc.) in a sample+decode loop. The wrapper:
@@ -1047,6 +1047,7 @@ impl<D> CheckMatrixObservableDecoder<D> {
 impl<D> super::ObservableDecoder for CheckMatrixObservableDecoder<D>
 where
     D: super::Decoder,
+    D::Error: Into<DecoderError>,
 {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         use super::DecodingResultTrait;
@@ -1070,7 +1071,7 @@ where
         let result = self
             .decoder
             .decode(&self.syndrome_arr.view())
-            .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(Into::into)?;
 
         let correction = result.correction();
         let mut observables = self.dem.observables_obsmask_from_correction(correction);

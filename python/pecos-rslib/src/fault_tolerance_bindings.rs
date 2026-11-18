@@ -3503,8 +3503,7 @@ fn subgraph_to_dem_string(graph: &pecos_decoder_core::DemMatchingGraph) -> Strin
     lines.join("\n")
 }
 
-/// Convert a decoder-spec parse error into Python's invalid-value exception.
-/// Convert a decoder type-string parse error into the legacy `ValueError`.
+/// Classify spec parse errors, keeping configuration messages without a category prefix.
 pub(crate) fn decoder_parse_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
     let message = match &error {
         pecos_decoders::DecoderError::InvalidConfiguration(message) => message.clone(),
@@ -3513,7 +3512,7 @@ pub(crate) fn decoder_parse_error_to_py(error: pecos_decoders::DecoderError) -> 
     crate::errors::decoder_error(&error, message)
 }
 
-/// Convert decoder errors at build and execution boundaries.
+/// Classify build and execution errors, keeping internal messages without a category prefix.
 fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
     let message = match &error {
         pecos_decoders::DecoderError::InternalError(message) => message.clone(),
@@ -6558,7 +6557,7 @@ impl PyLogicalAlgorithmDecoder {
     fn accumulated_obs(&self) -> PyResult<u64> {
         self.inner
             .accumulated_obs()
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+            .map_err(decoder_build_error_to_py)
     }
 
     /// Current accumulated observable correction as an arbitrary-precision int.

@@ -13,7 +13,9 @@
 //! detectors. Each is rejected at construction with upstream's own message.
 
 use super::bridge::ffi;
-use super::decoder::{TesseractError, fired_detectors, reject_repeated_detections};
+use super::decoder::{
+    TesseractError, fired_detectors, reject_repeated_detections, validate_syndrome_length,
+};
 use cxx::UniquePtr;
 use ndarray::ArrayView1;
 use pecos_decoder_core::{Decoder, DecodingResultTrait};
@@ -262,9 +264,10 @@ impl pecos_decoder_core::ObservableDecoder for TesseractTrellisDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
+        validate_syndrome_length(syndrome.len(), self.num_detectors)?;
         let result = self
             .decode_detections(&fired_detectors(syndrome.iter()).view())
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
         Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
             result.observables_mask,
         ))
@@ -276,6 +279,7 @@ impl Decoder for TesseractTrellisDecoder {
     type Error = TesseractError;
 
     fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
+        validate_syndrome_length(input.len(), self.num_detectors).map_err(TesseractError::Dem)?;
         self.decode_detections(&fired_detectors(input.iter()).view())
     }
 

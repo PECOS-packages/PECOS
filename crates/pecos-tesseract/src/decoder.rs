@@ -10,7 +10,7 @@ use std::fmt;
 /// Error types for Tesseract operations
 #[derive(Debug)]
 pub enum TesseractError {
-    /// DEM validation failed
+    /// Shared DEM or syndrome validation failed
     Dem(pecos_decoder_core::DecoderError),
     /// Invalid configuration parameter
     InvalidConfig(String),
@@ -49,6 +49,9 @@ impl From<TesseractError> for pecos_decoder_core::DecoderError {
     fn from(error: TesseractError) -> Self {
         match error {
             TesseractError::Dem(error) => error,
+            TesseractError::InvalidConfig(message) | TesseractError::InvalidInput(message) => {
+                Self::InvalidConfiguration(message)
+            }
             error => Self::InternalError(error.to_string()),
         }
     }
@@ -471,6 +474,17 @@ pub(crate) fn reject_repeated_detections(detections: &[u64]) -> Result<(), Tesse
     }
 }
 
+/// Validate the dense dimension before converting a syndrome to sparse detections.
+pub(crate) fn validate_syndrome_length(
+    actual: usize,
+    expected: usize,
+) -> Result<(), pecos_decoder_core::DecoderError> {
+    if actual != expected {
+        return Err(pecos_decoder_core::DecoderError::InvalidDimensions { expected, actual });
+    }
+    Ok(())
+}
+
 /// Indices of the nonzero entries of a dense syndrome, as sparse detections.
 pub(crate) fn fired_detectors<'a>(syndrome: impl IntoIterator<Item = &'a u8>) -> Array1<u64> {
     Array1::from_iter(
@@ -487,9 +501,10 @@ impl pecos_decoder_core::ObservableDecoder for TesseractDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
+        validate_syndrome_length(syndrome.len(), self.num_detectors)?;
         let result = self
             .decode_detections(&fired_detectors(syndrome.iter()).view())
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
         Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
             result.observables_mask,
         ))
@@ -501,6 +516,7 @@ impl Decoder for TesseractDecoder {
     type Error = TesseractError;
 
     fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
+        validate_syndrome_length(input.len(), self.num_detectors).map_err(TesseractError::Dem)?;
         self.decode_detections(&fired_detectors(input.iter()).view())
     }
 

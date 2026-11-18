@@ -1092,7 +1092,7 @@ impl pecos_decoder_core::ObservableDecoder for WeightedUnionFindDecoder {
         let result = self
             .decoder
             .decode(&syndrome.view(), &self.llrs, 1)
-            .map_err(|error| pecos_decoder_core::DecoderError::DecodingFailed(error.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
         Ok(self
             .dem
             .observables_obsmask_from_correction(result.decoding.as_slice().unwrap_or(&[])))

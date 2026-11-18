@@ -42,8 +42,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
 - **Breaking:** Python decoder surfaces now raise `ValueError` for caller input
   errors on spec-built, batch, sampler and logical paths, including wrong syndrome
-  lengths and empty reduced support. Internal failures remain `RuntimeError`.
-  Union-find rejects `error_rate` because it takes no priors.
+  lengths and empty reduced support. This also covers `CssUfDecoder` and raw
+  `pecos_rslib.decoders` classes, classifying the first `DecoderError` in their
+  error chain (for example, PyMatching configuration errors). Internal failures remain
+  `RuntimeError`. `DemAwareDecoder.from_dem(..., "union_find")` rejects `error_rate`
+  because this entry point has no prior override; the spec `union_find` uses DEM
+  priors as edge weights. The Rust `CheckMatrixObservableDecoder` adapter now
+  requires inner errors convertible to `DecoderError`, preserving their category.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,
@@ -87,14 +92,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `DemSampler` decoding and logical decoder constructors and `decode`/`decode_count`
   likewise raise `ValueError` for these input errors, including wrong lengths.
   `SampleBatch.compare_decoders` counts per-shot decode errors as outcomes.
-  Wrappers validate syndrome
-  length and binary values before applying biases. Raw BP-OSD, BP-LSD,
-  soft-information BP and BeliefFind builders now reject endpoint priors and
-  require finite values in `(0, 1)`; see the MBP entry above for its prior rule.
-  Product-sum check updates bound saturated tanh products so check-to-bit
-  messages remain finite; all other products are unchanged. `belief_matching`, experimental BP-trellis, and
-  the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
-  perturbed ensemble members retain their existing prior clamp.
+  Wrappers validate syndrome length and binary values before applying biases.
+  Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders now reject
+  endpoint priors and require finite values in `(0, 1)`; see the MBP entry
+  above for its prior rule. Product-sum check updates bound saturated tanh
+  products so check-to-bit messages remain finite; all other products are
+  unchanged. `belief_matching`, experimental BP-trellis, and the `pecos_uf` `bp`
+  and `bp_serial` presets retain native ±30 saturation; perturbed ensemble
+  members retain their existing prior clamp.
 - **Breaking:** Native Relay-BP and min-sum now flip bits whose posterior is
   exactly zero (using `<= 0`, matching relay-bp and ldpc). PECOS always floors
   the stored prior that seeds messages and memory at magnitude `4e-5`, as
@@ -214,7 +219,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (`LdpcError::InvalidInput`), such as an invalid prior, a channel of the wrong
   length, or a union-find syndrome of the wrong length. Errors raised by the C++
   core remain `RuntimeError`; BP-OSD and BP-LSD check the syndrome length there.
-  Decoders built from a `DecoderSpec` keep their exception types.
 - **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
   results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
   of decode order, batch splitting and worker count, enabling parallel batches.

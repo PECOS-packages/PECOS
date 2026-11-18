@@ -193,9 +193,9 @@ syndromes, and invalid configuration. This applies to `DemAwareDecoder`,
 `DemSampler` decoding, and logical decoder constructors and `decode`/`decode_count`.
 Internal and backend execution failures remain `RuntimeError`. Input errors abort
 batch decoding; `SampleBatch.compare_decoders` instead counts per-shot decode
-errors as outcomes. Union-find takes no priors: passing `error_rate` to
-`DemAwareDecoder.from_dem(..., "union_find", ...)` raises `ValueError`, even for a
-valid probability.
+errors as outcomes. `DemAwareDecoder.from_dem(..., "union_find", ...)` has no
+prior override: passing `error_rate` raises `ValueError`, even for a valid
+probability. The spec `union_find` uses DEM priors as edge weights.
 
 Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
 priors strictly in `(0, 1)`. MBP requires a finite error rate in `(0, 1)` and

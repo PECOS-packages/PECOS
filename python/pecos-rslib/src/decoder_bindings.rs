@@ -2826,13 +2826,15 @@ fn parse_stopping_criterion(s: &str) -> PyResult<RustStoppingCriterion> {
 
 /// Input errors from the native Relay / MinSum facade are Python value errors.
 fn relay_error_to_py(error: pecos_decoders::RelayBpError) -> PyErr {
-    let message = match &error {
-        pecos_decoders::RelayBpError::Configuration(message)
-        | pecos_decoders::RelayBpError::InvalidMatrix(message)
-        | pecos_decoders::RelayBpError::InvalidSyndrome(message)
-        | pecos_decoders::RelayBpError::DecodingFailed(message) => message.clone(),
-    };
-    crate::errors::decoder_error(&error.into(), message)
+    use pecos_decoders::RelayBpError;
+    match error {
+        RelayBpError::Configuration(message)
+        | RelayBpError::InvalidMatrix(message)
+        | RelayBpError::InvalidSyndrome(message) => {
+            pyo3::exceptions::PyValueError::new_err(message)
+        }
+        RelayBpError::DecodingFailed(message) => pyo3::exceptions::PyRuntimeError::new_err(message),
+    }
 }
 
 /// Shared flat-buffer adapter; syndrome validation remains owned by the decoder.
@@ -3678,7 +3680,7 @@ impl PyDemAwareDecoder {
     ///   merging identical detector and observable sets; a group of k lines receives the
     ///   k-fold independent XOR of the rate. Endpoints are then reduced exactly.
     ///   Construction raises `ValueError` if no uncertain error mechanism remains.
-    ///   Union-find takes no priors and rejects explicit `error_rate` values.
+    ///   This union-find entry point has no prior override and rejects explicit `error_rate` values.
     /// * `max_iter` - None uses 30 for BP-LSD, 100 for BP-OSD and min-sum. Relay-BP and
     ///   union-find reject explicit values; use `pre_iter` / `set_max_iter` on
     ///   the Relay builder or spec factory to configure Relay iteration limits.

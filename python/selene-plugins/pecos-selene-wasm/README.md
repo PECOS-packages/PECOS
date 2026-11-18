@@ -19,3 +19,9 @@ From the PECOS checkout, install this package with
 source requires Rust and compiles the native utility. See
 [the Guppy WASM guide](https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/guppy-wasm.md)
 for examples, supported operations, and limitations.
+
+Each source build asks Cargo to check the native library and its dependencies
+for changes, then packages the library reported by Cargo. Existing staged
+libraries do not bypass this check. Cargo's incremental cache is reused, and
+custom target directories configured through `CARGO_TARGET_DIR` or Cargo's
+`build.target-dir` are supported.

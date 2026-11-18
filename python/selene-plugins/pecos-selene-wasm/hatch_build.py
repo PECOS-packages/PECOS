@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import platform
 import shutil
 import subprocess
@@ -58,26 +59,6 @@ class PecosSeleneWasmBuildHook(BuildHookInterface):
         # Get the root directory (where pyproject.toml is)
         root = Path(self.root)
 
-        # Check if library already exists (e.g., from `make build-selene`)
-        # If so, skip building and just collect artifacts
-        dist_dir = root / "python" / "pecos_selene_wasm" / "_dist"
-        lib_dir = dist_dir / "lib"
-        if lib_dir.exists() and any(lib_dir.iterdir()):
-            self.app.display_info("Library already built, skipping cargo build...")
-            # Collect artifacts
-            artifacts = []
-            for artifact in dist_dir.rglob("*"):
-                if artifact.is_file():
-                    rel_path = artifact.relative_to(root)
-                    artifacts.append(str(rel_path.as_posix()))
-            if artifacts:
-                self.app.display_info("Found existing artifacts:")
-                for a in artifacts:
-                    self.app.display_info(f"    {a}")
-                build_data["artifacts"] += artifacts
-                self._set_wheel_tag(build_data)
-                return
-
         # Determine library extension based on platform
         system = platform.system()
         if system == "Linux":
@@ -98,14 +79,18 @@ class PecosSeleneWasmBuildHook(BuildHookInterface):
 
         self.app.display_info(f"Building {cargo_package}...")
 
-        # Run cargo build from the PECOS workspace root
+        # Always let Cargo check freshness, including workspace dependencies.
+        # An existing staged library may belong to an older source revision.
+        # Run cargo build from the PECOS workspace root.
         # Plugin is at python/selene-plugins/<plugin>/, so 3 levels up to workspace
         workspace_root = root.parent.parent.parent
         result = subprocess.run(
             [
                 "cargo",
                 "build",
+                "--locked",
                 "--release",
+                "--message-format=json-render-diagnostics",
                 "--package",
                 cargo_package,
             ],
@@ -121,9 +106,26 @@ class PecosSeleneWasmBuildHook(BuildHookInterface):
             msg = f"Cargo build failed for {cargo_package}"
             raise RuntimeError(msg)
 
-        # Find the compiled library
+        # Cargo reports the selected artifact even on an incremental cache hit.
+        # Do not guess its path: CARGO_TARGET_DIR and Cargo config can relocate it.
         lib_filename = f"{lib_prefix}{lib_name}{lib_suffix}"
-        source_lib = workspace_root / "target" / "release" / lib_filename
+        libraries = set()
+        for line in result.stdout.splitlines():
+            message = json.loads(line)
+            if (
+                message.get("reason") == "compiler-artifact"
+                and Path(message["manifest_path"]).resolve() == (root / "Cargo.toml").resolve()
+                and message["target"]["name"] == lib_name
+                and "cdylib" in message["target"]["crate_types"]
+            ):
+                libraries.update(
+                    Path(filename) for filename in message["filenames"] if Path(filename).suffix == lib_suffix
+                )
+
+        if len(libraries) != 1:
+            msg = f"Expected one Cargo cdylib artifact for {cargo_package}, found: {sorted(libraries)}"
+            raise RuntimeError(msg)
+        source_lib = libraries.pop()
 
         if not source_lib.exists():
             msg = f"Built library not found: {source_lib}"
@@ -137,17 +139,5 @@ class PecosSeleneWasmBuildHook(BuildHookInterface):
         self.app.display_info(f"Copying {source_lib} -> {dest_lib}")
         shutil.copy2(source_lib, dest_lib)
 
-        # Collect artifacts
-        artifacts = []
-        dist_dir = root / "python" / "pecos_selene_wasm" / "_dist"
-        for artifact in dist_dir.rglob("*"):
-            if artifact.is_file():
-                rel_path = artifact.relative_to(root)
-                artifacts.append(str(rel_path.as_posix()))
-
-        self.app.display_info("Found artifacts:")
-        for a in artifacts:
-            self.app.display_info(f"    {a}")
-
-        build_data["artifacts"] += artifacts
+        build_data["artifacts"].append(dest_lib.relative_to(root).as_posix())
         self._set_wheel_tag(build_data)

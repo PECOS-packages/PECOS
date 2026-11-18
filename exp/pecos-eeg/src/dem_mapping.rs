@@ -969,11 +969,7 @@ pub fn format_dem(entries: &[DemEntry]) -> String {
             parts.push(format!("L{o}"));
         }
         if !parts.is_empty() {
-            lines.push(format!(
-                "error({}) {}",
-                entry.probability,
-                parts.join(" ")
-            ));
+            lines.push(format!("error({}) {}", entry.probability, parts.join(" ")));
         }
     }
     lines.join("\n")

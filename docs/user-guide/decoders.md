@@ -199,9 +199,13 @@ aborts the batch; `SampleBatch.compare_decoders` instead counts them as
 decode-error outcomes for those shots.
 
 Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
-priors strictly in `(0, 1)`; MBP is unchanged. Their product-sum check update
-bounds saturated tanh products to the closest double below one in magnitude,
-keeping check-to-bit messages finite; other products are unchanged.
+priors strictly in `(0, 1)`. MBP requires a finite error rate in `(0, 1)` and
+positive XYZ weights whose normalized Pauli probabilities have finite `(1-p)/p`
+ratios. For pure dephasing, use small positive X/Y weights satisfying this rule.
+MBP performs message passing and rejects NaN log ratios before making decisions.
+The other raw LDPC kernels' product-sum check update bounds saturated tanh
+products to the closest double below one in magnitude, keeping check-to-bit
+messages finite; other products are unchanged.
 `belief_matching`, experimental BP-trellis, and the `pecos_uf` `bp` and
 `bp_serial` presets retain native ±30 saturation. Perturbed ensemble members
 retain their probability clamp, so only the anchor member receives the exact

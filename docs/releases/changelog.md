@@ -8,6 +8,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - **Fixed:** Union-find now rejects NaN weights instead of sorting them (undefined
   behaviour), and BeliefFind reports a BP-produced NaN log-probability ratio as an error.
+- **Breaking:** MBP now updates stored edge messages and excludes the current
+  edge during message passing; it previously decoded from priors alone, so
+  results change. Product-sum and min-sum now floor denominators at `1e-12`. The
+  product-sum negative saturation guard also preserves the sign, but this branch
+  is unreachable through the public API: each factor is at least
+  `tanh(log(1e-12) / 2) > -1` (approximately `tanh(-13.8)`), so this defensive
+  correction has no observable decoding effect. NaN log ratios raise a decoder
+  error before the hard decision. MBP now requires a finite `error_rate` in `(0,
+  1)` and positive XYZ weights whose normalized Pauli probabilities are strictly
+  positive with finite `(1-p)/p` ratios. For pure dephasing use small positive
+  X/Y weights satisfying this condition. Build-time patches update the shared
+  dependency cache and affect other local checkouts.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,
@@ -58,9 +70,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   decode-error outcomes for those shots. Wrappers validate syndrome
   length and binary values before applying biases. Raw BP-OSD, BP-LSD,
   soft-information BP and BeliefFind builders now reject endpoint priors and
-  require finite values in `(0, 1)`; MBP is unchanged. Product-sum check updates
-  bound saturated tanh products so check-to-bit messages remain finite; all
-  other products are unchanged. `belief_matching`, experimental BP-trellis, and
+  require finite values in `(0, 1)`; see the MBP entry above for its prior rule.
+  Product-sum check updates bound saturated tanh products so check-to-bit
+  messages remain finite; all other products are unchanged. `belief_matching`, experimental BP-trellis, and
   the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
   perturbed ensemble members retain their existing prior clamp.
 - **Breaking:** Native Relay-BP and min-sum now flip bits whose posterior is

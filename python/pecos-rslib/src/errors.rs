@@ -1,8 +1,38 @@
-//! Shared Python exception mapping for simulation construction and execution.
+//! Shared Python exception mapping for simulation and decoder operations.
 
 use pecos_core::errors::PecosError;
 use pyo3::PyErr;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+
+/// Classify the original decoder error while retaining boundary-specific context.
+pub(crate) fn decoder_error(error: &pecos_decoder_core::DecoderError, message: String) -> PyErr {
+    use pecos_decoder_core::DecoderError;
+    match error {
+        DecoderError::BackendUnavailable { family: "mwpf", .. } => PyValueError::new_err(
+            "MWPF decoder is not available in this build. \
+             Install cmake (run `pecos setup`) and rebuild. \
+             See: https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md",
+        ),
+        // A backend missing from this build is reported as a configuration error, as before.
+        DecoderError::BackendUnavailable { .. }
+        | DecoderError::InvalidDimensions { .. }
+        | DecoderError::InvalidDemSyntax(_)
+        | DecoderError::InvalidConfiguration(_)
+        | DecoderError::InvalidGraph(_)
+        | DecoderError::MatrixError(_)
+        | DecoderError::BatchSizeMismatch { .. }
+        | DecoderError::InvalidSyndrome(_)
+        | DecoderError::InvalidNodeIndex { .. }
+        | DecoderError::InvalidEdge(_) => PyValueError::new_err(message),
+        DecoderError::InternalError(_)
+        | DecoderError::DecodingFailed(_)
+        | DecoderError::FfiError(_)
+        | DecoderError::ConvergenceFailure { .. }
+        | DecoderError::NotImplemented(_)
+        | DecoderError::IoError(_)
+        | DecoderError::Other(_) => PyRuntimeError::new_err(message),
+    }
+}
 
 pub(crate) fn simulation_error(error: PecosError, context: &str) -> PyErr {
     if let Some(reference) = result_reference_error(&error) {

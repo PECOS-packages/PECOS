@@ -192,9 +192,13 @@ impl ObservableDecoder for PyMatchingDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        let result = self
-            .decode(syndrome)
-            .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+        if syndrome.len() != self.num_detectors() {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.num_detectors(),
+                actual: syndrome.len(),
+            });
+        }
+        let result = self.decode(syndrome).map_err(DecoderError::from)?;
         let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
         for (i, &v) in result.observable.iter().enumerate() {
             if v != 0 {
@@ -211,6 +215,12 @@ impl ObservableDecoder for PyMatchingDecoder {
         num_detectors: usize,
     ) -> Result<Vec<pecos_decoder_core::obs_mask::ObsMask>, DecoderError> {
         use crate::decoder::BatchConfig;
+        if num_detectors != self.num_detectors() {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.num_detectors(),
+                actual: num_detectors,
+            });
+        }
         let config = BatchConfig {
             bit_packed_input: false,
             bit_packed_output: true,
@@ -218,7 +228,7 @@ impl ObservableDecoder for PyMatchingDecoder {
         };
         let result = self
             .decode_batch_with_config(shots, num_shots, num_detectors, config)
-            .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(DecoderError::from)?;
 
         // Convert each bit-packed prediction into little-endian words. The
         // bridge already emits every observable byte, including above bit 63.
@@ -238,6 +248,24 @@ impl ObservableDecoder for PyMatchingDecoder {
 mod tests {
     use super::*;
     use ndarray::{Array1, Array2};
+
+    #[test]
+    fn observable_batch_rejects_short_stride() {
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 L0\ndetector D2").unwrap();
+        assert!(matches!(
+            pecos_decoder_core::ObservableDecoder::decode_batch_to_observables(
+                &mut decoder,
+                &[0],
+                1,
+                1
+            ),
+            Err(pecos_decoder_core::DecoderError::InvalidDimensions {
+                expected: 3,
+                actual: 1
+            })
+        ));
+    }
 
     #[test]
     fn test_decoder_trait_implementation() {

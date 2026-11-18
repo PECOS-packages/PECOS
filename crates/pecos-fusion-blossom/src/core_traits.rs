@@ -43,7 +43,7 @@ impl pecos_decoder_core::ObservableDecoder for FusionBlossomDecoder {
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         self.decode_to_obs_mask(syndrome)
             .map(pecos_decoder_core::obs_mask::ObsMask::from_u64)
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))
+            .map_err(pecos_decoder_core::DecoderError::from)
     }
 }
 
@@ -60,7 +60,7 @@ impl pecos_decoder_core::erasure::ObservableErasureDecoder for FusionBlossomDeco
         if erasure_edges.is_empty() {
             return self
                 .decode_to_obs_mask(syndrome)
-                .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()));
+                .map_err(pecos_decoder_core::DecoderError::from);
         }
 
         let defects: Vec<usize> = syndrome
@@ -77,7 +77,7 @@ impl pecos_decoder_core::erasure::ObservableErasureDecoder for FusionBlossomDeco
 
         let result = self
             .decode_with_options(syndrome_data, DecodingOptions::default())
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
 
         let edge_indices: Vec<usize> = result.matched_edges.clone();
         Ok(self.obs_mask_from_edges(&edge_indices))
@@ -107,7 +107,7 @@ impl pecos_decoder_core::correlated_decoder::MatchingDecoder for FusionBlossomDe
         let syndrome_data = SyndromeData::from_defects(defects);
         let result = self
             .decode_with_options(syndrome_data, DecodingOptions::default())
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
 
         let edge_indices: Vec<usize> = result.matched_edges.clone();
         let mask = self.obs_mask_from_edges(&edge_indices);
@@ -158,7 +158,7 @@ impl pecos_decoder_core::correlated_decoder::MatchingDecoder for FusionBlossomDe
 
         let result = self
             .decode_with_options(syndrome_data, DecodingOptions::default())
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
 
         let edge_indices: Vec<usize> = result.matched_edges.clone();
         let mask = self.obs_mask_from_edges(&edge_indices);

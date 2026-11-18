@@ -6,6 +6,26 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** Python decoder surfaces now raise `ValueError` for caller input
+  errors on spec-built, batch, sampler and logical paths, including wrong
+  syndrome lengths and empty reduced support. This also covers `CssUfDecoder`
+  construction, `decode_css`, `count_erasures` and `decode_count_batch`, as well
+  as raw `pecos_rslib.decoders` classes, classifying the first `DecoderError` in
+  their error chain (for example, PyMatching configuration errors). Internal
+  failures remain `RuntimeError`. `DemAwareDecoder.from_dem(..., "union_find")`
+  rejects `error_rate` because this entry point has no prior override; the spec
+  `union_find` uses DEM priors as edge weights. The Rust
+  `CheckMatrixObservableDecoder` adapter now requires inner errors convertible
+  to `DecoderError`, preserving their category.
+  `WeightedUnionFindDecoder::new` now returns `Result` and rejects an LLR vector
+  that is neither empty nor one entry per bit, and
+  `CssUfDecoder::count_intersection_erasures` now returns `Result` and rejects
+  syndromes of the wrong length.
+
+- **Fixed:** Logical-subgraph sub-DEMs now declare their full detector and
+  observable widths, so spec families no longer reject shots whose last local
+  detector has no edges.
+
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,
   optional reload on prep, partner spreading and lost-state readout. Loss is rejected
@@ -45,21 +65,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   declared-but-unused detectors, raises `InvalidSyndrome`, naming the lowest
   index and count; this aborts a batch. Python `DemAwareDecoder` raises
   `ValueError` for empty reduced support and invalid syndromes.
-  `StructuredDemDecoder.decode_syndrome` raises `ValueError` for fired dead
-  detectors and non-binary input, but `RuntimeError` for wrong lengths. On
-  spec-built paths, empty reduced support raises `RuntimeError` when the decoder
-  is built (for the logical-subgraph, logical-algorithm and logical-circuit
-  decoders, in their constructors). `SampleBatch.decode`, `DemSampler` decoding
-  and the logical decoders' `decode`/`decode_count` raise `RuntimeError` for
-  fired dead detectors; `SampleBatch.compare_decoders` counts them as
-  decode-error outcomes for those shots. Wrappers validate syndrome
-  length and binary values before applying biases. Raw BP-OSD, BP-LSD,
-  soft-information BP and BeliefFind builders now reject endpoint priors and
-  require finite values in `(0, 1)`; MBP is unchanged. Product-sum check updates
-  bound saturated tanh products so check-to-bit messages remain finite; all
-  other products are unchanged. `belief_matching`, experimental BP-trellis, and
-  the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
-  perturbed ensemble members retain their existing prior clamp.
+  `StructuredDemDecoder.decode_syndrome`, spec-built paths,
+  `SampleBatch.decode`, `DemSampler` decoding and logical decoder constructors
+  and `decode`/`decode_count` likewise raise `ValueError` for these input
+  errors, including wrong lengths. `SampleBatch.compare_decoders` counts
+  per-shot decode errors as outcomes. Wrappers validate syndrome length and
+  binary values before applying biases. Raw BP-OSD, BP-LSD, soft-information BP
+  and BeliefFind builders now reject endpoint priors and require finite values
+  in `(0, 1)`; MBP is unchanged. Product-sum check updates bound saturated tanh
+  products so check-to-bit messages remain finite; all other products are
+  unchanged. `belief_matching`, experimental BP-trellis, and the `pecos_uf` `bp`
+  and `bp_serial` presets retain native ±30 saturation; perturbed ensemble
+  members retain their existing prior clamp.
 - **Breaking:** Native Relay-BP and min-sum now flip bits whose posterior is
   exactly zero (using `<= 0`, matching relay-bp and ldpc). PECOS always floors
   the stored prior that seeds messages and memory at magnitude `4e-5`, as
@@ -179,7 +196,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (`LdpcError::InvalidInput`), such as an invalid prior, a channel of the wrong
   length, or a union-find syndrome of the wrong length. Errors raised by the C++
   core remain `RuntimeError`; BP-OSD and BP-LSD check the syndrome length there.
-  Decoders built from a `DecoderSpec` keep their exception types.
 - **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
   results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
   of decode order, batch splitting and worker count, enabling parallel batches.

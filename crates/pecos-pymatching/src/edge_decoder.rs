@@ -31,7 +31,7 @@ impl PyMatchingEdgeDecoder {
     pub fn set_all_error_probabilities(&mut self, probability: f64) -> Result<(), DecoderError> {
         self.decoder
             .set_all_error_probabilities(probability)
-            .map_err(|error| DecoderError::InvalidConfiguration(error.to_string()))
+            .map_err(DecoderError::from)
     }
 
     /// Build from a window, retaining surviving error groups for correlated matching.
@@ -47,7 +47,12 @@ impl PyMatchingEdgeDecoder {
             &window.model.to_dem_string(),
             correlated,
         )
-        .map_err(|error| DecoderError::DecodingFailed(error.to_string()))?;
+        .map_err(|error| match error {
+            crate::PyMatchingError::Dem(error) => DecoderError::InternalError(format!(
+                "invalid internally generated window DEM: {error}"
+            )),
+            error => DecoderError::from(error),
+        })?;
         Ok(Self { decoder, edges })
     }
 }
@@ -56,7 +61,7 @@ impl EdgeDecoder for PyMatchingEdgeDecoder {
     fn decode_to_edges(&mut self, syndrome: &[u8]) -> Result<Vec<usize>, DecoderError> {
         self.decoder
             .decode_to_edges(syndrome)
-            .map_err(|error| DecoderError::DecodingFailed(error.to_string()))?
+            .map_err(DecoderError::from)?
             .into_iter()
             .map(|pair| {
                 let node1 = u32::try_from(pair.detector1).map_err(|_| {

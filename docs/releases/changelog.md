@@ -51,6 +51,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `union_find` uses DEM priors as edge weights. The Rust
   `CheckMatrixObservableDecoder` adapter now requires inner errors convertible
   to `DecoderError`, preserving their category.
+  `WeightedUnionFindDecoder::new` now returns `Result` and rejects an LLR vector
+  that is neither empty nor one entry per bit, and
+  `CssUfDecoder::count_intersection_erasures` now returns `Result` and rejects
+  syndromes of the wrong length.
 
 - **Fixed:** Logical-subgraph sub-DEMs now declare their full detector and
   observable widths, so spec families no longer reject shots whose last local

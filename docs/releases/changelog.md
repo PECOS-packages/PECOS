@@ -6,6 +6,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Fixed:** Union-find now rejects NaN weights instead of sorting them (undefined
+  behaviour), and BeliefFind reports a BP-produced NaN log-probability ratio as an error.
+
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,
   optional reload on prep, partner spreading and lost-state readout. Loss is rejected

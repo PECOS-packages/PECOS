@@ -534,10 +534,10 @@ def test_contract_provider_rejects_object_before_build(fused):
     dem = _sector_dem()
     provider = Provider()
     if fused:
-        with pytest.raises(RuntimeError, match="providers require DEM text by protocol"):
+        with pytest.raises(ValueError, match="providers require DEM text by protocol"):
             dem.to_sampler().decode(dem, 8, provider)
     else:
-        with pytest.raises(RuntimeError, match="providers require DEM text by protocol"):
+        with pytest.raises(ValueError, match="providers require DEM text by protocol"):
             dem.to_sampler().sample_batch(8, seed=3).decode(dem, provider)
     assert provider.builds == 0
 
@@ -551,7 +551,7 @@ def test_contract_hybrid_refuses_object_everywhere():
         lambda: dem.build_decoder("belief_matching_hybrid:error(0.01) D0 D1 D2 D3"),
         lambda: batch.compare_decoders(dem, "belief_matching_hybrid:error(0.01) D0 D1 D2 D3", "pymatching"),
     ]:
-        with pytest.raises(RuntimeError, match="requires.*DEM text.*objects are not supported"):
+        with pytest.raises(ValueError, match="requires.*DEM text.*objects are not supported"):
             call()
 
 

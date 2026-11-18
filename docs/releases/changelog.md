@@ -40,6 +40,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `generate_*_code_dem` and `pecos-zx` wrote six decimal places, so priors at or
   below about 5e-7 became `error(0.000000)`; the other writers kept six, seven or
   eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
+- **Breaking:** Python decoder surfaces now raise `ValueError` for caller input
+  errors on spec-built, batch, sampler and logical paths, including wrong syndrome
+  lengths and empty reduced support. Internal failures remain `RuntimeError`.
+  Union-find rejects `error_rate` because it takes no priors.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,
@@ -79,14 +83,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   declared-but-unused detectors, raises `InvalidSyndrome`, naming the lowest
   index and count; this aborts a batch. Python `DemAwareDecoder` raises
   `ValueError` for empty reduced support and invalid syndromes.
-  `StructuredDemDecoder.decode_syndrome` raises `ValueError` for fired dead
-  detectors and non-binary input, but `RuntimeError` for wrong lengths. On
-  spec-built paths, empty reduced support raises `RuntimeError` when the decoder
-  is built (for the logical-subgraph, logical-algorithm and logical-circuit
-  decoders, in their constructors). `SampleBatch.decode`, `DemSampler` decoding
-  and the logical decoders' `decode`/`decode_count` raise `RuntimeError` for
-  fired dead detectors; `SampleBatch.compare_decoders` counts them as
-  decode-error outcomes for those shots. Wrappers validate syndrome
+  `StructuredDemDecoder.decode_syndrome`, spec-built paths, `SampleBatch.decode`,
+  `DemSampler` decoding and logical decoder constructors and `decode`/`decode_count`
+  likewise raise `ValueError` for these input errors, including wrong lengths.
+  `SampleBatch.compare_decoders` counts per-shot decode errors as outcomes.
+  Wrappers validate syndrome
   length and binary values before applying biases. Raw BP-OSD, BP-LSD,
   soft-information BP and BeliefFind builders now reject endpoint priors and
   require finite values in `(0, 1)`; see the MBP entry above for its prior rule.

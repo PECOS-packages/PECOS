@@ -248,16 +248,6 @@ fn unavailable<T>(family: &'static str, required_feature: &'static str) -> Resul
     })
 }
 
-#[cfg(any(
-    feature = "pymatching",
-    feature = "fusion-blossom",
-    feature = "ldpc",
-    feature = "mwpf"
-))]
-fn internal(error: impl std::fmt::Display) -> DecoderError {
-    DecoderError::InternalError(error.to_string())
-}
-
 #[cfg(any(feature = "uf", test))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ResolvedBeamSearchConfig {
@@ -301,7 +291,7 @@ fn build_pymatching(
     if let Some(error_probability) = config.error_probability {
         decoder
             .set_all_error_probabilities(error_probability)
-            .map_err(internal)?;
+            .map_err(DecoderError::from)?;
     }
     Ok(Box::new(decoder))
 }
@@ -402,7 +392,7 @@ fn build_k_mwpm(
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     use pecos_decoder_core::k_mwpm::{KMwpmConfig as CoreConfig, KMwpmDecoder};
 
-    let inner = crate::FusionBlossomDecoder::from_dem(dem).map_err(internal)?;
+    let inner = crate::FusionBlossomDecoder::from_dem(dem).map_err(DecoderError::from)?;
     Ok(Box::new(KMwpmDecoder::new(
         inner,
         CoreConfig { k: config.k },
@@ -442,14 +432,14 @@ fn build_fusion_blossom(
         (FusionBlossomSolverType::Auto, false) => build_fusion_auto(dem),
         (FusionBlossomSolverType::Parallel, false) => build_fusion_parallel(dem),
         (FusionBlossomSolverType::Serial, false) => Ok(Box::new(
-            crate::FusionBlossomDecoder::from_dem(dem).map_err(internal)?,
+            crate::FusionBlossomDecoder::from_dem(dem).map_err(DecoderError::from)?,
         )),
         (FusionBlossomSolverType::Legacy, false) => Ok(Box::new(
             crate::FusionBlossomDecoder::from_dem_with_solver_type(
                 dem,
                 FusionBlossomEngineSolverType::Legacy,
             )
-            .map_err(internal)?,
+            .map_err(DecoderError::from)?,
         )),
         (FusionBlossomSolverType::Auto | FusionBlossomSolverType::Serial, true) => {
             build_fusion_correlated(dem)
@@ -459,7 +449,7 @@ fn build_fusion_blossom(
                 dem,
                 FusionBlossomEngineSolverType::Legacy,
             )
-            .map_err(internal)?,
+            .map_err(DecoderError::from)?,
         )),
         (FusionBlossomSolverType::Parallel, true) => Err(DecoderError::InvalidConfiguration(
             "correlated Fusion Blossom does not support the parallel solver".to_string(),
@@ -475,7 +465,7 @@ fn build_fusion_auto(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
         build_fusion_parallel_from_graph(dem, &graph)
     } else {
         Ok(Box::new(
-            crate::FusionBlossomDecoder::from_dem(dem).map_err(internal)?,
+            crate::FusionBlossomDecoder::from_dem(dem).map_err(DecoderError::from)?,
         ))
     }
 }
@@ -493,7 +483,8 @@ fn build_fusion_correlated(dem: &str) -> Result<Box<dyn ObservableDecoder>, Deco
         num_observables: graph.num_observables,
         ..Default::default()
     };
-    let mut decoder = crate::FusionBlossomDecoder::new(engine_config).map_err(internal)?;
+    let mut decoder =
+        crate::FusionBlossomDecoder::new(engine_config).map_err(DecoderError::from)?;
     let mut edge_index_map = BTreeMap::new();
     let mut base_weights = Vec::with_capacity(graph.edges.len());
     for (index, edge) in graph.edges.iter().enumerate() {
@@ -511,12 +502,12 @@ fn build_fusion_correlated(dem: &str) -> Result<Box<dyn ObservableDecoder>, Deco
                     &observables,
                     Some(edge.weight),
                 )
-                .map_err(internal)?;
+                .map_err(DecoderError::from)?;
             ordered_edge(edge.node1, node2)
         } else {
             decoder
                 .add_boundary_edge(edge.node1 as usize, &observables, Some(edge.weight))
-                .map_err(internal)?;
+                .map_err(DecoderError::from)?;
             (edge.node1, u32::MAX)
         };
         edge_index_map.insert(key, index);
@@ -559,7 +550,7 @@ fn build_fusion_parallel_from_graph(
     let num_rounds = round_groups.len();
     if num_rounds < 2 {
         return Ok(Box::new(
-            crate::FusionBlossomDecoder::from_dem(dem).map_err(internal)?,
+            crate::FusionBlossomDecoder::from_dem(dem).map_err(DecoderError::from)?,
         ));
     }
 
@@ -587,7 +578,8 @@ fn build_fusion_parallel_from_graph(
         num_observables: graph.num_observables,
         ..Default::default()
     };
-    let mut decoder = crate::FusionBlossomDecoder::new(engine_config).map_err(internal)?;
+    let mut decoder =
+        crate::FusionBlossomDecoder::new(engine_config).map_err(DecoderError::from)?;
     for &boundary in &partition_boundary {
         decoder.virtual_vertices.push(boundary);
     }
@@ -604,7 +596,7 @@ fn build_fusion_parallel_from_graph(
         );
         decoder
             .add_edge(node1, node2, &observables, Some(edge.weight))
-            .map_err(internal)?;
+            .map_err(DecoderError::from)?;
     }
 
     let partition_count = num_rounds.clamp(2, 4);
@@ -714,7 +706,8 @@ fn build_perturbed_fusion_blossom(
     };
     let decoder = build_perturbed_ensemble(dem, &core_config, |member_dem| {
         Ok(Box::new(
-            crate::FusionBlossomDecoder::from_dem_correlated(member_dem).map_err(internal)?,
+            crate::FusionBlossomDecoder::from_dem_correlated(member_dem)
+                .map_err(DecoderError::from)?,
         ))
     })?;
     Ok(Box::new(decoder))
@@ -780,11 +773,10 @@ fn build_bp_osd(
         None,
         config.random_schedule_seed,
     )
-    .map_err(internal)?;
+    .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)
-            .map_err(internal)?,
+            .with_support(support)?,
     ))
 }
 
@@ -826,11 +818,10 @@ fn build_bp_lsd(
         None,
         config.random_schedule_seed,
     )
-    .map_err(internal)?;
+    .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)
-            .map_err(internal)?,
+            .with_support(support)?,
     ))
 }
 
@@ -861,11 +852,10 @@ fn build_belief_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
         crate::UfMethod::Inversion,
         0,
     )
-    .map_err(internal)?;
+    .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)
-            .map_err(internal)?,
+            .with_support(support)?,
     ))
 }
 
@@ -877,8 +867,8 @@ fn build_belief_find(_dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderEr
 #[cfg(feature = "ldpc")]
 fn build_union_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     let (matrix, sparse) = dem_matrix(dem)?;
-    let decoder =
-        crate::UnionFindDecoder::new(&sparse, crate::UfMethod::Inversion).map_err(internal)?;
+    let decoder = crate::UnionFindDecoder::new(&sparse, crate::UfMethod::Inversion)
+        .map_err(DecoderError::from)?;
     let llrs = matrix
         .error_priors
         .iter()
@@ -956,8 +946,7 @@ fn build_relay_bp(
         .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)
-            .map_err(internal)?,
+            .with_support(support)?,
     ))
 }
 
@@ -987,8 +976,7 @@ fn build_min_sum_bp(
         .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
-            .with_support(support)
-            .map_err(internal)?,
+            .with_support(support)?,
     ))
 }
 
@@ -1108,7 +1096,8 @@ fn build_belief_matching_with_dems(
         num_observables: graph.num_observables,
         ..Default::default()
     };
-    let mut matching = crate::FusionBlossomDecoder::new(engine_config).map_err(internal)?;
+    let mut matching =
+        crate::FusionBlossomDecoder::new(engine_config).map_err(DecoderError::from)?;
     let correlated = !matches!(mode, BeliefMatchingMode::Standard);
     if correlated {
         let mut edge_index_map = BTreeMap::new();
@@ -1149,12 +1138,12 @@ fn add_fusion_edge(
                 &observables,
                 Some(edge.weight),
             )
-            .map_err(internal)?;
+            .map_err(DecoderError::from)?;
         Ok(ordered_edge(edge.node1, node2))
     } else {
         decoder
             .add_boundary_edge(edge.node1 as usize, &observables, Some(edge.weight))
-            .map_err(internal)?;
+            .map_err(DecoderError::from)?;
         Ok((edge.node1, u32::MAX))
     }
 }
@@ -1303,7 +1292,7 @@ fn build_mwpf(dem: &str, config: &MwpfConfig) -> Result<Box<dyn ObservableDecode
                 only_solve_primal_once: config.only_solve_primal_once,
             },
         )
-        .map_err(internal)?,
+        .map_err(DecoderError::from)?,
     ))
 }
 

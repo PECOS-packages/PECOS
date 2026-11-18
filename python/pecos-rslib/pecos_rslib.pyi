@@ -4615,6 +4615,22 @@ def scheduled_event_idle_noise(
     profile: ScheduledIdleNoise,
     adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
 ) -> ScheduledEventIdleNoise: ...
+def scheduled_native_adapter(
+    profile: ScheduledIdleZ | ScheduledIdleNoise | ScheduledLocalNoise,
+    library_path: str | os.PathLike[str],
+    *,
+    config: bytes | None = None,
+) -> ScheduledEventIdleNoise:
+    """Attach an experimental native normalizer from an explicitly trusted library.
+
+    The library must implement pecos_scheduled_adapter.h and obey its ownership,
+    threading and no-unwind contract. Native code is not sandboxed. Config bytes
+    are copied; None is equivalent to empty bytes. Only checked scheduled profiles
+    are accepted. Use with QIS/HUGR on the engines stack without operation tracing.
+    This uses the existing MonteCarlo/noise/quantum path with no per-batch Python
+    callbacks. It does not enable the Python worker-context optimization implicitly.
+    """
+    ...
 
 class ScheduledLocalNoise:
     """Checked gate Pauli/emission/seepage, preparation and readout faults."""

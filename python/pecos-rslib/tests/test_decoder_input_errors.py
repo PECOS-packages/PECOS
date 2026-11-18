@@ -102,3 +102,81 @@ def test_structured_backend_wrong_length(spec, length):
 def test_spec_tesseract_rejects_wide_observables():
     with pytest.raises(ValueError, match="at most 64"):
         SampleBatch([[0]], [0]).decode("error(0.1) D0 L64", tesseract(), workers=1)
+
+
+@pytest.mark.parametrize("length", [1, 4])
+@pytest.mark.parametrize(
+    "family",
+    [
+        "pymatching",
+        "tesseract",
+        "tesseract_trellis",
+        "k_mwpm",
+        "astar",
+        "astar_full",
+        "fusion_blossom",
+        "perturbed_fb_corr",
+        "bp_osd",
+        "bp_lsd",
+        "belief_find",
+        "union_find",
+        "relay_bp",
+        "min_sum_bp",
+        "pecos_uf",
+        "belief_matching",
+        "windowed:step=5,buf=5,inner=pecos_uf",
+        "mwpf",
+        "perturbed",
+        "beamsearch",
+        "ensemble:pecos_uf,bp_osd",
+    ],
+)
+def test_all_spec_families_reject_wrong_length(family, length):
+    from pecos_rslib.decoders import DecoderSpec
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0, 1, 2])
+    circuit.tick().mz([0, 1, 2])
+    for detector in range(3):
+        circuit.add_detector([detector - 3], coords=[detector, 0, 0], detector_id=detector, fault_sector="Z")
+    dem = DetectorErrorModel.from_circuit(circuit, p1=0, p2=0, p_meas=0.1, p_prep=0)
+    decoder = dem.build_decoder(DecoderSpec.parse(family))
+    with pytest.raises(ValueError, match=f"expected 3, got {length}"):
+        decoder.decode_syndrome([0] * length)
+
+
+@pytest.mark.parametrize("family", ["tesseract", "tesseract_trellis", "bp_osd"])
+def test_logical_subdem_preserves_unconnected_detector(family):
+    decoder = LogicalSubgraphDecoder.from_membership("error(0.1) D1 L0", [[1, 0]], family)
+    assert decoder.decode(bytes([0, 0])) == 0
+    assert decoder.decode(bytes([0, 1])) == 1
+
+
+@pytest.mark.parametrize(("x_length", "z_length"), [(0, 2), (2, 2), (1, 1), (1, 3)])
+@pytest.mark.parametrize("batch", [False, True])
+def test_css_wrong_lengths(x_length, z_length, batch):
+    from pecos_rslib.qec import CssUfDecoder
+
+    decoder = CssUfDecoder("error(0.1) D0 L0", "error(0.1) D0 L0\ndetector D1")
+    if batch:
+        with pytest.raises(ValueError, match="Invalid input dimensions"):
+            decoder.decode_count_batch([[0] * (x_length + z_length)], [0], x_length)
+    else:
+        with pytest.raises(ValueError, match="Invalid input dimensions"):
+            decoder.decode_css(bytes(x_length), bytes(z_length))
+
+
+def test_css_batch_does_not_ignore_unpaired_syndromes():
+    from pecos_rslib.qec import CssUfDecoder
+
+    decoder = CssUfDecoder("error(0.1) D0 L0", "error(0.1) D0 L0")
+    with pytest.raises(ValueError, match="Batch size mismatch"):
+        decoder.decode_count_batch([[0, 0], [0]], [0], 1)
+
+
+def test_css_empty_batch_still_validates_split():
+    from pecos_rslib.qec import CssUfDecoder
+
+    decoder = CssUfDecoder("error(0.1) D0 L0", "error(0.1) D0 L0")
+    with pytest.raises(ValueError, match="expected 1, got 0"):
+        decoder.decode_count_batch([], [], 0)

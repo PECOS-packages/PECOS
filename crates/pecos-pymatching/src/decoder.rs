@@ -349,6 +349,7 @@ impl Default for PyMatchingConfig {
 /// Complete `PyMatching` decoder with full API
 pub struct PyMatchingDecoder {
     graph: UniquePtr<ffi::PyMatchingGraph>,
+    num_detectors: usize,
     config: PyMatchingConfig,
 }
 
@@ -521,7 +522,12 @@ impl PyMatchingDecoder {
             ));
         };
 
-        Ok(Self { graph, config })
+        let num_detectors = ffi::pymatching_get_num_detectors(&graph);
+        Ok(Self {
+            graph,
+            num_detectors,
+            config,
+        })
     }
 
     /// Create a decoder from a Detector Error Model (DEM) string
@@ -542,7 +548,12 @@ impl PyMatchingDecoder {
             num_observables,
         };
 
-        Ok(Self { graph, config })
+        let num_detectors = ffi::pymatching_get_num_detectors(&graph);
+        Ok(Self {
+            graph,
+            num_detectors,
+            config,
+        })
     }
 
     /// Create a decoder from a DEM and override every graph edge's error probability.
@@ -598,7 +609,12 @@ impl PyMatchingDecoder {
             num_observables,
         };
 
-        Ok(Self { graph, config })
+        let num_detectors = ffi::pymatching_get_num_detectors(&graph);
+        Ok(Self {
+            graph,
+            num_detectors,
+            config,
+        })
     }
 
     /// Create a decoder from a check matrix
@@ -753,7 +769,7 @@ impl PyMatchingDecoder {
     ) -> Result<()> {
         let error_prob = config.error_probability.unwrap_or(f64::NAN);
 
-        ffi::add_edge(
+        let result = ffi::add_edge(
             self.graph.pin_mut(),
             node1,
             node2,
@@ -761,7 +777,9 @@ impl PyMatchingDecoder {
             config.weight,
             error_prob,
             config.merge_strategy.into(),
-        )?;
+        );
+        self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
+        result?;
 
         Ok(())
     }
@@ -806,14 +824,16 @@ impl PyMatchingDecoder {
         let (weight, error_probability, merge_strategy) =
             Self::normalize_edge_params(weight, error_probability, merge_strategy);
 
-        ffi::add_boundary_edge(
+        let result = ffi::add_boundary_edge(
             self.graph.pin_mut(),
             node,
             observables,
             weight,
             error_probability,
             merge_strategy.into(),
-        )?;
+        );
+        self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
+        result?;
 
         Ok(())
     }
@@ -827,7 +847,7 @@ impl PyMatchingDecoder {
     /// Get the number of detectors
     #[must_use]
     pub fn num_detectors(&self) -> usize {
-        ffi::pymatching_get_num_detectors(&self.graph)
+        self.num_detectors
     }
 
     /// Get the number of edges
@@ -902,6 +922,7 @@ impl PyMatchingDecoder {
     pub fn set_boundary(&mut self, boundary: &[NodeId]) {
         // PyMatching will auto-expand nodes as needed
         ffi::pymatching_set_boundary(self.graph.pin_mut(), boundary);
+        self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
     }
 
     /// Check if a node is a boundary node

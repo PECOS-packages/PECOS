@@ -123,6 +123,18 @@ struct ModelDimensionDecoder {
     num_detectors: usize,
 }
 
+impl ModelDimensionDecoder {
+    fn validate_length(&self, actual: usize) -> Result<(), DecoderError> {
+        if actual != self.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual,
+            });
+        }
+        Ok(())
+    }
+}
+
 impl ObservableDecoder for ModelDimensionDecoder {
     fn num_detectors(&self) -> Option<usize> {
         Some(self.num_detectors)
@@ -132,6 +144,7 @@ impl ObservableDecoder for ModelDimensionDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+        self.validate_length(syndrome.len())?;
         self.inner.decode_obs(syndrome)
     }
 
@@ -141,6 +154,7 @@ impl ObservableDecoder for ModelDimensionDecoder {
         num_shots: usize,
         num_detectors: usize,
     ) -> Result<Vec<pecos_decoder_core::obs_mask::ObsMask>, DecoderError> {
+        self.validate_length(num_detectors)?;
         self.inner
             .decode_batch_to_observables(shots, num_shots, num_detectors)
     }
@@ -148,6 +162,7 @@ impl ObservableDecoder for ModelDimensionDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         // Forward rather than inherit the trait default: an inner decoder that
         // overrides this method must keep its own semantics when wrapped.
+        self.validate_length(syndrome.len())?;
         self.inner.decode_to_observables(syndrome)
     }
 }
@@ -1449,6 +1464,49 @@ fn build_ensemble(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn weighted_union_find_llr_mismatch_is_internal() {
+        let (matrix, sparse) = dem_matrix("error(0.1) D0 L0\nerror(0.2) D1").unwrap();
+        let inner = crate::UnionFindDecoder::new(&sparse, crate::UfMethod::Inversion).unwrap();
+        let mut decoder = crate::WeightedUnionFindDecoder::new(inner, matrix, vec![1.0]);
+        assert!(matches!(
+            decoder.decode_obs(&[0, 0]),
+            Err(DecoderError::InternalError(_))
+        ));
+    }
+
+    #[test]
+    fn model_dimensions_guard_all_entry_points() {
+        struct AcceptsAnything;
+        impl ObservableDecoder for AcceptsAnything {
+            fn decode_obs(
+                &mut self,
+                _: &[u8],
+            ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+                Ok(pecos_decoder_core::obs_mask::ObsMask::new())
+            }
+        }
+        let mut decoder = ModelDimensionDecoder {
+            inner: Box::new(AcceptsAnything),
+            num_detectors: 3,
+        };
+        for actual in [1, 4] {
+            let syndrome = vec![0; actual];
+            for error in [
+                decoder.decode_obs(&syndrome).err(),
+                decoder.decode_to_observables(&syndrome).err(),
+                decoder
+                    .decode_batch_to_observables(&syndrome, 1, actual)
+                    .err(),
+            ] {
+                assert!(
+                    matches!(error, Some(DecoderError::InvalidDimensions { expected: 3, actual: n }) if n == actual)
+                );
+            }
+        }
+    }
 
     #[cfg(feature = "ldpc")]
     #[test]

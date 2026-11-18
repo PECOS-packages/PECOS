@@ -1086,6 +1086,13 @@ impl pecos_decoder_core::ObservableDecoder for WeightedUnionFindDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
+        if self.llrs.len() != self.decoder.bit_count() {
+            return Err(pecos_decoder_core::DecoderError::InternalError(format!(
+                "LLR length {} does not match bit count {} in weighted union-find adapter",
+                self.llrs.len(),
+                self.decoder.bit_count(),
+            )));
+        }
         let syndrome = Array1::from_vec(syndrome.to_vec());
         // Grow one bit at a time in LLR order. Zero means all candidates per
         // step and is translated at the Rust boundary since the segfault fix.

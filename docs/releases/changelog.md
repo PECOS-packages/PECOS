@@ -42,7 +42,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
 - **Breaking:** Python decoder surfaces now raise `ValueError` for caller input
   errors on spec-built, batch, sampler and logical paths, including wrong syndrome
-  lengths and empty reduced support. This also covers `CssUfDecoder` and raw
+  lengths and empty reduced support. This also covers `CssUfDecoder` construction, `decode_css`, and
+  `decode_count_batch`, as well as raw
   `pecos_rslib.decoders` classes, classifying the first `DecoderError` in their
   error chain (for example, PyMatching configuration errors). Internal failures remain
   `RuntimeError`. `DemAwareDecoder.from_dem(..., "union_find")` rejects `error_rate`

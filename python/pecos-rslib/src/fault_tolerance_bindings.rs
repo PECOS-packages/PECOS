@@ -5647,9 +5647,14 @@ impl PyCssUfDecoder {
     }
 
     /// Count erasures the intersection would produce for given syndromes.
-    fn count_erasures(&mut self, x_syndrome: &[u8], z_syndrome: &[u8]) -> usize {
+    ///
+    /// Raises:
+    ///     `ValueError`: If a syndrome length differs from its DEM's detector
+    ///         count.
+    fn count_erasures(&mut self, x_syndrome: &[u8], z_syndrome: &[u8]) -> PyResult<usize> {
         self.inner
             .count_intersection_erasures(x_syndrome, z_syndrome)
+            .map_err(decoder_build_error_to_py)
     }
 
     /// Decode a batch of syndromes and return the error count.
@@ -5659,11 +5664,18 @@ impl PyCssUfDecoder {
     ///
     /// Args:
     ///     syndromes: List of concatenated syndrome byte arrays.
-    ///     `true_obs_masks`: True observable masks for each shot.
-    ///     `x_num_detectors`: Length of the X syndrome prefix.
+    ///     `true_obs_masks`: True observable masks for each shot, one per
+    ///         entry of `syndromes`.
+    ///     `x_num_detectors`: Length of the X syndrome prefix; must equal the
+    ///         decoder's X width (the X DEM's detector count).
     ///
     /// Returns:
     ///     Number of logical errors.
+    ///
+    /// Raises:
+    ///     `ValueError`: If `x_num_detectors` differs from the decoder's X
+    ///         width, if `syndromes` and `true_obs_masks` have different
+    ///         lengths, or if a shot has the wrong length.
     fn decode_count_batch(
         &mut self,
         syndromes: Vec<Vec<u8>>,

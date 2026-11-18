@@ -246,6 +246,9 @@ impl ObservableDecoder for PyMatchingDecoder {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use ndarray::{Array1, Array2};
+
     #[test]
     fn observable_batch_rejects_short_stride() {
         let mut decoder =
@@ -263,9 +266,6 @@ mod tests {
             })
         ));
     }
-
-    use super::*;
-    use ndarray::{Array1, Array2};
 
     #[test]
     fn test_decoder_trait_implementation() {

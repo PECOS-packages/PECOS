@@ -255,10 +255,13 @@ mod tests {
             [0, 1, 1, 0, 0, 1, 1],
             [0, 0, 0, 1, 1, 1, 1],
         ]);
-        let syndrome = ndarray::arr1(&[0, 1, 0]);
-        let seed = 31;
+        let syndrome = ndarray::arr1(&[1, 0, 1]);
+        // Unit scaling now resolves zero ties in leg zero. This fixture
+        // reaches random relay legs and distinguishes mixed from raw seeds.
+        let seed = 840;
         let mut facade = RelayBpDecoder::builder(&matrix.view())
             .error_priors(&[0.05; 7])
+            .alpha(Some(0.2))
             .pre_iter(1)
             .num_sets(3)
             .set_max_iter(2)
@@ -272,7 +275,7 @@ mod tests {
             graph,
             pecos_bp::RelayConfig {
                 schedule: Schedule::Flooding,
-                alpha: Alpha::Constant(1.0),
+                alpha: Alpha::Constant(0.2),
                 gamma0: 0.65,
                 pre_iterations: 1,
                 num_legs: 3,
@@ -284,9 +287,9 @@ mod tests {
         )
         .unwrap();
         let mixed = native
-            .decode(&[0, 1, 0], syndrome_seed(seed, &[0, 1, 0]))
+            .decode(&[1, 0, 1], syndrome_seed(seed, &[1, 0, 1]))
             .unwrap();
-        let raw = native.decode(&[0, 1, 0], seed).unwrap();
+        let raw = native.decode(&[1, 0, 1], seed).unwrap();
         let actual = facade.decode(&syndrome.view()).unwrap();
         assert_eq!(actual.decoding.to_vec(), mixed.correction);
         assert_eq!(actual.converged, mixed.converged);

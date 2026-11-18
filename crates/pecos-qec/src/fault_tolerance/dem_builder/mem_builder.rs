@@ -125,8 +125,10 @@ impl<'a> MemBuilder<'a> {
                 GateType::MX if self.noise.p_meas > 0.0 && loc.before => {
                     self.process_single_pauli_fault(loc_idx, Pauli::Z, self.noise.p_meas, &mut mem);
                 }
-                GateType::MZ | GateType::MeasureFree | GateType::MPZ
-                    if self.noise.p_meas > 0.0 && loc.before =>
+                gate_type
+                    if gate_type.consumes_measurement_record()
+                        && self.noise.p_meas > 0.0
+                        && loc.before =>
                 {
                     self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_meas, &mut mem);
                 }

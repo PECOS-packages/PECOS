@@ -169,7 +169,10 @@ def test_measurement_ids_preserve_sparse_operand_mapping_and_ranges(output_forma
             assert "MZ[m7]" in rows["q2"]
 
 
-@pytest.mark.parametrize(("gate_type", "symbol"), [("MZ", "MZ"), ("MeasureLeaked", "MZ_L")])
+@pytest.mark.parametrize(
+    ("gate_type", "symbol"),
+    [("MZ", "MZ"), ("MeasureLeaked", "MZ_L"), ("MeasureZLost", "MLo"), ("MeasureZLeakedLost", "MLL")],
+)
 def test_measurement_labels_do_not_assign_missing_ids(gate_type, symbol):
     circuit = TickCircuit()
     circuit.tick().add_gate(gate_type, [2, 8])
@@ -179,13 +182,21 @@ def test_measurement_labels_do_not_assign_missing_ids(gate_type, symbol):
     assert circuit.to_ascii() == before
 
 
-def test_explicit_leakage_ids_keep_operand_order_metadata_and_reserve_ids():
+@pytest.mark.parametrize(
+    ("method", "kind", "symbol"),
+    [
+        ("measure_leaked_with_ids", "MeasureZLeaked", "MZ_L"),
+        ("measure_lost_with_ids", "MeasureZLost", "MLo"),
+        ("measure_leaked_lost_with_ids", "MeasureZLeakedLost", "MLL"),
+    ],
+)
+def test_explicit_herald_ids_keep_operand_order_metadata_and_reserve_ids(method, kind, symbol):
     circuit = TickCircuit()
     handle = circuit.tick()
-    assert handle.measure_leaked_with_ids([8, 2], [42, 7]) is handle
+    assert getattr(handle, method)([8, 2], [42, 7]) is handle
     handle.meta("round", 3)
     gate = circuit.get_tick(0).gate_batches()[0]
-    assert gate.gate_type.name == "MeasureZLeaked"
+    assert gate.gate_type.name == kind
     assert gate.qubits == [8, 2]
     assert gate.meas_ids == [42, 7]
     assert circuit.get_tick(0).get_gate_attr(0, "round") == 3
@@ -194,27 +205,29 @@ def test_explicit_leakage_ids_keep_operand_order_metadata_and_reserve_ids():
         for row in circuit.render("ascii", show_measurement_ids=True).splitlines()
         if row.startswith("q")
     }
-    assert "MZ_L[m42]" in rows["q8"]
-    assert "MZ_L[m7]" in rows["q2"]
+    assert f"{symbol}[m42]" in rows["q8"]
+    assert f"{symbol}[m7]" in rows["q2"]
     circuit.tick().mz([0])
     assert circuit.get_tick(1).gate_batches()[0].meas_ids == [43]
 
 
 @pytest.mark.parametrize(("qubits", "ids"), [([0], []), ([0, 1], [7, 7]), ([0], [2**64 - 1])])
-def test_invalid_explicit_leakage_ids_leave_gate_and_counter_unchanged(qubits, ids):
+@pytest.mark.parametrize("method", ["measure_leaked_with_ids", "measure_lost_with_ids", "measure_leaked_lost_with_ids"])
+def test_invalid_explicit_herald_ids_leave_gate_and_counter_unchanged(qubits, ids, method):
     circuit = TickCircuit()
     handle = circuit.tick()
     with pytest.raises(ValueError, match="meas_ids"):
-        handle.measure_leaked_with_ids(qubits, ids)
+        getattr(handle, method)(qubits, ids)
     assert circuit.get_tick(0).gate_batches() == []
     handle.mz([2])
     assert circuit.get_tick(0).gate_batches()[0].meas_ids == [0]
 
 
-def test_conflicting_explicit_leakage_measurement_does_not_reserve_ids():
+@pytest.mark.parametrize("method", ["measure_leaked_with_ids", "measure_lost_with_ids", "measure_leaked_lost_with_ids"])
+def test_conflicting_explicit_herald_measurement_does_not_reserve_ids(method):
     circuit = TickCircuit()
     handle = circuit.tick().h([0])
     with pytest.raises(ValueError, match="already in use"):
-        handle.measure_leaked_with_ids([0], [42])
+        getattr(handle, method)([0], [42])
     circuit.tick().mz([1])
     assert circuit.get_tick(1).gate_batches()[0].meas_ids == [0]

@@ -416,7 +416,7 @@ fn measurement_records_by_node(dag: &DagCircuit) -> (MeasurementRecordMap, usize
         let Some(gate) = dag.gate(node) else {
             continue;
         };
-        // `MeasureZLeaked` consumes no measurement record.
+        // Z heralds consume no measurement record.
         if !gate.gate_type.consumes_measurement_record() {
             continue;
         }
@@ -485,6 +485,8 @@ fn propagate_tracked_pauli_forward(
             | GateType::MZ
             | GateType::MeasureFree
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MPZ => {
                 if let Some(entries) = measurement_records.get(&node) {
                     for &(qubit, record) in entries {
@@ -578,8 +580,8 @@ mod tests {
     use super::*;
     use pecos_quantum::Gate;
 
-    /// A `MeasureZLeaked` must affect a propagating Pauli exactly as an `MZ`
-    /// does: both are non-destructive Z-collapses, executed identically by the
+    /// Each Z herald must affect a propagating Pauli exactly as an `MZ`
+    /// does: all are non-destructive Z-collapses, executed identically by the
     /// simulators.
     #[test]
     fn measure_leaked_affects_a_propagating_pauli_like_an_mz() {
@@ -590,10 +592,7 @@ mod tests {
                 GateType::TrackedPauliMeta,
                 vec![pecos_quantum::QubitId::from(0usize)],
             ));
-            let leading_gate = match leading {
-                GateType::MeasureZLeaked => Gate::measure_z_leaked(&[0usize]),
-                _ => Gate::mz(&[0usize]),
-            };
+            let leading_gate = Gate::simple(leading, vec![0.into()]);
             dag.add_gate_auto_wire(leading_gate);
             let later = dag.add_gate_auto_wire(Gate::mz(&[0usize]));
 
@@ -621,11 +620,16 @@ mod tests {
             affected.contains(&later_record)
         }
 
-        assert_eq!(
-            later_measurement_flipped(GateType::MeasureZLeaked),
-            later_measurement_flipped(GateType::MZ),
-            "the two non-destructive measurements must treat a Pauli identically"
-        );
+        for gate in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            assert_eq!(
+                later_measurement_flipped(gate),
+                later_measurement_flipped(GateType::MZ)
+            );
+        }
         // And the absolute: collapse projects, it does not reset, so the X
         // survives the first measurement and flips the later one.
         assert!(

@@ -758,6 +758,8 @@ impl QASMEngine {
             GateType::MX
             | GateType::MZ
             | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ => Err(PecosError::Processing(
                 "measurement gates should be handled by MeasureWithMapping operation".to_string(),
@@ -1900,6 +1902,20 @@ impl fmt::Debug for QASMEngine {
 mod tests {
     use super::*;
     use pecos_core::gate_type::GateType;
+
+    #[test]
+    fn heralds_require_measurement_mapping() {
+        for gate_type in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let error = QASMEngine::default()
+                .process_native_gate(&pecos_core::Gate::simple(gate_type, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("measurement gates should be handled by MeasureWithMapping"),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn native_parameterized_gates_keep_all_angle_bits() {

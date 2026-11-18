@@ -528,10 +528,76 @@ fn leaked_measurement_builds_a_record_aligned_dem() {
     let (mechanisms, _) = dem.to_mechanisms();
     assert_eq!(mechanisms.len(), 1);
     let (probability, detectors, observables) = &mechanisms[0];
+    // The record-less herald carries no measurement fault; only the two MZs
+    // contribute, with odd-parity probability 2 * 0.1 * 0.9 = 0.18.
     assert!((probability - 0.18).abs() < 1e-12);
     assert_eq!(detectors, &[0]);
     assert_eq!(observables, &Vec::<u32>::new());
     DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap();
+}
+
+#[test]
+fn bell_herald_dem_probability_matches_fault_catalog() {
+    use pecos_qec::fault_tolerance::fault_sampler::{StochasticNoiseParams, build_fault_catalog};
+    for herald in [
+        GateType::MeasureZLeaked,
+        GateType::MeasureZLost,
+        GateType::MeasureZLeakedLost,
+    ] {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.h(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.add_gate_auto_wire(Gate::simple(herald, vec![0.into()]));
+        circuit.mz(&[1]);
+        circuit.mz(&[0]);
+        let detectors_json = r#"[{"id":0,"records":[-2,-1]}]"#;
+        circuit.set_attr(
+            "detectors",
+            pecos_quantum::Attribute::String(detectors_json.into()),
+        );
+        let map = InfluenceBuilder::new(&circuit).unwrap().build().unwrap();
+        let dem = DemBuilder::new(&map)
+            .with_detectors_json(detectors_json)
+            .unwrap()
+            .with_noise(0.0, 0.0, 0.1, 0.0)
+            .build()
+            .unwrap();
+        let (mechanisms, _) = dem.to_mechanisms();
+        let dem_probability = mechanisms
+            .iter()
+            .filter(|(_, dets, _)| dets.contains(&0))
+            .fold(0.0, |p, (q, _, _)| p + q - 2.0 * p * q);
+        let catalog = build_fault_catalog(
+            &TickCircuit::from(&circuit),
+            &StochasticNoiseParams {
+                p1: 0.0,
+                p2: 0.0,
+                p_meas: 0.1,
+                p_prep: 0.0,
+            },
+        )
+        .unwrap();
+        let catalog_probability = catalog
+            .to_mechanisms()
+            .iter()
+            .map(|mechanism| {
+                // The Bell detector is the parity of both recorded measurements.
+                let flipping = mechanism
+                    .alternatives
+                    .iter()
+                    .filter(|records| records.len() % 2 == 1)
+                    .count();
+                mechanism.probability * f64::from(u32::try_from(flipping).unwrap())
+                    / f64::from(u32::try_from(mechanism.alternatives.len()).unwrap())
+            })
+            .fold(0.0, |p, q| p + q - 2.0 * p * q);
+        assert!((catalog_probability - 0.18).abs() < 1e-12);
+        assert!(
+            (dem_probability - catalog_probability).abs() < 1e-12,
+            "{herald}: DEM={dem_probability}, FaultCatalog={catalog_probability}"
+        );
+    }
 }
 
 fn detector_records(

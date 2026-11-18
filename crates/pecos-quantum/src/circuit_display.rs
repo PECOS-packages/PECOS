@@ -148,6 +148,8 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::MX => "MX",
         GateType::MZ => "MZ",
         GateType::MeasureZLeaked => "MZ_L",
+        GateType::MeasureZLost => "MLo",
+        GateType::MeasureZLeakedLost => "MLL",
         GateType::MeasureFree => "MF",
         GateType::MPZ => "MPZ",
         GateType::PX => "PX",
@@ -310,6 +312,8 @@ fn gate_color(gate_type: GateType) -> CellColor {
         GateType::Idle
         | GateType::I
         | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::QAlloc
@@ -340,9 +344,12 @@ fn gate_color(gate_type: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_family(gate_type: GateType) -> GateFamily {
     match gate_type {
-        GateType::MZ | GateType::MeasureZLeaked | GateType::MeasureFree | GateType::MPZ => {
-            GateFamily::Measurement
-        }
+        GateType::MZ
+        | GateType::MeasureZLeaked
+        | GateType::MeasureZLost
+        | GateType::MeasureZLeakedLost
+        | GateType::MeasureFree
+        | GateType::MPZ => GateFamily::Measurement,
         GateType::PZ | GateType::QAlloc | GateType::QFree => GateFamily::Preparation,
         _ => GateFamily::Default,
     }
@@ -498,11 +505,11 @@ fn decompose_gate(
     } else if arity == 1 {
         let sym = full_gate_symbol(gate, angle_unit, symbol);
         let family = gate_family(gate.gate_type);
-        // MZ_L returns 0/1/2 through runtime engines even though the current
-        // circuit record allocator does not include it in its predicate.
+        // Herald measurements return runtime outcomes and may carry explicit
+        // IDs even though the Boolean circuit record allocator excludes them.
         let show_id = style.show_measurement_ids
             && (gate.gate_type.consumes_measurement_record()
-                || gate.gate_type == GateType::MeasureZLeaked);
+                || gate.gate_type.is_recordless_z_measurement());
         for (position, &q) in qubits.iter().enumerate() {
             if let Some(&row) = qubit_to_row.get(&q) {
                 let label = if show_id {
@@ -855,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn measurement_labels_cover_ordinary_and_leakage_aware_measurements() {
+    fn measurement_labels_cover_ordinary_and_herald_measurements() {
         let style = DiagramStyle::builder().show_measurement_ids(true).build();
         for (gt, name) in [
             (GateType::MX, "MX"),
@@ -863,6 +870,8 @@ mod tests {
             (GateType::MPZ, "MPZ"),
             (GateType::MeasureFree, "MF"),
             (GateType::MeasureZLeaked, "MZ_L"),
+            (GateType::MeasureZLost, "MLo"),
+            (GateType::MeasureZLeakedLost, "MLL"),
         ] {
             let mut circuit = crate::TickCircuit::new();
             let mut gate = Gate::simple(gt, vec![QubitId(8), QubitId(2)]);
@@ -892,6 +901,8 @@ mod tests {
             GateType::MPZ,
             GateType::MeasureFree,
             GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
         ] {
             for ids in [vec![], vec![7], vec![7, 9, 11]] {
                 let mut gate = Gate::simple(gt, vec![QubitId(8), QubitId(2)]);
@@ -1124,6 +1135,16 @@ mod tests {
                     .collect::<Vec<_>>()
             };
             assert_eq!(rows(&full), rows(&selected));
+        }
+    }
+
+    #[test]
+    fn herald_labels_share_measurement_style() {
+        assert_eq!(gate_symbol(GateType::MeasureZLost), "MLo");
+        assert_eq!(gate_symbol(GateType::MeasureZLeakedLost), "MLL");
+        for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            assert_eq!(gate_color(gate), gate_color(GateType::MeasureZLeaked));
+            assert_eq!(gate_family(gate), gate_family(GateType::MeasureZLeaked));
         }
     }
 

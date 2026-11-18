@@ -366,10 +366,10 @@ def _replay_lowered_qis_trace_into_tick_circuit(
     a tick --- matching the parallel structure of the abstract circuit.
 
     MeasIds flow from runtime-lowered measurement provenance:
-    ``lowered_quantum_ops`` MZ, MeasureLeaked (saved traces), and MeasureZLeaked
-    entries must carry ``measurement_result_ids``. Both leakage spellings are
-    replayed as the Boolean MZ component of the accepted no-leakage path;
-    leakage probability remains outside the Pauli circuit/DEM model. This
+    ``lowered_quantum_ops`` MZ and herald-measurement entries must carry
+    ``measurement_result_ids``. Analysis replay retains the Boolean MZ component
+    of the accepted no-leakage/no-loss path; herald probabilities remain outside
+    the Pauli circuit/DEM model. Visual replay preserves each measurement kind. This
     avoids inferring lowered measurement IDs from raw QIS operation order,
     which is not stable under runtime scheduling or transport.
     """
@@ -421,7 +421,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                     msg = f"Lowered Idle gate expected one duration param, got {params!r}"
                     raise ValueError(msg)
                 tick.idle(_runtime_idle_seconds_to_time_units(params[0]), qubits)
-            elif gate_type in {"MZ", "MeasureLeaked", "MeasureZLeaked"}:
+            elif gate_type in {"MZ", "MeasureLeaked", "MeasureZLeaked", "MeasureZLost", "MeasureZLeakedLost"}:
                 if not isinstance(gate.get("measurement_result_ids"), list):
                     msg = (
                         f"Lowered {gate_type} trace is missing measurement_result_ids; "
@@ -451,8 +451,14 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                         "MeasCrosstalkGlobalPayload",
                         qubits,
                     )
-                if preserve_measurement_kinds and gate_type in {"MeasureLeaked", "MeasureZLeaked"}:
-                    tick.measure_leaked_with_ids(qubits, meas_ids)
+                if preserve_measurement_kinds and gate_type != "MZ":
+                    insert_measurement = {
+                        "MeasureLeaked": "measure_leaked_with_ids",
+                        "MeasureZLeaked": "measure_leaked_with_ids",
+                        "MeasureZLost": "measure_lost_with_ids",
+                        "MeasureZLeakedLost": "measure_leaked_lost_with_ids",
+                    }[gate_type]
+                    getattr(tick, insert_measurement)(qubits, meas_ids)
                 else:
                     tick.mz_with_ids(qubits, meas_ids)
             elif gate_type == "MeasCrosstalkGlobalPayload":

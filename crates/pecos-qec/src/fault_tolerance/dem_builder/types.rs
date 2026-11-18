@@ -4858,7 +4858,7 @@ impl PerGateTypeNoise {
     ///
     /// # Errors
     ///
-    /// Returns an error if this model carries invalid probabilities, requested idle noise, or any
+    /// Returns an error for unmapped per-gate rates, invalid probabilities, requested idle noise, or any
     /// `GateType::Idle` rates, including base gate-rate keys -- idle noise cannot be
     /// represented in the returned Pauli channel.
     #[cfg(feature = "neo")]
@@ -4890,13 +4890,13 @@ impl PerGateTypeNoise {
             if self.rates_1q.contains_key(&gate) {
                 continue;
             }
-            channel = channel.with_1q_rates(core_gate_to_neo(gate), [total / 3.0; 3])?;
+            channel = channel.with_1q_rates(core_gate_to_neo(gate)?, [total / 3.0; 3])?;
         }
         for (&gate, &rates) in &self.rates_1q {
-            channel = channel.with_1q_rates(core_gate_to_neo(gate), rates)?;
+            channel = channel.with_1q_rates(core_gate_to_neo(gate)?, rates)?;
         }
         for (&(gate, qubit), &rates) in &self.rates_1q_per_qubit {
-            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate), qubit, rates)?;
+            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate)?, qubit, rates)?;
         }
 
         for (&gate, &total) in &self.base.p2_gate_rates {
@@ -4904,16 +4904,16 @@ impl PerGateTypeNoise {
                 continue;
             }
             channel = channel.with_2q_rates(
-                core_gate_to_neo(gate),
+                core_gate_to_neo(gate)?,
                 qec_2q_rates_to_neo([total / 15.0; 15]),
             )?;
         }
         for (&gate, &rates) in &self.rates_2q {
-            channel = channel.with_2q_rates(core_gate_to_neo(gate), qec_2q_rates_to_neo(rates))?;
+            channel = channel.with_2q_rates(core_gate_to_neo(gate)?, qec_2q_rates_to_neo(rates))?;
         }
         for (&(gate, first, second), &rates) in &self.rates_2q_per_qubits {
             channel = channel.with_2q_rates_for_qubits(
-                core_gate_to_neo(gate),
+                core_gate_to_neo(gate)?,
                 first,
                 second,
                 qec_2q_rates_to_neo(rates),
@@ -4932,8 +4932,10 @@ impl PerGateTypeNoise {
 }
 
 #[cfg(feature = "neo")]
-fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
-    match gate {
+fn core_gate_to_neo(
+    gate: GateType,
+) -> pecos_neo::noise::validation::ValidationResult<pecos_neo::GateType> {
+    Ok(match gate {
         GateType::I => pecos_neo::GateType::I,
         GateType::X => pecos_neo::GateType::X,
         GateType::Y => pecos_neo::GateType::Y,
@@ -4977,9 +4979,19 @@ fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
         GateType::QFree => pecos_neo::GateType::QFree,
         GateType::Idle => pecos_neo::GateType::Idle,
         unsupported => {
-            panic!("unsupported gate type for NEO per-gate noise conversion: {unsupported:?}")
+            let reason = if unsupported.is_recordless_z_measurement() {
+                "neo has no matching herald gate"
+            } else {
+                "neo has no matching gate for per-gate noise conversion"
+            };
+            return Err(pecos_neo::noise::validation::ValidationError::new(
+                format!("per-gate rate for {unsupported}"),
+                reason,
+            )
+            .with_value(&unsupported.to_string())
+            .with_suggestion("remove the per-gate rate"));
         }
-    }
+    })
 }
 
 #[cfg(feature = "neo")]
@@ -8065,6 +8077,26 @@ fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "neo")]
+    #[test]
+    fn neo_unmapped_gate_rates_return_actionable_errors() {
+        use super::*;
+        for gate in [
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+            GateType::Custom,
+        ] {
+            let noise = PerGateTypeNoise::from_base_noise(NoiseConfig::default())
+                .with_1q_rates(gate, [0.01; 3]);
+            let error = noise
+                .to_neo_channel()
+                .expect_err("unmapped rate must fail")
+                .to_string();
+            assert!(error.contains(&gate.to_string()), "{error}");
+            assert!(error.contains("remove the per-gate rate"), "{error}");
+        }
+    }
+
     use super::is_two_qubit_noise_gate;
     use pecos_core::CliffordLowering;
     use pecos_core::gate_type::GateType;

@@ -3526,7 +3526,8 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
         // Malformed DEM text is bad caller input, as the other DEM surfaces
         // already report it.
         pecos_decoders::DecoderError::BackendUnavailable { .. }
-        | pecos_decoders::DecoderError::InvalidDemSyntax(_) => {
+        | pecos_decoders::DecoderError::InvalidDemSyntax(_)
+        | pecos_decoders::DecoderError::InvalidSyndrome(_) => {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
         }
         pecos_decoders::DecoderError::InternalError(message) => {

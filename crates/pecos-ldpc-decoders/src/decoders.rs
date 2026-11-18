@@ -14,19 +14,37 @@ use cxx::UniquePtr;
 use ndarray::{Array1, ArrayView1};
 use std::collections::BTreeMap;
 
-/// Helper function to prepare channel probabilities
+/// Prepare finite, strictly interior channel probabilities for raw LDPC kernels.
+/// DEM-built decoders handle certain and impossible mechanisms exactly through
+/// support reduction before reaching this boundary.
 fn prepare_channel_probs(
     pcm_cols: usize,
     error_rate: Option<f64>,
     error_channel: Option<&[f64]>,
 ) -> Result<Vec<f64>, LdpcError> {
     match (error_rate, error_channel) {
-        (Some(rate), None) => Ok(vec![rate; pcm_cols]),
+        (Some(rate), None) => {
+            if !(rate > 0.0 && rate < 1.0) {
+                return Err(LdpcError::InvalidInput(format!(
+                    "error_rate must be finite and in (0, 1), got {rate}; DEM-built decoders handle certain and impossible mechanisms exactly"
+                )));
+            }
+            Ok(vec![rate; pcm_cols])
+        }
         (None, Some(probs)) => {
             if probs.len() != pcm_cols {
                 return Err(LdpcError::InvalidInput(
                     "Error channel length must match number of columns".to_string(),
                 ));
+            }
+            if let Some((column, p)) = probs
+                .iter()
+                .enumerate()
+                .find(|(_, p)| !(**p > 0.0 && **p < 1.0))
+            {
+                return Err(LdpcError::InvalidInput(format!(
+                    "error_channel[{column}] must be finite and in (0, 1), got {p}; DEM-built decoders handle certain and impossible mechanisms exactly"
+                )));
             }
             Ok(probs.to_vec())
         }
@@ -335,7 +353,11 @@ impl BpLsdDecoder {
         crate::builders::BpLsdBuilder::new(pcm)
     }
 
-    /// Create a new BP+LSD decoder
+    /// Create a new BP+LSD decoder.
+    ///
+    /// `Off` is rejected because LSD always runs. `Osd0` requires order zero;
+    /// positive orders require a reprocessing method (`OsdCs` or `OsdE`). At order
+    /// zero every accepted method (`Osd0`, `OsdCs`, `OsdE`) runs LSD-0.
     ///
     /// # Errors
     ///
@@ -358,6 +380,18 @@ impl BpLsdDecoder {
         serial_schedule_order: Option<&[i32]>,
         random_schedule_seed: Option<i32>,
     ) -> Result<Self, LdpcError> {
+        if lsd_method == OsdMethod::Off {
+            return Err(LdpcError::InvalidInput(format!(
+                "lsd_method Off with lsd_order {lsd_order}: LSD cannot be disabled; use Osd0 with lsd_order 0 for LSD-0, or OsdCs/OsdE with a positive order for reprocessing"
+            )));
+        }
+
+        if lsd_method == OsdMethod::Osd0 && lsd_order > 0 {
+            return Err(LdpcError::InvalidInput(format!(
+                "lsd_method Osd0 with lsd_order {lsd_order}: use OsdCs or OsdE for reprocessing, or lsd_order 0"
+            )));
+        }
+
         // Validate input type - LSD requires syndrome input
         if input_vector_type != InputVectorType::Syndrome {
             return Err(LdpcError::InvalidInput(
@@ -517,7 +551,7 @@ impl BpLsdDecoder {
         }
     }
 
-    /// Get the LSD order
+    /// Get the LSD order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     #[must_use]
     pub fn lsd_order(&self) -> usize {
         usize::try_from(ffi::get_lsd_order_lsd(&self.inner)).unwrap_or(0)
@@ -615,7 +649,7 @@ pub struct LsdStatistics {
     pub elapsed_time: u64,
     /// LSD method used
     pub lsd_method: OsdMethod,
-    /// LSD order parameter
+    /// LSD order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     pub lsd_order: usize,
 }
 
@@ -954,7 +988,8 @@ impl UnionFindDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome or LLR lengths don't match expected sizes,
+    /// Returns `LdpcError::InvalidInput` if the syndrome or LLR lengths don't match expected sizes
+    /// or an LLR is NaN (infinite LLRs are allowed),
     /// or `LdpcError::Ldpc` if the C++ decoder encounters an error.
     pub fn decode(
         &mut self,
@@ -975,6 +1010,13 @@ impl UnionFindDecoder {
                 "LLR length {} does not match bit count {}",
                 llrs.len(),
                 self.bit_count()
+            )));
+        }
+
+        // NaN is not a valid sorting key; infinite weights remain valid.
+        if let Some(index) = llrs.iter().position(|llr| llr.is_nan()) {
+            return Err(LdpcError::InvalidInput(format!(
+                "LLR at index {index} is NaN"
             )));
         }
 
@@ -1139,7 +1181,8 @@ impl BeliefFindDecoder {
     /// # Errors
     ///
     /// Returns `LdpcError::InvalidInput` if the syndrome length doesn't match the check count,
-    /// or `LdpcError` if either the BP or Union Find decoding fails.
+    /// or `LdpcError::Ldpc` if BP produces a NaN log-probability ratio before
+    /// Union Find fallback or either decoding stage fails.
     ///
     /// # Panics
     ///
@@ -1163,6 +1206,11 @@ impl BeliefFindDecoder {
 
         // BP didn't converge, use Union Find with soft information from BP
         let llrs = self.bp_decoder.log_prob_ratios()?;
+        if let Some(bit) = llrs.iter().position(|llr| llr.is_nan()) {
+            return Err(LdpcError::Ldpc(format!(
+                "BP produced a NaN log-probability ratio for bit {bit}"
+            )));
+        }
         let llrs_slice = llrs.as_slice().expect("LLR array must be contiguous");
 
         // Union Find visits bits in ascending weight order, so lower means more

@@ -4765,6 +4765,42 @@ impl PyTickHandle {
         Ok(slf)
     }
 
+    /// Insert a loss-aware Z measurement with externally assigned result IDs.
+    ///
+    /// Outcomes can be 0, 1, or 3 (lost). IDs are reserved, as with
+    /// `measure_leaked_with_ids`, without creating Boolean annotation references.
+    fn measure_lost_with_ids(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+        meas_ids: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_measurement_with_ids(
+            py,
+            Gate::measure_z_lost(&qubits),
+            &meas_ids,
+        )?;
+        Ok(slf)
+    }
+
+    /// Insert a leakage/loss-aware Z measurement with externally assigned IDs.
+    ///
+    /// Outcomes can be 0, 1, 2 (leaked), or 3 (lost). Returns this handle for
+    /// metadata; these IDs are not Boolean detector-annotation references.
+    fn measure_leaked_lost_with_ids(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+        meas_ids: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_measurement_with_ids(
+            py,
+            Gate::measure_z_leaked_lost(&qubits),
+            &meas_ids,
+        )?;
+        Ok(slf)
+    }
+
     /// Measure and free qubits (destructive measurement).
     ///
     /// Measure and free qubits (destructive measurement).

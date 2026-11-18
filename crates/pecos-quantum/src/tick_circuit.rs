@@ -669,10 +669,10 @@ fn gate_batch_has_zero_physical_duration(gate: GateBatchRef<'_>) -> bool {
     }
 }
 
-// Runtime leakage measurements emit outcomes too, even though they are not
+// Runtime herald measurements emit outcomes too, even though they are not
 // automatically allocated Boolean analysis records. Preserve their ordering.
 pub(crate) fn is_measurement_for_scheduling(gate_type: GateType) -> bool {
-    gate_type.consumes_measurement_record() || gate_type == GateType::MeasureZLeaked
+    gate_type.consumes_measurement_record() || gate_type.is_recordless_z_measurement()
 }
 
 impl Tick {
@@ -4183,34 +4183,40 @@ mod tests {
         );
     }
 
-    /// `MeasureZLeaked` must not be minted a `MeasId` on the way to a
-    /// `TickCircuit` when `DagCircuit` does not mint one on the way in. It was,
-    /// so an id-less `MeasureZLeaked` took the id a real measurement already
+    /// No Z herald may be minted a `MeasId` on the way to a `TickCircuit`
+    /// when `DagCircuit` does not mint one on the way in. Previously, an
+    /// id-less `MeasureZLeaked` took the id a real measurement already
     /// held, and converting back reported two measurements sharing an id.
     #[test]
     fn measure_leaked_survives_a_dag_tick_dag_round_trip() {
-        let mut dag = DagCircuit::new();
-        dag.pz(&[0, 1]);
-        dag.add_gate_auto_wire(Gate::measure_z_leaked(&[0usize]));
-        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
-        assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId::from_raw(0));
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut dag = DagCircuit::new();
+            dag.pz(&[0, 1]);
+            dag.add_gate_auto_wire(Gate::simple(flavor, vec![0.into()]));
+            let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+            assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId::from_raw(0));
 
-        let tc = TickCircuit::from(&dag);
-        let ids: Vec<usize> = tc
-            .iter_gate_batches()
-            .flat_map(|batch| {
-                batch
-                    .as_gate()
-                    .meas_ids
-                    .iter()
-                    .map(|id| id.index())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        assert_eq!(ids, vec![0], "only the MZ carries an id");
+            let tc = TickCircuit::from(&dag);
+            let ids: Vec<usize> = tc
+                .iter_gate_batches()
+                .flat_map(|batch| {
+                    batch
+                        .as_gate()
+                        .meas_ids
+                        .iter()
+                        .map(|id| id.index())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert_eq!(ids, vec![0], "only the MZ carries an id");
 
-        let round_tripped = DagCircuit::try_from(&tc).expect("valid circuit");
-        assert_eq!(round_tripped.num_measurement_ids(), 1);
+            let round_tripped = DagCircuit::try_from(&tc).expect("valid circuit");
+            assert_eq!(round_tripped.num_measurement_ids(), 1);
+        }
     }
 
     #[test]
@@ -6817,9 +6823,16 @@ mod tests {
     }
 
     #[test]
-    fn compaction_preserves_leakage_measurement_order_and_ids() {
+    fn compaction_preserves_herald_measurement_order_and_ids() {
         for kinds in [
             [GateType::MZ, GateType::MeasureZLeaked, GateType::MZ],
+            [GateType::MZ, GateType::MeasureZLost, GateType::MZ],
+            [GateType::MZ, GateType::MeasureZLeakedLost, GateType::MZ],
+            [
+                GateType::MeasureZLost,
+                GateType::MZ,
+                GateType::MeasureZLeakedLost,
+            ],
             [
                 GateType::MeasureZLeaked,
                 GateType::MZ,
@@ -6833,11 +6846,7 @@ mod tests {
                     circuit.tick().x(&[4]);
                 }
                 for ((kind, q), mid) in kinds.into_iter().zip([4, 1, 3]).zip([42, 7, 20]) {
-                    let mut gate = if kind == GateType::MZ {
-                        Gate::mz(&[q])
-                    } else {
-                        Gate::measure_z_leaked(&[q])
-                    };
+                    let mut gate = Gate::simple(kind, vec![QubitId(q)]);
                     gate.meas_ids.push(MeasId::from_raw(mid));
                     let idx = circuit.tick().index();
                     let tick = circuit.get_tick_mut(idx).unwrap();

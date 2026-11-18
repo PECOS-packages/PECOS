@@ -168,7 +168,7 @@ def test_range_cannot_bypass_trace_validation():
         circuit_diagram_panels(trace, [])
 
 
-@pytest.mark.parametrize("gate_type", ["MZ", "MeasureLeaked", "MeasureZLeaked"])
+@pytest.mark.parametrize("gate_type", ["MZ", "MeasureLeaked", "MeasureZLeaked", "MeasureZLost", "MeasureZLeakedLost"])
 def test_trace_measurement_labels_keep_source_identity(gate_type):
     from pecos.visualization import circuit_diagram_panels
 
@@ -177,7 +177,12 @@ def test_trace_measurement_labels_keep_source_identity(gate_type):
     original = copy.deepcopy(trace)
     diagram = circuit_diagram(trace, start=2, stop=3, show_measurement_ids=True)
     labels = list(ET.fromstring(str(diagram)).itertext())  # noqa: S314 - generated SVG
-    symbol = "MZ_L" if gate_type in {"MeasureLeaked", "MeasureZLeaked"} else "MZ"
+    symbol = {
+        "MeasureLeaked": "MZ_L",
+        "MeasureZLeaked": "MZ_L",
+        "MeasureZLost": "MLo",
+        "MeasureZLeakedLost": "MLL",
+    }.get(gate_type, "MZ")
     assert f"{symbol}[m7]" in labels
     panels = circuit_diagram_panels(trace, [("Readout", 2, 3)], format="tikz", show_measurement_ids=True)
     assert f"{symbol.replace('_', r'\_')}[m7]" in str(panels[0])
@@ -203,7 +208,15 @@ def mixed_measurement_trace(kinds=("MZ", "MeasureLeaked", "MZ"), *, different_me
     return trace
 
 
-@pytest.mark.parametrize("kinds", [("MZ", "MeasureLeaked", "MZ"), ("MeasureLeaked", "MZ", "MeasureLeaked")])
+@pytest.mark.parametrize(
+    "kinds",
+    [
+        ("MZ", "MeasureLeaked", "MZ"),
+        ("MeasureLeaked", "MZ", "MeasureLeaked"),
+        ("MZ", "MeasureZLost", "MZ"),
+        ("MeasureZLeakedLost", "MZ", "MeasureZLost"),
+    ],
+)
 @pytest.mark.parametrize("different_metadata", [False, True])
 def test_visual_replay_preserves_native_measurements_and_metadata(kinds, different_metadata):
     from pecos.tracing import _qis_operation_trace_to_visualization_circuit, qis_operation_trace_to_tick_circuit
@@ -237,10 +250,11 @@ def test_mixed_trace_exports_keep_labels_and_titles(output_format):
 
 
 @pytest.mark.parametrize("invalid", ["duplicate", "cardinality", "missing_ids", "source_mismatch", "incomplete"])
-def test_preserved_leakage_trace_rejects_invalid_provenance_even_outside_panel(invalid):
+@pytest.mark.parametrize("herald", ["MeasureLeaked", "MeasureZLost", "MeasureZLeakedLost"])
+def test_preserved_herald_trace_rejects_invalid_provenance_even_outside_panel(invalid, herald):
     from pecos.visualization import circuit_diagram_panels
 
-    trace = mixed_measurement_trace()
+    trace = mixed_measurement_trace(("MZ", herald, "MZ"))
     leakage = trace[0]["lowered_quantum_ops"][1]
     if invalid == "duplicate":
         leakage["measurement_result_ids"] = [42]

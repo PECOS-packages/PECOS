@@ -59,6 +59,8 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "CCX" | "Toffoli" => Ok(GateType::CCX),
         "Measure" | "MeasureZ" | "MZ" => Ok(GateType::MZ),
         "MeasureLeaked" | "MeasureZLeaked" => Ok(GateType::MeasureZLeaked),
+        "MeasureZLost" => Ok(GateType::MeasureZLost),
+        "MeasureZLeakedLost" => Ok(GateType::MeasureZLeakedLost),
         "MeasureFree" => Ok(GateType::MeasureFree),
         "Prep" | "PZ" => Ok(GateType::PZ),
         "QAlloc" => Ok(GateType::QAlloc),

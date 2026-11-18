@@ -66,6 +66,12 @@ class PhaseAdapter:
         return gates
 
 
+def test_runtime_descriptor_publication_is_atomic(tmp_path, scheduled_support):
+    probe = scheduled_support.descriptor_probe(tmp_path)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert probe.stdout.strip() == "base_init=0 wrapped_start=1 errno=0"
+
+
 def test_event_translation_and_shot_factories(event_runtime):
     contexts = []
 

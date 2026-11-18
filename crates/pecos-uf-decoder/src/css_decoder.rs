@@ -240,20 +240,14 @@ impl CssUfDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `DecoderError` if decoding fails.
+    /// Returns [`DecoderError::InvalidDimensions`] if `x_syndrome` or
+    /// `z_syndrome` does not have exactly one entry per detector of its DEM.
     pub fn decode_css(
         &mut self,
         x_syndrome: &[u8],
         z_syndrome: &[u8],
     ) -> Result<(u64, u64), DecoderError> {
-        for (actual, expected) in [
-            (x_syndrome.len(), self.x_num_detectors),
-            (z_syndrome.len(), self.z_num_detectors),
-        ] {
-            if actual != expected {
-                return Err(DecoderError::InvalidDimensions { expected, actual });
-            }
-        }
+        self.validate_syndrome_lengths(x_syndrome, z_syndrome)?;
         if let Some(mapping) = &self.qubit_map {
             let pairs = mapping.pairs.clone();
             Ok(self.decode_uiuf(x_syndrome, z_syndrome, &pairs))
@@ -266,8 +260,18 @@ impl CssUfDecoder {
     }
 
     /// Count erasures that the intersection would produce (diagnostic).
-    pub fn count_intersection_erasures(&mut self, x_syndrome: &[u8], z_syndrome: &[u8]) -> usize {
-        if let Some(mapping) = &self.qubit_map {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidDimensions`] if `x_syndrome` or
+    /// `z_syndrome` does not have exactly one entry per detector of its DEM.
+    pub fn count_intersection_erasures(
+        &mut self,
+        x_syndrome: &[u8],
+        z_syndrome: &[u8],
+    ) -> Result<usize, DecoderError> {
+        self.validate_syndrome_lengths(x_syndrome, z_syndrome)?;
+        Ok(if let Some(mapping) = &self.qubit_map {
             self.x_decoder.syndrome_validate(x_syndrome);
             self.z_decoder.syndrome_validate(z_syndrome);
             let mut count = 0;
@@ -281,7 +285,23 @@ impl CssUfDecoder {
             count
         } else {
             0
+        })
+    }
+
+    fn validate_syndrome_lengths(
+        &self,
+        x_syndrome: &[u8],
+        z_syndrome: &[u8],
+    ) -> Result<(), DecoderError> {
+        for (actual, expected) in [
+            (x_syndrome.len(), self.x_num_detectors),
+            (z_syndrome.len(), self.z_num_detectors),
+        ] {
+            if actual != expected {
+                return Err(DecoderError::InvalidDimensions { expected, actual });
+            }
         }
+        Ok(())
     }
 
     /// Full UIUF algorithm.

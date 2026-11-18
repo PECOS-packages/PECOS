@@ -1,7 +1,9 @@
 //! Tests for newly added decoders (Flip, Union Find)
 
 use ndarray::{Array1, arr1};
-use pecos_ldpc_decoders::{FlipDecoder, SparseMatrix, UfMethod, UnionFindDecoder};
+use pecos_ldpc_decoders::{
+    FlipDecoder, LdpcError, SparseMatrix, UfMethod, UnionFindDecoder, WeightedUnionFindDecoder,
+};
 
 /// Create a repetition code parity check matrix
 fn repetition_code(n: usize) -> SparseMatrix {
@@ -195,6 +197,30 @@ mod union_find_decoder_tests {
 
         assert_eq!(decoder.check_count(), 4);
         assert_eq!(decoder.bit_count(), 6);
+    }
+
+    #[test]
+    fn test_weighted_uf_new_checks_llr_length() {
+        use pecos_decoder_core::{DemCheckMatrix, ObservableDecoder};
+
+        let dem = "error(0.1) D0 L0\nerror(0.2) D1";
+        let build = |llrs: Vec<f64>| {
+            let matrix = DemCheckMatrix::from_dem_str(dem).unwrap();
+            let pcm = SparseMatrix::from_dense(&matrix.check_matrix.view());
+            let inner = UnionFindDecoder::new(&pcm, UfMethod::Inversion).unwrap();
+            WeightedUnionFindDecoder::new(inner, matrix, llrs)
+        };
+
+        let Err(LdpcError::InvalidInput(message)) = build(vec![1.0]) else {
+            panic!("a one-entry LLR vector for two bits must be rejected");
+        };
+        assert!(message.contains("length 1"), "{message}");
+        assert!(message.contains("2 bits"), "{message}");
+
+        for llrs in [vec![], vec![2.0, 1.4]] {
+            let mut decoder = build(llrs).unwrap();
+            assert_eq!(decoder.decode_obs(&[1, 0]).unwrap().to_u64(), Some(1));
+        }
     }
 }
 

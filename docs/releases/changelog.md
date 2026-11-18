@@ -41,15 +41,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   below about 5e-7 became `error(0.000000)`; the other writers kept six, seven or
   eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
 - **Breaking:** Python decoder surfaces now raise `ValueError` for caller input
-  errors on spec-built, batch, sampler and logical paths, including wrong syndrome
-  lengths and empty reduced support. This also covers `CssUfDecoder` construction, `decode_css`, and
-  `decode_count_batch`, as well as raw
-  `pecos_rslib.decoders` classes, classifying the first `DecoderError` in their
-  error chain (for example, PyMatching configuration errors). Internal failures remain
-  `RuntimeError`. `DemAwareDecoder.from_dem(..., "union_find")` rejects `error_rate`
-  because this entry point has no prior override; the spec `union_find` uses DEM
-  priors as edge weights. The Rust `CheckMatrixObservableDecoder` adapter now
-  requires inner errors convertible to `DecoderError`, preserving their category.
+  errors on spec-built, batch, sampler and logical paths, including wrong
+  syndrome lengths and empty reduced support. This also covers `CssUfDecoder`
+  construction, `decode_css`, `count_erasures` and `decode_count_batch`, as well
+  as raw `pecos_rslib.decoders` classes, classifying the first `DecoderError` in
+  their error chain (for example, PyMatching configuration errors). Internal
+  failures remain `RuntimeError`. `DemAwareDecoder.from_dem(..., "union_find")`
+  rejects `error_rate` because this entry point has no prior override; the spec
+  `union_find` uses DEM priors as edge weights. The Rust
+  `CheckMatrixObservableDecoder` adapter now requires inner errors convertible
+  to `DecoderError`, preserving their category.
+
+- **Fixed:** Logical-subgraph sub-DEMs now declare their full detector and
+  observable widths, so spec families no longer reject shots whose last local
+  detector has no edges.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,

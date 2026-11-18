@@ -180,3 +180,13 @@ def test_css_empty_batch_still_validates_split():
     decoder = CssUfDecoder("error(0.1) D0 L0", "error(0.1) D0 L0")
     with pytest.raises(ValueError, match="expected 1, got 0"):
         decoder.decode_count_batch([], [], 0)
+
+
+@pytest.mark.parametrize(("x_length", "z_length"), [(0, 2), (2, 2), (1, 1), (1, 3)])
+def test_css_count_erasures_wrong_lengths(x_length, z_length):
+    from pecos_rslib.qec import CssUfDecoder
+
+    decoder = CssUfDecoder("error(0.1) D0 L0", "error(0.1) D0 L0\ndetector D1")
+    with pytest.raises(ValueError, match="Invalid input dimensions"):
+        decoder.count_erasures(bytes(x_length), bytes(z_length))
+    assert decoder.count_erasures(bytes(1), bytes(2)) == 0

@@ -155,6 +155,18 @@ impl ObservableDecoder for ModelDimensionDecoder {
         num_detectors: usize,
     ) -> Result<Vec<pecos_decoder_core::obs_mask::ObsMask>, DecoderError> {
         self.validate_length(num_detectors)?;
+        let expected = num_shots.checked_mul(num_detectors).ok_or_else(|| {
+            DecoderError::InvalidSyndrome(format!(
+                "num_shots {num_shots} times num_detectors {num_detectors} overflows usize; the shots buffer holds {} bytes",
+                shots.len()
+            ))
+        })?;
+        if shots.len() != expected {
+            return Err(DecoderError::BatchSizeMismatch {
+                expected,
+                actual: shots.len(),
+            });
+        }
         self.inner
             .decode_batch_to_observables(shots, num_shots, num_detectors)
     }
@@ -904,9 +916,9 @@ fn build_union_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErro
             }
         })
         .collect();
-    Ok(Box::new(crate::WeightedUnionFindDecoder::new(
-        decoder, matrix, llrs,
-    )))
+    Ok(Box::new(
+        crate::WeightedUnionFindDecoder::new(decoder, matrix, llrs).map_err(internal)?,
+    ))
 }
 
 #[cfg(not(feature = "ldpc"))]
@@ -1467,14 +1479,15 @@ mod tests {
 
     #[cfg(feature = "ldpc")]
     #[test]
-    fn weighted_union_find_llr_mismatch_is_internal() {
+    fn weighted_union_find_llr_mismatch_is_rejected_at_construction() {
         let (matrix, sparse) = dem_matrix("error(0.1) D0 L0\nerror(0.2) D1").unwrap();
         let inner = crate::UnionFindDecoder::new(&sparse, crate::UfMethod::Inversion).unwrap();
-        let mut decoder = crate::WeightedUnionFindDecoder::new(inner, matrix, vec![1.0]);
         assert!(matches!(
-            decoder.decode_obs(&[0, 0]),
-            Err(DecoderError::InternalError(_))
+            crate::WeightedUnionFindDecoder::new(inner, matrix, vec![1.0]),
+            Err(crate::LdpcError::InvalidInput(_))
         ));
+        let mut built = build_union_find("error(0.1) D0 L0\nerror(0.2) D1").unwrap();
+        assert_eq!(built.decode_obs(&[1, 0]).unwrap().to_u64(), Some(1));
     }
 
     #[test]
@@ -1506,6 +1519,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn model_dimensions_guard_batch_buffer_length() {
+        struct AcceptsAnything;
+        impl ObservableDecoder for AcceptsAnything {
+            fn decode_obs(
+                &mut self,
+                _: &[u8],
+            ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+                Ok(pecos_decoder_core::obs_mask::ObsMask::new())
+            }
+        }
+        let mut decoder = ModelDimensionDecoder {
+            inner: Box::new(AcceptsAnything),
+            num_detectors: 3,
+        };
+        for actual in [5, 7] {
+            let shots = vec![0; actual];
+            assert!(matches!(
+                decoder.decode_batch_to_observables(&shots, 2, 3),
+                Err(DecoderError::BatchSizeMismatch { expected: 6, actual: n }) if n == actual
+            ));
+        }
+        assert!(matches!(
+            decoder.decode_batch_to_observables(&[0; 6], usize::MAX, 3),
+            Err(DecoderError::InvalidSyndrome(_))
+        ));
+        assert_eq!(
+            decoder
+                .decode_batch_to_observables(&[0; 6], 2, 3)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[cfg(feature = "ldpc")]

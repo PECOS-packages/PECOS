@@ -657,12 +657,22 @@ fn test_invalid_node_indices() {
     let result = decoder.add_edge(0, 10, &[0], Some(1.0), None, None);
     assert!(result.is_ok(), "PyMatching should auto-expand nodes");
     assert!(decoder.num_nodes() > 5, "Graph should have expanded");
+    assert_eq!(
+        decoder.num_detectors(),
+        11,
+        "add_edge must refresh the detector count"
+    );
 
     // Test adding boundary edge with high node index
     let boundary_result = decoder.add_boundary_edge(20, &[0], Some(1.0), None, None);
     assert!(
         boundary_result.is_ok(),
         "PyMatching should auto-expand for boundary edges"
+    );
+    assert_eq!(
+        decoder.num_detectors(),
+        21,
+        "add_boundary_edge must refresh the detector count"
     );
 
     // Test adding edge with high observable index

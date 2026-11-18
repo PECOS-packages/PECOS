@@ -1071,13 +1071,27 @@ pub struct WeightedUnionFindDecoder {
 
 impl WeightedUnionFindDecoder {
     /// Wrap a Union-Find decoder with DEM priors and observable mappings.
-    #[must_use]
+    ///
+    /// `llrs` is either empty (unweighted growth) or holds one weight per
+    /// decoder bit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LdpcError::InvalidInput`] if `llrs` is non-empty and its
+    /// length differs from `decoder.bit_count()`.
     pub fn new(
         decoder: UnionFindDecoder,
         dem: pecos_decoder_core::DemCheckMatrix,
         llrs: Vec<f64>,
-    ) -> Self {
-        Self { decoder, dem, llrs }
+    ) -> Result<Self, LdpcError> {
+        let bit_count = decoder.bit_count();
+        if !llrs.is_empty() && llrs.len() != bit_count {
+            return Err(LdpcError::InvalidInput(format!(
+                "llrs has length {}, but the union-find decoder has {bit_count} bits; pass one LLR per bit or an empty vector for unweighted decoding",
+                llrs.len()
+            )));
+        }
+        Ok(Self { decoder, dem, llrs })
     }
 }
 
@@ -1086,13 +1100,6 @@ impl pecos_decoder_core::ObservableDecoder for WeightedUnionFindDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
-        if self.llrs.len() != self.decoder.bit_count() {
-            return Err(pecos_decoder_core::DecoderError::InternalError(format!(
-                "LLR length {} does not match bit count {} in weighted union-find adapter",
-                self.llrs.len(),
-                self.decoder.bit_count(),
-            )));
-        }
         let syndrome = Array1::from_vec(syndrome.to_vec());
         // Grow one bit at a time in LLR order. Zero means all candidates per
         // step and is translated at the Rust boundary since the segfault fix.

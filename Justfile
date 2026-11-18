@@ -319,6 +319,11 @@ rslib-rust-test:
       LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       cargo test --locked -p pecos-rslib --lib
 
+# Inspector DOM checks (install npm dependencies as described in the test README).
+[group('test')]
+test-inspector:
+    npm test --prefix crates/pecos-quantum/tests/inspector
+
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:
@@ -1106,8 +1111,8 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
-# The python-ci-sync* recipes install the pure-Python side of the workspace
-# only. The native packages are listed with `--package` so their dependencies
+# The python-ci-sync* recipes install the Python packages and the small standard
+# runtime plugin. The main native bindings are listed with `--package` so their dependencies
 # land in the environment, but are excluded from installation with
 # `--no-install-package`: otherwise uv builds release wheels of each one
 # (~20 min on a 4-core runner) that the following `pecos python build`
@@ -1123,6 +1128,7 @@ python-ci-sync-test:
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
       --package quantum-pecos \
+      --package pecos-selene-runtime-plugin \
       --no-install-package pecos-rslib \
       --no-install-package pecos-rslib-exp \
       --no-install-package pecos-rslib-llvm

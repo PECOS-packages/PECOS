@@ -85,6 +85,14 @@ in the canonical Guppy measurement stream, as in Stim, and
 `result_ref("tag", occurrence=...)` is the explicit form when you need its
 extra selectors.
 
+For a check whose raw XOR is one noiselessly, include a literal one:
+`Detector("m0", "m1", 1)`. The same syntax works for
+`Observable(rec[-1], 1, id=0)`. Literal zero is neutral and repeated ones cancel;
+`constant=True` and `definition ^ 1` are equivalent alternatives. These offsets
+are applied by the audited build's raw-result evaluation methods and retained
+in its schema fingerprint. Fault DEM supports are unchanged because constants
+cancel in error differences. See [signed-parity semantics](../user-guide/named-qec-gadgets.md#xor-with-a-constant).
+
 Detectors and observables are not named: each one's DEM label is its position in
 the list, so `detectors[0]` is `D0` and `observables[0]` is `L0`. That is the
 identity the decoders and the DEM text use. A tag that no `result()` call emits is a hard error, so

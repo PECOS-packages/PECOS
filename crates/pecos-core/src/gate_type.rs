@@ -591,7 +591,7 @@ impl GateType {
         matches!(self, GateType::TrackedPauliMeta)
     }
 
-    /// Returns true if this gate consumes a measurement record.
+    /// Returns true if this gate consumes a Boolean circuit-analysis record.
     ///
     /// A measurement record is a slot in the classical result stream, named by a
     /// [`MeasId`](crate::MeasId). Every site that allocates, counts, or resolves
@@ -599,9 +599,10 @@ impl GateType {
     /// end up sharing a record. Use this predicate rather than spelling the gate
     /// types out, so there is one place to change.
     ///
-    /// `MeasureZLeaked`, `MeasureZLost`, and `MeasureZLeakedLost` are measurements
-    /// to `Gate::validate` and collapse the qubit, but consume no classical record.
-    /// Record-producing gates and their bases are defined by [`Self::measured_pauli`].
+    /// This is circuit bookkeeping, not a classification of runtime outcomes.
+    /// `MeasureZLeaked`, `MeasureZLost`, and `MeasureZLeakedLost` can return
+    /// herald values through the engines/noise model and carry explicit result
+    /// IDs, but are excluded from this Boolean allocator and annotation policy.
     #[must_use]
     pub const fn consumes_measurement_record(self) -> bool {
         self.measured_pauli().is_some()

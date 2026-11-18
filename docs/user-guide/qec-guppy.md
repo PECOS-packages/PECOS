@@ -2,6 +2,12 @@
 
 This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy_gen`), which generates executable Guppy quantum programs directly from QEC geometry.
 
+For the cited planar 4.8.8 and triangular 6.6.6 constructions, including
+SWAP-superdense extraction and selectable schedules, see
+[Paper color-code constructions](paper-color-codes.md).
+For reusable gadgets with named roles and outcomes, see
+[Authoring and inspecting QEC gadgets](named-qec-gadgets.md).
+
 ## What You'll Learn
 
 - Generating surface code memory experiments

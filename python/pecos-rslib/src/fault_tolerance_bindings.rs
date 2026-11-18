@@ -2364,9 +2364,25 @@ fn contribution_record_to_pydict(
     Ok(dict.unbind())
 }
 
+fn python_circuit_uses_inline_noise(circuit: &Bound<'_, pyo3::PyAny>) -> bool {
+    use pecos_qec::fault_tolerance::dem_builder::{tick_uses_inline_noise, uses_inline_noise};
+    if let Ok(dag) = circuit.extract::<PyRef<'_, PyDagCircuit>>() {
+        uses_inline_noise(&dag.inner)
+    } else if let Ok(tick) = circuit.extract::<PyRef<'_, PyTickCircuit>>() {
+        tick_uses_inline_noise(&tick.inner)
+    } else {
+        false
+    }
+}
+
 #[pymethods]
 impl PyDetectorErrorModel {
     /// Build a DetectorErrorModel directly from a circuit and noise.
+    ///
+    /// Inline Pauli circuits use their channel payloads and reject additional
+    /// nonzero noise rates. Omitted scalar rates resolve to zero for inline
+    /// circuits, or the legacy (.001, .01, .001, .001) values for ideal circuits.
+    /// The pecos_noise_source="inline" attribute also declares a zero-noise circuit.
     ///
     /// Accepts both `TickCircuit` and `DagCircuit`. Reads detector/tracked-Pauli
     /// definitions from circuit metadata.
@@ -2382,13 +2398,14 @@ impl PyDetectorErrorModel {
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
+    #[pyo3(signature = (circuit, p1=None, p2=None, p_meas=None, p_prep=None, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
+    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
-        p1: f64,
-        p2: f64,
-        p_meas: f64,
-        p_prep: f64,
+        p1: Option<f64>,
+        p2: Option<f64>,
+        p_meas: Option<f64>,
+        p_prep: Option<f64>,
         p_idle: Option<f64>,
         t1: Option<f64>,
         t2: Option<f64>,
@@ -2417,8 +2434,14 @@ impl PyDetectorErrorModel {
     ) -> PyResult<Self> {
         use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
 
+        let inline = python_circuit_uses_inline_noise(circuit);
         let noise = apply_noise_options(
-            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            NoiseConfig::new(
+                p1.unwrap_or(if inline { 0.0 } else { 0.001 }),
+                p2.unwrap_or(if inline { 0.0 } else { 0.01 }),
+                p_meas.unwrap_or(if inline { 0.0 } else { 0.001 }),
+                p_prep.unwrap_or(if inline { 0.0 } else { 0.001 }),
+            ),
             p_idle,
             t1,
             t2,
@@ -2464,6 +2487,71 @@ impl PyDetectorErrorModel {
         }
     }
 
+    /// Construct a DEM from independent Bernoulli mechanisms, without sampling
+    /// thresholds or text rounding. This does not accept categorical branches:
+    /// callers must first convert those to independent mechanisms.
+    #[staticmethod]
+    #[pyo3(signature = (mechanisms, *, num_detectors, num_observables, detector_coordinates=None))]
+    fn from_independent_mechanisms(
+        mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
+        num_detectors: u32,
+        num_observables: u32,
+        detector_coordinates: Option<Vec<Option<Vec<f64>>>>,
+    ) -> PyResult<Self> {
+        use pecos_qec::fault_tolerance::dem_builder::{DemOutput, DetectorDef, FaultMechanism};
+        let invalid = pyo3::exceptions::PyValueError::new_err;
+        if let Some(coords) = &detector_coordinates
+            && (coords.len() != num_detectors as usize
+                || coords.iter().flatten().flatten().any(|x| !x.is_finite()))
+        {
+            return Err(invalid(
+                "detector_coordinates must contain one finite vector or None per detector",
+            ));
+        }
+        for (p, detectors, observables) in &mechanisms {
+            if !p.is_finite() || !(0.0..=1.0).contains(p) {
+                return Err(invalid(
+                    "mechanism probabilities must be finite and in [0, 1]",
+                ));
+            }
+            for (targets, count) in [(detectors, num_detectors), (observables, num_observables)] {
+                let unique: std::collections::BTreeSet<_> = targets.iter().collect();
+                if targets.iter().any(|&i| i >= count) || unique.len() != targets.len() {
+                    return Err(invalid(
+                        "mechanism targets must be distinct and within declared dimensions",
+                    ));
+                }
+            }
+        }
+        let mut inner =
+            RustDetectorErrorModel::with_capacity(num_detectors as usize, num_observables as usize);
+        for id in 0..num_detectors {
+            let mut detector = DetectorDef::new(id);
+            detector.coords = detector_coordinates
+                .as_ref()
+                .and_then(|coords| coords[id as usize].clone());
+            inner.add_detector(detector);
+        }
+        for id in 0..num_observables {
+            inner.add_observable(DemOutput::new(id));
+        }
+        for (p, detectors, observables) in mechanisms {
+            if p > 0.0 && (!detectors.is_empty() || !observables.is_empty()) {
+                inner.add_direct_contribution(
+                    FaultMechanism::from_unsorted(detectors, observables),
+                    p,
+                );
+            }
+        }
+        Ok(Self { inner })
+    }
+
+    /// Return grouped independent mechanisms at full floating-point precision.
+    /// Each tuple is (probability, detector IDs, observable IDs).
+    fn independent_mechanisms(&self) -> Vec<(f64, Vec<u32>, Vec<u32>)> {
+        self.inner.to_mechanisms().0
+    }
+
     /// Build a DetectorErrorModel from PECOS DEM metadata JSON.
     ///
     /// This imports observable and tracked-Pauli metadata only; mechanism
@@ -2503,12 +2591,12 @@ impl PyDetectorErrorModel {
         self.inner.num_tracked_paulis()
     }
 
-    /// Detector identities and their optional ``[x, y, time]`` coordinates.
-    fn detector_coordinates(&self) -> Vec<(u32, Option<[f64; 3]>)> {
+    /// Detector identities and their optional annotation coordinate vectors.
+    fn detector_coordinates(&self) -> Vec<(u32, Option<Vec<f64>>)> {
         self.inner
             .detectors
             .iter()
-            .map(|detector| (detector.id, detector.coords))
+            .map(|detector| (detector.id, detector.coords.clone()))
             .collect()
     }
 
@@ -4252,13 +4340,14 @@ impl PyDemSampler {
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
+    #[pyo3(signature = (circuit, p1=None, p2=None, p_meas=None, p_prep=None, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
+    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
-        p1: f64,
-        p2: f64,
-        p_meas: f64,
-        p_prep: f64,
+        p1: Option<f64>,
+        p2: Option<f64>,
+        p_meas: Option<f64>,
+        p_prep: Option<f64>,
         p_idle: Option<f64>,
         t1: Option<f64>,
         t2: Option<f64>,
@@ -4285,8 +4374,14 @@ impl PyDemSampler {
         p2_gate_rates: Option<BTreeMap<String, f64>>,
         p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
+        let inline = python_circuit_uses_inline_noise(circuit);
         let noise = apply_noise_options(
-            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            NoiseConfig::new(
+                p1.unwrap_or(if inline { 0.0 } else { 0.001 }),
+                p2.unwrap_or(if inline { 0.0 } else { 0.01 }),
+                p_meas.unwrap_or(if inline { 0.0 } else { 0.001 }),
+                p_prep.unwrap_or(if inline { 0.0 } else { 0.001 }),
+            ),
             p_idle,
             t1,
             t2,

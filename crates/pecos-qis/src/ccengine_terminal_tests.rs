@@ -1171,6 +1171,13 @@ fn non_measurement_drains_cannot_keep_an_unsatisfiable_read_alive() {
 }
 
 fn deferred_read_quantum(mode: ScheduledTransport) -> pecos_engines::quantum_system::QuantumSystem {
+    deferred_read_quantum_with_capacity(mode, 2)
+}
+
+fn deferred_read_quantum_with_capacity(
+    mode: ScheduledTransport,
+    capacity: usize,
+) -> pecos_engines::quantum_system::QuantumSystem {
     use pecos_engines::noise::IntoNoiseModel;
     use pecos_engines::quantum_system::QuantumSystem;
     use pecos_engines::runtime_frame::ShotContext;
@@ -1199,20 +1206,21 @@ fn deferred_read_quantum(mode: ScheduledTransport) -> pecos_engines::quantum_sys
         }
     }
     let noise = if mode == ScheduledTransport::V7 {
-        ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), |_| {
-            Ok(Box::new(Gates))
-        })
+        ScheduledEventIdleZ::new(
+            ScheduledIdleZ::new(capacity, 0.0, 0.0, 0.0).unwrap(),
+            |_| Ok(Box::new(Gates)),
+        )
         .into_noise_model()
         .unwrap()
     } else if mode == ScheduledTransport::V6 {
-        ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
+        ScheduledIdleZ::new(capacity, 0.0, 0.0, 0.0)
             .unwrap()
             .into_noise_model()
             .unwrap()
     } else {
         Box::new(pecos_engines::noise::PassThroughNoiseModel::default())
     };
-    let mut quantum = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
+    let mut quantum = QuantumSystem::new(noise, Box::new(StateVecEngine::new(capacity)));
     quantum
         .begin_shot(ShotContext {
             run: 0,
@@ -2138,4 +2146,190 @@ fn monte_carlo_build_with_seed_forwards_allocation_hint() {
         .with_seed(42)
         .build_with_seed();
     assert_allocation_hint_error(engine.run(1));
+}
+
+#[test]
+fn pecos_runtime_feedback_repeated_slots_and_terminal_tail_on_all_transports() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = r#"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
+        declare i64 @___lazy_measure_leaked(i64)
+        declare i64 @___read_future_uint(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+            call void @__quantum__qis__x__body(i64 0)
+            %m1 = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+            %ri = call i32 @__quantum__rt__result_get_one(i64 7)
+            %r = icmp ne i32 %ri, 0
+            %ci = call i32 @__quantum__rt__result_get_one(i64 7)
+            %cached = icmp ne i32 %ci, 0
+            %correct = and i1 %r, %cached
+            br i1 %correct, label %feedback, label %failure
+        feedback:
+            call void @__quantum__qis__x__body(i64 1)
+            %measure = call i32 @__quantum__qis__m__body(i64 1, i64 8)
+            %value = call i32 @__quantum__rt__result_get_one(i64 8)
+            %one = icmp eq i32 %value, 1
+            br i1 %one, label %done, label %failure
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+            call void @__quantum__qis__x__body(i64 1)
+            %tail = call i32 @__quantum__qis__m__body(i64 1, i64 9)
+            ret void
+        }
+        attributes #0 = { "EntryPoint" }
+    "#;
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
+    ] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(crate::selene_runtimes::pecos_test_runtime(&[
+                "--max-batch-size=2",
+            ])),
+        );
+        engine.scheduled_transport = mode;
+        engine.set_num_qubits_hint(2);
+        engine
+            .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+            .unwrap();
+        for _ in 0..2 {
+            let mut quantum = deferred_read_quantum(mode);
+            let stage = engine.start(()).unwrap();
+            let shot = finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
+            assert_eq!(shot.data.get("measurement_7"), Some(&Data::U32(1)));
+            assert_eq!(shot.data.get("measurement_9"), Some(&Data::U32(0)));
+            engine.reset_all().unwrap();
+        }
+    }
+}
+
+#[test]
+fn pecos_runtime_shared_selene_program_and_cross_qubit_reused_slot() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let shared = include_str!("../../pecos-selene-runtime/tests/fixtures/feedback.ll");
+    let reordered_slot = r#"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i32 @__quantum__rt__result_get_one(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {
+            %m0 = call i32 @__quantum__qis__m__body(i64 2, i64 9)
+            call void @__quantum__qis__x__body(i64 0)
+            %m1 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %m2 = call i32 @__quantum__qis__m__body(i64 1, i64 0)
+            %ri = call i32 @__quantum__rt__result_get_one(i64 0)
+            %r = icmp ne i32 %ri, 0
+            br i1 %r, label %failure, label %done
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+            ret void
+        }
+        attributes #0 = { "EntryPoint" }
+    "#;
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
+    ] {
+        for (source, slot) in [(shared, "measurement_3"), (reordered_slot, "measurement_0")] {
+            let mut engine = QisEngine::new(
+                Box::new(crate::QisHeliosInterface::new()),
+                Box::new(crate::selene_runtimes::pecos_test_runtime(&[
+                    "--max-batch-size=2",
+                ])),
+            );
+            engine.scheduled_transport = mode;
+            engine.set_num_qubits_hint(3);
+            engine
+                .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+                .unwrap();
+            let mut quantum = deferred_read_quantum_with_capacity(mode, 3);
+            let stage = engine.start(()).unwrap();
+            let result = finish_deferred_read_shot(&mut engine, &mut quantum, stage);
+            engine.reset_all().unwrap();
+            assert_eq!(result.unwrap().data.get(slot), Some(&Data::U32(0)));
+        }
+    }
+}
+
+#[test]
+fn ordered_helpers_share_native_handles_with_ordinary_allocations_and_reuse() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = r#"
+        declare i64 @___qalloc()
+        declare void @___reset(i64)
+        declare void @___qfree(i64)
+        declare void @___rxy(i64, double, double)
+        declare i64 @___lazy_measure(i64)
+        declare i1 @___read_future_bool(i64)
+        declare i64 @pecos_qis_ordered_alloc_hugr(i64)
+        declare i64 @pecos_qis_ordered_alloc_tagged_hugr(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {
+            %ordinary = call i64 @___qalloc()
+            call void @___reset(i64 %ordinary)
+            %ordered = call i64 @pecos_qis_ordered_alloc_hugr(i64 0)
+            call void @___rxy(i64 %ordered, double 0x400921FB54442D18, double 0.0)
+            %f0 = call i64 @___lazy_measure(i64 %ordinary)
+            %f1 = call i64 @___lazy_measure(i64 %ordered)
+            %v0 = call i1 @___read_future_bool(i64 %f0)
+            %v1 = call i1 @___read_future_bool(i64 %f1)
+            %zero = xor i1 %v0, true
+            %right = and i1 %zero, %v1
+            br i1 %right, label %reuse, label %failure
+        reuse:
+            call void @___qfree(i64 %ordered)
+            %tagged = call i64 @pecos_qis_ordered_alloc_tagged_hugr(i64 0)
+            %f2 = call i64 @___lazy_measure(i64 %tagged)
+            %v2 = call i1 @___read_future_bool(i64 %f2)
+            br i1 %v2, label %failure, label %done
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+            call void @___qfree(i64 %ordinary)
+            call void @___qfree(i64 %tagged)
+            ret void
+        }
+        attributes #0 = { "EntryPoint" }
+    "#;
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V6,
+        ScheduledTransport::V7,
+    ] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(crate::selene_runtimes::pecos_test_runtime(&[])),
+        );
+        engine.scheduled_transport = mode;
+        engine.set_num_qubits_hint(2);
+        // Scheduled transport deliberately rejects source metadata; tagged
+        // lifetime evidence is captured through flat lowering. Check the
+        // untagged native helper on all transports and the tagged helper flat.
+        let source = if mode == ScheduledTransport::Off {
+            source.to_string()
+        } else {
+            source.replace(
+                "call i64 @pecos_qis_ordered_alloc_tagged_hugr",
+                "call i64 @pecos_qis_ordered_alloc_hugr",
+            )
+        };
+        engine
+            .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+            .unwrap();
+        let mut quantum = deferred_read_quantum(mode);
+        let stage = engine.start(()).unwrap();
+        finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
+    }
 }

@@ -1,0 +1,15 @@
+{
+  "name": "pecos-circuit-inspector-tests",
+  "private": true,
+  "version": "0.0.0",
+  "description": "DOM regression tests for Rust-generated circuit inspector HTML",
+  "scripts": {
+    "test": "node run-tests.cjs"
+  },
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
+  },
+  "devDependencies": {
+    "jsdom": "29.1.1"
+  }
+}

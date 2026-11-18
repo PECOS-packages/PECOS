@@ -173,11 +173,24 @@ def test_canonical_aliases_and_prefixed_ids():
     assert _dem_events(raw) == pytest.approx(_dem_events(baseline))
 
 
-# MUST FAIL BEFORE: the canonical schema rejects invalid coordinates and labels.
+@pytest.mark.parametrize("coords", [[], [1], [1, 2], [1, 2, 3], [1, 2, 3, 4, 5]])
+def test_canonical_coordinates_accept_any_dimension(coords):
+    """Coordinates annotate detectors without changing their parity definitions."""
+    circuit = _circuit()
+    definitions = json.loads(circuit.get_meta("detectors"))
+    definitions[0]["coords"] = coords
+    circuit.set_meta("detectors", json.dumps(definitions))
+    actual = {tuple(nodes): p for nodes, p in exact_correlation_table(circuit, p1=0.05, prune=0.0)}
+    expected = {tuple(nodes): p for nodes, p in exact_correlation_table(_circuit(), p1=0.05, prune=0.0)}
+    assert actual == pytest.approx(expected)
+
+
+# The canonical schema accepts arbitrary dimensions but validates values and labels.
 @pytest.mark.parametrize(
     ("key", "metadata"),
     [
-        ("detectors", '[{"id":5,"records":[-2],"coords":[1,2]}]'),
+        ("detectors", '[{"id":5,"records":[-2],"coords":1}]'),
+        ("detectors", '[{"id":5,"records":[-2],"coords":[true]}]'),
         ("detectors", '[{"id":5,"records":[-2],"coords":[1,2,"x"]}]'),
         ("observables", '[{"id":3,"records":[-1],"label":42}]'),
     ],

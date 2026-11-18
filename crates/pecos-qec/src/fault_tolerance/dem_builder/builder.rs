@@ -55,8 +55,8 @@ use std::rc::Rc;
 pub struct ParsedDetector {
     /// Declared identifier.
     pub id: u32,
-    /// Optional three-dimensional coordinates.
-    pub coords: Option<[f64; 3]>,
+    /// Optional detector annotation coordinates, with arbitrary dimension.
+    pub coords: Option<Vec<f64>>,
     /// Measurement record offsets.
     pub records: Vec<i32>,
     /// Stable measurement identifiers.
@@ -303,6 +303,14 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
+        if super::inline::tick_uses_inline_noise(circuit) {
+            let dag = pecos_quantum::DagCircuit::try_from(circuit)
+                .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
+            return super::inline::build_inline_dem(
+                &dag,
+                &NoiseConfig::new(p1, p2, p_meas, p_prep),
+            );
+        }
         if let Some(error) =
             crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
         {
@@ -333,6 +341,11 @@ impl<'a> DemBuilder<'a> {
         circuit: &pecos_quantum::TickCircuit,
         noise: NoiseConfig,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
+        if super::inline::tick_uses_inline_noise(circuit) {
+            let dag = pecos_quantum::DagCircuit::try_from(circuit)
+                .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
+            return super::inline::build_inline_dem(&dag, &noise);
+        }
         if let Some(error) =
             crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
         {
@@ -590,23 +603,10 @@ impl<'a> DemBuilder<'a> {
             .detectors
             .into_iter()
             .map(|detector| {
-                let coords = match detector.coords {
-                    None => None,
-                    Some(coords) if coords.is_empty() => None,
-                    Some(coords) => {
-                        let length = coords.len();
-                        Some(coords.try_into().map_err(|_| {
-                            DefinitionError::InvalidDetectorCoordinates {
-                                id: detector.id,
-                                length,
-                            }
-                        })?)
-                    }
-                };
                 Ok(ParsedDetector {
                     fault_sector: detector.fault_sector,
                     id: detector.id,
-                    coords,
+                    coords: detector.coords,
                     label: detector.label,
                     records: records(detector.measurements)?,
                     meas_ids: Vec::new(),
@@ -941,8 +941,8 @@ impl<'a> DemBuilder<'a> {
         for det in &self.detectors {
             let mut def = DetectorDef::new(det.id);
             def.fault_sector = self.detector_fault_sector(det)?;
-            if let Some(coords) = det.coords {
-                def = def.with_coords(coords);
+            if let Some(coords) = &det.coords {
+                def = def.with_coords(coords.clone());
             }
             let records = self.effective_record_offsets(&det.records, &det.meas_ids);
             def = def.with_records(records.iter().copied());
@@ -2411,7 +2411,9 @@ impl<'a> DemBuilder<'a> {
     }
 
     /// Builds mappings from measurement indices to detector/DEM-output IDs.
-    fn build_measurement_mappings(&self) -> (BTreeMap<usize, Vec<u32>>, BTreeMap<usize, Vec<u32>>) {
+    pub(super) fn build_measurement_mappings(
+        &self,
+    ) -> (BTreeMap<usize, Vec<u32>>, BTreeMap<usize, Vec<u32>>) {
         let mut meas_to_detectors: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
         let mut meas_to_observables: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
         let influence_observable_ids = self.influence_map.observable_ids();
@@ -2477,7 +2479,7 @@ impl<'a> DemBuilder<'a> {
     }
 
     /// Computes the fault mechanism for a fault at the given location and Pauli type.
-    fn compute_mechanism(
+    pub(super) fn compute_mechanism(
         &self,
         loc_idx: usize,
         pauli: Pauli,
@@ -3125,27 +3127,27 @@ fn extract_u32(
     )))
 }
 
-/// Extracts coordinates array [x, y, t].
+/// Extracts an arbitrary-length numerical coordinate vector.
 fn extract_coords(
     object: &serde_json::Map<String, serde_json::Value>,
-) -> Result<Option<[f64; 3]>, DemBuilderError> {
+) -> Result<Option<Vec<f64>>, DemBuilderError> {
     let Some(coords) = object.get("coords") else {
         return Ok(None);
     };
     let array = coords
         .as_array()
         .ok_or_else(|| DemBuilderError::ParseError("detector coords must be an array".into()))?;
-    if array.len() != 3 {
-        return Err(DemBuilderError::ParseError(
-            "detector coords must contain exactly three numbers".into(),
-        ));
-    }
-    let mut values = [0.0; 3];
-    for (idx, coord) in array.iter().enumerate() {
-        values[idx] = coord
-            .as_f64()
-            .ok_or_else(|| DemBuilderError::ParseError("detector coords must be numeric".into()))?;
-    }
+    let values = array
+        .iter()
+        .map(|coord| {
+            coord
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| {
+                    DemBuilderError::ParseError("detector coords must be finite numbers".into())
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Some(values))
 }
 
@@ -3429,6 +3431,9 @@ fn build_dem_from_circuit(
 ) -> Result<DetectorErrorModel, DemBuilderError> {
     use crate::fault_tolerance::influence_builder::InfluenceBuilder;
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+    if super::inline::uses_inline_noise(circuit) {
+        return super::inline::build_inline_dem(circuit, &noise);
+    }
     let definitions = definitions_from_dag_circuit(circuit)?;
 
     let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map_diagnostic();
@@ -4766,7 +4771,7 @@ mod tests {
 
         assert_eq!(detectors.len(), 2);
         assert_eq!(detectors[0].id, 0);
-        assert_eq!(detectors[0].coords, Some([0.0, 0.0, 0.0]));
+        assert_eq!(detectors[0].coords, Some(vec![0.0, 0.0, 0.0]));
         assert_eq!(detectors[0].records, vec![-1, -5]);
         let meas_ids = &detectors[0].meas_ids;
         assert!(
@@ -4775,6 +4780,26 @@ mod tests {
         );
         assert_eq!(detectors[1].id, 1);
         assert_eq!(detectors[1].records, vec![-2]);
+    }
+
+    #[test]
+    fn parse_arbitrary_detector_coordinate_vectors() {
+        for coords in [vec![], vec![1.0], vec![1.0, 2.0], vec![1.0, 2.0, 3.0, -1.0]] {
+            let json = serde_json::json!([{"id": "D0", "records": [-1], "coords": coords}]);
+            assert_eq!(
+                parse_detectors_json(&json.to_string()).unwrap()[0].coords,
+                Some(coords)
+            );
+        }
+        for coords in [
+            serde_json::json!(null),
+            serde_json::json!("1,2"),
+            serde_json::json!([true]),
+            serde_json::json!(["1"]),
+        ] {
+            let json = serde_json::json!([{"id": 0, "records": [-1], "coords": coords}]);
+            assert!(parse_detectors_json(&json.to_string()).is_err());
+        }
     }
 
     #[test]

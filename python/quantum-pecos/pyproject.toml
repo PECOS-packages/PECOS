@@ -112,6 +112,8 @@ packages = ["src/pecos"]
 line-length = 120
 # See top-level pyproject.toml's [tool.black] for why this is pinned to py312.
 target-version = ["py312"]
+# Keep published reference sources identical to their recorded provenance hashes.
+force-exclude = '/qec/color/_(shutty488|shutty_torus488|shutty_torus488_cz)/'
 
 [tool.pytest.ini_options]
 markers = [

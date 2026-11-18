@@ -10,6 +10,8 @@ from hugr import ops
 from hugr.cli import convert, validate
 from hugr.envelope import EnvelopeFormat, EnvelopeHeader
 from hugr.package import Package
+from hugr.std.int import int_t
+from hugr.tys import Bool, FunctionType, Qubit
 from tket_exts import tket_registry
 
 if TYPE_CHECKING:
@@ -62,15 +64,75 @@ def load_hugr_from_bytes(data: bytes) -> Hugr:
     return package.modules[0]
 
 
+def _extension_ids(op: ops.Op) -> tuple[str, str] | None:
+    if isinstance(op, ops.ExtOp):
+        custom = op.to_custom_op()
+        return custom.extension, custom.op_name
+    return None
+
+
+def _is_measurement(op: ops.Op) -> bool:
+    return _extension_ids(op) in {("tket.quantum", "Measure"), ("tket.quantum", "MeasureFree")}
+
+
+def measurement_op_count(hugr: Hugr) -> int:
+    """Count static measurements across the whole graph, including function bodies.
+
+    Runtime loops count their measurement nodes once, regardless of iterations.
+    """
+    return sum(_is_measurement(hugr[node].op) for node in hugr)
+
+
+def _is_static_pecos_barrier(op: ops.FuncDecl) -> bool:
+    """Recognize only the two fixed native barrier ABIs, including their HUGR types.
+
+    These helpers in pecos-qis-ffi queue one Barrier and return unchanged qubit
+    handles. They cannot measure, allocate, branch on a result, or loop. The LLVM
+    helper normalizer independently checks their lowered ABI before linking.
+    A familiar name with a different signature is not a static certificate.
+    """
+    arity = {
+        "pecos_qis_runtime_barrier_qubit_hugr": 1,
+        "pecos_qis_runtime_barrier_qubits2_hugr": 2,
+    }.get(op.f_name.rsplit(".", 1)[-1])
+    return (
+        arity is not None
+        and not op.signature.params
+        and op.signature.body == FunctionType([Qubit] * arity, [Qubit] * arity)
+    )
+
+
+def _is_static_pecos_ordering(op: ops.FuncDecl) -> bool:
+    """Recognize opaque dependency helpers with fixed, measurement-free behavior.
+
+    The allocation helper performs the ordinary allocate/reset sequence. The
+    others return unchanged dependencies and optionally request a barrier; none
+    branches on the measured value. Linking binds these names to the native ABI.
+    """
+    token = int_t(6)  # Guppy's 64-bit int, not an arbitrary integer extension.
+    signature = {
+        "pecos_qis_ordered_alloc_hugr": FunctionType([token], [Qubit]),
+        "pecos_qis_ordered_alloc_tagged_hugr": FunctionType([token], [Qubit]),
+        "pecos_qis_ordering_join_hugr": FunctionType([Qubit, token], [Qubit, token]),
+        "pecos_qis_ordering_observe_hugr": FunctionType([token, Bool], [token]),
+        "pecos_qis_ordering_barrier_hugr": FunctionType([token], [token]),
+    }.get(op.f_name.rsplit(".", 1)[-1])
+    return signature is not None and not op.signature.params and op.signature.body == signature
+
+
 def has_nontrivial_control_flow(hugr: Hugr) -> bool:
-    """Detect branching, looping, bodyless declarations, and indirect calls.
+    """Detect branching, looping, unknown bodyless declarations, and indirect calls.
 
     A DataflowBlock is nontrivial only if its sum has more than one row.
     Direct calls do not hide their function bodies from whole-graph traversal.
+    Type-checked PECOS runtime barrier and ordering helpers are known straight-line
+    operations, not a blanket exemption for external functions or helper names.
     """
     for node in hugr:
         op = hugr[node].op
-        if isinstance(op, (ops.Conditional, ops.TailLoop, ops.FuncDecl, ops.CallIndirect)):
+        if isinstance(op, (ops.Conditional, ops.TailLoop, ops.CallIndirect)):
+            return True
+        if isinstance(op, ops.FuncDecl) and not (_is_static_pecos_barrier(op) or _is_static_pecos_ordering(op)):
             return True
         if isinstance(op, ops.DataflowBlock) and len(op.sum_ty.variant_rows) > 1:
             return True

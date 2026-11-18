@@ -2159,6 +2159,39 @@ def resolve_result_tags_for_guppy(
 class DagCircuit:
     """Directed acyclic graph circuit representation."""
 
+    def render(
+        self,
+        format: str = "svg",
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        title: str | None = None,
+        show_measurement_ids: bool = False,
+    ) -> str:
+        """Render as ascii, unicode, svg, tikz, or dot; angles use radians or turns."""
+        ...
+
+    def inspect(
+        self,
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        show_measurement_ids: bool = False,
+        include_html: bool = False,
+    ) -> dict[str, Any]:
+        """Owned SVG and stored-batch records; include_html adds standalone HTML."""
+        ...
+
+    def to_ascii(self) -> str: ...
+    def to_unicode(self) -> str: ...
+    def to_svg(self) -> str: ...
+    def to_tikz(self) -> str: ...
+    def to_dot(self) -> str: ...
+    def _repr_svg_(self) -> str: ...
     def __init__(self) -> None: ...
     def gate_count(self) -> int: ...
     def gate(self, node: int) -> Gate | None: ...
@@ -2219,6 +2252,9 @@ class Tick:
 class TickHandle:
     """Handle for adding gates to a tick."""
 
+    def x_error(self, probability: float, qubit: int) -> TickHandle: ...
+    def depolarize1(self, probability: float, qubit: int) -> TickHandle: ...
+    def depolarize2(self, probability: float, pair: tuple[int, int]) -> TickHandle: ...
     def index(self) -> int: ...
     def gate_on_qubit(self, qubit: int) -> int | None: ...
     def get_gate(self, index: int) -> Gate | None: ...
@@ -2285,6 +2321,21 @@ class TickHandle:
         qubits: Sequence[int],
         meas_ids: Sequence[int],
     ) -> list[tuple[int, int, int]]: ...
+    def measure_leaked_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def measure_lost_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def measure_leaked_lost_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
     def mz_free(self, qubits: Sequence[int]) -> list[tuple[int, int, int]]: ...
     def qalloc(self, qubits: Sequence[int]) -> TickHandle: ...
     def qfree(self, qubits: Sequence[int]) -> TickHandle: ...
@@ -2305,6 +2356,39 @@ class TickMeasureHandle:
 class TickCircuit:
     """Tick-based quantum circuit representation."""
 
+    def render(
+        self,
+        format: str = "svg",
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        title: str | None = None,
+        show_measurement_ids: bool = False,
+    ) -> str:
+        """Render as ascii, unicode, svg, tikz, or dot; angles use radians or turns."""
+        ...
+
+    def inspect(
+        self,
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        show_measurement_ids: bool = False,
+        include_html: bool = False,
+    ) -> dict[str, Any]:
+        """Owned SVG and stored-batch records; include_html adds standalone HTML."""
+        ...
+
+    def to_ascii(self) -> str: ...
+    def to_unicode(self) -> str: ...
+    def to_svg(self) -> str: ...
+    def to_tikz(self) -> str: ...
+    def to_dot(self) -> str: ...
+    def _repr_svg_(self) -> str: ...
     def __init__(self) -> None: ...
     @staticmethod
     def gate_locations(name: str, qubits: Sequence[int]) -> list[list[int]]: ...
@@ -2913,12 +2997,21 @@ class qec:
 
     class DetectorErrorModel:
         @staticmethod
+        def from_independent_mechanisms(
+            mechanisms: Sequence[tuple[float, Sequence[int], Sequence[int]]],
+            *,
+            num_detectors: int,
+            num_observables: int,
+            detector_coordinates: Sequence[Sequence[float] | None] | None = None,
+        ) -> qec.DetectorErrorModel: ...
+        def independent_mechanisms(self) -> list[tuple[float, list[int], list[int]]]: ...
+        @staticmethod
         def from_circuit(
             circuit: DagCircuit | TickCircuit,
-            p1: float = ...,
-            p2: float = ...,
-            p_meas: float = ...,
-            p_prep: float = ...,
+            p1: float | None = None,
+            p2: float | None = None,
+            p_meas: float | None = None,
+            p_prep: float | None = None,
             **noise_options: Any,
         ) -> qec.DetectorErrorModel: ...
         @staticmethod
@@ -3224,10 +3317,10 @@ class qec:
         @staticmethod
         def from_circuit(
             circuit: DagCircuit | TickCircuit,
-            p1: float = ...,
-            p2: float = ...,
-            p_meas: float = ...,
-            p_prep: float = ...,
+            p1: float | None = None,
+            p2: float | None = None,
+            p_meas: float | None = None,
+            p_prep: float | None = None,
             **noise_options: Any,
         ) -> qec.DemSampler: ...
         @staticmethod

@@ -2026,8 +2026,8 @@ pub fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> 
 pub struct DetectorDef {
     /// Unique detector ID.
     pub id: u32,
-    /// Optional 3D coordinates (x, y, t) for visualization.
-    pub coords: Option<[f64; 3]>,
+    /// Optional detector annotation coordinates. Extra axes may encode categories.
+    pub coords: Option<Vec<f64>>,
     /// Measurement record offsets (negative indices from end of record).
     pub records: SmallVec<[i32; 2]>,
     /// Optional fault sector; omitted from all DEM text and PECOS metadata output.
@@ -2048,8 +2048,8 @@ impl DetectorDef {
 
     /// Sets the detector coordinates.
     #[must_use]
-    pub fn with_coords(mut self, coords: [f64; 3]) -> Self {
-        self.coords = Some(coords);
+    pub fn with_coords(mut self, coords: impl Into<Vec<f64>>) -> Self {
+        self.coords = Some(coords.into());
         self
     }
 
@@ -5574,9 +5574,20 @@ impl DetectorErrorModel {
         &self,
     ) -> Result<pecos_decoder_core::window::StructuredDem, pecos_decoder_core::errors::DecoderError>
     {
-        let parsed = pecos_decoder_core::window::StructuredDem::from_dem_str(&self.to_string())?;
+        let mut parsed =
+            pecos_decoder_core::window::StructuredDem::from_dem_str(&self.to_string())?;
         let mut detector_fault_sectors = vec![None; parsed.num_detectors];
         for detector in &self.detectors {
+            let index = detector.id as usize;
+            let Some(slot) = parsed.detector_coords.get_mut(index) else {
+                return Err(
+                    pecos_decoder_core::errors::DecoderError::InvalidConfiguration(format!(
+                        "detector D{} is outside the model's detector dimension {}",
+                        detector.id, parsed.num_detectors
+                    )),
+                );
+            };
+            slot.clone_from(&detector.coords);
             // The index is in bounds because to_string declares every detector definition.
             detector_fault_sectors[detector.id as usize].clone_from(&detector.fault_sector);
         }
@@ -5686,8 +5697,13 @@ impl DetectorErrorModel {
         let mut lines = Vec::new();
 
         for det in &self.detectors {
-            if let Some([x, y, z]) = det.coords {
-                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            if let Some(coords) = det.coords.as_ref().filter(|coords| !coords.is_empty()) {
+                let coords = coords
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("detector({coords}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -6492,7 +6508,7 @@ impl DetectorErrorModel {
         let coords: Vec<(u32, Vec<f64>)> = self
             .detectors
             .iter()
-            .filter_map(|det| det.coords.map(|[x, y, z]| (det.id, vec![x, y, z])))
+            .filter_map(|det| det.coords.clone().map(|coords| (det.id, coords)))
             .collect();
 
         (mechanisms, coords)
@@ -6627,8 +6643,13 @@ impl DetectorErrorModel {
 
         // Add detector coordinate annotations
         for det in &self.detectors {
-            if let Some([x, y, z]) = det.coords {
-                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            if let Some(coords) = det.coords.as_ref().filter(|coords| !coords.is_empty()) {
+                let coords = coords
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("detector({coords}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -6671,7 +6692,20 @@ impl DetectorErrorModel {
     fn detector_coordinate_map(&self) -> BTreeMap<u32, [f64; 3]> {
         self.detectors
             .iter()
-            .filter_map(|detector| detector.coords.map(|coords| (detector.id, coords)))
+            // The existing pairing heuristic uses x/y/time only. Additional axes
+            // (e.g. color/basis labels) are metadata, not metric dimensions.
+            .filter_map(|detector| {
+                detector
+                    .coords
+                    .as_ref()
+                    .filter(|coords| !coords.is_empty())
+                    .map(|coords| {
+                        (
+                            detector.id,
+                            std::array::from_fn(|i| coords.get(i).copied().unwrap_or(0.0)),
+                        )
+                    })
+            })
             .collect()
     }
 
@@ -6986,8 +7020,13 @@ impl DetectorErrorModel {
         let mut lines = Vec::new();
 
         for det in &self.detectors {
-            if let Some([x, y, z]) = det.coords {
-                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            if let Some(coords) = det.coords.as_ref().filter(|coords| !coords.is_empty()) {
+                let coords = coords
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("detector({coords}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -7658,8 +7697,13 @@ impl DetectorErrorModel {
 
         // Add detector coordinate annotations
         for det in &self.detectors {
-            if let Some([x, y, z]) = det.coords {
-                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            if let Some(coords) = det.coords.as_ref().filter(|coords| !coords.is_empty()) {
+                let coords = coords
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("detector({coords}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -8790,6 +8834,44 @@ mod tests {
         assert_eq!(
             recovered.tracked_paulis()[0].label.as_deref(),
             Some("tracked_z3")
+        );
+    }
+
+    #[test]
+    fn detector_coordinate_vectors_survive_all_export_forms() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0).with_coords([1.0, 2.0, 3.0, 5.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords(Vec::<f64>::new()));
+        dem.add_detector(DetectorDef::new(2));
+        for text in [
+            dem.to_string(),
+            dem.to_pecos_string(),
+            dem.to_string_decomposed(),
+            dem.to_string_source_decomposed(),
+            dem.to_string_source_graphlike_decomposed(),
+            dem.to_string_graphlike_search_decomposed(),
+            dem.to_string_decomposed_maximally(),
+            dem.to_string_terminal_graphlike_decomposed().unwrap(),
+        ] {
+            assert!(text.contains("detector(1, 2, 3, 5) D0"));
+            assert!(text.contains("detector D1"));
+            assert!(text.contains("detector D2"));
+        }
+        assert_eq!(
+            dem.to_mechanisms().1,
+            vec![(0, vec![1.0, 2.0, 3.0, 5.0]), (1, vec![])]
+        );
+        let structured = dem.to_structured_decoder_dem().unwrap();
+        assert_eq!(
+            structured.detector_coords,
+            vec![Some(vec![1.0, 2.0, 3.0, 5.0]), Some(vec![]), None]
+        );
+        // Extra categorical axes are retained in export but excluded from the existing metric.
+        assert_eq!(dem.detector_coordinate_map()[&0], [1.0, 2.0, 3.0]);
+        dem.add_detector(DetectorDef::new(3).with_coords([1.0, 2.0, 3.0, -99.0]));
+        assert_eq!(
+            DetectorErrorModel::detector_coordinate_distance(0, 3, &dem.detector_coordinate_map()),
+            0.0
         );
     }
 

@@ -5,6 +5,8 @@
 # deferred because it is unrelated to dropping Python 3.10/3.11 support.
 target-version = "py312"
 line-length = 120
+# Preserve the pinned Apache-2.0 reference source byte-for-byte.
+extend-exclude = ["python/quantum-pecos/src/pecos/qec/color/_shutty488", "python/quantum-pecos/src/pecos/qec/color/_shutty_torus488", "python/quantum-pecos/src/pecos/qec/color/_shutty_torus488_cz"]
 # preview = true
 
 [lint.pycodestyle]
@@ -114,6 +116,10 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
+# Pinned Apache-2.0 upstream sources; preserve their recorded byte hashes.
+"**/qec/color/_shutty488/**" = ["ALL"]
+"**/qec/color/_shutty_torus488/**" = ["ALL"]
+"**/qec/color/_shutty_torus488_cz/**" = ["ALL"]
 "**/__init__.py" = ["F401"]  # imported but unused - Expected for __init__.py re-exports
 
 # NumPy is the oracle the test suite compares PECOS's own numerics against, so tests may

@@ -16,6 +16,10 @@ using a state-vector simulator.
 
 ## What You'll Learn
 
+For classical WebAssembly calls inside Guppy, see
+[WASM calls in Guppy](guppy-wasm.md), including arithmetic examples and execution
+support for the tested compiler/runtime versions.
+
 - How to write quantum programs in Guppy
 - Running simulations with `sim(Guppy(...)).qubits(N)`
 - Using pre-compiled HUGR files

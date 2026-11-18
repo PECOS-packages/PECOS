@@ -119,7 +119,8 @@ fn patch_mbp_fragment(
     if old_count != count || new_count != 0 {
         return Err(Error::Config(format!(
             "{} does not contain the expected MBP fragment {count} time(s): {upstream:?}; \
-             the pinned ldpc source changed or is partially patched, so update the MBP fixes in build_ldpc.rs",
+             for a partially patched or corrupt cache, delete ~/.pecos/deps/ldpc-* and rebuild; \
+             if the pinned upstream source changed, update the MBP fixes in build_ldpc.rs",
             path.display()
         )));
     }
@@ -140,6 +141,8 @@ fn write_mbp_header(path: &Path, content: &str) -> Result<()> {
     // Shared cache: publish atomically so other checkouts never read a partial header.
     let temporary = path.with_extension(format!("hpp.pecos-{}.tmp", std::process::id()));
     fs::write(&temporary, content).map_err(|error| {
+        // A failed write may have left a partial header.
+        let _ = fs::remove_file(&temporary);
         Error::Config(format!(
             "Cannot write {}: {error}; check the path and permissions",
             temporary.display()

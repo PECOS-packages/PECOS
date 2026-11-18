@@ -29,7 +29,7 @@ fn mbp_channel(error_rate: f64, xyz_bias: [f64; 3]) -> Result<(f64, [f64; 3]), L
         return Err(LdpcError::InvalidInput(format!(
             "xyz_bias[{index}] must be finite and positive, got {bias}; \
              MBP needs a small positive weight for every Pauli; \
-             for pure dephasing, use tiny X/Y weights"
+             for pure dephasing, use small positive X/Y weights whose probabilities keep a finite log ratio"
         )));
     }
 
@@ -462,7 +462,65 @@ mod tests {
 
     #[test]
     fn test_mbp_min_sum_corrects_every_single_qubit_pauli() {
+        // At scaling 0.75, rate 0.05 corrects only 18/21 Paulis; rate 0.1 corrects all 21.
         assert_mbp_corrects_every_single_qubit_pauli(BpMethod::MinimumSum, 0.1);
+    }
+
+    fn assert_mbp_floors_positive_denominator(method: BpMethod) {
+        let hx = SparseMatrix::from_coo(0, 2, vec![], vec![]).unwrap();
+        let hz = SparseMatrix::from_coo(1, 2, vec![0, 0], vec![0, 1]).unwrap();
+        // X/Y priors of 1.5e-13 and 0.5e-13 initialize messages near 30.
+        // Their exponentials sum to about 2e-13: positive, but below the floor.
+        // With the floor, the check message is about 28.32, below the X prior
+        // log ratio (~29.53). The old zero-only guard instead flips X.
+        let mut decoder =
+            MbpDecoder::new(&hx, &hz, 3e-13, [1.5, 0.5, 1.0], 1, method, 1.0, None).unwrap();
+        let syndrome = Array1::from_vec(vec![1]);
+        assert_eq!(
+            decoder.decode_gf4(&syndrome.view()).unwrap(),
+            Array1::zeros(2)
+        );
+        assert!(!decoder.converged());
+    }
+
+    #[test]
+    fn test_mbp_product_sum_floors_positive_denominator() {
+        assert_mbp_floors_positive_denominator(BpMethod::ProductSum);
+    }
+
+    #[test]
+    fn test_mbp_min_sum_floors_positive_denominator() {
+        assert_mbp_floors_positive_denominator(BpMethod::MinimumSum);
+    }
+
+    #[test]
+    fn test_mbp_finite_prior_ratio_boundary() {
+        // The reciprocal of MAX rounds down; the next representable probability
+        // has a finite ratio, while its immediate predecessor overflows.
+        let boundary = (1.0 / f64::MAX).next_up();
+        let below = boundary.next_down();
+        assert!(((1.0 - boundary) / boundary).is_finite());
+        assert!(((1.0 - below) / below).is_infinite());
+        // Power-of-two normalization preserves these exact subnormal probabilities.
+        let rate = 4.0 * boundary;
+        let bias = [1.0, 1.0, 2.0];
+        let (_, normalized) = mbp_channel(rate, bias).unwrap();
+        assert_eq!(rate * normalized[0], boundary);
+        let checks = steane_checks();
+        assert!(
+            MbpDecoder::new(
+                &checks,
+                &checks,
+                rate,
+                bias,
+                1,
+                BpMethod::ProductSum,
+                1.0,
+                None,
+            )
+            .is_ok()
+        );
+        assert_invalid_channel(4.0 * below, bias, "finite prior ratio");
     }
 
     fn assert_invalid_channel(rate: f64, bias: [f64; 3], expected: &str) {

@@ -2042,7 +2042,7 @@ mod measurement_followups {
                                 expected,
                                 "{route:?}, deferred={deferred}"
                             );
-                            assert!(runtime.emitted_measurements[&7].is_empty());
+                            assert!(runtime.emitted_measurements.slots[&7].is_empty());
                         });
                     }
                 }

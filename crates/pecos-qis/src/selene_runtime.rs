@@ -368,6 +368,44 @@ impl NativeWorkState {
     }
 }
 
+/// Emission-order feedback queues with constant-time readiness checks.
+/// Empty slots remain known so duplicate feedback is rejected rather than treated
+/// as an outcome belonging only to the local classical state.
+#[derive(Clone, Default)]
+struct EmittedMeasurements {
+    slots: BTreeMap<usize, VecDeque<(u64, bool)>>,
+    pending: usize,
+}
+
+impl EmittedMeasurements {
+    fn push(&mut self, program_result: usize, runtime_result: u64, leakage_aware: bool) {
+        self.slots
+            .entry(program_result)
+            .or_default()
+            .push_back((runtime_result, leakage_aware));
+        self.pending += 1;
+    }
+
+    fn pop(&mut self, program_result: usize) -> Option<(u64, bool)> {
+        let outcome = self.slots.get_mut(&program_result)?.pop_front()?;
+        self.pending -= 1;
+        Some(outcome)
+    }
+
+    fn contains_key(&self, program_result: usize) -> bool {
+        self.slots.contains_key(&program_result)
+    }
+
+    fn has_pending(&self) -> bool {
+        self.pending != 0
+    }
+
+    fn clear(&mut self) {
+        self.slots.clear();
+        self.pending = 0;
+    }
+}
+
 /// Timestamp convention declared by a native runtime, independent of custom events.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RuntimeClockModel {
@@ -481,7 +519,7 @@ pub struct SeleneRuntime {
 
     /// Native identity and leakage kind for each emitted measurement, in
     /// emission order within its program slot. Submission order may differ.
-    emitted_measurements: BTreeMap<usize, VecDeque<(u64, bool)>>,
+    emitted_measurements: EmittedMeasurements,
 
     /// End timestamp of the last scheduled physical operation per runtime qubit.
     last_gate_time_end_nanos: Vec<u64>,
@@ -643,7 +681,7 @@ impl SeleneRuntime {
             runtime_responses: BTreeMap::new(),
             native_future_reads: BTreeMap::new(),
             runtime_to_program_results: BTreeMap::new(),
-            emitted_measurements: BTreeMap::new(),
+            emitted_measurements: EmittedMeasurements::default(),
             last_gate_time_end_nanos: Vec::new(),
             submitted_rz_phases: BTreeMap::new(),
             source_trace_metadata: VecDeque::new(),
@@ -927,13 +965,10 @@ impl SeleneRuntime {
             }
 
             if self.native_result_slots.contains(result_id)
-                || self.emitted_measurements.contains_key(result_id)
+                || self.emitted_measurements.contains_key(*result_id)
             {
-                let (runtime_result_id, leakage_aware) = self
-                    .emitted_measurements
-                    .get_mut(result_id)
-                    .and_then(VecDeque::pop_front)
-                    .ok_or_else(|| {
+                let (runtime_result_id, leakage_aware) =
+                    self.emitted_measurements.pop(*result_id).ok_or_else(|| {
                         RuntimeError::ExecutionError(format!(
                             "no emitted measurement awaiting outcome for result {result_id}"
                         ))
@@ -1049,11 +1084,7 @@ impl SeleneRuntime {
                 "shot ended with deferred source operations".into(),
             )));
         }
-        if self
-            .emitted_measurements
-            .values()
-            .any(|pending| !pending.is_empty())
-        {
+        if self.has_pending_feedback() {
             return Err(self.latch_batch_failure(RuntimeError::ExecutionError(
                 "shot ended with native measurements awaiting outcomes".into(),
             )));
@@ -1301,10 +1332,11 @@ impl SeleneRuntime {
             .charge(&batch.operations, measurements.len())
             .map_err(|error| RuntimeError::ExecutionError(error.to_string()))?;
         for measurement in &measurements {
-            self.emitted_measurements
-                .entry(measurement.program_result)
-                .or_default()
-                .push_back((measurement.runtime_result, measurement.leakage_aware));
+            self.emitted_measurements.push(
+                measurement.program_result,
+                measurement.runtime_result,
+                measurement.leakage_aware,
+            );
         }
         for (operation_index, op) in batch.operations.iter().enumerate() {
             if let RuntimeScheduledOp::Custom { tag, data } = op {
@@ -2708,9 +2740,7 @@ impl SeleneRuntime {
     }
 
     fn has_pending_feedback(&self) -> bool {
-        self.emitted_measurements
-            .values()
-            .any(|pending| !pending.is_empty())
+        self.emitted_measurements.has_pending()
     }
 
     fn drain_runtime_operations(&mut self) -> Result<Vec<QuantumOp>> {
@@ -2720,11 +2750,7 @@ impl SeleneRuntime {
         }
         // A second extraction in the same lowering call must not cross the
         // feedback boundary established by the first one.
-        if self
-            .emitted_measurements
-            .values()
-            .any(|pending| !pending.is_empty())
-        {
+        if self.has_pending_feedback() {
             return Ok(Vec::new());
         }
         let mut lowered_ops = Vec::new();
@@ -3437,9 +3463,7 @@ impl SeleneRuntime {
                     }
                     let leakage_aware = source_leaked;
                     self.emitted_measurements
-                        .entry(program_result)
-                        .or_default()
-                        .push_back((result_id, leakage_aware));
+                        .push(program_result, result_id, leakage_aware);
                     if leakage_aware {
                         // The pinned runtime ABI allocates both Boolean and
                         // leakage-aware futures through `runtime_measure`.
@@ -3458,9 +3482,7 @@ impl SeleneRuntime {
                     let qubit = self.runtime_qubit_to_usize(qubit_id)?;
                     let (program_result, _) = self.take_runtime_measurement(result_id);
                     self.emitted_measurements
-                        .entry(program_result)
-                        .or_default()
-                        .push_back((result_id, true));
+                        .push(program_result, result_id, true);
                     if !normalized || touched.insert(qubit) {
                         self.push_idle_before(&mut lowered_ops, qubit, start_time)?;
                     }
@@ -4467,6 +4489,124 @@ impl Drop for SeleneRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn feedback_readiness_preserves_fifo_history_clone_and_clear() {
+        let mut emitted = EmittedMeasurements::default();
+        assert!(!emitted.has_pending());
+        assert_eq!(emitted.pop(7), None);
+        assert!(!emitted.contains_key(7));
+        // Reused program slots can carry different native IDs and readout kinds.
+        emitted.push(7, 81, false);
+        emitted.push(2, 93, true);
+        emitted.push(7, 85, true);
+        assert_eq!(emitted.pop(7), Some((81, false)));
+        assert!(emitted.has_pending());
+        let mut cloned = emitted.clone();
+        assert_eq!(emitted.pop(2), Some((93, true)));
+        assert_eq!(emitted.pop(2), None);
+        assert!(emitted.contains_key(2));
+        assert!(emitted.has_pending());
+        assert_eq!(emitted.pop(7), Some((85, true)));
+        assert!(!emitted.has_pending());
+        assert!(cloned.has_pending());
+        assert_eq!(cloned.pop(7), Some((85, true)));
+        assert!(cloned.has_pending());
+        cloned.clear();
+        assert!(!cloned.has_pending());
+        assert!(!cloned.contains_key(2));
+        cloned.push(2, 101, false);
+        assert!(cloned.has_pending());
+        assert_eq!(cloned.pop(2), Some((101, false)));
+        assert!(!cloned.has_pending());
+    }
+
+    #[test]
+    fn completed_runtime_owned_feedback_is_still_rejected() {
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        let slot = pecos_qis_ffi_types::RUNTIME_OWNED_MEASUREMENT_ID;
+        runtime.emitted_measurements.push(slot, 42, false);
+        assert_eq!(runtime.emitted_measurements.pop(slot), Some((42, false)));
+        assert!(!runtime.has_pending_feedback());
+        assert!(!runtime.native_result_slots.contains(&slot));
+        // This rejection relies on retaining the empty emitted slot, not on
+        // native_result_slots (which only records source-owned measurements).
+        let error = runtime
+            .provide_measurement_outcomes(vec![(slot, 0)])
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no emitted measurement awaiting outcome")
+        );
+        assert!(runtime.shot_end().is_err());
+        runtime.reset().unwrap();
+        assert!(!runtime.has_pending_feedback());
+        assert!(!runtime.emitted_measurements.contains_key(slot));
+    }
+
+    #[test]
+    fn feedback_readiness_ignores_completed_slot_history() {
+        let mut emitted = EmittedMeasurements::default();
+        for result in 0..4096 {
+            emitted.push(result, result as u64, false);
+            assert!(emitted.has_pending());
+            assert_eq!(emitted.pop(result), Some((result as u64, false)));
+            assert!(!emitted.has_pending());
+        }
+        // Old empty queues still reject duplicate feedback, but must not hold
+        // the runtime at a feedback boundary when a later slot is delivered.
+        emitted.push(4096, 9000, true);
+        for result in 0..4096 {
+            assert!(emitted.contains_key(result));
+            assert_eq!(emitted.pop(result), None);
+            assert!(emitted.has_pending());
+        }
+        assert_eq!(emitted.pop(4096), Some((9000, true)));
+        assert!(!emitted.has_pending());
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn feedback_readiness_tracks_delivery_reuse_duplicate_rejection_and_reset() {
+        for mode in LoweringRoute::ALL {
+            let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+            runtime.set_num_qubits(1);
+            runtime.shot_start(0, None).unwrap();
+            for result in [0, 1, 0] {
+                mode.lower(&mut runtime, &[QuantumOp::Measure(0, result).into()])
+                    .unwrap();
+                assert!(runtime.has_pending_feedback(), "{mode:?}");
+                runtime
+                    .provide_measurement_outcomes(vec![(result, 0)])
+                    .unwrap();
+                assert!(!runtime.has_pending_feedback(), "{mode:?}");
+                mode.lower(&mut runtime, &[]).unwrap();
+            }
+            // An already delivered slot must remain known even after its
+            // pending count reaches zero. The error must remain sticky.
+            let error = runtime
+                .provide_measurement_outcomes(vec![(0, 0)])
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("no emitted measurement awaiting outcome")
+            );
+            assert!(mode.lower(&mut runtime, &[]).is_err());
+            assert!(runtime.clone().shot_end().is_err());
+            runtime.reset().unwrap();
+            assert!(!runtime.has_pending_feedback());
+            runtime.shot_start(1, None).unwrap();
+            mode.lower(&mut runtime, &[QuantumOp::MeasureLeaked(0, 0).into()])
+                .unwrap();
+            assert!(runtime.has_pending_feedback());
+            runtime.provide_measurement_outcomes(vec![(0, 2)]).unwrap();
+            assert!(!runtime.has_pending_feedback());
+            mode.drain(&mut runtime);
+            runtime.shot_end().unwrap();
+        }
+    }
 
     #[test]
     fn api_version_error_reports_supported_version_and_rebuild_guidance() {
@@ -6660,6 +6800,7 @@ mod tests {
                 // The real plugin rejects an unknown integer result ID.
                 runtime
                     .emitted_measurements
+                    .slots
                     .get_mut(&0)
                     .unwrap()
                     .front_mut()

@@ -463,16 +463,21 @@ present two-qubit gate even without a loss source. Set `default_recovery: false`
 this behavior; an explicit recovery anywhere also prevents adding the default.
 
 A lost operand suppresses ordinary one-qubit operations and a two-qubit pair containing it,
-including base fault, emission, seepage and hook selection draws. `QFree` followed by `QAlloc`
+including base fault, emission, seepage and non-loss hook selection draws. Loss entries
+still run at their configured sites, as described below. `QFree` followed by `QAlloc`
 does not restore a lost atom. `Custom` is one operand group: before-site recovery can restore
 its lost atoms, and each non-loss before-hook skips the group only if an atom is still lost
 when that hook runs. After the before-hooks, any remaining lost operand suppresses the whole
 operation and its p1 draws. Non-loss after-hooks skip the group if it was suppressed or any
-atom is lost now; loss channels still visit its qubits individually. `TrackedPauliMeta`,
-`MX` and `MeasureFree` follow the generic single-qubit operand rule. Outcomes from `MX` and
-`MeasureFree` are not tracked by this noise model and fail its outcome-count check. The
-leakage path filters `Custom` operands individually. `Idle` emits only noise. Hook sites
-exclude `Idle`, preparation, tracked measurements and crosstalk payloads.
+atom is lost now; loss channels still visit its qubits individually. `TrackedPauliMeta`
+follows the generic single-qubit operand rule. All measurement-producing gates retain
+operands under loss filtering. `MX` and `MeasureFree` are not tracked by this noise model:
+with present or lost atoms, noisy or noiseless, they fail its outcome-count check.
+The leakage path filters `Custom` operands individually. `Idle` emits only noise. Hook
+sites exclude `Idle`, `PZ`/`MPZ`, tracked measurements and crosstalk payloads. Although the
+backend treats `PX` and `QAlloc` as preparations, this model treats them as one-qubit gates
+for loss: they are suppressed on lost atoms, never reload, draw no prep loss, and receive
+before/after single-qubit loss and recovery entries (unless declared noiseless).
 
 Only `PZ` and `MPZ` reload, and only with `reload_on_prep: true`. Without reload, lost `PZ`
 operands are dropped before prep faults or crosstalk, and are not added to the prepared pool.
@@ -491,8 +496,8 @@ A configured `lost` row replaces the lost fallback with one categorical draw, ev
 one-label row. The fallback never uses a configured `"0"` row. Its flip always draws, even
 at zero probability; nominal 3 makes no draw. Noiseless readout returns nominal values
 without a draw. `MPZ` shares `MZ`'s readout/noiseless-readout key, but uses its own `MPZ` key
-to disable its loss-source draws. Other noiseless operations still drop lost operand groups,
-and noiseless `PZ`/`MPZ` reload only if configured. They make no loss draws or spreading.
+to disable its loss-source draws. Noiseless non-measurement operations still drop lost
+operand groups, and noiseless `PZ`/`MPZ` reload only if configured. They make no loss draws or spreading.
 
 Loss sources and recovery:
 
@@ -528,8 +533,16 @@ Before-sites run recovery entries, existing non-loss hooks, then events entries.
 run loss entries in their listed order, then non-loss hooks. Listed order is preserved
 within each kind. Non-loss before-hooks skip currently lost groups after recovery;
 after-hooks skip groups suppressed for loss even if recovery restored them, and groups
-newly lost at that site. Loss entries run even when the gate was suppressed. All state and
-hook positions survive simulator round trips. After-two-qubit idle follows after-hooks.
+newly lost at that site. Loss entries run even when the gate was suppressed: the gate's
+pulse still reaches the surviving atom. Thus an `after_two_qubit` recovery listed before
+an `after_two_qubit` events entry can recover the lost atom and then lose its partner.
+For example, with `idle_rate: 1`, `default_recovery: false`, partner loss probability 0,
+after-site recovery FN = FP = 0, then events probability 1 with `{"IL": 1}`,
+`[lose q0, CX(0,1), MeasureZLost(0,1)]` reads `[0, 3]` at noise seed 7919,
+where `lose q0` is an `Idle` of duration 1 on q0.
+The CX is suppressed; recovery randomizes q0, so its readout can also be 1 at other seeds.
+All state and hook positions survive simulator round trips. After-two-qubit idle follows
+after-hooks.
 Hooks iterate hook-major, pair-minor; splitting a batch preserves distributions, not seeded
 streams or command order. Loss is excluded from all crosstalk victim draws.
 
@@ -810,8 +823,15 @@ Use the stated numbers: each qubit lost independently with `q = 0.00183` after C
 and its two-qubit Pauli channel; outer `1-(1-q)^2`, `LI, IL: (1-q)/(2-q)`,
 `LL: q/(2-q)`. Readout loss is `0.006`; reset loss is `0.006` for data and `0.011` for
 ancillas, but only one uniform rate is expressible (this instance uses data's `0.006`).
-Idle loss is `0.09e-6` per time unit. The linear `rate*duration` matches the paper's
-`1-(1-rate)^duration` only to first order. Methods turns off a gate with a lost atom
+The paper gives `idle_loss_rate = 0.09e-6` in `1-(1-rate)^idle_duration` but does not
+state the duration unit. `idle_rate` is per unit of the `Idle` duration the program uses.
+If that unit is microseconds, `1 / 0.09e-6 µs = 1.11e7 µs = 11.1 s`, corresponding
+to a vacuum-limited lifetime of about 11 s. PECOS's `Gate::idle` and general-noise
+linear-idle helper document durations in seconds; the general-noise formulas use the
+supplied duration directly without unit conversion. Rescale `idle_rate` to the duration
+unit of the program's `Idle` gates (the microsecond interpretation would give `0.09`
+per second). The JSON below retains the paper's number. The linear `rate*duration`
+matches the paper's law only to first order. Methods turns off a gate with a lost atom
 while still applying gate error. Partner loss `0.00183` is [inf, from the entangling-zone
 spectator rule]; partner Pauli `I: 0.9984, X: 5e-5, Y: 5e-5, Z: 0.0015` is its 2q
 channel's one-leg marginal. Ancillas are a fresh block each round; data is prepared once,

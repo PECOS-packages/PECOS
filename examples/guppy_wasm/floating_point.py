@@ -60,6 +60,21 @@ def float_state() -> None:
     arithmetic.discard()
 
 
+@guppy
+def float_loop() -> None:
+    """Carry a float through mixed-signature WASM calls."""
+    arithmetic = FloatingPoint(nat(0))
+    value = 0.25
+    for _ in range(3):
+        value = arithmetic.affine(value, 2, 0.25)
+    arithmetic.discard()
+    result("value", value)
+    q = qubit()
+    if value == 3.75:
+        x(q)
+    result("measured", measure(q).read())
+
+
 def main() -> None:
     import argparse
     from tempfile import TemporaryDirectory
@@ -68,7 +83,7 @@ def main() -> None:
     parser.add_argument("--backend", choices=("selene", "pecos"), default="selene")
     backend = parser.parse_args().backend
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
-    for function in (mixed_arithmetic, float_feedback, float_state):
+    for function in (mixed_arithmetic, float_feedback, float_state, float_loop):
         if backend == "pecos":
             import pecos as pc
 

@@ -32,7 +32,7 @@ _PREFIX = "pecos_wasm_adapter_"
 type Json = dict[str, Json] | list[Json] | str | int | float | bool | None
 
 
-def _order_calls(document: dict) -> None:
+def _order_calls(document: dict, acquisitions: set[int]) -> None:
     """Choose a stable dependency-respecting schedule for classical effects.
 
     Older Guppy releases leave context release/reacquisition unordered. Once
@@ -62,7 +62,7 @@ def _order_calls(document: dict) -> None:
         return None
 
     for parent, node in enumerate(nodes):
-        if node.get("op") not in {"FuncDefn", "DFG", "DataflowBlock", "Case"}:
+        if node.get("op") not in {"FuncDefn", "DFG", "DataflowBlock", "Case", "TailLoop"}:
             continue
         children = {index for index, child in enumerate(nodes) if child["parent"] == parent}
         successors = {child: set() for child in children}
@@ -72,6 +72,39 @@ def _order_calls(document: dict) -> None:
             if a is not None and b is not None and a != b and b not in successors[a]:
                 successors[a].add(b)
                 indegree[b] += 1
+        # Older Guppy orders the acquisition's success check, but can leave
+        # get_context itself unordered (and hoist it before a preceding loop).
+        # Restore those same-region predecessors when acquisition has no
+        # explicit order. Never contradict an existing dependency path.
+        for acquire in sorted(children & acquisitions):
+            if any(target == [acquire, None] for _, target in edges):
+                continue
+            guards = {
+                target[0]
+                for source, target in edges
+                if source == [acquire, 0]
+                and target[1] == 0
+                and target[0] in children
+                and nodes[target[0]].get("op") == "Conditional"
+                and not nodes[target[0]].get("other_inputs")
+            }
+            for before, after in edges.copy():
+                predecessor = before[0]
+                if after[0] not in guards or after[1] is not None or predecessor not in children:
+                    continue
+                reachable, pending = set(), [acquire]
+                while pending:
+                    current = pending.pop()
+                    if current not in reachable:
+                        reachable.add(current)
+                        pending.extend(successors[current])
+                if predecessor in reachable:
+                    continue
+                edges.append([[predecessor, None], [acquire, None]])
+                if acquire not in successors[predecessor]:
+                    successors[predecessor].add(acquire)
+                    indegree[acquire] += 1
+
         ready = [child for child, degree in indegree.items() if degree == 0]
         heapq.heapify(ready)
         schedule = []
@@ -93,38 +126,77 @@ def _order_calls(document: dict) -> None:
                     if edge not in edges:
                         edges.append(edge)
                 previous = child
+        if previous is not None:
+            # Indirect calls may be removed when their results are unused.
+            # Anchor the final effect to the region's exit, retaining the chain.
+            output = next(child for child in children if nodes[child].get("op") == "Output")
+            edge = [[previous, None], [output, None]]
+            if edge not in edges:
+                edges.append(edge)
 
 
-def _reject_loops(document: dict) -> None:
-    """Fail closed for public compiler external-call loop constant propagation.
+def _protect_external_calls(document: dict) -> None:
+    """Keep external results unknown to released HUGR constant analysis.
 
-    Compiler 0.4.2 and 0.5.2 can replace a loop-carried external call result
-    with its initial constant, including at opt_level=0. Check the entire
-    program, so a WASM call in a helper cannot bypass this restriction.
+    Compiler 0.4.x/0.5.2 treat a known external declaration's return values as
+    impossible, which can discard loop-carried results. Load the function value
+    through the public prelude Barrier before calling it indirectly. Barrier
+    has no constant-fold rule and emits as an identity, so analysis uses the
+    conservative unknown-target rule while execution calls the original export.
+    Protect existing loads too, including declarations other than WASM adapters.
     """
-    nodes = document["nodes"]
-    blocks = {index for index, node in enumerate(nodes) if node.get("op") == "DataflowBlock"}
-    successors = {block: set() for block in blocks}
-    indegree = dict.fromkeys(blocks, 0)
-    for source, target in document["edges"]:
-        a, b = source[0], target[0]
-        if a in blocks and b in blocks and nodes[a]["parent"] == nodes[b]["parent"] and b not in successors[a]:
-            successors[a].add(b)
-            indegree[b] += 1
-    ready = [block for block, degree in indegree.items() if degree == 0]
-    visited = 0
-    while ready:
-        visited += 1
-        for successor in successors[ready.pop()]:
-            indegree[successor] -= 1
-            if indegree[successor] == 0:
-                ready.append(successor)
-    if visited != len(blocks) or any(node.get("op") == "TailLoop" for node in nodes):
-        msg = (
-            "WASM programs containing loops are not supported yet: public compiler versions "
-            "0.4.2 and 0.5.2 can miscompile loop-carried external-call results"
+    nodes, edges = document["nodes"], document["edges"]
+
+    def append(node: dict) -> int:
+        index = len(nodes)
+        nodes.append(node)
+        if document.get("metadata") is not None:
+            document["metadata"].append(None)
+        return index
+
+    # Convert direct declaration calls to loads and indirect calls first.
+    for index, node in enumerate(nodes.copy()):
+        if node.get("op") != "Call":
+            continue
+        signature = node["instantiation"]
+        # No result can be misfolded; older compilers may discard void indirect calls.
+        if not signature["output"]:
+            continue
+        static_port = len(signature["input"])
+        link = next(edge for edge in edges if edge[1] == [index, static_port])
+        if nodes[link[0][0]].get("op") != "FuncDecl":
+            continue
+        load = append({**node, "op": "LoadFunction"})
+        edges.remove(link)
+        for _, target in edges:
+            if target[0] == index and target[1] is not None:
+                target[1] += 1
+        edges.extend([[link[0], [load, 0]], [[load, 0], [index, 0]]])
+        nodes[index] = {"op": "CallIndirect", "parent": node["parent"], "signature": signature}
+
+    for index, node in enumerate(nodes.copy()):
+        if node.get("op") != "LoadFunction":
+            continue
+        link = next(edge for edge in edges if edge[1] == [index, 0])
+        if nodes[link[0][0]].get("op") != "FuncDecl":
+            continue
+        signature = node["instantiation"]
+        if not signature["output"]:
+            continue
+        barrier = append(
+            {
+                "op": "Extension",
+                "parent": node["parent"],
+                "extension": "prelude",
+                "name": "Barrier",
+                "args": [{"tya": "List", "elems": [{"tya": "Type", "ty": signature}]}],
+                "signature": {"t": "G", "input": [signature], "output": [signature]},
+            },
         )
-        raise ValueError(msg)
+        for source, _ in edges:
+            if source == [index, 0]:
+                source[0] = barrier
+        edges.append([[index, 0], [barrier, 0]])
 
 
 def _replace_types(value: Json) -> Json:
@@ -326,7 +398,6 @@ def compile_wasm(
     serialized = graph._to_serial()  # noqa: SLF001
     serial_type = type(serialized)
     document = serialized.model_dump(mode="json")
-    _reject_loops(document)
     operations = []
     module_ids = {}
     for index, node in enumerate(document["nodes"]):
@@ -375,7 +446,8 @@ def compile_wasm(
         }
         document["edges"].append([[declaration, 0], [index, len(signature["input"])]])
         adapters[name] = operation
-    _order_calls(document)
+    _order_calls(document, {index for index, operation in operations if operation["name"] == "get_context"})
+    _protect_external_calls(document)
     lowered = Hugr._from_serial(serial_type.model_validate(document))  # noqa: SLF001
     envelope = Package(modules=[lowered], extensions=program.extensions).to_bytes()
     llvm = compile_to_llvm_ir(envelope, platform=platform, opt_level=opt_level, emit_debug=emit_debug)

@@ -2,7 +2,7 @@
 
 Example: python examples/guppy_wasm/benchmark.py --backend both --calls 0 1 10 100
 
-Calls are generated as straight-line Guppy to avoid the current loop limitation.
+Calls are generated as straight-line Guppy to exclude loop-control overhead.
 Timings include module instantiation, shot setup, result collection and backend
 costs; amortized seconds per call are not isolated WASM boundary latency.
 """

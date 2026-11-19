@@ -22,10 +22,10 @@ def examples():
     return modules
 
 
-def run(example, function, tmp_path, *, shots=4, processes=1, modules=None, platform="helios"):
+def run(example, function, tmp_path, *, shots=4, processes=1, modules=None, platform="helios", opt_level=2):
     if modules is None:
         modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    runner = build(function.compile(), modules, build_dir=tmp_path, platform=platform)
+    runner = build(function.compile(), modules, build_dir=tmp_path, platform=platform, opt_level=opt_level)
     return [
         dict(shot)
         for shot in runner.run_shots(
@@ -79,10 +79,20 @@ def test_dead_wasm_branch_can_be_optimized_away(examples, tmp_path):
     assert run(example, example.conditional_calls, tmp_path) == [{"value": 6}] * 4
 
 
-def test_loops_fail_before_public_compiler_can_miscompile(examples):
-    example = examples["stateful"]
-    with pytest.raises(ValueError, match="loop-carried external-call results"):
-        compile_wasm(example.stateful_loop.compile(), {str(example.WASM_PATH): example.WASM_PATH.read_bytes()})
+@pytest.mark.parametrize("platform", ["helios", "sol"])
+@pytest.mark.parametrize("opt_level", [0, 1, 2, 3])
+@pytest.mark.parametrize(
+    ("module", "name", "expected"),
+    [
+        ("stateful", "stateful_loop", {"three": 3}),
+        ("stateful", "loop_control", {"zero": 99, "one": 1, "nested": 7, "condition": 10, "steps": 3}),
+        ("stateful", "loop_helpers", {"helper": 3, "after": 4}),
+        ("floating_point", "float_loop", {"value": 3.75, "measured": 1}),
+    ],
+)
+def test_loop_results_survive_public_compiler(examples, tmp_path, module, name, expected, platform, opt_level):
+    example = examples[module]
+    assert run(example, getattr(example, name), tmp_path, platform=platform, opt_level=opt_level) == [expected] * 4
 
 
 def test_sol_platform_reaches_compiler_and_linker(examples, tmp_path):
@@ -183,3 +193,109 @@ def test_benchmark_checks_results_and_records_timings(tmp_path):
         assert len(record["repeat_seconds"]) == 1
         assert record["backend_prepare_seconds"] >= 0
     assert report["results"][0]["amortized_seconds_per_call"] is None
+
+
+@pytest.mark.parametrize("opt_level", [0, 2])
+def test_existing_external_function_value_and_discarded_result(examples, tmp_path, opt_level):
+    import re
+
+    from guppylang import guppy
+    from guppylang.library import link_name
+    from guppylang.std.builtins import Function, nat, result
+    from hugr import ops
+    from pecos_selene_wasm import WasmPlugin
+    from selene_sim import build as build_llvm
+
+    example = examples["stateful"]
+    counter_module = example.Counter
+
+    @guppy.declare
+    @link_name("wasm_test_increment")
+    def external(value: int) -> int: ...
+
+    @guppy
+    def target() -> Function[[int], int]:
+        return external
+
+    @guppy
+    def program() -> None:
+        counter = counter_module(nat(0))
+        result("counter", counter.increment())
+        counter.discard()
+        value = 0
+        for _ in range(3):
+            function = target()
+            value = function(value)
+        result("total", value)
+        external(100)
+
+    # Preserve first-class function loads before PECOS lowering. Default Guppy
+    # optimization can already fold ordinary externs incorrectly at this stage.
+    package = program.with_minimal_opt().compile()
+    assert any(isinstance(package.modules[0][node].op, ops.LoadFunc) for node in package.modules[0])
+    ir = compile_wasm(package, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, opt_level=opt_level)
+    label = b"USER:INT:external"
+    encoded = "".join(f"\\{byte:02X}" for byte in bytes([len(label)]) + label)
+    ir += f'\n@fixture_label = private constant [{len(label) + 1} x i8] c"{encoded}"\n'
+    # A tiny independent native fixture implements this ordinary declaration.
+    # Printing its result also makes the discarded final call observable.
+    body = (
+        r"define i64 \1(i64 %n) {\nentry:\n  %next = add i64 %n, 1\n"
+        f"  call void @print_int(ptr @fixture_label, i64 {len(label)}, i64 %next)\n"
+        "  ret i64 %next\n}"
+    )
+    ir, count = re.subn(
+        r"^declare i64 (@[^\s(]*wasm_test_increment[^\s(]*)\(i64\)[^\n]*$",
+        body,
+        ir,
+        flags=re.MULTILINE,
+    )
+    assert count == 1
+    runner = build_llvm(ir, utilities=[WasmPlugin()], opt_level=opt_level, build_dir=tmp_path)
+    shots = [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=2, n_processes=1)]
+    assert shots == [{"counter": 1, "total": 3, "external": 101}] * 2
+
+
+@pytest.mark.parametrize("opt_level", [0, 2])
+def test_hugr_tail_loop_orders_context_helpers(examples, tmp_path, opt_level):
+    from hugr import ops, tys
+    from hugr.build.function import Module
+    from hugr.package import Package
+    from hugr.std.int import INT_OPS_EXTENSION, IntVal, int_t
+
+    example = examples["stateful"]
+    source = Package.from_bytes(example.increment_context.with_minimal_opt().compile().to_bytes())
+    module = Module()
+    main = module.define_function("main", [], visibility="Public")
+    graph = module.hugr
+    mapping = graph.insert_hugr(source.modules[0], graph.module_root)
+    helper = mapping[source.modules[0].entrypoint]
+    loop = main.add_tail_loop([], [main.load(IntVal(0, 6))])
+    # No data dependency orders these leases. The first result is discarded.
+    loop.call(helper)
+    value = loop.call(helper)
+    compare = INT_OPS_EXTENSION.get_op("ige_s").instantiate(
+        [tys.BoundedNatArg(6)],
+        tys.FunctionType([int_t(6), int_t(6)], [tys.Bool]),
+    )
+    done = loop.add_op(compare, value, loop.load(IntVal(4, 6)))
+    loop.set_loop_outputs(done, value)
+    record_graph = example.stateful_loop.compile().modules[0]
+    record = next(
+        record_graph[node].op
+        for node in record_graph
+        if isinstance(record_graph[node].op, ops.ExtOp) and record_graph[node].op.op_def().name == "result_int"
+    )
+    record_node = main.add_op(record, loop.parent_node)
+    main.add_state_order(record_node, main.output_node)
+    main.set_outputs()
+    graph.entrypoint = main.parent_node
+    program = Package([graph], source.extensions)
+    runner = build(
+        program,
+        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        opt_level=opt_level,
+        build_dir=tmp_path,
+    )
+    shots = [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=2)]
+    assert shots == [{"three": 4}] * 4

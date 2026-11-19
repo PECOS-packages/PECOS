@@ -217,6 +217,7 @@ def test_runtime_probe_control(tmp_path, backend) -> None:
         ("mixed_arithmetic", {"value": [-4.25] * 4, "integer": [-4] * 4}),
         ("float_feedback", {"measured": [1] * 4}),
         ("float_state", {"initial": [0.0] * 4, "retained": [-2.5] * 4}),
+        ("float_loop", {"value": [3.75] * 4, "measured": [1] * 4}),
     ],
 )
 def test_pecos_float_wasm(examples, wrapper, name, expected):
@@ -231,3 +232,26 @@ def test_pecos_float_wasm(examples, wrapper, name, expected):
     )
     data = pc.sim(program).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
     assert data == expected
+
+
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("stateful_loop", {"three": 3}),
+        ("loop_control", {"zero": 99, "one": 1, "nested": 7, "condition": 10, "steps": 3}),
+        ("loop_helpers", {"helper": 3, "after": 4}),
+    ],
+)
+def test_pecos_wasm_loops(examples, wrapper, name, expected):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["stateful"]
+    function = getattr(example, name)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    program = (
+        pc.Guppy(function, wasm_modules=modules)
+        if wrapper == "guppy"
+        else pc.Hugr(function.compile().to_bytes(), wasm_modules=modules)
+    )
+    data = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).run(4).to_dict()
+    assert data == {label: [value] * 4 for label, value in expected.items()}

@@ -364,6 +364,7 @@ def test_same_parameters_configure_a_pecos_sim_builder() -> None:
             "sin_squared_model": {"X": 0.5, "Z": 0.5},
             "coherent_rate": 0.13,
             "coherent_model": {"RZ": 1.0},
+            "frequency_noise": None,
             "scale": 0.75,
         },
         "measurement": {
@@ -535,3 +536,18 @@ def test_recording_builder_receives_hook_json_in_order() -> None:
         {"kind": "pauli_leakage", "probability": 1.0, "events": {"L": 1.0}},
         {"kind": "transition", "probability": 1.0, "transitions": {"L": {"0": 1.0}}},
     ]
+
+
+def test_idle_frequency_noise_payload() -> None:
+    parameters = (
+        GeneralNoiseParameters().with_idle_frequency_noise(0.2).with_idle_frequency_noise(0.3, scope="per_qubit")
+    )
+    assert config(parameters)["model"]["idle"]["frequency_noise"] == [
+        {"std": 0.2, "scope": "shared"},
+        {"std": 0.3, "scope": "per_qubit"},
+    ]
+    for std in (-1.0, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="finite and non-negative"):
+            config(GeneralNoiseParameters().with_idle_frequency_noise(std))
+    with pytest.raises(ValueError, match=r"shared.*per_qubit"):
+        config(GeneralNoiseParameters().with_idle_frequency_noise(0.2, scope="invalid"))

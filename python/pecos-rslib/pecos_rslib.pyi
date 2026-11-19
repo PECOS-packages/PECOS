@@ -1375,6 +1375,10 @@ class GeneralNoiseModelBuilder:
     leg is checked separately.
     """
 
+    def with_idle_frequency_noise(self, std: float, *, scope: str = "shared") -> GeneralNoiseModelBuilder:
+        """Append static per-shot idle detuning; scope is shared or per_qubit."""
+        ...
+
     def with_config_json(self, json: str) -> GeneralNoiseModelBuilder:
         """Apply model JSON; schema and recorded setter errors raise ValueError."""
         ...

@@ -6,6 +6,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Added:** Static per-shot idle frequency noise for `GeneralNoiseModel`, with
+  shared or independent per-qubit Gaussian detuning components, isolated seed
+  derivation, and Rust, Python, QASM, and Selene configuration support.
+
 - **Fixed:** Union-find now rejects NaN weights instead of sorting them (undefined
   behaviour), and BeliefFind reports a BP-produced NaN log-probability ratio as an error.
 - **Breaking:** MBP now updates stored edge messages and excludes the current

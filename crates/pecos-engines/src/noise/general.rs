@@ -103,9 +103,55 @@ use crate::noise::{NoiseModel, RngManageable};
 use log::trace;
 use pecos_core::errors::PecosError;
 use pecos_core::{Angle64, QubitId};
-use pecos_random::PecosRng;
+use pecos_random::{PecosRng, derive_seed, nth_derived_seed};
+use rand_distr::{Distribution, StandardNormal};
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Spatial scope of a static, per-shot idle detuning component.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrequencyNoiseScope {
+    /// One detuning shared by every qubit in a shot.
+    #[default]
+    Shared,
+    /// Independent detuning for each qubit in a shot.
+    PerQubit,
+}
+
+/// A zero-mean idle angular-frequency component, in radians per idle-duration unit.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdleFrequencyNoise {
+    /// Finite, non-negative standard deviation.
+    pub std: f64,
+    /// Spatial scope; defaults to shared.
+    #[serde(default)]
+    pub scope: FrequencyNoiseScope,
+}
+
+/// Idle frequency for one idle call: the mean plus all shared-scope values, and the
+/// per-qubit components still to be drawn. Summation order is mean, then shared
+/// components, then per-qubit components. Built per call; nothing survives across calls.
+struct IdleFrequency {
+    shared: f64,
+    per_qubit: Vec<(f64, u64)>,
+}
+
+impl IdleFrequency {
+    fn sample(std: f64, seed: u64) -> f64 {
+        let normal: f64 = StandardNormal.sample(&mut PecosRng::seed_from_u64(seed));
+        std * normal
+    }
+
+    fn at(&self, qubit: usize) -> f64 {
+        self.per_qubit
+            .iter()
+            .fold(self.shared, |value, &(std, seed)| {
+                value + Self::sample(std, nth_derived_seed(seed, qubit as u64))
+            })
+    }
+}
 
 #[derive(Clone, Copy)]
 struct IdleRates {
@@ -224,6 +270,16 @@ pub struct GeneralNoiseModel {
 
     /// Unnormalized RX/RY/RZ relative multipliers for the coherent idle family.
     p_idle_coherent_model: BTreeMap<String, f64>,
+
+    /// Static per-shot idle Z frequency components as (std, scope), in radians per
+    /// idle-duration unit; an empty list disables the family.
+    idle_frequency_noise: Vec<(f64, FrequencyNoiseScope)>,
+
+    /// Seed for frequency-noise draws, derived in `set_rng` without advancing the primary RNG.
+    frequency_seed: u64,
+
+    /// Shot counter mixed into frequency-noise seeds; zeroed by `set_rng`, advanced by reset.
+    shot_index: u64,
 
     /// Probability of applying a fault during preparation (initialization)
     ///
@@ -529,7 +585,11 @@ impl NoiseModel for GeneralNoiseModel {
 impl RngManageable for GeneralNoiseModel {
     type Rng = PecosRng;
 
+    /// Replace the primary RNG and restart the frequency-noise shot sequence.
+    /// Derivation uses a clone so it never advances the primary noise stream.
     fn set_rng(&mut self, rng: Self::Rng) {
+        self.frequency_seed = Self::frequency_seed_for(&rng);
+        self.shot_index = 0;
         self.rng = NoiseRng::new(rng);
     }
 
@@ -664,7 +724,10 @@ impl GeneralNoiseModel {
         if !probabilities
             .into_iter()
             .all(|p| p.is_finite() && (0.0..=1.0).contains(&p))
-            || !rates.into_iter().all(|p| p.is_finite() && p >= 0.0)
+            || !rates
+                .into_iter()
+                .chain(self.idle_frequency_noise.iter().map(|(std, _)| *std))
+                .all(|p| p.is_finite() && p >= 0.0)
         {
             return Err(PecosError::Input(
                 "resolved general-noise configuration exceeds runtime profile".into(),
@@ -686,6 +749,7 @@ impl GeneralNoiseModel {
             },
             &self.p_idle_sin_squared_model,
             &self.p_idle_coherent_model,
+            &self.idle_frequency_noise,
         )
         .map_err(PecosError::Input)
     }
@@ -697,6 +761,7 @@ impl GeneralNoiseModel {
         rates: IdleRates,
         sine_model: &BTreeMap<String, f64>,
         coherent_model: &BTreeMap<String, f64>,
+        frequency_noise: &[(f64, FrequencyNoiseScope)],
     ) -> Result<(), String> {
         let check = |family: &str, rate: f64, axis: &str, multiplier: f64| {
             let product = rate * multiplier * duration;
@@ -716,6 +781,22 @@ impl GeneralNoiseModel {
         }
         for (axis, multiplier) in coherent_model {
             check("p_idle_coherent", rates.coherent, axis, *multiplier)?;
+        }
+        if frequency_noise.iter().any(|(std, _)| *std > 0.0) {
+            // rand_distr 0.6.0 src/normal.rs:67-90: non-tail |x| < R =
+            // 3.654152885361009; tail |x| = R - ln(u)/R, u from Open01.
+            // Open01 has minimum u = 2^-53: R + 36.737/R < 14.
+            // Re-derive this bound on any rand_distr/rand version bump.
+            const N_MAX: f64 = 14.0;
+            let mean = rates.coherent * coherent_model.get("RZ").copied().unwrap_or(0.0);
+            let bound = frequency_noise
+                .iter()
+                .fold(mean.abs(), |sum, (std, _)| sum + std * N_MAX);
+            if !bound.is_finite() || !(bound * duration).is_finite() {
+                return Err(format!(
+                    "idle frequency noise mean {mean}, components {frequency_noise:?}, normal bound {N_MAX} * {duration_source} {duration} produces a non-finite angle bound; reduce std, coherent rate, idle duration, or scale factors to keep the product finite"
+                ));
+            }
         }
         Ok(())
     }
@@ -1296,7 +1377,9 @@ impl GeneralNoiseModel {
             self.apply_idle_sin_squared(duration, qubits, builder);
         }
 
-        if self.p_idle_coherent_rate > f64::EPSILON && duration.abs() > f64::EPSILON {
+        if (self.p_idle_coherent_rate > f64::EPSILON || self.frequency_noise_enabled())
+            && duration.abs() > f64::EPSILON
+        {
             self.apply_idle_coherent(duration, qubits, builder);
         }
     }
@@ -1383,7 +1466,37 @@ impl GeneralNoiseModel {
         (rate * multiplier * duration).sin().powi(2)
     }
 
-    /// Apply deterministic coherent idle rotations in RX/RY/RZ order.
+    /// Derive the frequency-noise seed from a clone so the primary stream is not advanced.
+    pub(crate) fn frequency_seed_for(rng: &PecosRng) -> u64 {
+        derive_seed(rng.clone().next_u64(), "idle_frequency_noise")
+    }
+
+    fn frequency_noise_enabled(&self) -> bool {
+        self.idle_frequency_noise.iter().any(|(std, _)| *std > 0.0)
+    }
+
+    fn idle_frequency(&self) -> IdleFrequency {
+        let shot_key = nth_derived_seed(self.frequency_seed, self.shot_index);
+        let mean = self.p_idle_coherent_rate
+            * self.p_idle_coherent_model.get("RZ").copied().unwrap_or(0.0);
+        let mut frequency = IdleFrequency {
+            shared: mean,
+            per_qubit: Vec::new(),
+        };
+        for (component, &(std, scope)) in self.idle_frequency_noise.iter().enumerate() {
+            let seed = nth_derived_seed(shot_key, component as u64);
+            match scope {
+                FrequencyNoiseScope::Shared => {
+                    frequency.shared +=
+                        IdleFrequency::sample(std, nth_derived_seed(seed, u64::MAX));
+                }
+                FrequencyNoiseScope::PerQubit => frequency.per_qubit.push((std, seed)),
+            }
+        }
+        frequency
+    }
+
+    /// Apply coherent idle rotations in RX/RY/RZ order, combining frequency noise into RZ.
     fn apply_idle_coherent(
         &self,
         duration: f64,
@@ -1399,7 +1512,30 @@ impl GeneralNoiseModel {
             return;
         }
 
+        let frequency = self
+            .frequency_noise_enabled()
+            .then(|| self.idle_frequency());
+
         for axis in ["RX", "RY", "RZ"] {
+            if axis == "RZ"
+                && let Some(frequency) = &frequency
+            {
+                for &qubit in &affected {
+                    let angle = frequency.at(qubit) * duration;
+                    if angle.abs() > f64::EPSILON {
+                        builder.rz(
+                            Angle64::try_from_radians(angle).expect(
+                                "validated idle frequency noise bound guarantees finite angles",
+                            ),
+                            &[qubit],
+                        );
+                    }
+                }
+                continue;
+            }
+            if self.p_idle_coherent_rate <= f64::EPSILON {
+                continue;
+            }
             let Some(multiplier) = self.p_idle_coherent_model.get(axis).copied() else {
                 continue;
             };
@@ -2326,6 +2462,7 @@ impl GeneralNoiseModel {
 
     /// Reset the noise model for a new shot
     fn reset_noise_model(&mut self) {
+        self.shot_index = self.shot_index.wrapping_add(1);
         // A failed/abandoned simulator continuation may leave user outcomes
         // buffered. They belong to the previous shot, just like pending qubits.
         self.results_builder.reset();
@@ -4503,6 +4640,364 @@ mod tests {
         assert_eq!(gates.len(), 2);
         assert_eq!(gates[0].angles, [pecos_core::radians!(0.1)].into());
         assert_eq!(gates[1].angles, [pecos_core::radians!(0.1)].into());
+    }
+
+    fn frequency_idle_output(
+        model: &mut GeneralNoiseModel,
+        qubits: &[usize],
+        duration: f64,
+    ) -> ByteMessage {
+        let mut input = ByteMessage::quantum_operations_builder();
+        input.idle(duration, qubits);
+        model.apply_noise_on_start(&input.build()).unwrap()
+    }
+
+    fn frequency_angles(
+        model: &mut GeneralNoiseModel,
+        qubits: &[usize],
+        duration: f64,
+    ) -> BTreeMap<usize, f64> {
+        frequency_idle_output(model, qubits, duration)
+            .quantum_ops()
+            .unwrap()
+            .into_iter()
+            .filter(|g| g.gate_type == GateType::RZ)
+            .map(|g| {
+                assert_eq!(g.qubits.len(), 1);
+                (g.qubits[0].0, g.angles[0].to_radians_signed())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn frequency_scopes_seeds_order_and_leakage() {
+        for scope in [FrequencyNoiseScope::Shared, FrequencyNoiseScope::PerQubit] {
+            let builder = GeneralNoiseModel::builder()
+                .with_seed(424)
+                .with_idle_frequency_noise(0.2, scope);
+            let mut model = builder.clone().build();
+            let first = frequency_angles(&mut model, &[0, 1, 2, 3], 0.7);
+            assert_eq!(first.len(), 4);
+            for q in 0..4 {
+                for r in q + 1..4 {
+                    assert_eq!(
+                        first[&q].to_bits() == first[&r].to_bits(),
+                        scope == FrequencyNoiseScope::Shared
+                    );
+                }
+            }
+            assert_eq!(
+                first,
+                frequency_angles(&mut builder.clone().build(), &[0, 1, 2, 3], 0.7)
+            );
+            assert_ne!(
+                first,
+                frequency_angles(
+                    &mut builder.clone().with_seed(425).build(),
+                    &[0, 1, 2, 3],
+                    0.7
+                )
+            );
+            assert_eq!(
+                first,
+                frequency_angles(&mut builder.clone().build(), &[3, 2, 1, 0], 0.7)
+            );
+            let mut leaked = builder.clone().build();
+            leaked.mark_as_leaked(0);
+            let mut expected = first.clone();
+            expected.remove(&0);
+            assert_eq!(expected, frequency_angles(&mut leaked, &[0, 1, 2, 3], 0.7));
+            let mut lost = builder
+                .with_loss(QubitLoss::builder().build().unwrap())
+                .build();
+            lost.loss_source(
+                &[QubitId(0)],
+                1.0,
+                &mut ByteMessage::quantum_operations_builder(),
+            );
+            assert!(lost.is_lost(0));
+            assert_eq!(expected, frequency_angles(&mut lost, &[0, 1, 2, 3], 0.7));
+            model.reset_noise_model();
+            assert_ne!(first, frequency_angles(&mut model, &[0, 1, 2, 3], 0.7));
+            model.set_seed(424);
+            assert_eq!(first, frequency_angles(&mut model, &[0, 1, 2, 3], 0.7));
+        }
+    }
+
+    #[test]
+    fn frequency_components_add_and_zero_keeps_its_index() {
+        let base = GeneralNoiseModel::builder().with_seed(424);
+        let mut first = base
+            .clone()
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::Shared)
+            .build();
+        let mut second = base
+            .clone()
+            .with_idle_frequency_noise(0.0, FrequencyNoiseScope::Shared)
+            .with_idle_frequency_noise(0.3, FrequencyNoiseScope::PerQubit)
+            .build();
+        let mut combined = base
+            .clone()
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::Shared)
+            .with_idle_frequency_noise(0.3, FrequencyNoiseScope::PerQubit)
+            .build();
+        let first = frequency_angles(&mut first, &[0, 1], 0.7);
+        let second = frequency_angles(&mut second, &[0, 1], 0.7);
+        let combined = frequency_angles(&mut combined, &[0, 1], 0.7);
+        for q in [0, 1] {
+            assert!((combined[&q] - first[&q] - second[&q]).abs() < 1e-12);
+        }
+        let mut tiny = base
+            .with_idle_frequency_noise(1e-18, FrequencyNoiseScope::Shared)
+            .build();
+        assert_eq!(frequency_angles(&mut tiny, &[0], 1e6).len(), 1);
+        assert!(tiny.idle_frequency().at(usize::MAX).is_finite());
+    }
+
+    #[test]
+    fn frequency_seed_derivation_leaves_primary_stream_untouched() {
+        let reference = PecosRng::seed_from_u64(424).next_u64();
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::Shared)
+            .build();
+        assert_eq!(model.rng().clone().next_u64(), reference);
+        model.set_seed(424);
+        assert_eq!(model.rng().clone().next_u64(), reference);
+    }
+
+    #[test]
+    fn frequency_pinned_values() {
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::PerQubit)
+            .build();
+        let actual = frequency_angles(&mut model, &[0, 1, 2, 3], 0.7);
+        let expected = [
+            -0.064_126_085_428_344_23_f64,
+            0.073_729_324_586_619_78,
+            0.145_024_855_017_988_37,
+            -0.136_743_865_968_503_94,
+        ];
+        for (q, expected) in expected.into_iter().enumerate() {
+            assert!((actual[&q] - expected).abs() <= expected.abs() * 1e-12);
+        }
+    }
+
+    #[test]
+    fn frequency_shots_advance_even_without_idles_and_wrapper_reseeds() {
+        use crate::noise::IntoNoiseModel;
+        use crate::runtime_frame::{FrameLimits, RuntimeNoise};
+        let builder = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::PerQubit);
+        let mut empty_shots = builder.clone().build();
+        let mut active_shots = builder.clone().build();
+        for _ in 0..3 {
+            frequency_angles(&mut active_shots, &[0], 0.7);
+            active_shots.reset_noise_model();
+            empty_shots.reset_noise_model();
+        }
+        assert_eq!(
+            frequency_angles(&mut active_shots, &[0], 0.7),
+            frequency_angles(&mut empty_shots, &[0], 0.7)
+        );
+        let mut wrapped = RuntimeNoise::new(builder, 4, FrameLimits::default())
+            .unwrap()
+            .into_noise_model()
+            .unwrap();
+        let mut run = |seed| {
+            wrapped.reset().unwrap();
+            wrapped.set_seed(seed);
+            let mut input = ByteMessage::quantum_operations_builder();
+            input.idle(0.7, &[0]);
+            match wrapped.start(input.build()).unwrap() {
+                EngineStage::NeedsProcessing(output) => output.into_bytes(),
+                EngineStage::Complete(_) => {
+                    panic!("idle rotation must dispatch to the quantum engine")
+                }
+            }
+        };
+        let first = run(424);
+        assert_ne!(first, run(425));
+        assert_eq!(first, run(424));
+    }
+
+    #[test]
+    fn frequency_signed_statistics_and_ramsey() {
+        let std = 0.2;
+        let duration = 0.7;
+        let n = 20_000;
+        for mean in [0.0, 0.1] {
+            let mut model = GeneralNoiseModel::builder()
+                .with_seed(424)
+                .with_p_idle_coherent(mean, &BTreeMap::from([("RZ".into(), 1.0)]))
+                .with_idle_frequency_noise(std, FrequencyNoiseScope::PerQubit)
+                .build();
+            let mut values = Vec::new();
+            let mut coherence = 0.0;
+            for _ in 0..n {
+                let theta = frequency_angles(&mut model, &[0], duration)[&0];
+                coherence += theta.cos();
+                values.push(theta / duration);
+                model.reset_noise_model();
+            }
+            assert!(values.iter().any(|v| *v < 0.0));
+            assert!(values.iter().any(|v| *v > 0.0));
+            let count = f64::from(n);
+            let average = values.iter().sum::<f64>() / count;
+            let measured_std =
+                (values.iter().map(|v| (v - average).powi(2)).sum::<f64>() / (count - 1.0)).sqrt();
+            assert!((average - mean).abs() < 5.0 * std / count.sqrt());
+            assert!((measured_std / std - 1.0).abs() < 5.0 / (2.0 * count).sqrt());
+            if mean == 0.0 {
+                assert!(
+                    (coherence / count - (-std.powi(2) * duration.powi(2) / 2.0).exp()).abs()
+                        < 5.0 / count.sqrt()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn frequency_combines_rz_preserves_axes_and_reverses_negative_duration() {
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_coherent(
+                0.1,
+                &BTreeMap::from([("RX".into(), 1.0), ("RY".into(), 2.0), ("RZ".into(), 3.0)]),
+            )
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::Shared)
+            .build();
+        let gates = frequency_idle_output(&mut model, &[0, 1], 0.7)
+            .quantum_ops()
+            .unwrap();
+        assert_eq!(
+            gates.iter().map(|g| g.gate_type).collect::<Vec<_>>(),
+            [GateType::RX, GateType::RY, GateType::RZ, GateType::RZ]
+        );
+        assert_eq!(gates[0].qubits.len(), 2);
+        assert_eq!(gates[1].qubits.len(), 2);
+        assert!((gates[0].angles[0].to_radians_signed() - 0.07).abs() < 1e-12);
+        assert!((gates[1].angles[0].to_radians_signed() - 0.14).abs() < 1e-12);
+        let mut noise_only = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::Shared)
+            .build();
+        let fluctuation = frequency_angles(&mut noise_only, &[0], 0.7)[&0];
+        let expected = fluctuation + 0.1 * 3.0 * 0.7;
+        assert!((gates[2].angles[0].to_radians_signed() - expected).abs() < 1e-12);
+        assert!((frequency_angles(&mut model, &[0], -0.7)[&0] + expected).abs() < 1e-12);
+        assert!(frequency_angles(&mut model, &[0], f64::EPSILON).is_empty());
+        // The mean includes sub-epsilon coherent rates even though RX/RY retain their old gate.
+        let mut tiny = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_coherent(f64::EPSILON, &BTreeMap::from([("RZ".into(), 1e15)]))
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::Shared)
+            .build();
+        assert!(
+            (frequency_angles(&mut tiny, &[0], 0.7)[&0] - fluctuation - f64::EPSILON * 1e15 * 0.7)
+                .abs()
+                < 1e-12
+        );
+    }
+
+    #[test]
+    fn frequency_does_not_consume_primary_rng_and_zero_is_byte_identical() {
+        let builder = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear(0.35, &BTreeMap::from([("X".into(), 1.0)]));
+        let mut baseline = builder.clone().build();
+        let mut active = builder
+            .clone()
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::PerQubit)
+            .build();
+        let mut zero = builder
+            .with_idle_frequency_noise(0.0, FrequencyNoiseScope::Shared)
+            .build();
+        for _ in 0..128 {
+            let expected = frequency_idle_output(&mut baseline, &[0, 1, 2, 3], 0.7);
+            assert_eq!(
+                expected.as_bytes(),
+                frequency_idle_output(&mut zero, &[0, 1, 2, 3], 0.7).as_bytes()
+            );
+            let actual = frequency_idle_output(&mut active, &[0, 1, 2, 3], 0.7)
+                .quantum_ops()
+                .unwrap()
+                .into_iter()
+                .filter(|g| g.gate_type != GateType::RZ)
+                .collect::<Vec<_>>();
+            assert_eq!(expected.quantum_ops().unwrap(), actual);
+            assert_eq!(
+                baseline.rng().clone().next_u64(),
+                active.rng().clone().next_u64()
+            );
+            baseline.reset_noise_model();
+            zero.reset_noise_model();
+            active.reset_noise_model();
+        }
+        let coherent = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_coherent(
+                0.25,
+                &BTreeMap::from([("RX".into(), 1.0), ("RY".into(), 2.0), ("RZ".into(), 3.0)]),
+            );
+        let mut off = coherent.clone().build();
+        let mut zero = coherent
+            .with_idle_frequency_noise(0.0, FrequencyNoiseScope::PerQubit)
+            .build();
+        assert_eq!(
+            frequency_idle_output(&mut off, &[0, 1], 0.7).as_bytes(),
+            frequency_idle_output(&mut zero, &[0, 1], 0.7).as_bytes()
+        );
+    }
+
+    #[test]
+    fn frequency_idle_after_two_qubit_and_unbounded_qubit_index() {
+        let builder = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::PerQubit);
+        let mut fixed = builder.clone().with_idle_after_2q(0.7).build();
+        let mut output = ByteMessage::quantum_operations_builder();
+        fixed.apply_tq_faults(&Gate::cz(&[(0, 1)]), 1.0, &mut output);
+        let explicit = frequency_idle_output(&mut builder.clone().build(), &[0, 1], 0.7);
+        assert_eq!(
+            output
+                .build()
+                .quantum_ops()
+                .unwrap()
+                .into_iter()
+                .filter(|g| g.gate_type == GateType::RZ)
+                .collect::<Vec<_>>(),
+            explicit.quantum_ops().unwrap()
+        );
+        assert_eq!(
+            frequency_angles(&mut builder.build(), &[u32::MAX as usize], 0.7).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn frequency_bounds_are_checked_for_fixed_and_variable_durations() {
+        let builder = GeneralNoiseModel::builder()
+            .with_idle_frequency_noise(1e300, FrequencyNoiseScope::Shared);
+        let error = builder
+            .clone()
+            .with_idle_after_2q(1e10)
+            .validate_configuration()
+            .unwrap_err();
+        assert!(error.contains("idle frequency noise"));
+        assert!(error.contains("reduce std"));
+        let mut model = builder.build();
+        let mut input = ByteMessage::quantum_operations_builder();
+        input.idle(1e10, &[0]);
+        assert!(
+            model
+                .apply_noise_on_start(&input.build())
+                .err()
+                .unwrap()
+                .contains("idle frequency noise")
+        );
     }
 
     #[test]

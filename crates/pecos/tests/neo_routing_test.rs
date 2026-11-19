@@ -477,3 +477,23 @@ fn t20_neo_stack_rejects_qubit_loss() {
         "{error}"
     );
 }
+
+#[test]
+fn neo_stack_rejects_idle_frequency_noise_including_zero() {
+    use pecos_engines::noise::{FrequencyNoiseScope, GeneralNoiseModel};
+    for std in [0.0, 0.2] {
+        let noise = GeneralNoiseModel::builder()
+            .with_idle_frequency_noise(std, FrequencyNoiseScope::Shared);
+        let error = sim(deterministic_conditional_qasm())
+            .stack(SimStack::Neo)
+            .noise(noise)
+            .shots(1)
+            .run()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("beyond the simple probability subset"),
+            "{error}"
+        );
+    }
+}

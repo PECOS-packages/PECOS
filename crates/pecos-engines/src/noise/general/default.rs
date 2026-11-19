@@ -78,6 +78,9 @@ impl Default for GeneralNoiseModel {
             ("RZ".to_string(), 1.0),
         ]);
 
+        let rng: NoiseRng = NoiseRng::default();
+        let frequency_seed = GeneralNoiseModel::frequency_seed_for(rng.inner());
+
         // No-effect defaults
         Self {
             p_prep: 0.0,
@@ -115,7 +118,10 @@ impl Default for GeneralNoiseModel {
             p2_angle_power: 1.0,
             idle_after_2q: 0.0,
             leaked_qubits: BTreeSet::new(),
-            rng: NoiseRng::default(),
+            rng,
+            frequency_seed,
+            shot_index: 0,
+            idle_frequency_noise: Vec::new(),
             prepared_qubits: BTreeSet::new(),
             measured_qubits: Vec::new(),
             pending_transition_batches: Vec::new(),

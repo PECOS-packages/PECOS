@@ -15,6 +15,7 @@ description = "Simulation engine infrastructure for PECOS"
 crate-type = ["rlib"]
 
 [dependencies]
+rand_distr.workspace = true
 rayon.workspace = true
 log.workspace = true
 serde.workspace = true

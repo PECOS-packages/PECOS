@@ -9,6 +9,9 @@ signatures to independent mechanisms. An infeasible exact conversion uses a
 non-negative boundary fit and exposes its quantified both-fire residual on the
 DEM. Sine-squared axes are independent already and remain separate mechanisms
 from the linear family.
+
+Idle frequency noise has no DEM parameter: per-shot coherent detuning cannot
+be represented by these stochastic mechanisms.
 """
 
 from __future__ import annotations

@@ -4223,6 +4223,7 @@ dependencies = [
  "pecos-results",
  "pecos-simulators",
  "rand 0.10.2",
+ "rand_distr",
  "rayon",
  "serde",
  "serde_json",

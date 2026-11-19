@@ -333,6 +333,7 @@ struct IdleConfig {
     sin_squared_model: Option<BTreeMap<String, f64>>,
     coherent_rate: Option<f64>,
     coherent_model: Option<BTreeMap<String, f64>>,
+    frequency_noise: Option<Vec<super::IdleFrequencyNoise>>,
     scale: Option<f64>,
 }
 
@@ -614,6 +615,12 @@ impl GeneralNoiseConfig {
             return Err(input_error(
                 "idle.coherent_model requires idle.coherent_rate",
             ));
+        }
+        if let Some(components) = &idle.frequency_noise {
+            builder.clear_idle_frequency_noise();
+            for component in components {
+                builder = builder.with_idle_frequency_noise(component.std, component.scope);
+            }
         }
         if let Some(value) = idle.scale {
             builder = builder.with_idle_scale(value);
@@ -1153,6 +1160,54 @@ mod tests {
                 .build()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn frequency_noise_schema_and_override() {
+        use super::super::FrequencyNoiseScope;
+        let config = GeneralNoiseConfig::from_json(
+            r#"{"idle":{"frequency_noise":[{"std":0.2},{"std":0.3,"scope":"per_qubit"}]}}"#,
+        )
+        .unwrap();
+        let model = config.build().unwrap();
+        assert_eq!(
+            model.idle_frequency_noise,
+            [
+                (0.2, FrequencyNoiseScope::Shared),
+                (0.3, FrequencyNoiseScope::PerQubit)
+            ]
+        );
+        let original = GeneralNoiseModel::builder()
+            .with_idle_frequency_noise(0.4, FrequencyNoiseScope::Shared);
+        let replaced = config.apply_to(original.clone()).unwrap().build();
+        assert_eq!(replaced.idle_frequency_noise, model.idle_frequency_noise);
+        let preserved = GeneralNoiseConfig::from_json("{}")
+            .unwrap()
+            .apply_to(original.clone())
+            .unwrap()
+            .build();
+        assert_eq!(
+            preserved.idle_frequency_noise,
+            [(0.4, FrequencyNoiseScope::Shared)]
+        );
+        let cleared = GeneralNoiseConfig::from_json(r#"{"idle":{"frequency_noise":[]}}"#)
+            .unwrap()
+            .apply_to(original)
+            .unwrap()
+            .build();
+        assert_eq!(cleared.idle_frequency_noise, Vec::new());
+        for entry in [
+            r#"{"std":1,"scope":"invalid"}"#,
+            r#"{"std":1,"extra":2}"#,
+            r#"{"scope":"shared"}"#,
+        ] {
+            assert!(
+                GeneralNoiseConfig::from_json(&format!(
+                    r#"{{"idle":{{"frequency_noise":[{entry}]}}}}"#
+                ))
+                .is_err()
+            );
+        }
     }
 
     #[test]

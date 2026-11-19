@@ -7,7 +7,7 @@ from pecos_rslib import (
     GeneralNoiseModelBuilder,
     Qasm,
 )
-from pecos_rslib import sim
+from pecos_rslib import sim, state_vector
 
 
 class TestDirectBuilder:
@@ -279,3 +279,47 @@ def test_config_json_composes_immutably_and_defers_cross_field_validation() -> N
     sim(program).noise(repaired).run(1)
     with pytest.raises(ValueError, match="scaled one-qubit probability"):
         sim(program).noise(intermediate).run(1)
+
+
+def test_idle_frequency_noise_builder() -> None:
+    builder = GeneralNoiseModelBuilder().with_idle_frequency_noise(0.2)
+    assert isinstance(
+        builder.with_idle_frequency_noise(0.0, scope="per_qubit"),
+        GeneralNoiseModelBuilder,
+    )
+    for std in (-1.0, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="idle frequency noise std must be finite and non-negative"):
+            builder.with_idle_frequency_noise(std)
+    with pytest.raises(TypeError, match="not bool"):
+        builder.with_idle_frequency_noise(True)
+    with pytest.raises(ValueError, match=r"invalid.*shared.*per_qubit"):
+        builder.with_idle_frequency_noise(0.2, scope="invalid")
+    with pytest.raises(TypeError):
+        builder.with_idle_frequency_noise(0.2, "per_qubit")
+
+
+def test_idle_frequency_noise_binding_reaches_model_validation() -> None:
+    program = Qasm.from_string('OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; cx q[0], q[1];')
+    builder = GeneralNoiseModelBuilder().with_idle_frequency_noise(1e300).with_idle_after_2q(1e10)
+    with pytest.raises(ValueError, match="idle frequency noise"):
+        sim(program).noise(builder).run(1)
+
+
+def test_idle_frequency_noise_setter_matches_config_json() -> None:
+    """The fluent setter must append components with the right scopes, like the config path."""
+    program = Qasm.from_string(
+        'OPENQASM 2.0; include "qelib1.inc"; qreg q[2]; creg c[2];'
+        "h q[0]; h q[1]; cx q[0], q[1]; h q[0]; h q[1]; measure q -> c;"
+    )
+
+    def run(noise: GeneralNoiseModelBuilder) -> list[int]:
+        return sim(program).quantum(state_vector()).seed(7).noise(noise).run(64).to_dict()["c"]
+
+    base = GeneralNoiseModelBuilder().with_idle_after_2q(1.0)
+    fluent = base.with_idle_frequency_noise(2.0).with_idle_frequency_noise(3.0, scope="per_qubit")
+    configured = base.with_config_json(
+        '{"idle": {"frequency_noise": [{"std": 2.0}, {"std": 3.0, "scope": "per_qubit"}]}}'
+    )
+    swapped = base.with_idle_frequency_noise(2.0, scope="per_qubit").with_idle_frequency_noise(3.0)
+    assert run(fluent) == run(configured)
+    assert run(fluent) != run(swapped)

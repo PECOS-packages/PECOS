@@ -1079,7 +1079,8 @@ pub unsafe extern "C" fn pecos_get_pending_operations_with_context(
     let Ok(mut pending) = ctx.pending_ops.lock() else {
         return 2;
     };
-    let mut collector = OperationCollector::new();
+    // Handoffs carry operations only; do not reserve unused collector buffers.
+    let mut collector = OperationCollector::default();
     collector.operations = std::mem::take(&mut *pending);
     // SAFETY: The caller provides writable output storage.
     unsafe {
@@ -2192,10 +2193,12 @@ mod tests {
         let context = unsafe { &*ctx };
 
         // Store some operations in context storage
-        if let Ok(mut ops) = context.pending_ops.lock() {
+        let (buffer, capacity) = {
+            let mut ops = context.pending_ops.lock().unwrap();
             ops.push(Operation::AllocateQubit { id: 0 });
             ops.push(Operation::AllocateQubit { id: 1 });
-        }
+            (ops.as_ptr(), ops.capacity())
+        };
 
         // Get pending operations
         let ptr = pecos_get_pending_operations();
@@ -2205,6 +2208,20 @@ mod tests {
         let collector =
             unsafe { ptr.as_ref() }.expect("pecos_get_pending_operations returned null");
         assert_eq!(collector.operations.len(), 2);
+        assert!(matches!(
+            collector.operations[0],
+            Operation::AllocateQubit { id: 0 }
+        ));
+        assert!(matches!(
+            collector.operations[1],
+            Operation::AllocateQubit { id: 1 }
+        ));
+        assert_eq!(collector.operations.as_ptr(), buffer);
+        assert_eq!(collector.operations.capacity(), capacity);
+        // A handoff carries operations only, so reserve no unused bookkeeping.
+        assert_eq!(collector.measurements.capacity(), 0);
+        assert_eq!(collector.allocated_qubits.capacity(), 0);
+        assert_eq!(collector.allocated_results.capacity(), 0);
 
         // Free the collector
         unsafe { pecos_free_operations(ptr) };
@@ -2212,7 +2229,11 @@ mod tests {
         // Second read should be empty because the handoff drains pending ops.
         let ptr = pecos_get_pending_operations();
         assert!(!ptr.is_null());
-        assert_eq!(unsafe { &*ptr }.operations, []);
+        let collector = unsafe { &*ptr };
+        assert_eq!(collector.operations, []);
+        assert_eq!(collector.measurements.capacity(), 0);
+        assert_eq!(collector.allocated_qubits.capacity(), 0);
+        assert_eq!(collector.allocated_results.capacity(), 0);
         unsafe { pecos_free_operations(ptr) };
 
         teardown_context(ctx);
@@ -2228,7 +2249,11 @@ mod tests {
         // Successful empty imports are distinct from unavailable imports.
         let ptr = pecos_get_pending_operations();
         assert!(!ptr.is_null());
-        assert_eq!(unsafe { &*ptr }.operations, []);
+        let collector = unsafe { &*ptr };
+        assert_eq!(collector.operations, []);
+        assert_eq!(collector.measurements.capacity(), 0);
+        assert_eq!(collector.allocated_qubits.capacity(), 0);
+        assert_eq!(collector.allocated_results.capacity(), 0);
         unsafe { pecos_free_operations(ptr) };
 
         teardown_context(ctx);

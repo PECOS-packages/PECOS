@@ -1430,12 +1430,12 @@ impl GeneralNoiseModel {
 
     /// Apply preparation (initialization) noise
     ///
-    /// State prep noise model:
-    /// 1. Reset all states including leaked qubits to |0⟩
-    /// 2. With probability `p_prep` per qubit, the initialization fails
-    /// 3. If failure occurs, with probability `p_prep_leak_ratio` the qubit leaks out of
-    ///    computational space.
-    /// 4. Otherwise, the qubit is prepared in the wrong state (|1⟩ instead of |0⟩)
+    /// State prep noise model, in order:
+    /// 1. Reload lost operands if configured; drop operands that remain lost before any draws.
+    /// 2. Clear leakage and emit preparation for the retained operands, resetting them to |0⟩.
+    /// 3. With probability `p_prep` per retained operand, initialization fails: leak with
+    ///    probability `p_prep_leak_ratio`, otherwise apply X to prepare |1⟩.
+    /// 4. Draw independent prep loss for each retained operand, emitting PZ on loss.
     ///
     /// In ion trap systems, this models imperfect optical pumping or errors in the initial
     /// state preparation process that fails to correctly initialize the qubit.
@@ -1610,8 +1610,16 @@ impl GeneralNoiseModel {
             && gate.qubits.iter().any(|q| self.is_lost(usize::from(*q)));
         for &qubit in &gate.qubits {
             if custom_lost || self.is_lost(usize::from(qubit)) {
-                self.suppress_for_loss(&[qubit]);
-                removed_gates = true;
+                // Preserve measurement outcomes without exposing a lost atom to the
+                // generic leakage/emission paths that can also remove the gate.
+                if gate.gate_type.consumes_measurement_record()
+                    || gate.gate_type.is_recordless_z_measurement()
+                {
+                    original_gate_qubits.push(usize::from(qubit));
+                } else {
+                    self.suppress_for_loss(&[qubit]);
+                    removed_gates = true;
+                }
                 continue;
             }
             // Track whether to add the original gate
@@ -1701,15 +1709,19 @@ impl GeneralNoiseModel {
     ///
     /// Models errors that occur during two-qubit gate operations in this order:
     ///
-    /// 1. Apply before-gate independent-leg or joint steps in insertion order across families.
-    /// 2. Finish internal measurements before deciding each pair's ideal-gate eligibility.
-    /// 3. Suppress the ideal gate for pairs that remain leaked; otherwise emit it.
-    /// 4. With probability `p`, sample the ordinary p2 error channel.
-    /// 5. Conditional on a p2 error, select emission with `p2_emission_ratio`; otherwise select a
-    ///    standard two-qubit Pauli error (IX, IY, IZ, XI, ...).
-    /// 6. Apply after-gate steps in insertion order across both families.
-    /// 7. Consume internal measurements without returning them as program results.
-    /// 8. Apply configured after-2Q idle noise.
+    /// 1. Apply before-site recovery, non-loss hooks, then loss events, preserving listed
+    ///    order within each kind; finish internal measurements before evaluating pairs.
+    /// 2. Suppress pairs with a lost operand, skipping base, emission and seepage draws.
+    ///    Apply partner spreading or its survivor Pauli unless this pair's own before-site
+    ///    loss event already decided the partner effect.
+    /// 3. For remaining pairs, suppress the ideal gate if leaked. With probability `p`,
+    ///    select emission with `p2_emission_ratio` (which can replace the gate or seep a
+    ///    leaked operand), otherwise sample the standard two-qubit Pauli error.
+    /// 4. Emit retained ideal gates, then accumulated spreading and ordinary noise.
+    /// 5. Apply after-site loss entries in listed order, even for suppressed pairs, then
+    ///    non-loss hooks, which skip pairs suppressed for loss or currently lost.
+    /// 6. Consume internal measurements without returning them as program results.
+    /// 7. Apply configured after-2Q idle noise, then clear per-command loss bookkeeping.
     ///
     /// In physical systems, emission errors can cause leakage, while Pauli errors
     /// represent standard decoherence, cross-talk, and control errors.

@@ -869,12 +869,16 @@ impl GeneralNoiseModel {
 }
 
 impl GeneralNoiseModel {
-    // Measurements always retain all operands; Custom is one operation.
+    // All measurement-producing gates retain operands, including untracked measurements
+    // that must still reach the outcome-count error. Custom is one operation.
     pub(super) fn filter_lost_gate<'a>(
         &self,
         gate: &'a Gate,
     ) -> Option<std::borrow::Cow<'a, Gate>> {
-        if self.loss.is_none() || super::is_tracked_measurement(gate.gate_type) {
+        if self.loss.is_none()
+            || gate.gate_type.consumes_measurement_record()
+            || gate.gate_type.is_recordless_z_measurement()
+        {
             return Some(std::borrow::Cow::Borrowed(gate));
         }
         let arity = if gate.gate_type == GateType::Custom {

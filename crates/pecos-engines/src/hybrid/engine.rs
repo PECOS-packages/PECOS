@@ -12,9 +12,7 @@
 
 use crate::Engine;
 use crate::byte_message::ByteMessage;
-use crate::engine_system::{
-    ClassicalControlEngine, ClassicalEngine, ControlEngine, EngineStage, EngineSystem,
-};
+use crate::engine_system::{ClassicalControlEngine, ClassicalEngine, EngineSystem};
 use crate::quantum_system::QuantumSystem;
 use crate::shot_results::Shot;
 use dyn_clone;
@@ -171,58 +169,48 @@ impl HybridEngine {
     }
 
     fn run_shot_inner(&mut self) -> Result<Shot, PecosError> {
+        enum Failure {
+            Error(PecosError),
+            Panic(Box<dyn std::any::Any + Send>),
+        }
         debug!(
             "HybridEngine::run_shot() starting - Thread {:?}",
             std::thread::current().id()
         );
-        let mut stage = self.classical_engine.start(())?;
-
-        // Handle the case where the engine immediately completes with no processing needed
-        if let EngineStage::Complete(results) = stage {
-            debug!(
-                "HybridEngine::run_shot() completed immediately (no commands) - Thread {:?}",
-                std::thread::current().id()
-            );
-            return Ok(results);
-        }
-
-        let mut iteration_count = 0;
-        while let EngineStage::NeedsProcessing(command_message) = stage {
-            iteration_count += 1;
-            debug!(
-                "HybridEngine::run_shot() iteration {} - Thread {:?}",
-                iteration_count,
-                std::thread::current().id()
-            );
-            debug!("Processing quantum commands, iteration {iteration_count}");
-
-            // Process through engine (could be QuantumEngine or EngineSystem)
-            let measurement_message = self.quantum_system.process(command_message)?;
-
-            debug!("Calling continue_processing with measurements");
-            // Continue classical processing with measurements
-            stage = self
-                .classical_engine
-                .continue_processing(measurement_message)?;
-            debug!(
-                "continue_processing returned stage: {:?}",
-                match &stage {
-                    EngineStage::Complete(_) => "Complete",
-                    EngineStage::NeedsProcessing(_) => "NeedsProcessing",
-                }
-            );
-        }
-
-        match stage {
-            EngineStage::Complete(results) => {
-                debug!(
-                    "HybridEngine::run_shot() completed after {} iterations - Thread {:?}",
-                    iteration_count,
-                    std::thread::current().id()
-                );
-                Ok(results)
+        // Keep the controlled engine on this worker, including its inner noise /
+        // simulator exchanges. The callback cannot escape this invocation.
+        let mut failure = None;
+        let mut calls = 0;
+        let quantum_system = &mut self.quantum_system;
+        let result = self.classical_engine.run_with((), &mut |commands| {
+            if failure.is_some() {
+                return Err(PecosError::Processing(
+                    "controlled engine already failed in this invocation".into(),
+                ));
             }
-            EngineStage::NeedsProcessing(_) => unreachable!(),
+            calls += 1;
+            debug!("Processing quantum commands, invocation {calls}");
+            // An override must not hide a backend failure or retry partially
+            // executed work. Preserve the original error/panic for the caller;
+            // no controlled-engine access is allowed after either failure.
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                quantum_system.process(commands)
+            })) {
+                Ok(Ok(reply)) => Ok(reply),
+                Ok(Err(error)) => {
+                    failure = Some(Failure::Error(error));
+                    Err(PecosError::Processing("controlled engine failed".into()))
+                }
+                Err(payload) => {
+                    failure = Some(Failure::Panic(payload));
+                    Err(PecosError::Processing("controlled engine panicked".into()))
+                }
+            }
+        });
+        match failure {
+            Some(Failure::Error(error)) => Err(error),
+            Some(Failure::Panic(payload)) => std::panic::resume_unwind(payload),
+            None => result,
         }
     }
 }

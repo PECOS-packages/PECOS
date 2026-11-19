@@ -6,6 +6,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Fixed:** Validating a just-installed managed LLVM now waits out the "text file
+  busy" window left by extraction before running `llvm-config` and `clang`, instead
+  of occasionally reporting a good installation as failed.
 - **Fixed:** Union-find now rejects NaN weights instead of sorting them (undefined
   behaviour), and BeliefFind reports a BP-produced NaN log-probability ratio as an error.
 - **Breaking:** MBP now updates stored edge messages and excludes the current

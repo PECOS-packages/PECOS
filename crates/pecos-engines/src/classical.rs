@@ -186,6 +186,14 @@ impl ControlEngine for Box<dyn ClassicalControlEngine> {
         (**self).continue_processing(result)
     }
 
+    fn run_with(
+        &mut self,
+        input: (),
+        process: &mut dyn FnMut(ByteMessage) -> Result<ByteMessage, PecosError>,
+    ) -> Result<Shot, PecosError> {
+        (**self).run_with(input, process)
+    }
+
     fn reset(&mut self) -> Result<(), PecosError> {
         <dyn ControlEngine<
                 Input = (),

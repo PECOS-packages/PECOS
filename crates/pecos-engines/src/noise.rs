@@ -191,6 +191,14 @@ impl ControlEngine for Box<dyn NoiseModel> {
         (**self).continue_processing(result)
     }
 
+    fn run_with(
+        &mut self,
+        input: Self::Input,
+        process: &mut dyn FnMut(Self::EngineInput) -> Result<Self::EngineOutput, PecosError>,
+    ) -> Result<Self::Output, PecosError> {
+        (**self).run_with(input, process)
+    }
+
     fn reset(&mut self) -> Result<(), PecosError> {
         (**self).reset()
     }

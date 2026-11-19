@@ -1,20 +1,16 @@
-"""Compile Guppy WASM calls and run the arithmetic module directly in PECOS.
+"""Run Guppy WASM arithmetic and quantum feed-forward on either public backend.
 
-Run from the repository root:
-    uv run --no-sync python examples/guppy_wasm/arithmetic.py
+    python examples/guppy_wasm/arithmetic.py --run pecos
+    python examples/guppy_wasm/arithmetic.py --run selene
 
-The default run compiles Guppy to HUGR and separately executes the WASM module.
-Use --run pecos or --run selene to probe hybrid execution through the public
-compiler paths. See docs/user-guide/guppy-wasm.md for tested versions and the
-remaining public compiler/runtime integration work.
+Install pecos-selene-wasm and build PECOS's QIS FFI for the PECOS path.
+See docs/user-guide/guppy-wasm.md for setup and supported signatures.
 """
 
 import argparse
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import pecos as pc
-import selene_sim
 from guppylang import guppy
 from guppylang.std.builtins import nat, result
 from guppylang.std.quantum import measure, qubit, x
@@ -66,15 +62,41 @@ def conditional_x() -> bool:
     return measured
 
 
+@guppy
+def conditional_calls() -> int:
+    """Allow the compiler to eliminate a provably unreachable WASM call."""
+    arithmetic = Arithmetic(nat(0))
+    total = arithmetic.add(2, 3)
+    if total == 5:  # noqa: SIM108 - Keep the correlated branches visible in this optimizer example.
+        value = arithmetic.multiply(2, 3) if total > 1 else arithmetic.multiply(8, 9)
+    else:
+        value = 0
+    arithmetic.discard()
+    result("value", value)
+    return value
+
+
 def run_pecos(function, shots: int = 4) -> dict:
-    """Probe Guppy WASM execution through PECOS (requires runtime support)."""
-    return pc.sim(pc.Guppy(function)).qubits(1).quantum(pc.state_vector()).seed(42).run(shots).to_dict()
+    """Execute the Guppy program through PECOS sim()."""
+    import pecos as pc
+
+    return (
+        pc.sim(pc.Guppy(function, wasm_modules={str(WASM_PATH): WASM_PATH.read_bytes()}))
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .seed(42)
+        .run(shots)
+        .to_dict()
+    )
 
 
 def run_selene(function, shots: int = 4) -> dict:
-    """Probe standalone Selene execution (requires compiler/runtime support)."""
+    """Execute through public Selene with the public WASM utility plugin."""
+    import selene_sim
+    from pecos_selene_wasm import build
+
     with TemporaryDirectory(prefix="pecos-guppy-wasm-") as build_dir:
-        instance = selene_sim.build(function.compile(), build_dir=Path(build_dir))
+        instance = build(function.compile(), {str(WASM_PATH): WASM_PATH.read_bytes()}, build_dir=Path(build_dir))
         results = {}
         for shot in instance.run_shots(
             simulator=selene_sim.Quest(),
@@ -93,7 +115,8 @@ def main() -> None:
     parser.add_argument(
         "--run",
         choices=("pecos", "selene"),
-        help="probe Guppy execution through the public compiler/runtime paths",
+        default="selene",
+        help="backend to execute all three examples (default: selene)",
     )
     args = parser.parse_args()
     examples = (
@@ -101,24 +124,9 @@ def main() -> None:
         ("chained_arithmetic", chained_arithmetic),
         ("conditional_x", conditional_x),
     )
-    # Guppy(...) compiles and retains HUGR; it does not execute the program.
+    run = run_pecos if args.run == "pecos" else run_selene
     for name, function in examples:
-        program = pc.Guppy(function)
-        print(f"Compiled {name} to HUGR ({len(program.hugr_bytes)} bytes)")
-
-    arithmetic = pc.WasmForeignObject.from_file(WASM_PATH)
-    arithmetic.init()
-    try:
-        total = arithmetic.exec("add", [2, 3])
-        product = arithmetic.exec("multiply", [total, 4])
-        print(f"Direct WASM execution: 2 + 3 = {total}; (2 + 3) * 4 = {product}")
-    finally:
-        arithmetic.teardown()
-    print("Default checks cover HUGR compilation and direct WASM execution separately.")
-    if args.run:
-        run = run_pecos if args.run == "pecos" else run_selene
-        for name, function in examples:
-            print(f"{args.run}: {name}: {run(function)}")
+        print(f"{args.run}: {name}: {run(function)}")
 
 
 if __name__ == "__main__":

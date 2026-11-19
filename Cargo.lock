@@ -4607,6 +4607,7 @@ dependencies = [
  "log",
  "pecos-qis-ffi-types",
  "pecos-random",
+ "pecos-wasm-runtime",
  "serde_json",
 ]
 
@@ -4870,6 +4871,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-selene-wasm"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-wasm-runtime",
+]
+
+[[package]]
 name = "pecos-simulators"
 version = "0.2.0-dev.0"
 dependencies = [
@@ -4973,6 +4981,13 @@ dependencies = [
  "parking_lot",
  "pecos-core",
  "wasmtime",
+]
+
+[[package]]
+name = "pecos-wasm-runtime"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-wasm",
 ]
 
 [[package]]

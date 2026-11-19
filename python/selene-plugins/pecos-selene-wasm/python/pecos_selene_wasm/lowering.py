@@ -1,0 +1,396 @@
+"""Independent lowering of public tket.wasm to a versioned scalar WASM ABI.
+
+The released public Selene compiler handles the remaining HUGR. Module
+identifiers resolve only to explicitly supplied bytes, never implicit files.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import heapq
+import re
+import struct
+from typing import TYPE_CHECKING
+
+from hugr.hugr import Hugr
+from hugr.package import Package
+from selene_hugr_qis_compiler import compile_to_llvm_ir
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+_I64 = {
+    "t": "Opaque",
+    "extension": "arithmetic.int.types",
+    "extension_version": "0.1.0",
+    "id": "int",
+    "args": [{"tya": "BoundedNat", "n": 6}],
+    "bound": "C",
+}
+_PREFIX = "pecos_wasm_adapter_"
+type Json = dict[str, Json] | list[Json] | str | int | float | bool | None
+
+
+def _order_calls(document: dict) -> None:
+    """Choose a stable dependency-respecting schedule for classical effects.
+
+    Older Guppy releases leave context release/reacquisition unordered. Once
+    WASM operations become external calls, choose a deterministic topological
+    schedule, using serialized node order only to break ties. Add order edges
+    between calls and enclosing dataflow regions, including calls to helpers.
+    Never order mutually exclusive cases or function definitions themselves.
+    """
+    nodes, edges = document["nodes"], document["edges"]
+    effects = set()
+    for index, node in enumerate(nodes):
+        if node.get("op") not in {"Call", "CallIndirect"}:
+            continue
+        current = index
+        while nodes[current].get("op") not in {"FuncDefn", "Module"}:
+            effects.add(current)
+            current = nodes[current]["parent"]
+
+    def child_of(node: int, parent: int) -> int | None:
+        while node != parent:
+            ancestor = nodes[node]["parent"]
+            if ancestor == parent:
+                return node
+            if ancestor == node:
+                break
+            node = ancestor
+        return None
+
+    for parent, node in enumerate(nodes):
+        if node.get("op") not in {"FuncDefn", "DFG", "DataflowBlock", "Case"}:
+            continue
+        children = {index for index, child in enumerate(nodes) if child["parent"] == parent}
+        successors = {child: set() for child in children}
+        indegree = dict.fromkeys(children, 0)
+        for source, target in edges:
+            a, b = child_of(source[0], parent), child_of(target[0], parent)
+            if a is not None and b is not None and a != b and b not in successors[a]:
+                successors[a].add(b)
+                indegree[b] += 1
+        ready = [child for child, degree in indegree.items() if degree == 0]
+        heapq.heapify(ready)
+        schedule = []
+        while ready:
+            child = heapq.heappop(ready)
+            schedule.append(child)
+            for successor in successors[child]:
+                indegree[successor] -= 1
+                if indegree[successor] == 0:
+                    heapq.heappush(ready, successor)
+        if len(schedule) != len(children):
+            msg = "Cannot schedule cyclic HUGR dataflow for WASM calls"
+            raise ValueError(msg)
+        previous = None
+        for child in schedule:
+            if child in effects:
+                if previous is not None:
+                    edge = [[previous, None], [child, None]]
+                    if edge not in edges:
+                        edges.append(edge)
+                previous = child
+
+
+def _reject_loops(document: dict) -> None:
+    """Fail closed for public compiler external-call loop constant propagation.
+
+    Compiler 0.4.2 and 0.5.2 can replace a loop-carried external call result
+    with its initial constant, including at opt_level=0. Check the entire
+    program, so a WASM call in a helper cannot bypass this restriction.
+    """
+    nodes = document["nodes"]
+    blocks = {index for index, node in enumerate(nodes) if node.get("op") == "DataflowBlock"}
+    successors = {block: set() for block in blocks}
+    indegree = dict.fromkeys(blocks, 0)
+    for source, target in document["edges"]:
+        a, b = source[0], target[0]
+        if a in blocks and b in blocks and nodes[a]["parent"] == nodes[b]["parent"] and b not in successors[a]:
+            successors[a].add(b)
+            indegree[b] += 1
+    ready = [block for block, degree in indegree.items() if degree == 0]
+    visited = 0
+    while ready:
+        visited += 1
+        for successor in successors[ready.pop()]:
+            indegree[successor] -= 1
+            if indegree[successor] == 0:
+                ready.append(successor)
+    if visited != len(blocks) or any(node.get("op") == "TailLoop" for node in nodes):
+        msg = (
+            "WASM programs containing loops are not supported yet: public compiler versions "
+            "0.4.2 and 0.5.2 can miscompile loop-carried external-call results"
+        )
+        raise ValueError(msg)
+
+
+def _replace_types(value: Json) -> Json:
+    if isinstance(value, list):
+        return [_replace_types(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if value.get("t") == "Opaque" and value.get("extension") == "tket.wasm":
+        if value["id"] not in {"module", "context", "func", "result"}:
+            msg = f"Unsupported WASM type: {value['id']}"
+            raise ValueError(msg)
+        return copy.deepcopy(_I64)
+    return {key: _replace_types(item) for key, item in value.items()}
+
+
+def _arity(argument: dict) -> int:
+    if argument.get("tya") != "List":
+        msg = "WASM signatures must have concrete type rows"
+        raise ValueError(msg)
+    for entry in argument["elems"]:
+        ty = entry.get("ty", {})
+        if not (
+            entry.get("tya") == "Type"
+            and ty.get("extension") == "arithmetic.int.types"
+            and ty.get("id") == "int"
+            and ty.get("args") == [{"tya": "BoundedNat", "n": 6}]
+        ):
+            msg = "Public WASM ABI v1 supports only scalar i64 signatures"
+            raise ValueError(msg)
+    return len(argument["elems"])
+
+
+def _validate(operation: dict) -> tuple[int, int]:
+    if operation.get("extension_version") != "0.5.0":
+        msg = "Public WASM lowering requires tket.wasm 0.5.0"
+        raise ValueError(msg)
+    name, args = operation["name"], operation["args"]
+    if name == "lookup_by_name":
+        if args[0].get("tya") != "String":
+            msg = "WASM export name must be a compile-time string"
+            raise ValueError(msg)
+        inputs, outputs = _arity(args[1]), _arity(args[2])
+    elif name == "call":
+        inputs, outputs = _arity(args[0]), _arity(args[1])
+    elif name == "read_result":
+        inputs, outputs = 0, _arity(args[0])
+    elif name in {"get_context", "dispose_context"}:
+        inputs, outputs = 0, 0
+    else:
+        msg = f"Unsupported public WASM operation: {name}"
+        raise ValueError(msg)
+    if outputs > 1:
+        msg = "Public WASM ABI v1 supports zero or one i64 result"
+        raise ValueError(msg)
+    return inputs, outputs
+
+
+def _constant(name: str, data: bytes) -> str:
+    literal = "".join(f"\\{byte:02X}" for byte in data)
+    return f'@{name} = private constant [{len(data)} x i8] c"{literal}"\n'
+
+
+_ABI = """
+declare i32 @pecos_wasm_v1_reset()
+declare i32 @pecos_wasm_v1_register(i64, ptr, i64)
+declare i64 @pecos_wasm_v1_acquire(i64)
+declare i32 @pecos_wasm_v1_release(i64)
+declare i64 @pecos_wasm_v1_lookup(i64, ptr, i64, i64, i64)
+declare i32 @pecos_wasm_v1_call(i64, i64, ptr, i64)
+declare i32 @pecos_wasm_v1_read(i64, ptr, i64)
+declare ptr @pecos_wasm_v1_error()
+
+define private void @pecos_wasm_check(i1 %ok) {
+entry:
+  br i1 %ok, label %success, label %failure
+failure:
+  %message = call ptr @pecos_wasm_v1_error()
+  call void @panic(i32 2001, ptr %message)
+  unreachable
+success:
+  ret void
+}
+"""
+
+
+def _check(status: str, bits: int = 32, *, nonzero: bool = False) -> str:
+    predicate = "ne" if nonzero else "eq"
+    return f"  %{status}_ok = icmp {predicate} i{bits} %{status}, 0\n  call void @pecos_wasm_check(i1 %{status}_ok)\n"
+
+
+def _adapter(symbol: str, operation: dict, unique: str) -> str:
+    name, args = operation["name"], operation["args"]
+    inputs, outputs = _validate(operation)
+    if name == "get_context":
+        return f"""define {{ i1, i64 }} {symbol}(i64 %index) {{
+entry:
+  %handle = call i64 @pecos_wasm_v1_acquire(i64 %index)
+  %ok = icmp ne i64 %handle, 0
+  %tag = insertvalue {{ i1, i64 }} poison, i1 %ok, 0
+  %result = insertvalue {{ i1, i64 }} %tag, i64 %handle, 1
+  ret {{ i1, i64 }} %result
+}}
+"""
+    if name == "lookup_by_name":
+        data = args[0]["arg"].encode("utf-8")
+        return _constant(unique, data) + f"""define i64 {symbol}(i64 %module) {{
+entry:
+  %handle = call i64 @pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})
+{_check('handle', 64, nonzero=True)}  ret i64 %handle
+}}
+"""
+    if name == "dispose_context":
+        return f"""define void {symbol}(i64 %context) {{
+entry:
+  %status = call i32 @pecos_wasm_v1_release(i64 %context)
+{_check('status')}  ret void
+}}
+"""
+    if name == "call":
+        parameters = "".join(f", i64 %arg{i}" for i in range(inputs))
+        packing = f"  %args = alloca [{inputs} x i64]\n"
+        for i in range(inputs):
+            packing += (
+                f"  %ptr{i} = getelementptr [{inputs} x i64], ptr %args, i64 0, i64 {i}\n"
+                f"  store i64 %arg{i}, ptr %ptr{i}\n"
+            )
+        return f"""define i64 {symbol}(i64 %context, i64 %function{parameters}) {{
+entry:
+{packing}  %status = call i32 @pecos_wasm_v1_call(i64 %context, i64 %function, ptr %args, i64 {inputs})
+{_check('status')}  ret i64 %context
+}}
+"""
+    result_type = "{ i64, i64 }" if outputs else "i64"
+    result = (
+        """  %value = load i64, ptr %out
+  %pair = insertvalue { i64, i64 } poison, i64 %context, 0
+  %result = insertvalue { i64, i64 } %pair, i64 %value, 1
+  ret { i64, i64 } %result
+"""
+        if outputs
+        else "  ret i64 %context\n"
+    )
+    return f"""define {result_type} {symbol}(i64 %context) {{
+entry:
+  %out = alloca i64
+  %status = call i32 @pecos_wasm_v1_read(i64 %context, ptr %out, i64 {outputs})
+{_check('status')}{result}}}
+"""
+
+
+def compile_wasm(
+    program: bytes | Package,
+    modules: Mapping[str, bytes],
+    *,
+    platform: str = "helios",
+    opt_level: int = 2,
+    emit_debug: bool = False,
+) -> str:
+    """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
+
+    ``modules`` maps exact module identifiers to caller-supplied WAT or WASM
+    bytes. The result requires the Selene WASM utility or WASM-enabled QIS FFI.
+    """
+    if struct.calcsize("P") != 8:
+        msg = "Public WASM ABI v1 requires a 64-bit host"
+        raise ValueError(msg)
+    program = Package.from_bytes(program if isinstance(program, bytes) else program.to_bytes())
+    if len(program.modules) != 1:
+        msg = "Public WASM lowering currently requires one HUGR module"
+        raise ValueError(msg)
+    graph = program.modules[0]
+    # HUGR 0.18 exposes graph editing through its versioned serialization model.
+    serialized = graph._to_serial()  # noqa: SLF001
+    serial_type = type(serialized)
+    document = serialized.model_dump(mode="json")
+    _reject_loops(document)
+    operations = []
+    module_ids = {}
+    for index, node in enumerate(document["nodes"]):
+        if node.get("op") in {"FuncDefn", "FuncDecl"} and node.get("name", "").startswith(_PREFIX):
+            msg = "Program uses a reserved WASM adapter name"
+            raise ValueError(msg)
+        if node.get("op") == "Extension" and node.get("extension") == "tket.wasm":
+            _validate(node)
+            operations.append((index, copy.deepcopy(node)))
+        if node.get("op") == "Const" and node["v"].get("value", {}).get("c") == "ConstWasmModule":
+            identifier = node["v"]["value"]["v"]["module_filename"]
+            if identifier not in modules:
+                msg = f"Supply bytes for WASM module {identifier!r}"
+                raise ValueError(msg)
+            if not isinstance(modules[identifier], bytes):
+                msg = "WASM modules must be explicit bytes, not paths"
+                raise TypeError(msg)
+            module_id = module_ids.setdefault(identifier, len(module_ids))
+            node["v"] = {
+                "v": "Extension",
+                "typ": _I64,
+                "value": {"c": "ConstInt", "v": {"log_width": 6, "value": module_id}},
+            }
+    if not operations:
+        msg = "Program contains no tket.wasm operations"
+        raise ValueError(msg)
+    document = _replace_types(document)
+    adapters = {}
+    digest = hashlib.sha256(program.to_bytes()).hexdigest()[:16]
+    for index, operation in operations:
+        signature = document["nodes"][index]["signature"]
+        poly = {"params": [], "body": signature}
+        name = f"{_PREFIX}{digest}_{index}"
+        declaration = len(document["nodes"])
+        document["nodes"].append(
+            {"op": "FuncDecl", "parent": 0, "name": name, "signature": poly, "visibility": "Public"},
+        )
+        if document.get("metadata") is not None:
+            document["metadata"].append(None)
+        document["nodes"][index] = {
+            "op": "Call",
+            "parent": operation["parent"],
+            "func_sig": poly,
+            "type_args": [],
+            "instantiation": signature,
+        }
+        document["edges"].append([[declaration, 0], [index, len(signature["input"])]])
+        adapters[name] = operation
+    _order_calls(document)
+    lowered = Hugr._from_serial(serial_type.model_validate(document))  # noqa: SLF001
+    envelope = Package(modules=[lowered], extensions=program.extensions).to_bytes()
+    llvm = compile_to_llvm_ir(envelope, platform=platform, opt_level=opt_level, emit_debug=emit_debug)
+    declarations = re.compile(r"^declare [^\n]*? (@[^\s(]+)\([^\n]*$", re.MULTILINE)
+    remaining = set(adapters)
+
+    def replace(match: re.Match) -> str:
+        symbol = match[1]
+        for name, operation in adapters.items():
+            if re.fullmatch(r'@"?__hugr__\.' + re.escape(name) + r'(?:\.\d+)?"?', symbol):
+                remaining.discard(name)
+                return _adapter(symbol, operation, name + "_name")
+        return match[0]
+
+    llvm = declarations.sub(replace, llvm)
+    # HUGR optimization may remove provably unreachable branches and their
+    # declarations. Only adapters still mentioned in emitted LLVM need bodies.
+    unresolved = {name for name in remaining if name in llvm}
+    if unresolved:
+        msg = f"Public compiler did not emit expected WASM adapters: {sorted(unresolved)}"
+        raise ValueError(msg)
+    if not re.search(r"^declare void @panic\(i32, ptr\)", llvm, re.MULTILINE):
+        llvm += "\ndeclare void @panic(i32, ptr)\n"
+    llvm += _ABI
+    setup = "  %wasm_reset = call i32 @pecos_wasm_v1_reset()\n" + _check("wasm_reset")
+    for identifier, module_id in module_ids.items():
+        data = modules[identifier]
+        global_name = f"pecos_wasm_module_{digest}_{module_id}"
+        llvm += _constant(global_name, data)
+        status = f"wasm_module_{module_id}"
+        setup += (
+            f"  %{status} = call i32 @pecos_wasm_v1_register(i64 {module_id}, ptr @{global_name}, i64 {len(data)})\n"
+        )
+        setup += _check(status)
+    entry = re.compile(r"(define [^\n]* @qmain\([^\n]*\{\n[^\n]*:\n)")
+    llvm, count = entry.subn(lambda m: m[0] + setup, llvm)
+    if count != 1:
+        msg = "Expected one public QIS qmain entry point"
+        raise ValueError(msg)
+    qmain = re.compile(r"(define [^\n]* @qmain\([^\n]*\{\n)(.*?)(^})", re.MULTILINE | re.DOTALL)
+    return qmain.sub(
+        lambda m: m[1] + re.sub(r"(?m)^(\s*ret )", "  call i32 @pecos_wasm_v1_reset()\n\\1", m[2]) + m[3],
+        llvm,
+    )

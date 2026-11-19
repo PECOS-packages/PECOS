@@ -1,4 +1,4 @@
-"""Guppy WASM declarations, compilation, arithmetic, and runtime support probes."""
+"""Guppy WASM compilation and real execution through the PECOS sim() stack."""
 
 import importlib.util
 import subprocess
@@ -16,21 +16,23 @@ from guppylang_internals.error import GuppyError
 from hugr import ops
 from hugr.package import Package
 
-EXAMPLE_PATH = Path(__file__).resolve().parents[4] / "examples/guppy_wasm/arithmetic.py"
+EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 
 
 @pytest.fixture(scope="module")
-def example():
-    """Import the actual example so tests exercise the documented programs."""
-    spec = importlib.util.spec_from_file_location("guppy_wasm_arithmetic", EXAMPLE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def examples():
+    modules = {}
+    for name in ("arithmetic", "stateful"):
+        spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        modules[name] = module
+    return modules
 
 
 @pytest.fixture
-def arithmetic(example):
-    module = pc.WasmForeignObject.from_file(example.WASM_PATH)
+def arithmetic(examples):
+    module = pc.WasmForeignObject.from_file(examples["arithmetic"].WASM_PATH)
     module.init()
     try:
         yield module
@@ -64,9 +66,9 @@ def test_chained_wasm_calls(arithmetic) -> None:
     ("name", "exports"),
     [("addition", ["add"]), ("chained_arithmetic", ["add", "multiply"]), ("conditional_x", ["add"])],
 )
-def test_guppy_wasm_hugr_roundtrip(example, name, exports) -> None:
+def test_guppy_wasm_hugr_roundtrip(examples, name, exports) -> None:
     """PECOS's Guppy wrapper must preserve actual WASM calls and their context."""
-    program = pc.Guppy(getattr(example, name))
+    program = pc.Guppy(getattr(examples["arithmetic"], name))
     package = Package.from_bytes(program.hugr_bytes)
     wasm_ops = [
         op
@@ -85,17 +87,17 @@ def test_guppy_wasm_hugr_roundtrip(example, name, exports) -> None:
     assert [op.args[0].value for op in wasm_ops if op.op_def().name == "lookup_by_name"] == exports
 
 
-def test_missing_export_is_rejected(example) -> None:
+def test_missing_export_is_rejected(examples) -> None:
     with pytest.raises(GuppyError, match="isn't exported"):
 
-        @wasm_module(str(example.WASM_PATH))
+        @wasm_module(str(examples["arithmetic"].WASM_PATH))
         class MissingExport:
             @wasm
             def subtract(self, a: int, b: int) -> int: ...
 
 
-def test_wrong_signature_is_rejected(example) -> None:
-    @wasm_module(str(example.WASM_PATH))
+def test_wrong_signature_is_rejected(examples) -> None:
+    @wasm_module(str(examples["arithmetic"].WASM_PATH))
     class WrongSignature:
         @wasm
         def add(self, a: int) -> int: ...
@@ -111,17 +113,68 @@ def test_wrong_signature_is_rejected(example) -> None:
         wrong_call.compile()
 
 
-def test_example_runs_from_another_directory(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("name", "label", "expected"),
+    [
+        ("addition", "sum", 5),
+        ("chained_arithmetic", "product", 20),
+        ("conditional_x", "measured", 1),
+        ("conditional_calls", "value", 6),
+    ],
+)
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+def test_pecos_wasm_execution(examples, name, label, expected, wrapper):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["arithmetic"]
+    function = getattr(example, name)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    program = (
+        pc.Guppy(function, wasm_modules=modules)
+        if wrapper == "guppy"
+        else pc.Hugr(
+            function.compile().to_bytes(),
+            wasm_modules=modules,
+        )
+    )
+    data = pc.sim(program).qubits(1).quantum(pc.state_vector()).seed(42).run(4).to_dict()
+    assert data[label] == [expected] * 4
+
+
+def test_pecos_state_and_error_recovery(examples):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["stateful"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+
+    def run(function):
+        return pc.sim(pc.Guppy(function, wasm_modules=modules)).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
+
+    for _ in range(2):
+        data = run(example.stateful_calls)
+        assert data["three"] == [3] * 4
+        assert data["four"] == [4] * 4
+        assert data["independent"] == [1] * 4
+        assert data["cleared"] == [1] * 4
+        with pytest.raises(RuntimeError, match=r"WASM|wasm|unreachable|2001"):
+            run(example.trapped)
+    data = run(example.context_helpers)
+    assert data["second"] == [2] * 4
+    assert data["third"] == [3] * 4
+
+
+@pytest.mark.parametrize("backend", ["pecos", "selene"])
+def test_example_runs_from_another_directory(tmp_path, backend) -> None:
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
     completed = subprocess.run(
-        [sys.executable, str(EXAMPLE_PATH)],
+        [sys.executable, str(EXAMPLES / "arithmetic.py"), "--run", backend],
         cwd=tmp_path,
         capture_output=True,
         text=True,
         check=True,
         timeout=60,
     )
-    assert "Compiled conditional_x to HUGR" in completed.stdout
-    assert "Direct WASM execution: 2 + 3 = 5; (2 + 3) * 4 = 20" in completed.stdout
+    assert f"{backend}: addition: {{'sum': [5, 5, 5, 5]}}" in completed.stdout
+    assert f"{backend}: chained_arithmetic: {{'product': [20, 20, 20, 20]}}" in completed.stdout
+    assert f"{backend}: conditional_x: {{'measured': [1, 1, 1, 1]}}" in completed.stdout
 
 
 @guppy
@@ -135,28 +188,23 @@ def control_without_wasm() -> None:
 
 
 @pytest.mark.parametrize("backend", ["pecos", "selene"])
-def test_runtime_probe_control(example, backend) -> None:
-    data = getattr(example, f"run_{backend}")(control_without_wasm, shots=3)
-    assert data["sum"] == [5] * 3
-    assert data["product"] == [20] * 3
-    assert data["measured"] == [1] * 3
+def test_runtime_probe_control(tmp_path, backend) -> None:
+    """Keep the default compiler/runtime control separate from WASM configuration."""
+    if backend == "pecos":
+        data = pc.sim(pc.Guppy(control_without_wasm)).qubits(1).quantum(pc.state_vector()).seed(42).run(3).to_dict()
+        shots = [dict(zip(data, values, strict=True)) for values in zip(*data.values(), strict=True)]
+    else:
+        import selene_sim
 
-
-@pytest.mark.parametrize("backend", ["pecos", "selene"])
-@pytest.mark.parametrize(
-    ("name", "label", "expected"),
-    [("addition", "sum", 5), ("chained_arithmetic", "product", 20), ("conditional_x", "measured", 1)],
-)
-def test_guppy_wasm_execution(example, backend, name, label, expected) -> None:
-    """Automatically exercise results once the compiler gains WASM support.
-
-    Only the observed missing WASM type is an expected failure. Other build or
-    runtime errors, and wrong answers, must fail normally.
-    """
-    try:
-        data = getattr(example, f"run_{backend}")(getattr(example, name), shots=3)
-    except RuntimeError as error:
-        if "Failed to emit LLVM for function" in str(error) and "Unknown type: module" in str(error):
-            pytest.xfail("The default Selene HUGR/QIS compiler path rejects the tket.wasm module type")
-        raise
-    assert data[label] == [expected] * 3
+        instance = selene_sim.build(control_without_wasm.compile(), build_dir=tmp_path)
+        shots = [
+            dict(shot)
+            for shot in instance.run_shots(
+                simulator=selene_sim.Quest(),
+                n_qubits=1,
+                n_shots=3,
+                n_processes=1,
+                random_seed=42,
+            )
+        ]
+    assert shots == [{"sum": 5, "product": 20, "measured": 1}] * 3

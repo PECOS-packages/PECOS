@@ -12,6 +12,7 @@ members = [
   "python/selene-plugins/pecos-selene-stab-vec",
   "python/selene-plugins/pecos-selene-stabilizer",
   "python/selene-plugins/pecos-selene-statevec",
+  "python/selene-plugins/pecos-selene-wasm",
   "julia/pecos-julia-ffi",
   "crates/pecos-synth",
   "crates/pecos*",
@@ -237,6 +238,7 @@ pecos-synth = { version = "0.2.0-dev.0", path = "crates/pecos-synth" }
 pecos-tesseract = { version = "0.2.0-dev.0", path = "crates/pecos-tesseract" }
 pecos-uf-decoder = { version = "0.2.0-dev.0", path = "crates/pecos-uf-decoder" }
 pecos-wasm = { version = "0.2.0-dev.0", path = "crates/pecos-wasm" }
+pecos-wasm-runtime = { version = "0.2.0-dev.0", path = "crates/pecos-wasm-runtime" }
 pecos-zx = { version = "0.2.0-dev.0", path = "exp/pecos-zx" }
 
 # split-debuginfo: faster linking on supported platforms.

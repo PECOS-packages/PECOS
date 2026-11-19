@@ -321,6 +321,35 @@ impl WasmForeignObject {
         Ok(func)
     }
 
+    /// Validate the scalar i64 ABI used by public Guppy WASM calls.
+    ///
+    /// # Errors
+    /// Returns an error for a missing export, differing arity, or non-i64 types.
+    pub fn validate_i64_signature(
+        &self,
+        name: &str,
+        inputs: usize,
+        outputs: usize,
+    ) -> Result<(), PecosError> {
+        let Some(wasmtime::ExternType::Func(signature)) = self.module.get_export(name) else {
+            return Err(PecosError::Input(format!(
+                "Missing WASM function export: {name}"
+            )));
+        };
+        if signature.params().len() != inputs
+            || signature.results().len() != outputs
+            || !signature
+                .params()
+                .chain(signature.results())
+                .all(|ty| matches!(ty, wasmtime::ValType::I64))
+        {
+            return Err(PecosError::Input(format!(
+                "WASM i64 signature mismatch for {name}"
+            )));
+        }
+        Ok(())
+    }
+
     /// Call before each shot to reset variables (if function exists)
     ///
     /// This is a convenience method that calls the `shot_reinit` function in the
@@ -348,7 +377,7 @@ impl WasmForeignObject {
     /// # Returns
     ///
     /// `true` if the function exists, `false` otherwise
-    fn has_func(&self, func_name: &str) -> bool {
+    pub fn has_func(&self, func_name: &str) -> bool {
         self.module
             .exports()
             .any(|e| e.name() == func_name && e.ty().func().is_some())

@@ -35,6 +35,7 @@ mod provenance;
 mod random;
 mod selene;
 mod shot;
+mod wasm;
 
 #[cfg(test)]
 mod test_env;

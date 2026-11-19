@@ -1050,14 +1050,17 @@ class Stabilizer:
     def num_qubits(self) -> int: ...
 
 class StabVec:
-    """Rust Clifford+RZ simulator (stabilizer sum / StabVec)."""
+    """Rust Clifford+RZ simulator (stabilizer sum / StabVec).
+
+    pruning_threshold must be finite and satisfy 0.0 <= threshold < 1.0.
+    Invalid values raise ValueError.
+    """
 
     def __init__(
         self,
         num_qubits: int,
         seed: int | None = None,
         pruning_threshold: float | None = None,
-        mc_threshold: int | None = 2048,
     ) -> None: ...
     @property
     def gate_capacity(self) -> int | None: ...

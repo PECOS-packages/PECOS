@@ -55,6 +55,10 @@ payload/error in its own scoped state, and return nonzero. Neither Rust unwindin
 nor a nonlocal transfer may cross that callback boundary. The FFI wrapper's
 failure latch takes precedence over a program `Exit` recorded by the callback,
 even if the underlying C guard reports that exit as successful.
+Rust program-entry frames, unlike host callbacks, must use `C-unwind`: Windows
+implements longjmp with stack unwinding. Those frames must still own no Rust
+destructors across recovery, since Unix longjmp skips them. The outer guard
+exports remain non-unwinding C boundaries.
 The wrapper also checks cancellation and recorded terminal errors after program
 return, including errors recorded after the last callback. An ordinary program
 exit remains successful unless accompanied by a callback failure or cancellation.

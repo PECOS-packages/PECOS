@@ -61,7 +61,7 @@ impl Drop for Witness {
     }
 }
 
-unsafe extern "C" fn nested_entry() {
+unsafe extern "C-unwind" fn nested_entry() {
     OBSERVED.set(999);
 }
 
@@ -166,14 +166,16 @@ unsafe extern "C" fn service(userdata: *mut c_void, id: u64) -> i32 {
 
 // The program-side frames own no destructors or Rust borrows across a read;
 // a failed read may transfer to the C guard, exactly as a compiled program does.
-unsafe extern "C" fn entry() {
+// Windows longjmp unwinds these frames, so they must also permit C unwinding.
+// The host service trampoline remains non-unwinding and catches its own panics.
+unsafe extern "C-unwind" fn entry() {
     // Nested entry must not run shot-start cleanup on this outer allocation.
     let _allocation = unsafe { ffi::heap_alloc(8) };
     unsafe { ffi::__quantum__qis__m__body(0, 7) };
     OBSERVED.set(u64::from(unsafe { ffi::___read_future_bool(7) }));
     REACHED.set(true);
 }
-unsafe extern "C" fn qentry(_: u64) -> u64 {
+unsafe extern "C-unwind" fn qentry(_: u64) -> u64 {
     unsafe { entry() };
     0
 }
@@ -349,7 +351,7 @@ fn admission_rejects_missing_context_non_dynamic_and_rust_executor() {
     assert_eq!(invoke(&ctx, Mode::Good, true), (0, 1));
 }
 
-unsafe extern "C" fn terminal_error() {
+unsafe extern "C-unwind" fn terminal_error() {
     // Like a typed-output mismatch: record an error, then return normally.
     unsafe { ffi::pecos_record_program_panic(1001, std::ptr::null(), 0) };
 }

@@ -8,13 +8,13 @@ use std::ffi::c_void;
 type Callback = unsafe extern "C" fn(*mut c_void, u64) -> i32;
 type QGuard = unsafe extern "C" fn(
     *mut ExecutionContext,
-    unsafe extern "C" fn(u64) -> u64,
+    unsafe extern "C-unwind" fn(u64) -> u64,
     Callback,
     *mut c_void,
 ) -> u64;
 type VGuard = unsafe extern "C" fn(
     *mut ExecutionContext,
-    unsafe extern "C" fn(),
+    unsafe extern "C-unwind" fn(),
     Callback,
     *mut c_void,
 ) -> u64;
@@ -98,6 +98,9 @@ pub(super) fn run_compiled_entries() {
     "
     );
     for is_void in [false, true] {
+        // The MSVC link path exports qmain explicitly, but the fixture also
+        // resolves these observation helpers and the original void main.
+        let export = if cfg!(windows) { "dllexport " } else { "" };
         let signature = if is_void {
             "void @main()"
         } else {
@@ -108,10 +111,10 @@ pub(super) fn run_compiled_entries() {
             r"
             @observed = global i64 0
             {qalloc}
-            define {signature} {{ {body} {ret} }}
-            define i64 @read_observed() {{ %v = load i64, ptr @observed
+            define {export}{signature} {{ {body} {ret} }}
+            define {export}i64 @read_observed() {{ %v = load i64, ptr @observed
                 ret i64 %v }}
-            define void @clear_observed() {{ store i64 0, ptr @observed
+            define {export}void @clear_observed() {{ store i64 0, ptr @observed
                 ret void }}
         "
         );

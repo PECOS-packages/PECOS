@@ -230,10 +230,12 @@ fn reject_nested() {
 /// validate native Boolean responses as 0/1 before storing them. The program
 /// obeys the ordinary C recovery discipline. This mode cannot detach an
 /// unresponsive program; callers must opt into that cancellation limitation.
+/// Rust program entries must use `C-unwind` for Windows recovery and own no
+/// destructors across a transfer. This does not permit the host callback to unwind.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_call_qmain_with_request_callback_v1(
     context: *mut ExecutionContext,
-    qmain: unsafe extern "C" fn(u64) -> u64,
+    qmain: unsafe extern "C-unwind" fn(u64) -> u64,
     callback: RequestCallback,
     userdata: *mut c_void,
 ) -> u64 {
@@ -254,7 +256,7 @@ pub unsafe extern "C" fn pecos_call_qmain_with_request_callback_v1(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_call_void_main_with_request_callback_v1(
     context: *mut ExecutionContext,
-    main: unsafe extern "C" fn(),
+    main: unsafe extern "C-unwind" fn(),
     callback: RequestCallback,
     userdata: *mut c_void,
 ) -> u64 {

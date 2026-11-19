@@ -292,7 +292,7 @@ def test_h_t_h_matches_exact_binomial() -> None:
 
 
 def test_rz_sign_through_rx_matches_exact_binomial() -> None:
-    """H RZ(pi/4) RX(pi/2) gives P(1) = (1 - sin(pi/4))/2; a flipped RZ or RX sign gives 0.854."""
+    """H RZ(pi/4) RX(pi/2) gives P(1) = (1 - sin(pi/4))/2; flipping either sign alone gives 0.854."""
 
     @guppy
     def main() -> None:
@@ -313,8 +313,9 @@ def test_rz_sign_through_rx_matches_exact_binomial() -> None:
             n_processes=1,
         )
     )
-    # Unlike sin^2(theta/2), this probability is odd in the RZ angle, so it
-    # also pins the rotation sign and the RXY decomposition used for RX.
+    # Unlike sin^2(theta/2), the deviation of this probability from 1/2 is odd
+    # in the RZ angle, so the test pins the RZ sign relative to the RX sign.
+    # Flipping both together (conjugating every gate) leaves P(1) unchanged.
     expected = (1 - math.sin(math.pi / 4)) / 2
     lower, upper = _binomial_tail_probabilities(ones, shots, expected)
     assert min(lower, upper) > 0.0005, (ones, lower, upper)

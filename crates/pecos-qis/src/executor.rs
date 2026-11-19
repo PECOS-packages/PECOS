@@ -14,6 +14,8 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use tempfile::NamedTempFile;
 
+mod scoped_execution;
+
 /// Process-wide singleton for the QIS FFI library.
 ///
 /// On macOS, loading the same dynamic library multiple times creates separate
@@ -1939,7 +1941,11 @@ entry:
     fn execute_program(
         &mut self,
         measurements: Option<&BTreeMap<usize, bool>>,
+        mut scoped: Option<&mut scoped_execution::RequestHost<'_>>,
     ) -> Result<OperationCollector, InterfaceError> {
+        // Reject host-side nested execution before context registration/reset;
+        // the native guard alone is too late to protect the outer context.
+        let _execution_scope = scoped_execution::ExecutionScope::enter()?;
         // Verify the executable path is set
         let so_path = self.executable_path.as_ref().ok_or_else(|| {
             InterfaceError::ExecutionError(
@@ -2057,11 +2063,17 @@ entry:
             // FFI Rust guard export → C setjmp → program qmain/main → FFI QIS or
             // selene_* adapter → thread-local operation collection. Termination
             // transfers to the C guard, which cleans up and restores the handler.
-            let (entry_label, result) = match &entry_point {
-                // SAFETY: Symbols were resolved with matching entry/guard ABIs.
-                ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
-                // SAFETY: Symbols were resolved with matching entry/guard ABIs.
-                ExecutionEntryPoint::VoidMain { func, call } => ("main", unsafe { call(**func) }),
+            let (entry_label, result) = if let Some(host) = scoped.as_mut() {
+                scoped_execution::call(pecos_qis_lib.inner(), ctx, &entry_point, host)?
+            } else {
+                match &entry_point {
+                    // SAFETY: Symbols were resolved with matching entry/guard ABIs.
+                    ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
+                    // SAFETY: Symbols were resolved with matching entry/guard ABIs.
+                    ExecutionEntryPoint::VoidMain { func, call } => {
+                        ("main", unsafe { call(**func) })
+                    }
+                }
             };
             // Read the error while this worker still has its context registered.
             // A type mismatch is fatal even if the program returned normally.
@@ -2289,7 +2301,33 @@ impl QisInterface for QisHeliosInterface {
 
     fn collect_operations(&mut self) -> Result<OperationCollector, InterfaceError> {
         // Execute the program and collect operations (no pre-populated measurements)
-        self.execute_program(None)
+        self.execute_program(None, None)
+    }
+
+    fn supports_scoped_execution(&self) -> bool {
+        true
+    }
+
+    fn collect_operations_scoped(
+        &mut self,
+        request: &mut dyn FnMut(u64) -> Result<(), InterfaceError>,
+    ) -> Result<OperationCollector, InterfaceError> {
+        if !self.dynamic_mode {
+            return Err(InterfaceError::ExecutionError(
+                "Scoped execution requires dynamic mode".into(),
+            ));
+        }
+        let mut host = scoped_execution::RequestHost::new(request);
+        let execution = self.execute_program(None, Some(&mut host));
+        // Program guards and TLS registration have returned before propagating
+        // a host failure. No unwind crosses the C callback or program frames.
+        if let Some(payload) = host.panic.take() {
+            std::panic::resume_unwind(payload);
+        }
+        if let Some(error) = host.error.take() {
+            return Err(error);
+        }
+        execution
     }
 
     fn execute_with_measurements(
@@ -2298,7 +2336,7 @@ impl QisInterface for QisHeliosInterface {
     ) -> Result<OperationCollector, InterfaceError> {
         // Execute with pre-populated measurements via the cdylib
         // This enables dynamic circuits where conditionals depend on measurement results
-        self.execute_program(Some(&measurements))
+        self.execute_program(Some(&measurements), None)
     }
 
     fn set_program_shot(&mut self, shot: u64) {

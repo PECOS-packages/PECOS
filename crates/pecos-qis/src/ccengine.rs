@@ -6,7 +6,7 @@
 //! # Dynamic Circuit Support
 //!
 //! For programs with conditionals that depend on measurement results (dynamic circuits),
-//! the engine runs LLVM execution on a worker thread. When a measurement result is needed:
+//! by default the engine runs LLVM execution on a worker thread. When a measurement result is needed:
 //! 1. The worker thread pauses and sends pending operations to the main thread
 //! 2. The main thread returns operations via `ControlEngine::start()` / `continue_processing()`
 //! 3. `continue_processing()` receives measurements and signals the worker to continue
@@ -55,6 +55,10 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use tests::drop_tests;
+
+#[path = "ccengine_scoped.rs"]
+mod scoped;
+use scoped::ExecutionMode;
 
 const RESET_WORKER_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -153,6 +157,12 @@ impl std::fmt::Display for WorkerFailure {
         }
         Ok(())
     }
+}
+
+/// Outcomes stored by the host and work released by runtime feedback.
+struct MeasurementFeedback {
+    updates: Vec<(usize, u32)>,
+    commands: Option<ByteMessage>,
 }
 
 /// Simulator commands plus one metadata record per lowered quantum gate.
@@ -418,8 +428,9 @@ struct PendingMeasurements {
 ///
 /// # Dynamic Circuit Support
 ///
-/// The engine always runs LLVM on a worker thread and coordinates via channels.
-/// This allows conditionals that depend on measurement results to work correctly.
+/// By default LLVM runs on a worker thread and coordinates via channels.
+/// `set_scoped_execution(true)` opts into caller-stack execution through
+/// `ControlEngine::run_with`, with cooperative cancellation only.
 pub struct QisEngine {
     pub(crate) decoder_factory: Option<crate::runtime_decoder::RuntimeDecoderFactory>,
     pub(crate) decoder_input_mode: crate::runtime_decoder::DecoderInputMode,
@@ -519,6 +530,8 @@ pub struct QisEngine {
     /// Persistent worker thread for dynamic execution (stays alive across shots)
     /// This avoids spawning a new thread per shot, which causes TLS allocation issues.
     persistent_worker: Option<PersistentDynamicWorker>,
+    /// Explicit caller-stack execution; staged execution remains the default.
+    execution_mode: ExecutionMode,
 
     /// Counts only this engine's workers, including clones used by `MonteCarlo`.
     #[cfg(test)]
@@ -624,7 +637,7 @@ impl QisEngine {
 
     /// Create a new engine with the given interface and runtime
     ///
-    /// Dynamic execution is always enabled - all LLVM runs on a worker thread.
+    /// Dynamic execution is always enabled; staged worker execution is the default.
     #[must_use]
     pub fn new(interface: BoxedInterface, runtime: Box<dyn QisRuntime>) -> Self {
         debug!("Creating QisEngine with dynamic execution");
@@ -664,6 +677,7 @@ impl QisEngine {
             program_format: None,
             interface_builder: None,
             persistent_worker: None,
+            execution_mode: ExecutionMode::Staged,
             #[cfg(test)]
             worker_counts: Arc::default(),
             operation_trace_dir: None,
@@ -776,6 +790,7 @@ impl QisEngine {
             program_format: None,
             interface_builder: None,
             persistent_worker: None,
+            execution_mode: ExecutionMode::Staged,
             #[cfg(test)]
             worker_counts: Arc::default(),
             operation_trace_dir: None,
@@ -1471,6 +1486,7 @@ impl Clone for QisEngine {
                 .map(|b| dyn_clone::clone_box(&**b)),
             // Create a new persistent worker for this clone (can't share threads across clones)
             persistent_worker: None,
+            execution_mode: self.execution_mode,
             #[cfg(test)]
             worker_counts: Arc::clone(&self.worker_counts),
             operation_trace_dir: self.operation_trace_dir.clone(),
@@ -1789,13 +1805,8 @@ impl QisEngine {
         Ok(())
     }
 
-    /// Start the LLVM program execution in a worker thread
-    ///
-    /// Uses a persistent worker thread to avoid TLS allocation issues from
-    /// spawning a new thread per shot.
-    fn start_dynamic_worker(&mut self) -> Result<(), PecosError> {
-        debug!("Starting dynamic execution");
-
+    /// Configure a fresh context and response handle before either execution mode.
+    fn prepare_dynamic_execution(&mut self) -> Result<(), PecosError> {
         // Get reference to interface for setup
         let interface = self.interface.as_mut().ok_or_else(|| {
             PecosError::Generic("No interface available for dynamic execution".to_string())
@@ -1822,6 +1833,21 @@ impl QisEngine {
         let sync_handle = interface.get_sync_handle();
         debug!("Got sync handle for main thread: {}", sync_handle.is_some());
 
+        // Initialize dynamic state
+        self.dynamic_state = Some(DynamicExecutionState {
+            sync_handle,
+            execution_complete: false,
+            terminal_error: None,
+            finalized: false,
+            terminal_lowering_flushed: false,
+        });
+
+        Ok(())
+    }
+
+    /// Run LLVM on a persistent worker, avoiding a new thread per shot.
+    fn start_dynamic_worker(&mut self) -> Result<(), PecosError> {
+        self.prepare_dynamic_execution()?;
         // Take the interface for the worker thread
         let interface = self.interface.take().ok_or_else(|| {
             PecosError::Generic("No interface available for dynamic execution".to_string())
@@ -1841,15 +1867,6 @@ impl QisEngine {
             .as_ref()
             .expect("persistent worker was just created")
             .execute(interface)?;
-
-        // Initialize dynamic state
-        self.dynamic_state = Some(DynamicExecutionState {
-            sync_handle,
-            execution_complete: false,
-            terminal_error: None,
-            finalized: false,
-            terminal_lowering_flushed: false,
-        });
 
         Ok(())
     }
@@ -2885,18 +2902,8 @@ impl ClassicalEngine for QisEngine {
     }
 }
 
-impl ControlEngine for QisEngine {
-    type Input = ();
-    type Output = Shot;
-    type EngineInput = ByteMessage;
-    type EngineOutput = ByteMessage;
-
-    fn start(
-        &mut self,
-        _input: Self::Input,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
-        debug!("QisEngine::start called");
-
+impl QisEngine {
+    fn validate_shot_start(&self) -> Result<(), PecosError> {
         // A latched reset failure is cleared only by a complete reset, which
         // also resets the interface; starting a shot must not bypass it.
         if let Some(failure) = &self.reset_failure {
@@ -2922,6 +2929,10 @@ impl ControlEngine for QisEngine {
                 "scheduled transport does not yet support operation tracing".into(),
             ));
         }
+        Ok(())
+    }
+
+    fn prepare_shot(&mut self) -> Result<(), PecosError> {
         self.decoder_session = None;
         self.control_state = self
             .control_state
@@ -2935,52 +2946,150 @@ impl ControlEngine for QisEngine {
         self.forced_native_result = None;
         self.scheduled_drain_feedback = false;
         let program_shot = self.program_shot.take();
-        let attempt = (|| {
-            // Check exhaustion before consuming RNG state or touching the runtime.
-            let shot_id = self.next_runtime_shot_id()?;
-            self.begin_trace_shot()?;
-            // Clear previous shot's measurement state
-            self.measurement_results.clear();
-            self.pending_measurements.clear();
-            self.measurement_mapping.clear();
-            self.pending_dynamic_ops.clear();
-            self.simulated_op_count = 0;
-            self.reset_qubit_slots();
-            debug!("QisEngine: Cleared previous measurement results for new shot");
+        // Check exhaustion before consuming RNG state or touching the runtime.
+        let shot_id = self.next_runtime_shot_id()?;
+        self.begin_trace_shot()?;
+        // Clear previous shot's measurement state
+        self.measurement_results.clear();
+        self.pending_measurements.clear();
+        self.measurement_mapping.clear();
+        self.pending_dynamic_ops.clear();
+        self.simulated_op_count = 0;
+        self.reset_qubit_slots();
+        debug!("QisEngine: Cleared previous measurement results for new shot");
 
-            // Generate a per-shot seed from our RNG
-            let shot_seed = self.rng.next_u64();
-            debug!("QisEngine: Generated shot seed {shot_seed}");
+        // Generate a per-shot seed from our RNG
+        let shot_seed = self.rng.next_u64();
+        debug!("QisEngine: Generated shot seed {shot_seed}");
 
-            // Store the shot seed for quantum engine access
-            self.current_shot_seed = Some(shot_seed);
+        // Store the shot seed for quantum engine access
+        self.current_shot_seed = Some(shot_seed);
 
-            // Reset the runtime to ensure clean state for new shot. A failure is
-            // latched like a failed `reset_all`, which alone clears the latch.
-            if let Err(e) = self.runtime.reset() {
-                let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
-                self.shot_lifecycle = ShotLifecycle::Failed(error.to_string());
-                self.reset_failure = Some(error.to_string());
-                return Err(error);
+        // Reset the runtime to ensure clean state for new shot. A failure is
+        // latched like a failed `reset_all`, which alone clears the latch.
+        if let Err(e) = self.runtime.reset() {
+            let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
+            self.shot_lifecycle = ShotLifecycle::Failed(error.to_string());
+            self.reset_failure = Some(error.to_string());
+            return Err(error);
+        }
+
+        // Reserve before invoking the plugin: even a failed start may have
+        // observed the ID, so reset/retry must not reuse it. Do not derive
+        // the seed from this per-instance ID; Monte Carlo seeds use a global
+        // shot index independently of worker partitioning.
+        self.last_runtime_shot_id = Some(shot_id);
+        self.runtime
+            .shot_start(shot_id, Some(shot_seed))
+            .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
+
+        self.started = true;
+        // The scheduler supplies a global job index. Direct engine callers
+        // use the local sequence; never infer it from a trace counter.
+        self.interface
+            .as_mut()
+            .expect("validated interface")
+            .set_program_shot(program_shot.unwrap_or(shot_id));
+
+        Ok(())
+    }
+
+    fn accept_feedback(&mut self, input: &ByteMessage) -> Result<MeasurementFeedback, PecosError> {
+        let measurements = Self::parse_measurement_outcomes(input)?;
+        let measurement_updates = self.map_measurements(&measurements)?;
+        let current_updates = self.store_measurement_updates(&measurement_updates)?;
+        if !measurement_updates.is_empty() {
+            self.provide_measurements_terminal(&measurement_updates)?;
+            if self.runtime.yields_at_measurements() {
+                // Selene processes feedback before requesting another batch or
+                // resuming the program. Poll without forcing any extra work.
+                let lowered = self.lower_operations_terminal(&[])?;
+                self.trace_operations_chunk("measurement_feedback", &[], None, Some(&lowered));
+                if !lowered.is_empty {
+                    return Ok(MeasurementFeedback {
+                        updates: current_updates,
+                        commands: Some(lowered.commands),
+                    });
+                }
             }
+        }
 
-            // Reserve before invoking the plugin: even a failed start may have
-            // observed the ID, so reset/retry must not reuse it. Do not derive
-            // the seed from this per-instance ID; Monte Carlo seeds use a global
-            // shot index independently of worker partitioning.
-            self.last_runtime_shot_id = Some(shot_id);
-            self.runtime
-                .shot_start(shot_id, Some(shot_seed))
-                .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
+        Ok(MeasurementFeedback {
+            updates: current_updates,
+            commands: None,
+        })
+    }
 
-            self.started = true;
-            // The scheduler supplies a global job index. Direct engine callers
-            // use the local sequence; never infer it from a trace counter.
-            self.interface
-                .as_mut()
-                .expect("validated interface")
-                .set_program_shot(program_shot.unwrap_or(shot_id));
+    fn publish_measurement_outcomes(&mut self, updates: &[(usize, u32)]) -> Result<(), PecosError> {
+        // Provide new measurement values to the dynamic worker thread.
+        let native_results = self.runtime.uses_native_runtime_protocol();
+        for &(result_id, value) in updates.iter().filter(|_| !native_results) {
+            debug!("Stored and providing measurement: result_id={result_id} value={value}");
+            self.set_dynamic_result(result_id as u64, u64::from(value))?;
+        }
 
+        Ok(())
+    }
+
+    fn completed_stage(&mut self) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
+        if let Some(err) = self.terminal_failure_error() {
+            return Err(err);
+        }
+        if !self.pending_dynamic_ops.is_empty() {
+            let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
+            let lowered = self.lower_operations_terminal(&final_ops)?;
+            self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
+            return Ok(EngineStage::NeedsProcessing(lowered.commands));
+        }
+        if let Some(commands) = self.drain_terminal_commands()? {
+            return Ok(EngineStage::NeedsProcessing(commands));
+        }
+        if let Some(commands) = self.finalize_shot_for_certification()? {
+            return Ok(EngineStage::NeedsProcessing(commands));
+        }
+        Ok(EngineStage::Complete(self.get_results()?))
+    }
+}
+
+impl ControlEngine for QisEngine {
+    type Input = ();
+    type Output = Shot;
+    type EngineInput = ByteMessage;
+    type EngineOutput = ByteMessage;
+
+    fn run_with(
+        &mut self,
+        input: (),
+        process: &mut dyn FnMut(ByteMessage) -> Result<ByteMessage, PecosError>,
+    ) -> Result<Shot, PecosError> {
+        if self.execution_mode == ExecutionMode::Scoped {
+            return self.run_scoped(process);
+        }
+        let mut stage = self.start(input)?;
+        loop {
+            match stage {
+                EngineStage::NeedsProcessing(commands) => {
+                    stage = self.continue_processing(process(commands)?)?;
+                }
+                EngineStage::Complete(shot) => return Ok(shot),
+            }
+        }
+    }
+
+    fn start(
+        &mut self,
+        _input: Self::Input,
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
+        debug!("QisEngine::start called");
+
+        if self.execution_mode == ExecutionMode::Scoped {
+            return Err(PecosError::Input(
+                "Scoped execution requires run_with".into(),
+            ));
+        }
+        self.validate_shot_start()?;
+        let attempt = (|| {
+            self.prepare_shot()?;
             // Start LLVM program in worker thread
             self.start_dynamic_worker()?;
 
@@ -2995,32 +3104,7 @@ impl ControlEngine for QisEngine {
 
             // Check if worker completed without needing any results
             if self.check_worker_complete() {
-                if let Some(err) = self.terminal_failure_error() {
-                    return Err(err);
-                }
-                // Worker completed but we still need to process any pending operations
-                // through the quantum engine (e.g., programs without measurement-dependent conditionals)
-                if !self.pending_dynamic_ops.is_empty() {
-                    let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
-                    if !final_ops.is_empty() {
-                        let lowered = self.lower_operations_terminal(&final_ops)?;
-                        self.trace_operations_chunk(
-                            "pending_final",
-                            &final_ops,
-                            None,
-                            Some(&lowered),
-                        );
-                        return Ok(EngineStage::NeedsProcessing(lowered.commands));
-                    }
-                }
-                if let Some(commands) = self.drain_terminal_commands()? {
-                    return Ok(EngineStage::NeedsProcessing(commands));
-                }
-                if let Some(commands) = self.finalize_shot_for_certification()? {
-                    return Ok(EngineStage::NeedsProcessing(commands));
-                }
-                let shot = self.get_results()?;
-                return Ok(EngineStage::Complete(shot));
+                return self.completed_stage();
             }
 
             // Return empty commands while we wait
@@ -3040,6 +3124,12 @@ impl ControlEngine for QisEngine {
         input: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         debug!("QisEngine::continue_processing called");
+        if self.execution_mode == ExecutionMode::Scoped {
+            return Err(PecosError::Input(
+                "Scoped execution requires run_with".into(),
+            ));
+        }
+
         if let Some(failure) = &self.reset_failure {
             return Err(PecosError::Generic(format!(
                 "Cannot continue after failed reset: {failure}"
@@ -3054,54 +3144,21 @@ impl ControlEngine for QisEngine {
             ));
         }
 
-        let measurements = Self::parse_measurement_outcomes(&input)?;
-        let measurement_updates = self.map_measurements(&measurements)?;
-        let current_updates = self.store_measurement_updates(&measurement_updates)?;
-        if !measurement_updates.is_empty() {
-            self.provide_measurements_terminal(&measurement_updates)?;
-            if self.runtime.yields_at_measurements() {
-                // Selene processes feedback before requesting another batch or
-                // resuming the program. Poll without forcing any extra work.
-                let lowered = self.lower_operations_terminal(&[])?;
-                self.trace_operations_chunk("measurement_feedback", &[], None, Some(&lowered));
-                if !lowered.is_empty {
-                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
-                }
-            }
+        let MeasurementFeedback {
+            updates: current_updates,
+            commands,
+        } = self.accept_feedback(&input)?;
+        if let Some(commands) = commands {
+            return Ok(EngineStage::NeedsProcessing(commands));
         }
 
         // First, check if worker already completed (before processing anything else)
         // This avoids unnecessary work if the worker finished
         if self.check_worker_complete() {
-            if let Some(err) = self.terminal_failure_error() {
-                return Err(err);
-            }
-            debug!("Worker already complete, finishing shot");
-            // Process any final operations
-            if !self.pending_dynamic_ops.is_empty() {
-                let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
-                if !final_ops.is_empty() {
-                    let lowered = self.lower_operations_terminal(&final_ops)?;
-                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
-                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
-                }
-            }
-            if let Some(commands) = self.drain_terminal_commands()? {
-                return Ok(EngineStage::NeedsProcessing(commands));
-            }
-            if let Some(commands) = self.finalize_shot_for_certification()? {
-                return Ok(EngineStage::NeedsProcessing(commands));
-            }
-            let shot = self.get_results()?;
-            return Ok(EngineStage::Complete(shot));
+            return self.completed_stage();
         }
 
-        // Provide new measurement values to the dynamic worker thread.
-        let native_results = self.runtime.uses_native_runtime_protocol();
-        for &(result_id, value) in current_updates.iter().filter(|_| !native_results) {
-            debug!("Stored and providing measurement: result_id={result_id} value={value}");
-            self.set_dynamic_result(result_id as u64, u64::from(value))?;
-        }
+        self.publish_measurement_outcomes(&current_updates)?;
 
         // Only the outstanding read's freshly delivered outcome permits ready.
         // Other measurements leave need_result set so the same request can
@@ -3132,27 +3189,7 @@ impl ControlEngine for QisEngine {
 
         // Check if worker completed after the wait
         if self.check_worker_complete() {
-            if let Some(err) = self.terminal_failure_error() {
-                return Err(err);
-            }
-            debug!("Worker completed after wait");
-            // Process any final operations
-            if !self.pending_dynamic_ops.is_empty() {
-                let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
-                if !final_ops.is_empty() {
-                    let lowered = self.lower_operations_terminal(&final_ops)?;
-                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
-                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
-                }
-            }
-            if let Some(commands) = self.drain_terminal_commands()? {
-                return Ok(EngineStage::NeedsProcessing(commands));
-            }
-            if let Some(commands) = self.finalize_shot_for_certification()? {
-                return Ok(EngineStage::NeedsProcessing(commands));
-            }
-            let shot = self.get_results()?;
-            return Ok(EngineStage::Complete(shot));
+            return self.completed_stage();
         }
 
         // Return empty commands while we wait
@@ -6177,3 +6214,7 @@ mod exit_metadata_tests;
 #[cfg(all(test, feature = "selene-runtimes"))]
 #[path = "ccengine_decoder_tests.rs"]
 mod decoder_tests;
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "ccengine_scoped_tests.rs"]
+mod scoped_tests;

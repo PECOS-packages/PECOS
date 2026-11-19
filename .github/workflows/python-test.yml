@@ -422,6 +422,7 @@ jobs:
         runtime_dir=$(cargo +stable run --locked -p pecos-cli -- qis-runtime --profile debug --tests)
         export PECOS_QIS_FFI_PATH="$runtime_dir" PECOS_SELENE_DIR="$runtime_dir"
         cargo +stable test --locked -p pecos-qis --lib executor::tests
+        cargo +stable test --locked -p pecos-qis --lib ccengine::scoped_tests
 
     - name: Test StabVec numerical reference contract
       run: cargo +stable test --locked -p pecos-simulators --test stab_vec_correctness

@@ -8,6 +8,97 @@ thread_local! {
     static OBSERVED: Cell<u64> = const { Cell::new(0) };
 }
 
+unsafe extern "C-unwind" fn native_bool_entry() {
+    unsafe { crate::selene::selene_future_read_bool(std::ptr::null_mut(), 7) };
+    REACHED.set(true);
+}
+
+unsafe extern "C-unwind" fn native_integer_entry() {
+    let response = unsafe { crate::selene::selene_future_read_u64(std::ptr::null_mut(), 7) };
+    OBSERVED.set(response.value);
+    REACHED.set(true);
+}
+
+unsafe extern "C" fn native_bool_response(data: *mut std::ffi::c_void, id: u64) -> i32 {
+    let (ctx, value) = unsafe { &*data.cast::<(*mut ExecutionContext, u64)>() };
+    let mut ops = std::ptr::null_mut();
+    if unsafe { pecos_get_pending_operations_with_context(*ctx, &raw mut ops) } != 0 {
+        return 1;
+    }
+    unsafe { pecos_free_operations(ops) };
+    if unsafe { pecos_set_measurement_outcome_with_context(*ctx, id, *value) } != 0 {
+        return 1;
+    }
+    unsafe { pecos_signal_result_ready_with_context(*ctx) }
+}
+
+#[test]
+fn native_boolean_response_rejects_non_boolean_values() {
+    if !test_env::run_test_in_child(
+        "scoped_request::tests::native_boolean_response_rejects_non_boolean_values",
+    ) {
+        return;
+    }
+    for value in [0, 1, 2, u64::MAX] {
+        let ctx = Context::new();
+        assert_eq!(unsafe { pecos_set_native_selene_handles(ctx.0, true) }, 0);
+        let mut data = (ctx.0, value);
+        let status = unsafe {
+            pecos_call_void_main_with_request_callback_v1(
+                ctx.0,
+                native_bool_entry,
+                native_bool_response,
+                std::ptr::from_mut(&mut data).cast(),
+            )
+        };
+        assert_eq!(status == 0, value <= 1, "value={value}");
+        assert_eq!(REACHED.get(), value <= 1);
+        let ctx = Context::new();
+        assert_eq!(unsafe { pecos_set_native_selene_handles(ctx.0, true) }, 0);
+        let mut data = (ctx.0, value);
+        let status = unsafe {
+            pecos_call_void_main_with_request_callback_v1(
+                ctx.0,
+                native_integer_entry,
+                native_bool_response,
+                std::ptr::from_mut(&mut data).cast(),
+            )
+        };
+        assert_eq!(status, 0);
+        assert!(REACHED.get());
+        assert_eq!(OBSERVED.get(), value);
+    }
+}
+
+#[test]
+fn invalid_native_boolean_returns_error_without_a_transfer_handler() {
+    if !test_env::run_test_in_child(
+        "scoped_request::tests::invalid_native_boolean_returns_error_without_a_transfer_handler",
+    ) {
+        return;
+    }
+    let ctx = Context::new();
+    assert_eq!(unsafe { pecos_set_native_selene_handles(ctx.0, true) }, 0);
+    let address = ctx.0 as usize;
+    let responder = std::thread::spawn(move || {
+        let context = address as *mut ExecutionContext;
+        let mut id = u64::MAX;
+        let status =
+            unsafe { pecos_wait_for_need_result_with_context(context, 10_000, &raw mut id) };
+        if status != 0 || id == u64::MAX {
+            unsafe { pecos_abort_dynamic_execution(context) };
+            return false;
+        }
+        let mut data = (context, 2_u64);
+        unsafe { native_bool_response(std::ptr::from_mut(&mut data).cast(), id) == 0 }
+    });
+    assert!(ffi::PROGRAM_PANIC_TRANSFER.get().is_none());
+    let result = unsafe { crate::selene::selene_future_read_bool(std::ptr::null_mut(), 7) };
+    assert!(responder.join().unwrap());
+    assert_ne!(result.error_code, 0);
+    assert!(!result.value);
+}
+
 struct Context(*mut ExecutionContext);
 impl Context {
     fn new() -> Self {

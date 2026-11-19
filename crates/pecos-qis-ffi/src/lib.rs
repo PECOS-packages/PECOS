@@ -33,6 +33,7 @@ mod decoder_reads;
 pub mod ffi;
 mod provenance;
 mod random;
+mod scoped_request;
 mod selene;
 mod shot;
 mod wasm;
@@ -580,6 +581,9 @@ thread_local! {
 /// The pointer must be valid for the duration of execution, or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_register_execution_context(ctx: *mut ExecutionContext) {
+    if !scoped_request::allow_context(ctx) {
+        return;
+    }
     log::debug!("pecos_register_execution_context called: ctx={ctx:?}");
     EXECUTION_CONTEXT.with(|ec| {
         *ec.borrow_mut() = if ctx.is_null() { None } else { Some(ctx) };
@@ -1358,6 +1362,9 @@ pub fn wait_for_result_ready(result_id: u64) -> ResultWaitOutcome {
     let Some(ctx) = get_execution_context() else {
         return ResultWaitOutcome::Failed("no execution context");
     };
+    if let Err(reason) = scoped_request::admit_request(ctx) {
+        return ResultWaitOutcome::Failed(reason);
+    }
     // SAFETY: The registered context is live throughout execution.
     let ctx = unsafe { &*ctx };
     let Ok(mut state) = ctx.sync_state.lock() else {
@@ -1389,6 +1396,12 @@ pub fn wait_for_result_ready(result_id: u64) -> ResultWaitOutcome {
     ctx.waiting_for_result.store(result_id, Ordering::SeqCst);
     state.need_result = true;
     state.result_ready = false;
+    if scoped_request::is_registered() {
+        // The host must be able to drain operations and publish a reply without
+        // borrowing the collector or acquiring a lock held by this frame.
+        drop(state);
+        return scoped_request::dispatch(result_id);
+    }
     ctx.sync_condvar.notify_all();
 
     let Ok(state) = ctx.sync_condvar.wait_while(state, |state| {

@@ -5,8 +5,10 @@
 The FFI library exports `pecos_call_qmain_with_request_callback_v1` and
 `pecos_call_void_main_with_request_callback_v1`. They run a guarded program and
 service synchronous result/runtime requests on the calling thread. This is the
-FFI boundary only. `QisEngine`, Monte Carlo and Python `sim()` still use staged
-execution; no native-runtime parity or performance result is claimed here.
+FFI boundary and an opt-in Rust host integration. A `QisEngine` configured with
+`set_scoped_execution(true)` uses it through `ControlEngine::run_with`, including
+the existing Monte Carlo/HybridEngine route. Staged execution remains the default;
+Python has no new option. No private-runtime or performance result is claimed.
 
 ## Host protocol
 
@@ -31,9 +33,9 @@ and calls `pecos_signal_result_ready_with_context`. Only then may it return zero
 Nonzero status, missing readiness/outcome, cancellation and recorded callback-side
 program errors fail the request. Readiness flags are retired after each callback.
 The existing QIR typed reader still checks Boolean representability and stored
-values. Native Selene requests retain their existing host-side validation
-contract: the host must validate a native Boolean response as 0 or 1 before
-storing it (the Selene Boolean adapter converts nonzero values to true).
+values. Native Boolean reads now also reject values other than 0 or 1 at the typed FFI
+boundary, before Boolean conversion. Integer and leakage futures keep their
+full-width values. This validation applies to both staged and scoped hosts.
 
 The callback must not reset/reconfigure/destroy the context, replace transfer
 handlers, or execute program instructions (including cached result reads).
@@ -70,7 +72,7 @@ Cancellation remains cooperative. Running on the host thread cannot detach an
 unresponsive program; the future host integration must expose an explicit mode
 choice and preserve staged execution for callers requiring its existing policy.
 
-## Validation and next integration
+## Host integration and validation
 
 FFI tests cover both entry signatures, same-thread calls, reply failures, callback
 panic conversion, callback-side exit, cancellation, recursive waits, nested entry
@@ -79,10 +81,30 @@ A compiled LLVM fixture resolves the new exports from the admitted shared librar
 uses repeated native requests and full-width replies, branches on a reply, and
 checks early termination and subsequent recovery on the same thread.
 
-The next milestone connects `QisEngine::run_with` to these exports while reusing
-request lowering, runtime draining/forcing, measurement feedback, decoder calls
-and terminal certification. The callback must submit emitted work through the
-borrowed `QuantumSystem` driver, including all inner noise/simulator exchanges.
-Require staged/scoped parity for scheduling/idling, futures, noise-generated
-measurements, outputs, shot/RNG identity and recovery before enabling Python or
-measuring a throughput change.
+`QisEngine::run_with` shares shot setup, runtime request processing, feedback,
+and terminal certification with the staged route. It moves the interface out
+while the callback borrows the controller and the controlled-engine driver. The
+host rejects nested program execution before TLS registration or reset. Failed
+execution restores interface ownership, retains the primary typed error or panic,
+and poisons the engine (including clones) until whole-host reset. Teardown
+failure is retained even when a primary failure takes precedence. Direct staged
+`start`/`continue_processing` calls are rejected while scoped mode is selected.
+
+Public tests compare both routes through Monte Carlo with seeded replay,
+multiple workers, Simple/SoftRZ runtimes, scheduled transport, embedded decoding,
+leakage outcomes, and noise-owned simulator measurement round trips. Additional
+comparisons check exact emitted wire batches for legacy, v6 and v7 transport,
+measurement-dependent control, both program entry shapes, terminal tail delivery,
+and caching multiple nonnative outcomes without splitting a quantum batch.
+
+Staged orchestration may emit empty messages while its worker runs. Scoped
+execution does not synthesize those worker polls. All messages actually emitted
+by request/feedback/terminal processing still reach the controlled engine,
+including empty or timed scheduled frames. The batch comparison excludes only
+legacy empty wait messages; it is not an equivalence guarantee for arbitrary
+noise models that deliberately change state on worker polls.
+
+Before Python activation or performance claims, validate the downstream runtime
+and matched noise profiles on this rebuilt stack. Runtime scheduling and idle
+intervals remain authoritative: the host neither reconstructs static traces nor
+reschedules emitted work.

@@ -738,6 +738,20 @@ unsafe fn native_read(future: u64, boolean: bool) -> SeleneU64Result {
             "selene future read",
         )
     };
+    if response.error_code == 0 && boolean && response.value > 1 {
+        // Validate at the typed boundary for every host, including custom
+        // runtimes. Integer/leakage futures retain their full-width values.
+        unsafe {
+            ffi::fatal_ffi_input(
+                "selene future read",
+                "Boolean response must be 0 or 1".into(),
+            );
+        };
+        return SeleneU64Result {
+            error_code: 1,
+            value: 0,
+        };
+    }
     if response.error_code == 0
         && let Err(reason) = record_native_read(future)
     {

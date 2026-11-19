@@ -1174,7 +1174,7 @@ fn deferred_read_quantum(mode: ScheduledTransport) -> pecos_engines::quantum_sys
     deferred_read_quantum_with_capacity(mode, 2)
 }
 
-fn deferred_read_quantum_with_capacity(
+pub(super) fn deferred_read_quantum_with_capacity(
     mode: ScheduledTransport,
     capacity: usize,
 ) -> pecos_engines::quantum_system::QuantumSystem {
@@ -1997,17 +1997,21 @@ fn soft_rz_unsupported_leaked_read_fails_promptly_without_certifying_trace() {
 fn selene_leaked_lazy_measure_reads_two_under_leakage_noise() {
     use pecos_engines::{QuantumSystem, noise::general::GeneralNoiseModel};
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    let source = leaked_lazy_read_program();
-    let mut engine = dynamic_read_engine(&source);
-    let noise = GeneralNoiseModel::builder()
-        .with_p1(1.0)
-        .with_p1_emission_ratio(1.0)
-        .with_p1_emission_model(&BTreeMap::from([("L".to_string(), 1.0)]))
-        .build();
-    let mut quantum = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(2)));
-    let stage = engine.start(()).unwrap();
-    let shot = finish_deferred_read_shot(&mut engine, &mut quantum, stage).unwrap();
-    assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(2)));
+    for scoped in [false, true] {
+        let source = leaked_lazy_read_program();
+        let mut engine = dynamic_read_engine(&source);
+        let noise = GeneralNoiseModel::builder()
+            .with_p1(1.0)
+            .with_p1_emission_ratio(1.0)
+            .with_p1_emission_model(&BTreeMap::from([("L".to_string(), 1.0)]))
+            .build();
+        let mut quantum = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(2)));
+        engine.set_scoped_execution(scoped).unwrap();
+        let shot = engine
+            .run_with((), &mut |commands| quantum.process(commands))
+            .unwrap();
+        assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(2)));
+    }
 }
 
 #[test]

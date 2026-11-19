@@ -227,7 +227,7 @@ fn reject_nested() {
 /// program API reentry. Only pending-operation drain/free, outcome storage and
 /// readiness signaling APIs may be used by the host callback. Other threads may
 /// request cancellation, but must not otherwise mutate the context. The host must
-/// validate native Boolean responses as 0/1 before storing them. The program
+/// provide native Boolean responses as 0/1; typed reads reject other values. The program
 /// obeys the ordinary C recovery discipline. This mode cannot detach an
 /// unresponsive program; callers must opt into that cancellation limitation.
 /// Rust program entries must use `C-unwind` for Windows recovery and own no

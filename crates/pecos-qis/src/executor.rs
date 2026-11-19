@@ -2466,6 +2466,13 @@ mod tests {
     use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
 
+    // Keep the compiled ABI probe in the executor::tests filter used by the
+    // Python compatibility smoke builds on all supported host platforms.
+    #[test]
+    fn compiled_entries_use_scoped_requests_in_the_selected_ffi() {
+        super::scoped_request_tests::run_compiled_entries();
+    }
+
     // Only primitive/pointer ABI types: this oracle also runs on Windows.
     #[test]
     fn explicit_context_exports_have_portable_ir_abi() {
@@ -4648,3 +4655,6 @@ mod selene_tests;
 
 #[cfg(test)]
 mod abi_tests;
+
+#[cfg(test)]
+mod scoped_request_tests;

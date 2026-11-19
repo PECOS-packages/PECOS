@@ -19,9 +19,13 @@ extern program_panic_handler_t pecos_get_program_panic_handler(void);
 extern void pecos_set_program_panic_handler(program_panic_handler_t);
 extern bool pecos_program_panic_handler_is_installed(void);
 extern bool pecos_program_exited(void);
+extern void pecos_reject_nested_execution(void);
 
 // One recovery target per thread; nested guards are unsupported.
 static PECOS_THREAD_LOCAL jmp_buf user_program_jmpbuf;
+static PECOS_THREAD_LOCAL bool guard_active;
+
+bool pecos_execution_guard_is_active(void) { return guard_active; }
 
 // Always jump with sentinel 1. The recorded termination variant determines
 // success or failure; the original signed code remains in the context.
@@ -48,11 +52,17 @@ static void pecos_program_panic_transfer(void) {
 typedef uint64_t (*qmain_fn_t)(uint64_t);
 
 uint64_t pecos_guard_qmain_with_setjmp(qmain_fn_t qmain) {
+    if (guard_active) {
+        pecos_reject_nested_execution();
+        return 1;
+    }
+    guard_active = true;
     // Initialize shot context to match what interface.c main() does
     // Must be thread-local for concurrent execution by multiple workers
     static PECOS_THREAD_LOCAL SeleneInstance dummy_instance;
     selene_void_result_t start_result = selene_on_shot_start(&dummy_instance, 0);
     if (start_result.error_code != 0) {
+        guard_active = false;
         return start_result.error_code;
     }
 
@@ -68,14 +78,14 @@ uint64_t pecos_guard_qmain_with_setjmp(qmain_fn_t qmain) {
         // Clean up shot context
         pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
-
+        guard_active = false;
         return result;
     } else {
         // longjmp was called - an error occurred
         // Clean up even on error
         pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
-
+        guard_active = false;
         return pecos_program_exited() ? 0 : 1;
     }
 }
@@ -101,9 +111,15 @@ uint64_t pecos_guard_qmain_with_setjmp(qmain_fn_t qmain) {
 typedef void (*void_main_fn_t)(void);
 
 uint64_t pecos_guard_void_main_with_setjmp(void_main_fn_t main_func) {
+    if (guard_active) {
+        pecos_reject_nested_execution();
+        return 1;
+    }
+    guard_active = true;
     static PECOS_THREAD_LOCAL SeleneInstance dummy_instance;
     selene_void_result_t start_result = selene_on_shot_start(&dummy_instance, 0);
     if (start_result.error_code != 0) {
+        guard_active = false;
         return start_result.error_code;
     }
 
@@ -116,10 +132,12 @@ uint64_t pecos_guard_void_main_with_setjmp(void_main_fn_t main_func) {
         main_func();
         pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
+        guard_active = false;
         return 0;
     } else {
         pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
+        guard_active = false;
         return pecos_program_exited() ? 0 : 1;
     }
 }

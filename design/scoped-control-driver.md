@@ -2,9 +2,10 @@
 
 ## Status
 
-The generic driver is implemented. Native QIS execution still uses its existing
-staged worker. No inline FFI path, Python option, or performance improvement is
-claimed by this change.
+The generic driver and an opt-in scoped FFI request callback are implemented.
+Native `QisEngine` execution still uses its existing staged worker: the callback
+is not yet connected to that controller. No Python option or performance
+improvement is claimed. See [the FFI contract](scoped-request-callback.md).
 
 ## Motivation and contract
 

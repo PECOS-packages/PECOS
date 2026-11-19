@@ -3889,6 +3889,8 @@ class decoders:
             self,
             detection_events: list[int],
             num_shots: int,
+            *,
+            syndrome_length: int | None = ...,
         ) -> list[list[int]]: ...
         def __repr__(self) -> str: ...
 

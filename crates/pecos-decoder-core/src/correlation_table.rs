@@ -59,7 +59,8 @@ type EdgeKey = (u32, u32);
 
 /// Independent probability combination (Bernoulli XOR):
 /// `p_combined = p_a * (1 - p_b) + p_b * (1 - p_a)`
-pub(crate) fn bernoulli_xor(p_a: f64, p_b: f64) -> f64 {
+#[must_use]
+pub fn bernoulli_xor(p_a: f64, p_b: f64) -> f64 {
     p_a * (1.0 - p_b) + p_b * (1.0 - p_a)
 }
 

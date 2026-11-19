@@ -7,18 +7,20 @@ use super::errors::Result;
 pub struct DecodeBuffer {
     /// Internal buffer for syndrome data
     syndrome_buffer: Vec<u8>,
-    /// Internal buffer for observable results, one byte per observable
+    /// Internal buffer for observable results, one byte per decoded observable
     observable_buffer: Vec<u8>,
 }
 
 impl DecodeBuffer {
     /// Create a new decode buffer for the given decoder
+    ///
+    /// The observable buffer holds
+    /// [`PyMatchingDecoder::num_decoded_observables`] bytes.
     #[must_use]
     pub fn new(decoder: &PyMatchingDecoder) -> Self {
-        let max_observables = decoder.num_observables();
         Self {
             syndrome_buffer: Vec::new(),
-            observable_buffer: vec![0; max_observables],
+            observable_buffer: vec![0; decoder.num_decoded_observables()],
         }
     }
 
@@ -51,7 +53,7 @@ impl PyMatchingDecoder {
 
     /// Validate buffer size for observables
     fn validate_buffer_size(&self, buffer: &[u8], purpose: &str) -> Result<()> {
-        let required_len = self.num_observables();
+        let required_len = self.num_decoded_observables();
         if buffer.len() < required_len {
             return Err(crate::PyMatchingError::Configuration(format!(
                 "{} buffer too small: need {} bytes, got {}",
@@ -67,8 +69,9 @@ impl PyMatchingDecoder {
     ///
     /// This method reuses the provided observable buffer to avoid allocations.
     /// The buffer holds one byte per observable, in the same layout as
-    /// [`DecodingResult::observable`], so it must be at least `num_observables`
-    /// bytes long. Bytes past `num_observables` are left untouched.
+    /// [`DecodingResult::observable`], so it must be at least
+    /// [`Self::num_decoded_observables`] bytes long. Bytes past that width are
+    /// left untouched.
     ///
     /// # Errors
     ///
@@ -82,7 +85,7 @@ impl PyMatchingDecoder {
         self.validate_buffer_size(observable_buffer, "Observable")?;
 
         let result = self.decode(syndrome)?;
-        let observables = &mut observable_buffer[..self.num_observables()];
+        let observables = &mut observable_buffer[..self.num_decoded_observables()];
         observables.fill(0);
         let copy_len = result.observable.len().min(observables.len());
         observables[..copy_len].copy_from_slice(&result.observable[..copy_len]);
@@ -92,23 +95,42 @@ impl PyMatchingDecoder {
 
     /// Decode with a reusable buffer
     ///
+    /// The returned observables have [`Self::num_decoded_observables`]
+    /// entries, as from [`Self::decode`]. On any validation error the buffer
+    /// is left untouched.
+    ///
     /// # Errors
     ///
-    /// Returns the same errors as [`Self::decode_into`].
+    /// Returns a [`PyMatchingError`](crate::PyMatchingError), checked in this
+    /// order and before the buffer is written, if:
+    /// - The syndrome length is outside the range [`Self::decode`] accepts
+    /// - The buffer's observable buffer is narrower than this decoder's
+    ///   decoded observables, for example because it was created for another
+    ///   decoder; call [`Self::create_decode_buffer`] again
+    ///
+    /// or if decoding fails.
     pub fn decode_with_buffer(
         &mut self,
         syndrome: &[u8],
         buffer: &mut DecodeBuffer,
     ) -> Result<DecodingResult> {
-        // Keep the caller's buffer intact when the syndrome is rejected.
+        // Keep the caller's buffer intact when validation fails.
         self.validate_syndrome(syndrome)?;
+        let width = self.num_decoded_observables();
+        if buffer.observable_buffer.len() < width {
+            return Err(crate::PyMatchingError::Configuration(format!(
+                "DecodeBuffer holds {} observables, but this decoder decodes {width}; call \
+                 create_decode_buffer again to get a buffer for this decoder",
+                buffer.observable_buffer.len()
+            )));
+        }
         buffer.clear();
         buffer.syndrome_buffer.extend_from_slice(syndrome);
 
         let weight = self.decode_into(&buffer.syndrome_buffer, &mut buffer.observable_buffer)?;
 
         Ok(DecodingResult {
-            observable: buffer.observable_buffer[..self.num_observables()].to_vec(),
+            observable: buffer.observable_buffer[..width].to_vec(),
             weight,
         })
     }
@@ -242,7 +264,54 @@ mod tests {
         for syndrome in test_syndromes {
             let result = decoder.decode_with_buffer(&syndrome, &mut buffer).unwrap();
             assert!(result.weight >= 0.0);
-            assert_eq!(result.observable.len(), DEFAULT_OBSERVABLES); // PyMatching defaults to 64 observables
+            // The graph pads to 64 observables, but decode returns the configured 3.
+            assert_eq!(result.observable.len(), 3);
         }
+    }
+
+    #[test]
+    fn buffered_widths_match_decode_for_a_padded_graph() {
+        let mut decoder = PyMatchingDecoder::new(PyMatchingConfig {
+            num_nodes: Some(2),
+            num_observables: 3,
+            ..Default::default()
+        })
+        .unwrap();
+        decoder
+            .add_edge(0, 1, &[2], Some(1.0), Some(0.1), None)
+            .unwrap();
+        assert_eq!(decoder.num_observables(), DEFAULT_OBSERVABLES);
+        let expected = decoder.decode(&[1, 1]).unwrap().observable;
+        assert_eq!(expected, [0, 0, 1]);
+
+        let mut buffer = decoder.create_decode_buffer();
+        assert_eq!(buffer.observable_buffer().len(), expected.len());
+        let result = decoder.decode_with_buffer(&[1, 1], &mut buffer).unwrap();
+        assert_eq!(result.observable, expected);
+
+        // A buffer of exactly the decoded width is enough for decode_into.
+        let mut observable_buffer = vec![0u8; expected.len()];
+        decoder
+            .decode_into(&[1, 1], &mut observable_buffer)
+            .unwrap();
+        assert_eq!(observable_buffer, expected);
+    }
+
+    #[test]
+    fn narrow_decode_buffer_is_rejected_untouched() {
+        let narrow = PyMatchingDecoder::from_dem("error(0.1) D0 L0\nerror(0.1) D0 D1").unwrap();
+        let mut decoder =
+            PyMatchingDecoder::from_dem("error(0.1) D0 L2\nerror(0.1) D0 D1").unwrap();
+        let mut buffer = narrow.create_decode_buffer();
+        buffer.syndrome_buffer.extend_from_slice(&[1, 0]);
+        buffer.observable_buffer.fill(0xAB);
+        match decoder.decode_with_buffer(&[1, 0], &mut buffer) {
+            Err(crate::PyMatchingError::Configuration(message)) => {
+                assert!(message.contains("create_decode_buffer"), "{message}");
+            }
+            other => panic!("expected a configuration error, got {other:?}"),
+        }
+        assert_eq!(buffer.syndrome_buffer(), [1, 0]);
+        assert_eq!(buffer.observable_buffer(), [0xAB]);
     }
 }

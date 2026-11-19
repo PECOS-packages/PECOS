@@ -78,14 +78,21 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `num_detectors` to `num_nodes` entries, as upstream PyMatching does, so a
   boundary node below a detector no longer hides the top detectors; other
   lengths are rejected (previously only longer ones). Python
-  `PyMatchingDecoder.decode_batch` takes its row width from the input length
-  and accepts the same range, instead of requiring `num_detectors`;
-  `decode_into` and `decode_with_buffer` check the syndrome before writing to
-  the caller's buffer. Their observable buffer now holds one byte per
-  observable, like `DecodingResult::observable`, and must be at least
-  `num_observables` bytes. Before, it was sized as packed bits, but the result
-  was copied one byte per observable, so every observable past the first
-  `ceil(num_observables / 8)` was silently dropped.
+  `PyMatchingDecoder.decode_batch` takes an optional `syndrome_length` keyword,
+  defaulting to `num_detectors`, that accepts the same range, and raises
+  `ValueError` naming `num_shots` and `syndrome_length` unless the input has
+  exactly `num_shots * syndrome_length` entries;
+  `decode_into` and `decode_with_buffer` check the syndrome, and
+  `decode_with_buffer` also the buffer's width, before writing to the caller's
+  buffer. Their observable buffer now holds one byte per observable, like
+  `DecodingResult::observable`, and must be at least the new
+  `PyMatchingDecoder::num_decoded_observables` bytes, the length `decode`
+  returns. Before, it was sized as packed bits, but the result was copied one
+  byte per observable, so every observable past the first
+  `ceil(num_observables / 8)` was silently dropped. It was also sized from the
+  graph's `num_observables`, which `new` and check-matrix decoders pad to 64,
+  so `DecodeBuffer` and `decode_with_buffer` results were 64 entries wide
+  where `decode` returns the configured count.
   `StreamingLogicalDecoder::feed_dense`, `feed_sparse` and `feed_detection` now
   return `Result` and reject wrong lengths and out-of-range indices; Python
   `LogicalAlgorithmDecoder.feed_dense` and `feed_sparse` raise `ValueError`.
@@ -102,13 +109,22 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   1.0 or more on `from_dem`, `from_dem_correlated`,
   `from_check_matrix_correlated` and the spec families built on them,
   `belief_matching` included, was accepted silently, as was a prior above 0.5
-  with weight factors on `from_check_matrix_correlated` and
-  `from_parsed_correlated`, whose negative weight was clamped to a small
-  positive one. Other priors above 0.5 gave a Fusion Blossom invalid-graph
+  with weight factors on `from_check_matrix_correlated`, whose negative weight
+  was clamped to a small positive one (on `from_parsed_correlated` the double
+  count fixed below made it an invalid-graph error instead). Other priors above
+  0.5 gave a Fusion Blossom invalid-graph
   error, already a `ValueError` when building directly but a `RuntimeError` as
   a logical decoder's inner decoder, or a correlated-PyMatching FFI error
   (`RuntimeError`); the `belief_matching` families rejected them in their BP
-  stage, already as `ValueError`, and now report the matching prior. Logical
+  stage, already as `ValueError`, and now report the matching prior. Each DEM
+  mechanism's own prior must be at most 0.5, as upstream PyMatching requires
+  of each instruction when correlations are enabled: `DemMatchingGraph::from_dem_str` and logical-subgraph
+  extraction now check every mechanism that becomes an edge before parallel
+  mechanisms are merged, so two `error(0.7) D0 D1`, whose merged prior is
+  0.42, are rejected by `FusionBlossomDecoder::from_dem`, the spec Fusion
+  Blossom and `belief_matching` families, the union-find and A* decoders, and
+  logical-subgraph decoders whatever their inner decoder, instead of being
+  accepted. Logical
   decoders raise `RuntimeError` when an internally generated sub-DEM fails to
   build for another reason. A Tesseract `decode_detections` or
   `decode_with_order` index outside the model is `InvalidSyndrome` instead of
@@ -124,8 +140,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   detector has no edges.
 
 - **Fixed:** `FusionBlossomDecoder::from_parsed_correlated` counted the first
-  mechanism on each edge twice when merging, so a lone prior of 0.1 became
-  0.19; each mechanism now enters the independent union once.
+  mechanism on each edge twice when merging, so each lone prior p became
+  2p - p² (0.1 became 0.19), and any lone prior above about 0.293 was rejected
+  as above 0.5 although it was legal; each mechanism now enters the merge once.
+  Parallel mechanisms now merge as independent events,
+  `p1 * (1 - p2) + p2 * (1 - p1)`, as its documentation and `DemMatchingGraph`
+  already did, instead of `p1 + p2 - p1 * p2`, so `error(0.3) D0 D1` with
+  `error(0.3) D0 D1 L0` merges to 0.42 and is accepted instead of rejected as
+  0.51.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,

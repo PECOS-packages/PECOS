@@ -881,9 +881,26 @@ impl PyMatchingDecoder {
     }
 
     /// Get the number of observables
+    ///
+    /// This is the graph's count. For a graph built with [`Self::new`] or from
+    /// a check matrix with at most 64 observables it is padded to 64; use
+    /// [`Self::num_decoded_observables`] for the length [`Self::decode`] returns.
     #[must_use]
     pub fn num_observables(&self) -> usize {
         ffi::pymatching_get_num_observables(&self.graph)
+    }
+
+    /// Number of entries in [`DecodingResult::observable`] from [`Self::decode`]
+    ///
+    /// With at most 64 configured observables, `decode` returns the configured
+    /// count; otherwise it returns the graph's [`Self::num_observables`].
+    #[must_use]
+    pub fn num_decoded_observables(&self) -> usize {
+        if self.config.num_observables <= OPTIMIZED_OBSERVABLE_LIMIT {
+            self.config.num_observables
+        } else {
+            self.num_observables()
+        }
     }
 
     /// Ensure the graph has at least the specified number of observables
@@ -1014,7 +1031,7 @@ impl PyMatchingDecoder {
             let result = ffi::decode_detection_events_64(self.graph.pin_mut(), detection_events)?;
 
             // The first 8 bytes of observables contain the packed obs_mask
-            let num_obs = self.config.num_observables;
+            let num_obs = self.num_decoded_observables();
             let mut observables = vec![0u8; num_obs];
 
             // Unpack the obs_mask from the result

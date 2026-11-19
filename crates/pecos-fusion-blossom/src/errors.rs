@@ -41,9 +41,9 @@ impl From<pecos_decoder_core::DecoderError> for FusionBlossomError {
         use pecos_decoder_core::DecoderError;
         match error {
             DecoderError::InvalidDemSyntax(_) => Self::DemSyntax(error),
-            DecoderError::InvalidConfiguration(_) | DecoderError::BackendUnavailable { .. } => {
-                Self::Configuration(error.to_string())
-            }
+            // Keep the message as is: converting back adds the category prefix again.
+            DecoderError::InvalidConfiguration(message) => Self::Configuration(message),
+            DecoderError::BackendUnavailable { .. } => Self::Configuration(error.to_string()),
             DecoderError::InvalidGraph(_)
             | DecoderError::InvalidNodeIndex { .. }
             | DecoderError::InvalidEdge(_) => Self::InvalidGraph(error.to_string()),

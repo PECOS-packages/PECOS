@@ -311,37 +311,50 @@ def test_logical_constructor_rejects_bad_inner_spec_before_building():
         LogicalSubgraphDecoder(_UNPARTITIONABLE_DEM, _LOGICAL_STAB_COORDS, "unknown_decoder")
 
 
-# The logical subgraph keeps the p = 0.7 mechanism, whose matching weight is negative. The
-# sub-DEM merges it with the projected D0 D1 mechanism, so messages name the merged value.
+# The p = 0.7 mechanism's matching weight is negative. Logical-subgraph extraction checks the
+# caller's prior before the sub-DEM merges it with the projected D0 D1 mechanism.
 _HIGH_PRIOR_DEM = _LOGICAL_DEM.replace("error(0.1) D0 L0", "error(0.7) D0 L0")
+_MECHANISM_PRIOR = r"DEM error probability 0\.7 is above 0\.5, which gives a negative matching weight"
+_EDGE_PRIOR = r"DEM edge probability 0\.7 is above 0\.5"
+_CORRELATED_PM_PRIOR = r"DEM error probability 0\.7 is above 0\.5, which correlated PyMatching"
 
 
 @pytest.mark.parametrize(
     ("family", "message"),
     [
-        ("fusion_blossom", r"DEM edge probability 0\.\d+ is above 0\.5"),
-        ("k_mwpm", r"DEM edge probability 0\.\d+ is above 0\.5"),
-        ("perturbed_fb_corr", r"DEM edge probability 0\.\d+ is above 0\.5"),
-        ("pymatching", r"DEM error probability 0\.\d+ is above 0\.5"),
-        ("perturbed", r"DEM error probability 0\.\d+ is above 0\.5"),
-        ("belief_matching", r"DEM edge probability 0\.\d+ is above 0\.5"),
-        ("belief_matching_correlated", r"DEM edge probability 0\.\d+ is above 0\.5"),
-        ("belief_matching_mgbp", r"DEM edge probability 0\.\d+ is above 0\.5"),
-        pytest.param(
-            f"belief_matching_hybrid:{_HIGH_PRIOR_DEM}",
-            r"DEM edge probability 0\.\d+ is above 0\.5",
-            id="belief_matching_hybrid",
-        ),
+        ("fusion_blossom", _MECHANISM_PRIOR),
+        ("k_mwpm", _MECHANISM_PRIOR),
+        ("perturbed_fb_corr", _EDGE_PRIOR),
+        ("pymatching", _CORRELATED_PM_PRIOR),
+        ("perturbed", _CORRELATED_PM_PRIOR),
+        ("belief_matching", _MECHANISM_PRIOR),
+        ("belief_matching_correlated", _MECHANISM_PRIOR),
+        ("belief_matching_mgbp", _MECHANISM_PRIOR),
+        pytest.param(f"belief_matching_hybrid:{_HIGH_PRIOR_DEM}", _MECHANISM_PRIOR, id="belief_matching_hybrid"),
     ],
 )
 def test_logical_subdem_prior_above_half_is_input_error(family, message):
     from pecos_rslib.decoders import DecoderSpec
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=_MECHANISM_PRIOR):
         LogicalSubgraphDecoder(_HIGH_PRIOR_DEM, _LOGICAL_STAB_COORDS, family)
     # Building the same backend directly classifies the prior the same way.
     with pytest.raises(ValueError, match=message):
         SampleBatch([[0, 0]], [0]).decode(_HIGH_PRIOR_DEM, DecoderSpec.parse(family), workers=1)
+
+
+# Each prior is above 0.5, though their independent combination, 0.42, is not.
+_PARALLEL_HIGH_PRIOR_DEM = _LOGICAL_DEM.replace("error(0.1) D0 D1", "error(0.7) D0 D1\nerror(0.7) D0 D1")
+
+
+@pytest.mark.parametrize("family", ["fusion_blossom", "belief_matching"])
+def test_parallel_priors_above_half_are_input_errors(family):
+    from pecos_rslib.decoders import DecoderSpec
+
+    with pytest.raises(ValueError, match=_MECHANISM_PRIOR):
+        SampleBatch([[0, 0]], [0]).decode(_PARALLEL_HIGH_PRIOR_DEM, DecoderSpec.parse(family), workers=1)
+    with pytest.raises(ValueError, match=_MECHANISM_PRIOR):
+        LogicalSubgraphDecoder(_PARALLEL_HIGH_PRIOR_DEM, _LOGICAL_STAB_COORDS, family)
 
 
 # A certain mechanism gives a zero weight that the BP stage accepts, so only the matching
@@ -361,7 +374,7 @@ _CERTAIN_PRIOR_DEM = _LOGICAL_DEM.replace("error(0.1) D0 L0", "error(1) D0 L0")
 def test_belief_matching_certain_prior_is_input_error(family):
     from pecos_rslib.decoders import DecoderSpec
 
-    with pytest.raises(ValueError, match=r"DEM edge probability 1 is above 0\.5"):
+    with pytest.raises(ValueError, match=r"DEM error probability 1 is above 0\.5"):
         SampleBatch([[0, 0]], [0]).decode(_CERTAIN_PRIOR_DEM, DecoderSpec.parse(family), workers=1)
 
 

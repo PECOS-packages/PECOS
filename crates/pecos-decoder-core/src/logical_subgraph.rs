@@ -347,6 +347,11 @@ pub fn coordinate_membership_from_dem(
 ///
 /// # Errors
 ///
+/// Returns [`DecoderError::InvalidConfiguration`] if a membership id is out of
+/// range, or if a mechanism that becomes a subgraph edge has a prior above
+/// 0.5; each mechanism's own prior is checked, before parallel mechanisms are
+/// merged.
+///
 /// Supports arbitrarily many observables: flips are packed into a wide
 /// [`ObsMask`] by [`ObservableDecoder::decode_obs`]. (The `u64`
 /// [`ObservableDecoder::decode_to_observables`] convenience errors above 64; the
@@ -415,22 +420,20 @@ pub fn subgraphs_from_membership(
             let observables = if flips_obs { vec![0u32] } else { vec![] };
 
             match sub_dets.len() {
-                1 => edges.push(MatchingEdge {
-                    node1: sub_dets[0],
-                    node2: None,
-                    weight,
-                    observables,
-                    probability: *p,
-                    fault_id: m,
-                }),
-                2 => edges.push(MatchingEdge {
-                    node1: sub_dets[0],
-                    node2: Some(sub_dets[1]),
-                    weight,
-                    observables,
-                    probability: *p,
-                    fault_id: m,
-                }),
+                1 | 2 => {
+                    // Check the caller's prior before merging: a sub-DEM
+                    // rendered from this graph holds merged priors, which are
+                    // at most 0.5 whenever every merged prior is.
+                    crate::dem::check_matching_prior(*p)?;
+                    edges.push(MatchingEdge {
+                        node1: sub_dets[0],
+                        node2: sub_dets.get(1).copied(),
+                        weight,
+                        observables,
+                        probability: *p,
+                        fault_id: m,
+                    });
+                }
                 _ => skipped += 1,
             }
         }

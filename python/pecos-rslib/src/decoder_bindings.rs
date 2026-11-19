@@ -581,16 +581,24 @@ impl PyPyMatchingDecoder {
     ///
     /// # Arguments
     ///
-    /// * `detection_events` - Flattened row-major detection events, `num_shots` rows of
-    ///   one byte per node. As in `decode_syndrome`, a row has `num_detectors` to `num_nodes`
-    ///   entries; the row width is `len(detection_events) / num_shots`.
+    /// * `detection_events` - Flattened row-major detection events: `num_shots` rows of
+    ///   `syndrome_length` entries, one byte per node, so exactly
+    ///   `num_shots * syndrome_length` entries
     /// * `num_shots` - Number of shots in the batch
+    /// * `syndrome_length` - Entries per row. Defaults to `num_detectors`; as in
+    ///   `decode_syndrome`, any width from `num_detectors` to `num_nodes` (boundary
+    ///   nodes included) is accepted
     ///
     /// # Returns
     ///
     /// List of observable predictions (one per shot), where each prediction
     /// is a list of 0/1 values (one per observable). Check index 0 for
     /// single-observable codes.
+    ///
+    /// # Errors
+    ///
+    /// Raises `ValueError` if `syndrome_length` is outside that range, or if
+    /// `detection_events` does not have `num_shots * syndrome_length` entries.
     ///
     /// # Example
     ///
@@ -600,27 +608,37 @@ impl PyPyMatchingDecoder {
     /// predictions = decoder.decode_batch(flat, num_shots=len(detection_events))
     /// num_errors = sum(p[0] != t for p, t in zip(predictions, true_flips))
     /// ```
+    #[pyo3(signature = (detection_events, num_shots, *, syndrome_length=None))]
     fn decode_batch(
         &mut self,
         detection_events: Vec<u8>,
         num_shots: usize,
+        syndrome_length: Option<usize>,
     ) -> PyResult<Vec<Vec<u8>>> {
         use pecos_decoders::BatchConfig as RustBatchConfig;
 
-        // Rows may be as wide as `decode_syndrome` accepts; the Rust call checks the range.
-        let row_width = if num_shots == 0 {
-            self.inner.num_detectors()
-        } else if detection_events.len().is_multiple_of(num_shots) {
-            detection_events.len() / num_shots
-        } else {
+        let (num_detectors, num_nodes) = (self.inner.num_detectors(), self.inner.num_nodes());
+        let syndrome_length = syndrome_length.unwrap_or(num_detectors);
+        if !(num_detectors..=num_nodes).contains(&syndrome_length) {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "detection_events has {} entries, which is not a whole number of rows for \
-                 num_shots={num_shots}; pass num_shots rows of {} to {} entries each",
-                detection_events.len(),
-                self.inner.num_detectors(),
-                self.inner.num_nodes()
+                "syndrome_length={syndrome_length} is outside the widths this decoder accepts: \
+                 {num_detectors} (one per detector) to {num_nodes} (one per node, boundary \
+                 nodes included)"
             )));
-        };
+        }
+        let expected = num_shots.checked_mul(syndrome_length);
+        if expected != Some(detection_events.len()) {
+            let needed = expected.map_or_else(
+                || "more than usize can count".to_string(),
+                |entries| entries.to_string(),
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detection_events has {} entries, but num_shots={num_shots} rows of \
+                 syndrome_length={syndrome_length} need {needed}; check num_shots, or pass \
+                 syndrome_length for rows wider than num_detectors",
+                detection_events.len()
+            )));
+        }
         let config = RustBatchConfig {
             bit_packed_input: false,
             bit_packed_output: false,
@@ -628,7 +646,7 @@ impl PyPyMatchingDecoder {
         };
 
         self.inner
-            .decode_batch_with_config(&detection_events, num_shots, row_width, config)
+            .decode_batch_with_config(&detection_events, num_shots, syndrome_length, config)
             .map(|result| result.predictions)
             .map_err(decoder_runtime_error_to_py)
     }

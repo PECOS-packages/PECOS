@@ -1273,3 +1273,15 @@ class TestNoisySimulation:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_generated_dem_priors_round_trip_exactly() -> None:
+    """Small priors survive DEM text exactly instead of rounding to zero."""
+    import re
+
+    from pecos.qec.surface import generate_repetition_code_dem
+
+    p_data, p_meas = 1e-7, 2.5e-10
+    dem = generate_repetition_code_dem(num_checks=2, num_rounds=2, p_data=p_data, p_meas=p_meas)
+    priors = {float(value) for value in re.findall(r"error\(([^)]*)\)", dem)}
+    assert priors == {p_data, p_meas}

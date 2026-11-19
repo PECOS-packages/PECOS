@@ -431,11 +431,7 @@ pub fn mechanisms_to_dem_string(mechanisms: &[DemMechanism]) -> String {
                 tokens.push(format!("L{o}"));
             }
             if !tokens.is_empty() {
-                lines.push(format!(
-                    "error({:.10e}) {}",
-                    mech.probability,
-                    tokens.join(" ")
-                ));
+                lines.push(format!("error({}) {}", mech.probability, tokens.join(" ")));
             }
         }
     }

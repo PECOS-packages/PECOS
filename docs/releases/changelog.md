@@ -20,6 +20,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   positive with finite `(1-p)/p` ratios. For pure dephasing use small positive
   X/Y weights satisfying this condition. Build-time patches update the shared
   dependency cache and affect other local checkouts.
+- **Fixed:** DEM text written by `generate_repetition_code_dem`,
+  `generate_surface_code_dem`, the surface circuit builder, the correlation
+  DEM export in `pecos-qec`, the experimental `pecos-eeg` and `pecos-zx` crates
+  and the DEM decomposition diagnostics example now uses the shortest exact
+  representation of each probability instead of fixed precision. Before,
+  `generate_*_code_dem` and `pecos-zx` wrote six decimal places, so priors at or
+  below about 5e-7 became `error(0.000000)`; the other writers kept six, seven or
+  eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,

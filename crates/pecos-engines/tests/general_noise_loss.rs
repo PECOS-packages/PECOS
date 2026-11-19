@@ -1603,26 +1603,49 @@ fn untracked_measurements_retain_lost_operands_and_custom_is_suppressed() {
 }
 
 #[test]
+fn after_hooks_skip_lost_untracked_measurements_restored_by_recovery() {
+    // After-site recovery restores the atom before the after-gate hooks run. The hooks
+    // must still skip it, as they do for any one-qubit gate suppressed for loss.
+    let hook = PauliLeakageChannel::new(1.0, &weights(&[("Z", 1.0)])).unwrap();
+    for kind in [GateType::X, GateType::MX, GateType::MeasureFree] {
+        let mut model = builder(loss().with_idle_rate(1.0).add_recovery_channel(
+            LossSite::AfterSingleQubit,
+            0.0,
+            0.0,
+        ))
+        .add_p1_pauli_leakage_channel_after_gate(&hook)
+        .build();
+        let mut input = ByteMessage::quantum_operations_builder();
+        input.add_gate_commands(&[lose(0), m(kind, 0)]);
+        let EngineStage::NeedsProcessing(commands) = model.start(input.build()).unwrap() else {
+            panic!("expected quantum commands for {kind:?}")
+        };
+        let stream = commands.quantum_ops().unwrap();
+        assert_eq!(count(&stream, GateType::Z, 0), 0, "{kind:?}: {stream:?}");
+    }
+}
+
+#[test]
 fn after_recovery_then_events_on_suppressed_gate() {
-    let mut model = builder(
+    let b = builder(
         loss()
             .with_idle_rate(1.0)
             .with_lost_partner_loss_probability(0.0)
             .add_recovery_channel(LossSite::AfterTwoQubit, 0.0, 0.0)
             .add_events_channel(LossSite::AfterTwoQubit, 1.0, &weights(&[("IL", 1.0)])),
-    )
-    .build();
-    let result = run(
-        &mut model,
-        &[
-            lose(0),
-            Gate::cx(&[(0, 1)]),
-            m(GateType::MeasureZLost, 0),
-            m(GateType::MeasureZLost, 1),
-        ],
     );
-    assert_eq!(result.0, [0, 3]);
-    assert_eq!(count(&result.1, GateType::CX, 0), 0);
+    // The user guide writes the herald as one two-qubit gate; split heralds agree.
+    let joint = Gate::simple(GateType::MeasureZLost, vec![0.into(), 1.into()]);
+    for heralds in [
+        vec![joint],
+        vec![m(GateType::MeasureZLost, 0), m(GateType::MeasureZLost, 1)],
+    ] {
+        let mut gates = vec![lose(0), Gate::cx(&[(0, 1)])];
+        gates.extend(heralds);
+        let result = run(&mut b.clone().build(), &gates);
+        assert_eq!(result.0, [0, 3]);
+        assert_eq!(count(&result.1, GateType::CX, 0), 0);
+    }
 }
 
 #[test]

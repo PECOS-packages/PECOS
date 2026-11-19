@@ -1571,12 +1571,17 @@ impl GeneralNoiseModel {
     ///
     /// Models errors that occur during single-qubit gate operations in this order:
     ///
-    /// 1. Apply before-gate channels in insertion order across both families.
+    /// 1. Apply before-site recovery, non-loss hooks, then loss events, preserving listed
+    ///    order within each kind.
     /// 2. Finish any internal MZ continuations before deciding ideal-gate eligibility.
-    /// 3. Suppress the ideal gate for qubits that remain leaked; otherwise emit it.
-    /// 4. With probability `p1`, select emission with `p1_emission_ratio`; otherwise select a
-    ///    standard Pauli error (X, Y, Z).
-    /// 5. Apply after-gate channels in insertion order across both families.
+    /// 3. Suppress lost operands, skipping their base, emission and seepage draws. A
+    ///    measurement keeps a lost operand so its outcome count still reaches the record
+    ///    check; any other gate drops it (`Custom` drops every operand if any is lost).
+    /// 4. For remaining qubits, suppress the ideal gate if leaked. With probability `p1`,
+    ///    select emission with `p1_emission_ratio` (which can replace the gate or seep a
+    ///    leaked qubit), otherwise sample a standard Pauli error (X, Y, Z) if not leaked.
+    /// 5. Apply after-site loss entries in listed order, then non-loss hooks, which skip
+    ///    operands suppressed for loss or currently lost.
     /// 6. Consume internal measurements without returning them as program results.
     ///
     /// In physical systems, spontaneous emission errors can cause leakage out of the computational
@@ -1610,14 +1615,15 @@ impl GeneralNoiseModel {
             && gate.qubits.iter().any(|q| self.is_lost(usize::from(*q)));
         for &qubit in &gate.qubits {
             if custom_lost || self.is_lost(usize::from(qubit)) {
-                // Preserve measurement outcomes without exposing a lost atom to the
-                // generic leakage/emission paths that can also remove the gate.
+                // A lost atom skips the base, emission and leakage paths, and after-gate
+                // hooks skip it even if after-site recovery restores it. A measurement
+                // keeps the operand so its outcome count still reaches the record check.
+                self.suppress_for_loss(&[qubit]);
                 if gate.gate_type.consumes_measurement_record()
                     || gate.gate_type.is_recordless_z_measurement()
                 {
                     original_gate_qubits.push(usize::from(qubit));
                 } else {
-                    self.suppress_for_loss(&[qubit]);
                     removed_gates = true;
                 }
                 continue;
@@ -1716,7 +1722,8 @@ impl GeneralNoiseModel {
     ///    loss event already decided the partner effect.
     /// 3. For remaining pairs, suppress the ideal gate if leaked. With probability `p`,
     ///    select emission with `p2_emission_ratio` (which can replace the gate or seep a
-    ///    leaked operand), otherwise sample the standard two-qubit Pauli error.
+    ///    leaked operand), otherwise sample the standard two-qubit Pauli error if neither
+    ///    operand is leaked.
     /// 4. Emit retained ideal gates, then accumulated spreading and ordinary noise.
     /// 5. Apply after-site loss entries in listed order, even for suppressed pairs, then
     ///    non-loss hooks, which skip pairs suppressed for loss or currently lost.

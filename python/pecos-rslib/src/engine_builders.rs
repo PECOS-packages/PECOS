@@ -2093,6 +2093,31 @@ impl PyGeneralNoiseModelBuilder {
         Self::from_setter(self.inner.clone().with_p_idle_coherent(rate, &model))
     }
 
+    /// Append static per-shot idle detuning (radians per idle-duration unit).
+    #[pyo3(signature = (std, *, scope="shared"))]
+    fn with_idle_frequency_noise(&self, std: &Bound<'_, PyAny>, scope: &str) -> PyResult<Self> {
+        if std.is_instance_of::<PyBool>() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "idle frequency noise std must be a finite, non-negative float, not bool",
+            ));
+        }
+        let std = std.extract::<f64>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err(
+                "idle frequency noise std must be a finite, non-negative float",
+            )
+        })?;
+        let scope = match scope {
+            "shared" => pecos_engines::noise::FrequencyNoiseScope::Shared,
+            "per_qubit" => pecos_engines::noise::FrequencyNoiseScope::PerQubit,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "invalid idle frequency noise scope {scope:?}; expected \"shared\" or \"per_qubit\""
+                )));
+            }
+        };
+        Self::from_setter(self.inner.clone().with_idle_frequency_noise(std, scope))
+    }
+
     /// Set idle scale factor
     fn with_idle_scale(&self, scale: f64) -> PyResult<Self> {
         Self::from_setter(self.inner.clone().with_idle_scale(scale))

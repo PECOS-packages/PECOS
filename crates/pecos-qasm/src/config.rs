@@ -74,6 +74,8 @@ pub struct GeneralNoiseFields {
     pub p_idle_coherent_model: Option<BTreeMap<String, f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idle_scale: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_frequency_noise: Option<Vec<pecos_engines::noise::IdleFrequencyNoise>>,
 
     // Preparation noise parameters
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -234,6 +236,12 @@ impl GeneralNoiseFields {
                     .unwrap_or(&default_model),
             );
         }
+        if let Some(components) = &self.idle_frequency_noise {
+            builder.clear_idle_frequency_noise();
+            for component in components {
+                builder = builder.with_idle_frequency_noise(component.std, component.scope);
+            }
+        }
         if let Some(rate) = self.p_idle_coherent {
             let default_model = BTreeMap::from([
                 ("RX".to_string(), 1.0),
@@ -386,3 +394,43 @@ pub fn parse_gate_type_from_string(gate_str: &str) -> Option<GateType> {
 // Note: The old impl From<NoiseConfig> for NoiseModelType has been removed
 // as NoiseModelType is no longer used in the unified API.
 // Use the noise model builders directly with the simulation API instead.
+
+#[cfg(test)]
+mod frequency_noise_tests {
+    use super::*;
+
+    #[test]
+    fn frequency_noise_round_trip_and_forwarding() {
+        let json = serde_json::json!({"idle_frequency_noise": [{"std": 0.2}, {"std": 0.3, "scope": "per_qubit"}]});
+        let fields: GeneralNoiseFields = serde_json::from_value(json).unwrap();
+        let encoded = serde_json::to_value(&fields).unwrap();
+        assert_eq!(encoded["idle_frequency_noise"][0]["scope"], "shared");
+        assert_eq!(encoded["idle_frequency_noise"][1]["scope"], "per_qubit");
+        let decoded: GeneralNoiseFields = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), encoded);
+        let builder = fields.apply_idle_params(GeneralNoiseModel::builder());
+        assert!(builder.simple_probabilities().is_none());
+        use pecos_engines::noise::FrequencyNoiseScope;
+        use pecos_engines::{ByteMessage, ControlEngine, EngineStage};
+        let mut configured = builder.with_seed(424).try_build().unwrap();
+        let mut direct = GeneralNoiseModel::builder().with_seed(424)
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::Shared)
+            .with_idle_frequency_noise(0.3, FrequencyNoiseScope::PerQubit)
+            .build();
+        let mut idle = ByteMessage::quantum_operations_builder();
+        idle.idle(0.7, &[0, 1]);
+        let idle = idle.build();
+        let emitted = |model: &mut GeneralNoiseModel| match model.start(idle.clone()).unwrap() {
+            EngineStage::NeedsProcessing(message) => message.quantum_ops().unwrap(),
+            EngineStage::Complete(_) => panic!("frequency noise must emit idle rotations"),
+        };
+        let expected = emitted(&mut direct);
+        assert_eq!(expected.len(), 2);
+        assert_eq!(emitted(&mut configured), expected);
+        let empty: GeneralNoiseFields = serde_json::from_str("{}").unwrap();
+        assert!(serde_json::to_value(empty).unwrap().get("idle_frequency_noise").is_none());
+        for entry in [r#"{"std":1,"scope":"invalid"}"#, r#"{"std":1,"extra":2}"#] {
+            assert!(serde_json::from_str::<GeneralNoiseFields>(&format!(r#"{{"idle_frequency_noise":[{entry}]}}"#)).is_err());
+        }
+    }
+}

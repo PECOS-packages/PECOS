@@ -29,8 +29,9 @@ pub use engine_system::{
 pub use hybrid::HybridEngine;
 pub use monte_carlo::MonteCarloEngine;
 pub use noise::{
-    DepolarizingNoiseModel, GeneralNoiseConfig, GeneralNoiseModel, GeneralNoiseModelBuilder,
-    NoiseModel, PassThroughNoiseModel, PassThroughNoiseModelBuilder,
+    DepolarizingNoiseModel, FrequencyNoiseScope, GeneralNoiseConfig, GeneralNoiseModel,
+    GeneralNoiseModelBuilder, IdleFrequencyNoise, NoiseModel, PassThroughNoiseModel,
+    PassThroughNoiseModelBuilder,
 };
 pub use pecos_core::errors::PecosError;
 pub use quantum::{

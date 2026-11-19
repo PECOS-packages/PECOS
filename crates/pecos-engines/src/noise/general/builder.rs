@@ -1,13 +1,14 @@
 use super::loss::LossScales;
-use super::{HookChannel, IdleRates};
+use super::{FrequencyNoiseScope, HookChannel, IdleRates};
 use crate::GateType;
 use crate::noise::weighted_sampler::{P2PauliLeakageWeightedStep, P2TransitionWeightedStep};
 use crate::noise::{
-    CrosstalkWeightedSampler, GeneralNoiseModel, NoiseRng, P2PauliLeakageStep, P2TransitionStep,
+    CrosstalkWeightedSampler, GeneralNoiseModel, P2PauliLeakageStep, P2TransitionStep,
     PauliLeakageChannel, PauliLeakageWeightedSampler, QubitTransitionWeightedSampler,
     SingleQubitWeightedSampler, StateTransitionChannel, TwoQubitWeightedSampler,
 };
 use pecos_core::errors::PecosError;
+use pecos_random::RngManageable;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn validate_hook_probabilities(
@@ -96,6 +97,7 @@ pub struct GeneralNoiseModelBuilder {
     p_idle_linear_model: Option<SingleQubitWeightedSampler>,
     p_idle_sin_squared: Option<(f64, BTreeMap<String, f64>)>,
     p_idle_coherent: Option<(f64, BTreeMap<String, f64>)>,
+    idle_frequency_noise: Vec<(f64, FrequencyNoiseScope)>,
     idle_scale: Option<f64>,
     // prep noise
     p_prep: Option<f64>,
@@ -171,6 +173,7 @@ impl GeneralNoiseModelBuilder {
             p_idle_linear_model: None,
             p_idle_sin_squared: None,
             p_idle_coherent: None,
+            idle_frequency_noise: Vec::new(),
             idle_scale: None,
             // prep noise
             p_prep: None,
@@ -287,8 +290,7 @@ impl GeneralNoiseModelBuilder {
         }
 
         if let Some(seed) = self.seed {
-            // Use the with_seed constructor for NoiseRng
-            model.rng = NoiseRng::with_seed(seed);
+            model.set_seed(seed);
         }
 
         if let Some(leakage_scale) = self.leakage_scale {
@@ -309,6 +311,10 @@ impl GeneralNoiseModelBuilder {
             model.p_idle_sin_squared_rate = rate;
             model.p_idle_sin_squared_model = sine_model;
         }
+
+        model
+            .idle_frequency_noise
+            .clone_from(&self.idle_frequency_noise);
 
         if let Some((rate, coherent_model)) = self.p_idle_coherent.clone() {
             model.p_idle_coherent_rate = rate;
@@ -614,6 +620,24 @@ impl GeneralNoiseModelBuilder {
             self.p_idle_coherent = Some((rate, model.clone()));
         }
         self
+    }
+
+    /// Append a static per-shot angular-frequency component in radians per idle-duration unit.
+    /// Invalid std is recorded for validation; zero components retain their component index.
+    #[must_use]
+    pub fn with_idle_frequency_noise(mut self, std: f64, scope: FrequencyNoiseScope) -> Self {
+        if let Some(std) = self.record_result(Self::validate_finite_non_negative(
+            std,
+            "idle frequency noise std",
+        )) {
+            self.idle_frequency_noise.push((std, scope));
+        }
+        self
+    }
+
+    /// Clear stored frequency components before applying a replacement config list.
+    pub fn clear_idle_frequency_noise(&mut self) {
+        self.idle_frequency_noise.clear();
     }
 
     /// Set the scaling factor for idle noise
@@ -1570,6 +1594,14 @@ impl GeneralNoiseModelBuilder {
             .as_ref()
             .map_or(default.p_idle_coherent_rate, |(rate, _)| *rate)
             * (scale * idle_scale);
+        let frequency_noise: Vec<_> = self
+            .idle_frequency_noise
+            .iter()
+            .map(|(std, scope)| (std * (scale * idle_scale), *scope))
+            .collect();
+        for &(std, _) in &frequency_noise {
+            Self::validate_finite_non_negative(std, "scaled idle frequency noise std")?;
+        }
         if ![linear_rate, sine_rate, coherent_rate]
             .into_iter()
             .all(finite_non_negative)
@@ -1596,6 +1628,7 @@ impl GeneralNoiseModelBuilder {
             },
             sine_model,
             coherent_model,
+            &frequency_noise,
         )?;
         Ok(())
     }
@@ -1723,6 +1756,7 @@ impl GeneralNoiseModelBuilder {
             && zero_or_unset(self.p_idle_linear_rate)
             && self.p_idle_sin_squared.is_none()
             && self.p_idle_coherent.is_none()
+            && self.idle_frequency_noise.is_empty()
             && zero_or_unset(self.p_prep_crosstalk)
             && zero_or_unset(self.idle_after_2q)
             && zero_or_unset(self.p_meas_crosstalk_global)
@@ -1836,7 +1870,8 @@ impl GeneralNoiseModelBuilder {
     ///
     /// # Panics
     /// Panics if a setter error is recorded, or if the model's scaled hook probabilities
-    /// are not finite or lie outside `[0, 1]`.
+    /// are not finite or lie outside `[0, 1]`, or if scaled frequency noise has
+    /// invalid stds or a non-finite fixed-idle angle bound.
     pub fn scale_parameters(&mut self, model: &mut GeneralNoiseModel) {
         if let Some(message) = self.setter_error() {
             panic!("{message}");
@@ -1873,6 +1908,38 @@ impl GeneralNoiseModelBuilder {
         let emission_scale = self.emission_scale.unwrap_or(1.0);
         let p_meas_crosstalk_scale = self.p_meas_crosstalk_scale.unwrap_or(1.0);
         let p_prep_crosstalk_scale = self.p_prep_crosstalk_scale.unwrap_or(1.0);
+
+        // This public method can scale a model supplied by a different builder.
+        // Validate that model's frequency components before changing any of its fields.
+        if !model.idle_frequency_noise.is_empty() {
+            let components: Vec<_> = model
+                .idle_frequency_noise
+                .iter()
+                .map(|(std, scope)| (std * (scale * idle_scale), *scope))
+                .collect();
+            for &(std, _) in &components {
+                if let Err(message) =
+                    Self::validate_finite_non_negative(std, "scaled idle frequency noise std")
+                {
+                    panic!("{message}");
+                }
+            }
+            if let Err(message) = GeneralNoiseModel::validate_idle_products(
+                model.idle_after_2q,
+                "idle_after_2q",
+                IdleRates {
+                    linear: 0.0,
+                    sine: 0.0,
+                    coherent: model.p_idle_coherent_rate * (scale * idle_scale),
+                    loss: None,
+                },
+                &BTreeMap::new(),
+                &model.p_idle_coherent_model,
+                &components,
+            ) {
+                panic!("{message}");
+            }
+        }
 
         if let Some(loss) = &mut model.loss {
             loss.scale(LossScales {
@@ -1944,6 +2011,9 @@ impl GeneralNoiseModelBuilder {
         model.p_idle_linear_rate *= scale * idle_scale;
         model.p_idle_sin_squared_rate *= scale * idle_scale;
         model.p_idle_coherent_rate *= scale * idle_scale;
+        for (std, _) in &mut model.idle_frequency_noise {
+            *std *= scale * idle_scale;
+        }
     }
 }
 
@@ -2186,6 +2256,56 @@ mod tests {
         assert_eq!(angle, Some((1.5, 0.0, 1.0, 0.0, default_power)));
     }
 
+    #[test]
+    fn frequency_components_are_never_plain_even_when_zero() {
+        for std in [0.0, 0.2] {
+            let builder = GeneralNoiseModelBuilder::new()
+                .with_idle_frequency_noise(std, FrequencyNoiseScope::Shared);
+            assert!(builder.simple_probabilities().is_none());
+            assert!(builder.pauli_with_angle_scaling().is_none());
+            assert!(!builder.runtime_frame_supports_physical_events());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "idle frequency noise")]
+    fn direct_scaling_checks_supplied_frequency_bound() {
+        let mut model = GeneralNoiseModelBuilder::new()
+            .with_idle_frequency_noise(1e290, FrequencyNoiseScope::Shared)
+            .with_idle_after_2q(1e10)
+            .build();
+        GeneralNoiseModelBuilder::new()
+            .with_idle_scale(1e10)
+            .scale_parameters(&mut model);
+    }
+
+    #[test]
+    fn frequency_std_validation_and_scaling() {
+        for std in [-1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let error = GeneralNoiseModelBuilder::new()
+                .with_idle_frequency_noise(std, FrequencyNoiseScope::Shared)
+                .validate_configuration()
+                .unwrap_err();
+            assert_eq!(
+                error,
+                format!("idle frequency noise std must be finite and non-negative, got {std}")
+            );
+        }
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_idle_frequency_noise(0.2, FrequencyNoiseScope::Shared)
+            .with_scale(3.0)
+            .with_idle_scale(2.0);
+        assert_float_eq(builder.build().idle_frequency_noise[0].0, 0.2 * 6.0);
+        assert!(
+            GeneralNoiseModelBuilder::new()
+                .with_idle_frequency_noise(1e300, FrequencyNoiseScope::Shared)
+                .with_idle_scale(1e10)
+                .validate_configuration()
+                .unwrap_err()
+                .contains("scaled idle frequency noise std")
+        );
+    }
+
     /// Non-angle features beyond the subset still force `None`, even with an
     /// angle configured.
     #[test]
@@ -2375,12 +2495,14 @@ mod tests {
             .with_p_idle_linear(0.2, &linear)
             .with_p_idle_sin_squared(0.3, &sine)
             .with_p_idle_coherent(0.4, &coherent)
+            .with_idle_frequency_noise(0.6, FrequencyNoiseScope::PerQubit)
             .with_idle_scale(0.5)
             .build();
 
         assert_float_eq(model.p_idle_linear_rate, 0.1);
         assert_float_eq(model.p_idle_sin_squared_rate, 0.15);
         assert_float_eq(model.p_idle_coherent_rate, 0.2);
+        assert_float_eq(model.idle_frequency_noise[0].0, 0.3);
     }
 
     #[test]

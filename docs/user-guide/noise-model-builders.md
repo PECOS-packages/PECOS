@@ -985,12 +985,83 @@ noise = (
 ```
 
 The duration only chooses where and how long idling occurs. It is not a
-standalone probability: all configured linear, sine-squared, and coherent idle
+standalone probability: all configured linear, sine-squared, coherent, and frequency idle
 families apply at these sites just as they do at a
 scheduled `Idle` gate. A duration of `0.0` disables the after-two-qubit sites.
 Consequently, code that previously used `with_p2_idle(0.01)` without a linear
 idle rate now produces no after-2q idle noise; the equivalent configuration is
 `with_p_idle_linear(0.01, {"X": 1/3, "Y": 1/3, "Z": 1/3}).with_idle_after_2q(1.0)`.
+
+### Idle frequency noise
+
+Idle frequency noise models a signed Z detuning with Hamiltonian
+`H = (1/2) delta(t) Z`. In this static model each shot has independent Gaussian
+detunings that remain constant throughout that shot; there is no within-shot
+drift, shot-to-shot correlation, or recalibration model. An idle of duration `d`
+emits `RZ((mean + sum(component values)) * d)` on each eligible qubit, after
+any coherent RX and RY. Leaked and lost qubits are excluded from emission.
+
+```python
+noise = (
+    GeneralNoiseModelBuilder()
+    .with_p_idle_coherent(0.1, {"RZ": 1.0})
+    .with_idle_frequency_noise(0.2)  # shared field
+    .with_idle_frequency_noise(0.05, scope="per_qubit")  # independent local offsets
+)
+```
+
+The Rust setter is `with_idle_frequency_noise(std, FrequencyNoiseScope::Shared)`
+or `FrequencyNoiseScope::PerQubit`. Calls append independent components in order.
+`std` must be finite and non-negative, in radians per idle-duration unit, just
+like the coherent rate. Selene uses seconds; TickCircuit paths currently cast
+TimeUnits to idle durations, so use radians per TimeUnit there. Each `std` scales
+linearly by `scale * idle_scale`. The family is off by default; zero components
+have no physical or primary-RNG effect and retain their component index.
+
+`scope="shared"` (the default) uses the same value for all qubits in a shot;
+`scope="per_qubit"` uses independent values for each qubit. Values depend only
+on the shot key, component index, and qubit index, so changing idle order,
+leakage, or other noise events cannot change the sampled field. Frequency draws
+use independent derived seeds and never advance the primary noise RNG.
+Replacing the model RNG restarts its frequency shot sequence; resetting the
+model advances to a new shot even when the preceding shot had no idles.
+
+The mean comes **only** from the existing coherent family's RZ rate times its
+RZ multiplier. It is zero if that family or its RZ term is absent. Explicitly
+use `{"RZ": 1.0}` for a pure detuning mean: the Python coherent setter otherwise
+defaults to all three axes. With frequency noise enabled, one single-qubit RZ
+combines the mean and fluctuations; coherent RX/RY remain unchanged. Signed
+angles are supported: negative idle durations on the general path reverse the
+combined RZ rotation only. Coherent RX/RY still skip non-positive angles
+(`angle <= f64::EPSILON`). Durations with absolute value at most machine epsilon emit no
+coherent or frequency rotation. This family also applies at `idle_after_2q` sites.
+
+The shared engine/Selene config shape is:
+
+```json
+{"idle": {"frequency_noise": [{"std": 0.2}, {"std": 0.05, "scope": "per_qubit"}]}}
+```
+
+`scope` defaults to `"shared"`; unknown entry keys are errors. A present list
+replaces existing components when applying a config; an absent field leaves
+them alone. QASM config uses `idle_frequency_noise` with the same entry shape.
+The Selene Python `GeneralNoiseParameters` offers the same fluent setter.
+
+For a zero-mean Gaussian static detuning, Ramsey coherence decays as
+`exp(-std^2 * t^2 / 2)`, so a Gaussian `1/e` time gives `T2* = sqrt(2) / std`.
+For independent components, their variances add. Convert frequency spread in
+Hz to angular-frequency spread using `std_rad = 2*pi*std_Hz` when time is in
+seconds. In the small-angle regime, a single-qubit RB average infidelity `r(t)`
+first converts to process error with the factor `3/2`; the inferred angular
+rate `2*sqrt((3/2)*r(t))/t` measures only `sqrt(mean^2 + std^2)`. RB alone cannot
+separate the mean from the spread.
+
+The Python DEM routes (`pecos.qec._idle_noise`, `dem`, and `surface.decode`)
+have no parameter for this family because they cannot represent coherent
+noise. The neo translation rejects a builder containing any frequency
+component, including zero; use the engines path with a simulator that supports
+rotations. Runtime frames and the Selene adapter accept it. The scheduled-frame
+`ScheduledNoise` profile does not expose it.
 
 ## Common Noise Model Examples
 

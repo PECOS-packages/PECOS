@@ -40,6 +40,9 @@ already-resolved ``records``. ``result_tags`` in circuit metadata fed
 directly to ``from_circuit`` / ``DemSampler.from_circuit`` /
 ``DemBuilder.build`` is **not** resolved -- those paths build from
 ``records``/``meas_ids`` as usual.
+
+Idle frequency noise has no parameter here because DEMs cannot represent
+per-shot coherent detuning.
 """
 
 from __future__ import annotations

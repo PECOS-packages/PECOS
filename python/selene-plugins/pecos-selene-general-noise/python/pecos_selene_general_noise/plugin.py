@@ -299,15 +299,30 @@ class IdleNoise:
     sin_squared_model: Distribution | None = None
     coherent_rate: float | None = None
     coherent_model: Distribution | None = None
+    frequency_noise: tuple[Mapping[str, object], ...] | None = None
     scale: float | None = None
 
     def __post_init__(self) -> None:
         """Defensively freeze user-supplied idle channel models."""
+        if self.frequency_noise is not None:
+            object.__setattr__(self, "frequency_noise", tuple(MappingProxyType(dict(c)) for c in self.frequency_noise))
         for name in ("linear_model", "sin_squared_model", "coherent_model"):
             object.__setattr__(self, name, _frozen_distribution(getattr(self, name)))
 
     def validate(self) -> None:
         """Validate idle-channel parameters."""
+        for component in self.frequency_noise or ():
+            if set(component) - {"std", "scope"} or "std" not in component:
+                message = "idle.frequency_noise entries require std and allow only std and scope"
+                raise ValueError(message)
+            std = component["std"]
+            if isinstance(std, bool) or not isinstance(std, (int, float)) or not math.isfinite(std) or std < 0:
+                message = f"idle frequency noise std {std!r} must be finite and non-negative"
+                raise ValueError(message)
+            scope = component.get("scope", "shared")
+            if scope not in ("shared", "per_qubit"):
+                message = f"invalid idle frequency noise scope {scope!r}; expected 'shared' or 'per_qubit'"
+                raise ValueError(message)
         for name in ("linear_rate", "sin_squared_rate", "coherent_rate", "scale"):
             _non_negative(f"idle.{name}", getattr(self, name))
         _distribution("idle.linear_model", self.linear_model, ONE_QUBIT_CHANNELS)
@@ -641,6 +656,10 @@ class GeneralNoiseParameters:
     def with_p_idle_coherent(self, rate: float, model: Distribution) -> GeneralNoiseParameters:
         """Set coherent idle rotations."""
         return self._with_idle(coherent_rate=rate, coherent_model=dict(model))
+
+    def with_idle_frequency_noise(self, std: float, *, scope: str = "shared") -> GeneralNoiseParameters:
+        """Append static per-shot detuning, in radians per second for Selene."""
+        return self._with_idle(frequency_noise=(*(self.idle.frequency_noise or ()), {"std": std, "scope": scope}))
 
     def with_idle_scale(self, scale: float) -> GeneralNoiseParameters:
         """Set the idle-noise scale."""

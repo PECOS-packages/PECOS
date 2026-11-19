@@ -32,8 +32,9 @@ pub use self::biased_depolarizing::{
 };
 pub use self::depolarizing::{DepolarizingNoiseModel, DepolarizingNoiseModelBuilder};
 pub use self::general::{
-    GeneralNoiseConfig, GeneralNoiseModel, GeneralNoiseModelBuilder, LossSite,
-    PauliWithAngleScaling, QubitLoss, QubitLossBuilder, ReadoutMatrix,
+    FrequencyNoiseScope, GeneralNoiseConfig, GeneralNoiseModel, GeneralNoiseModelBuilder,
+    IdleFrequencyNoise, LossSite, PauliWithAngleScaling, QubitLoss, QubitLossBuilder,
+    ReadoutMatrix,
 };
 pub use self::noise_rng::NoiseRng;
 pub use self::pass_through::{PassThroughNoiseModel, PassThroughNoiseModelBuilder};

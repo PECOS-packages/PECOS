@@ -39,6 +39,9 @@ For circuit-level decoding with MWPM:
 1. Raw syndromes are converted to detection events (differences between rounds)
 2. A space-time matching graph connects detectors across rounds
 3. The decoder finds minimum-weight corrections
+
+Idle frequency noise has no parameter here because DEMs cannot represent
+per-shot coherent detuning.
 """
 
 from __future__ import annotations

@@ -14,7 +14,7 @@ EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful"):
+    for name in ("arithmetic", "stateful", "floating_point"):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -138,3 +138,48 @@ def test_lowered_llvm_verifies(examples, opt_level):
         opt_level=opt_level,
     )
     llvm.parse_assembly(ir).verify()
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("mixed_arithmetic", {"value": -4.25, "integer": -4}),
+        ("float_feedback", {"measured": 1}),
+        ("float_state", {"initial": 0.0, "retained": -2.5}),
+    ],
+)
+def test_float_signatures_and_feedback(examples, tmp_path, name, expected):
+    example = examples["floating_point"]
+    assert run(example, getattr(example, name), tmp_path) == [expected] * 4
+
+
+def test_float_signature_mismatch(examples, tmp_path):
+    example = examples["floating_point"]
+    modules = {
+        str(example.WASM_PATH): b'(module (func (export "affine") (param i64 i64 i64) (result i64) i64.const 0))',
+    }
+    with pytest.raises(SelenePanicError, match="signature mismatch"):
+        run(example, example.float_feedback, tmp_path, modules=modules)
+
+
+def test_benchmark_checks_results_and_records_timings(tmp_path):
+    import json
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        [sys.executable, str(EXAMPLES / "benchmark.py"), "--calls", "0", "2", "--shots", "2", "--repeats", "1"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    report = json.loads(completed.stdout)
+    assert report["versions"]["selene-hugr-qis-compiler"]
+    assert [record["calls_per_shot"] for record in report["results"]] == [0, 2]
+    for record in report["results"]:
+        assert record["shots"] == 2
+        assert len(record["repeat_seconds"]) == 1
+        assert record["backend_prepare_seconds"] >= 0
+    assert report["results"][0]["amortized_seconds_per_call"] is None

@@ -27,6 +27,15 @@ use wasmtime::{
     Config, Engine, Func, Instance, Module, Store, StoreLimits, StoreLimitsBuilder, Trap, Val,
 };
 
+/// Scalar types supported by the strict Guppy WASM interface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WasmScalarType {
+    /// Signed 64-bit integer.
+    I64,
+    /// IEEE 754 double precision, transported without changing its bits.
+    F64,
+}
+
 /// Length of each tick in milliseconds (10ms per tick)
 const WASM_EXECUTION_TICK_LENGTH_MS: u64 = 10;
 /// Default timeout in seconds (1 second to match Python implementation)
@@ -350,6 +359,87 @@ impl WasmForeignObject {
         Ok(())
     }
 
+    /// Execute a strictly typed scalar call using one raw 64-bit slot per value.
+    ///
+    /// Float slots contain IEEE 754 bits, not integer conversions. This keeps
+    /// the Guppy interface separate from the legacy integer/clamping API.
+    ///
+    /// # Errors
+    /// Rejects missing exports, argument/signature mismatches, traps and timeouts.
+    pub fn exec_scalar_bits(
+        &mut self,
+        name: &str,
+        inputs: &[WasmScalarType],
+        outputs: &[WasmScalarType],
+        arguments: &[i64],
+    ) -> Result<Vec<i64>, PecosError> {
+        let func = self.get_function(name)?;
+        let mut store = self.store.write();
+        let signature = func.ty(&*store);
+        let matches = |expected: &WasmScalarType, actual: wasmtime::ValType| {
+            matches!(
+                (expected, actual),
+                (WasmScalarType::I64, wasmtime::ValType::I64)
+                    | (WasmScalarType::F64, wasmtime::ValType::F64)
+            )
+        };
+        if arguments.len() != inputs.len()
+            || signature.params().len() != inputs.len()
+            || signature.results().len() != outputs.len()
+            || !inputs
+                .iter()
+                .zip(signature.params())
+                .all(|(a, b)| matches(a, b))
+            || !outputs
+                .iter()
+                .zip(signature.results())
+                .all(|(a, b)| matches(a, b))
+        {
+            return Err(PecosError::Input(format!(
+                "WASM scalar signature mismatch for {name}"
+            )));
+        }
+        let values: Vec<_> = inputs
+            .iter()
+            .zip(arguments)
+            .map(|(ty, bits)| match ty {
+                WasmScalarType::I64 => Val::I64(*bits),
+                WasmScalarType::F64 => Val::F64(u64::from_ne_bytes(bits.to_ne_bytes())),
+            })
+            .collect();
+        let mut results = vec![Val::I64(0); outputs.len()];
+        store.set_epoch_deadline(Self::calculate_max_ticks(self.timeout_seconds));
+        func.call(&mut *store, &values, &mut results)
+            .map_err(|error| self.execution_error(name, &error))?;
+        results
+            .into_iter()
+            .map(|value| match value {
+                Val::I64(bits) => Ok(bits),
+                Val::F64(bits) => Ok(i64::from_ne_bytes(bits.to_ne_bytes())),
+                _ => Err(PecosError::Input(
+                    "Unexpected WASM scalar result type".into(),
+                )),
+            })
+            .collect()
+    }
+
+    fn execution_error(&self, name: &str, error: &wasmtime::Error) -> PecosError {
+        if let Some(trap) = error.downcast_ref::<Trap>() {
+            let trap_str = trap.to_string();
+            if trap_str.contains("interrupt") {
+                return PecosError::Processing(format!(
+                    "WebAssembly execution timed out after {}s (possible infinite loop in '{name}')",
+                    self.timeout_seconds
+                ));
+            }
+            if trap_str.contains("integer divide by zero") {
+                return PecosError::RuntimeDivisionByZero;
+            }
+            return PecosError::Generic(format!("WebAssembly function '{name}' trapped: {trap}"));
+        }
+        PecosError::Generic(format!("WebAssembly function '{name}' failed: {error}"))
+    }
+
     /// Call before each shot to reset variables (if function exists)
     ///
     /// This is a convenience method that calls the `shot_reinit` function in the
@@ -597,28 +687,7 @@ impl ForeignObject for WasmForeignObject {
                     }
                 }
             }
-            Err(e) => {
-                if let Some(trap) = e.downcast_ref::<Trap>() {
-                    let trap_str = trap.to_string();
-                    if trap_str.contains("interrupt") {
-                        return Err(PecosError::Processing(format!(
-                            "WebAssembly execution timed out after {}s (possible infinite loop in '{func_name}')",
-                            self.timeout_seconds
-                        )));
-                    }
-                    if trap_str.contains("integer divide by zero") {
-                        return Err(PecosError::RuntimeDivisionByZero);
-                    }
-                    // Return the trap code/type without the verbose backtrace
-                    return Err(PecosError::Generic(format!(
-                        "WebAssembly function '{func_name}' trapped: {trap}"
-                    )));
-                }
-
-                Err(PecosError::Generic(format!(
-                    "WebAssembly function '{func_name}' failed: {e}"
-                )))
-            }
+            Err(error) => Err(self.execution_error(func_name, &error)),
         }
     }
 

@@ -1,8 +1,8 @@
 # Public WASM support for Selene
 
 This package lowers Guppy's public `tket.wasm` operations and supplies a Selene
-Utility plugin backed by Wasmtime. It supports signed 64-bit arguments and zero
-or one signed 64-bit result, with explicit module bytes.
+Utility plugin backed by Wasmtime. It supports mixed signed 64-bit integer and double-precision float arguments,
+with zero or one scalar result and explicit module bytes.
 
 ```python
 from pecos_selene_wasm import build

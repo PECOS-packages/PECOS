@@ -140,21 +140,27 @@ def _replace_types(value: Json) -> Json:
     return {key: _replace_types(item) for key, item in value.items()}
 
 
-def _arity(argument: dict) -> int:
+def _scalar_types(argument: dict) -> list[str]:
     if argument.get("tya") != "List":
         msg = "WASM signatures must have concrete type rows"
         raise ValueError(msg)
+    types = []
     for entry in argument["elems"]:
         ty = entry.get("ty", {})
-        if not (
-            entry.get("tya") == "Type"
-            and ty.get("extension") == "arithmetic.int.types"
-            and ty.get("id") == "int"
-            and ty.get("args") == [{"tya": "BoundedNat", "n": 6}]
-        ):
-            msg = "Public WASM ABI v1 supports only scalar i64 signatures"
-            raise ValueError(msg)
-    return len(argument["elems"])
+        if entry.get("tya") == "Type" and ty.get("t") == "Opaque":
+            if (
+                ty.get("extension") == "arithmetic.int.types"
+                and ty.get("id") == "int"
+                and ty.get("args") == [{"tya": "BoundedNat", "n": 6}]
+            ):
+                types.append("i64")
+                continue
+            if ty.get("extension") == "arithmetic.float.types" and ty.get("id") == "float64" and ty.get("args") == []:
+                types.append("double")
+                continue
+        msg = "Public WASM lowering supports only scalar i64 and f64 signatures"
+        raise ValueError(msg)
+    return types
 
 
 def _validate(operation: dict) -> tuple[int, int]:
@@ -166,18 +172,18 @@ def _validate(operation: dict) -> tuple[int, int]:
         if args[0].get("tya") != "String":
             msg = "WASM export name must be a compile-time string"
             raise ValueError(msg)
-        inputs, outputs = _arity(args[1]), _arity(args[2])
+        inputs, outputs = len(_scalar_types(args[1])), len(_scalar_types(args[2]))
     elif name == "call":
-        inputs, outputs = _arity(args[0]), _arity(args[1])
+        inputs, outputs = len(_scalar_types(args[0])), len(_scalar_types(args[1]))
     elif name == "read_result":
-        inputs, outputs = 0, _arity(args[0])
+        inputs, outputs = 0, len(_scalar_types(args[0]))
     elif name in {"get_context", "dispose_context"}:
         inputs, outputs = 0, 0
     else:
         msg = f"Unsupported public WASM operation: {name}"
         raise ValueError(msg)
     if outputs > 1:
-        msg = "Public WASM ABI v1 supports zero or one i64 result"
+        msg = "Public WASM lowering supports zero or one scalar result"
         raise ValueError(msg)
     return inputs, outputs
 
@@ -193,6 +199,7 @@ declare i32 @pecos_wasm_v1_register(i64, ptr, i64)
 declare i64 @pecos_wasm_v1_acquire(i64)
 declare i32 @pecos_wasm_v1_release(i64)
 declare i64 @pecos_wasm_v1_lookup(i64, ptr, i64, i64, i64)
+declare i64 @pecos_wasm_v2_lookup(i64, ptr, i64, ptr, i64, ptr, i64)
 declare i32 @pecos_wasm_v1_call(i64, i64, ptr, i64)
 declare i32 @pecos_wasm_v1_read(i64, ptr, i64)
 declare ptr @pecos_wasm_v1_error()
@@ -230,9 +237,19 @@ entry:
 """
     if name == "lookup_by_name":
         data = args[0]["arg"].encode("utf-8")
-        return _constant(unique, data) + f"""define i64 {symbol}(i64 %module) {{
+        in_types, out_types = _scalar_types(args[1]), _scalar_types(args[2])
+        constants = _constant(unique, data)
+        lookup = f"@pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})"
+        if "double" in in_types + out_types:
+            constants += _constant(unique + "_inputs", bytes(ty == "double" for ty in in_types))
+            constants += _constant(unique + "_outputs", bytes(ty == "double" for ty in out_types))
+            lookup = (
+                f"@pecos_wasm_v2_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, "
+                f"ptr @{unique}_inputs, i64 {inputs}, ptr @{unique}_outputs, i64 {outputs})"
+            )
+        return constants + f"""define i64 {symbol}(i64 %module) {{
 entry:
-  %handle = call i64 @pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})
+  %handle = call i64 {lookup}
 {_check('handle', 64, nonzero=True)}  ret i64 %handle
 }}
 """
@@ -244,12 +261,17 @@ entry:
 }}
 """
     if name == "call":
-        parameters = "".join(f", i64 %arg{i}" for i in range(inputs))
+        in_types = _scalar_types(args[0])
+        parameters = "".join(f", {ty} %arg{i}" for i, ty in enumerate(in_types))
         packing = f"  %args = alloca [{inputs} x i64]\n"
-        for i in range(inputs):
+        for i, ty in enumerate(in_types):
+            value = f"%arg{i}"
+            if ty == "double":
+                packing += f"  %bits{i} = bitcast double {value} to i64\n"
+                value = f"%bits{i}"
             packing += (
                 f"  %ptr{i} = getelementptr [{inputs} x i64], ptr %args, i64 0, i64 {i}\n"
-                f"  store i64 %arg{i}, ptr %ptr{i}\n"
+                f"  store i64 {value}, ptr %ptr{i}\n"
             )
         return f"""define i64 {symbol}(i64 %context, i64 %function{parameters}) {{
 entry:
@@ -257,16 +279,20 @@ entry:
 {_check('status')}  ret i64 %context
 }}
 """
-    result_type = "{ i64, i64 }" if outputs else "i64"
-    result = (
-        """  %value = load i64, ptr %out
-  %pair = insertvalue { i64, i64 } poison, i64 %context, 0
-  %result = insertvalue { i64, i64 } %pair, i64 %value, 1
-  ret { i64, i64 } %result
-"""
-        if outputs
-        else "  ret i64 %context\n"
-    )
+    value_type = _scalar_types(args[0])[0] if outputs else None
+    result_type = f"{{ i64, {value_type} }}" if outputs else "i64"
+    result = "  ret i64 %context\n"
+    if outputs:
+        result = "  %bits = load i64, ptr %out\n"
+        value = "%bits"
+        if value_type == "double":
+            result += "  %value = bitcast i64 %bits to double\n"
+            value = "%value"
+        result += (
+            f"  %pair = insertvalue {result_type} poison, i64 %context, 0\n"
+            f"  %result = insertvalue {result_type} %pair, {value_type} {value}, 1\n"
+            f"  ret {result_type} %result\n"
+        )
     return f"""define {result_type} {symbol}(i64 %context) {{
 entry:
   %out = alloca i64

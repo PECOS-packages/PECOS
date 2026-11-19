@@ -4,7 +4,7 @@
 //! C entry points return a status; they never unwind or transfer control while
 //! Rust frames own resources. The generated caller handles errors afterwards.
 
-use pecos_wasm::{ForeignObject, WasmForeignObject};
+use pecos_wasm::{ForeignObject, WasmForeignObject, WasmScalarType};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -24,6 +24,7 @@ struct Function {
     name: String,
     inputs: usize,
     outputs: usize,
+    scalar_types: Option<(Vec<WasmScalarType>, Vec<WasmScalarType>)>,
 }
 
 #[derive(Default)]
@@ -135,17 +136,50 @@ pub fn lookup(module: u64, name: &str, inputs: usize, outputs: usize) -> Result<
     if outputs > 1 {
         return Err("WASM ABI v1 supports at most one result".into());
     }
+    lookup_function(Function {
+        module,
+        name: name.into(),
+        inputs,
+        outputs,
+        scalar_types: None,
+    })
+}
+
+/// Bind an export with an explicit scalar signature.
+///
+/// # Errors
+/// Rejects unknown modules, multiple results, and unrepresentable handles.
+pub fn lookup_scalar(
+    module: u64,
+    name: &str,
+    inputs: &[WasmScalarType],
+    outputs: &[WasmScalarType],
+) -> Result<u64> {
+    if outputs.len() > 1 {
+        return Err("WASM scalar ABI supports at most one result".into());
+    }
+    if inputs
+        .iter()
+        .chain(outputs)
+        .all(|ty| *ty == WasmScalarType::I64)
+    {
+        return lookup(module, name, inputs.len(), outputs.len());
+    }
+    lookup_function(Function {
+        module,
+        name: name.into(),
+        inputs: inputs.len(),
+        outputs: outputs.len(),
+        scalar_types: Some((inputs.to_vec(), outputs.to_vec())),
+    })
+}
+
+fn lookup_function(function: Function) -> Result<u64> {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
-        if !state.modules.contains_key(&module) {
-            return Err(format!("Unknown WASM module {module}"));
+        if !state.modules.contains_key(&function.module) {
+            return Err(format!("Unknown WASM module {}", function.module));
         }
-        let function = Function {
-            module,
-            name: name.into(),
-            inputs,
-            outputs,
-        };
         if let Some(index) = state
             .functions
             .iter()
@@ -157,6 +191,20 @@ pub fn lookup(module: u64, name: &str, inputs: usize, outputs: usize) -> Result<
         state.functions.push(function);
         Ok(handle)
     })
+}
+
+/// Decode the stable scalar type tags used by the typed lookup ABI.
+///
+/// # Errors
+/// Rejects unknown type tags rather than interpreting them as integers.
+pub fn scalar_types(tags: &[u8]) -> Result<Vec<WasmScalarType>> {
+    tags.iter()
+        .map(|tag| match tag {
+            0 => Ok(WasmScalarType::I64),
+            1 => Ok(WasmScalarType::F64),
+            _ => Err(format!("Unknown WASM scalar type tag: {tag}")),
+        })
+        .collect()
 }
 
 /// Execute synchronously and retain the result until `read_result` consumes it.
@@ -200,17 +248,23 @@ pub fn call(context: u64, function: u64, arguments: &[i64]) -> Result<i32> {
             .modules
             .get_mut(&function.module)
             .ok_or("Unknown WASM instance")?;
-        object
-            .validate_i64_signature(&function.name, function.inputs, function.outputs)
-            .map_err(|e| e.to_string())?;
-        let mut values = object
-            .exec(&function.name, arguments)
-            .map_err(|e| e.to_string())?;
-        // ForeignObject's legacy API returns a sentinel zero for void exports.
-        // The validated public WASM signature has a genuinely empty result row.
-        if function.outputs == 0 {
-            values.clear();
-        }
+        let values = if let Some((inputs, outputs)) = &function.scalar_types {
+            object
+                .exec_scalar_bits(&function.name, inputs, outputs, arguments)
+                .map_err(|e| e.to_string())?
+        } else {
+            object
+                .validate_i64_signature(&function.name, function.inputs, function.outputs)
+                .map_err(|e| e.to_string())?;
+            let mut values = object
+                .exec(&function.name, arguments)
+                .map_err(|e| e.to_string())?;
+            // The legacy API returns a sentinel zero for void exports.
+            if function.outputs == 0 {
+                values.clear();
+            }
+            values
+        };
         context.pending = Some(values);
         Ok(0)
     })
@@ -299,6 +353,46 @@ macro_rules! export_wasm_runtime {
                 let bytes = unsafe { std::slice::from_raw_parts(name, length) };
                 let name = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
                 $crate::lookup(module, name, inputs, outputs)
+            })
+        }
+        /// Typed extension to v1 lookup. Tags: 0 = i64, 1 = f64.
+        /// The returned handle uses v1 call/read's 64-bit slots; float slots
+        /// carry IEEE 754 bits. Existing integer lookup/call clients are unchanged.
+        ///
+        /// # Safety
+        /// name points to length UTF-8 bytes. Type arrays point to their counts
+        /// of readable bytes, or may be null when the corresponding count is zero.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn pecos_wasm_v2_lookup(
+            module: u64,
+            name: *const u8,
+            length: usize,
+            input_types: *const u8,
+            inputs: usize,
+            output_types: *const u8,
+            outputs: usize,
+        ) -> u64 {
+            $crate::boundary(0, || {
+                if name.is_null() {
+                    return Err("Null WASM export name".into());
+                }
+                let bytes = unsafe { std::slice::from_raw_parts(name, length) };
+                let name = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
+                let types = |pointer: *const u8, count: usize| {
+                    if count == 0 {
+                        return $crate::scalar_types(&[]);
+                    }
+                    if pointer.is_null() {
+                        return Err("Null WASM scalar types".into());
+                    }
+                    $crate::scalar_types(unsafe { std::slice::from_raw_parts(pointer, count) })
+                };
+                $crate::lookup_scalar(
+                    module,
+                    name,
+                    &types(input_types, inputs)?,
+                    &types(output_types, outputs)?,
+                )
             })
         }
         /// # Safety
@@ -455,6 +549,78 @@ mod tests {
         .join()
         .unwrap();
         assert_eq!(invoke(context, 0, "increment", &[], 1), [12]);
+    }
+
+    #[test]
+    fn float_bits_mixed_signatures_and_void_results() {
+        reset().unwrap();
+        register(
+            0,
+            br#"(module
+            (global $x (mut f64) (f64.const 0))
+            (func (export "echo") (param f64) (result f64) local.get 0)
+            (func (export "set") (param f64) local.get 0 global.set $x)
+            (func (export "get") (result f64) global.get $x)
+            (func (export "mixed") (param f64 i64) (result f64)
+                local.get 0 local.get 1 f64.convert_i64_s f64.add))"#,
+        )
+        .unwrap();
+        let context = acquire(0).unwrap();
+        let echo =
+            lookup_scalar(0, "echo", &[WasmScalarType::F64], &[WasmScalarType::F64]).unwrap();
+        // Include negative zero, infinities, a subnormal and a quiet NaN payload.
+        for bits in [
+            0_u64,
+            0x8000_0000_0000_0000,
+            0x7ff0_0000_0000_0000,
+            0xfff0_0000_0000_0000,
+            1,
+            0x7ff8_0000_0000_1234,
+        ] {
+            let bits = i64::from_ne_bytes(bits.to_ne_bytes());
+            call(context, echo, &[bits]).unwrap();
+            assert_eq!(read(context, 1).unwrap(), [bits]);
+        }
+        let set = lookup_scalar(0, "set", &[WasmScalarType::F64], &[]).unwrap();
+        let get = lookup_scalar(0, "get", &[], &[WasmScalarType::F64]).unwrap();
+        let bits = i64::from_ne_bytes((-2.5_f64).to_bits().to_ne_bytes());
+        call(context, set, &[bits]).unwrap();
+        assert_eq!(read(context, 0).unwrap(), [] as [i64; 0]);
+        release(context).unwrap();
+        assert_eq!(acquire(0).unwrap(), context);
+        call(context, get, &[]).unwrap();
+        assert_eq!(read(context, 1).unwrap(), [bits]);
+        let mixed = lookup_scalar(
+            0,
+            "mixed",
+            &[WasmScalarType::F64, WasmScalarType::I64],
+            &[WasmScalarType::F64],
+        )
+        .unwrap();
+        call(context, mixed, &[bits, 4]).unwrap();
+        let value = read(context, 1).unwrap()[0];
+        assert_eq!(f64::from_bits(u64::from_ne_bytes(value.to_ne_bytes())), 1.5);
+        // Same arity does not make differently typed exports compatible.
+        let wrong = lookup(0, "echo", 1, 1).unwrap();
+        assert_ne!(wrong, echo);
+        assert!(call(context, wrong, &[bits]).is_err());
+        assert!(scalar_types(&[2]).is_err());
+    }
+
+    #[test]
+    fn legacy_lookup_keeps_large_arities_compact() {
+        let context = start();
+        assert!(lookup(u64::MAX, "add", usize::MAX, 1).is_err());
+        let function = lookup(0, "add", usize::MAX, 1).unwrap();
+        assert_eq!(
+            call(context, function, &[]).unwrap_err(),
+            "WASM argument count mismatch"
+        );
+        let integer = lookup(0, "add", 2, 1).unwrap();
+        assert_eq!(
+            integer,
+            lookup_scalar(0, "add", &[WasmScalarType::I64; 2], &[WasmScalarType::I64]).unwrap()
+        );
     }
 
     #[test]

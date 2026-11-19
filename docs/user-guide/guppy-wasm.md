@@ -144,14 +144,61 @@ slots and different modules have independent instances. Every shot starts with
 fresh instances; workers do not share state. A module's optional `init` export
 must have signature `() -> ()` and runs once when that instance is first used.
 
-## Initial supported scope
+## Floating-point calls
 
-- Named exports with scalar `i64` arguments and zero or one `i64` result.
+Guppy `float` maps to WASM `f64` on the Helios WASM platform. Integer and float
+arguments can be mixed in one signature, and the result can be either type.
+For example, `affine(self, value: float, scale: int, offset: float) -> float`
+matches a WAT export with `(param f64 i64 f64) (result f64)`.
+
+Run the mixed arithmetic, state, and quantum-feedback examples:
+
+```bash
+python examples/guppy_wasm/floating_point.py --backend selene
+python examples/guppy_wasm/floating_point.py --backend pecos
+```
+
+The examples produce `-4.25` from mixed arithmetic, `-4` from an explicit WASM
+float-to-integer conversion, and measurement `1` from float-controlled feedback.
+Float state is retained across context leases and reset between shots.
+
+Float arguments and results are transported by their IEEE 754 bits. The adapter
+does not convert them to integers or clamp them. Runtime signature checks reject
+a supplied export with different argument or result types, even when arity matches.
+Actual arithmetic follows WebAssembly semantics, including traps from invalid
+float-to-integer conversions. Rebuild the native utility and PECOS QIS FFI when
+upgrading: float signatures need the new typed lookup export. Existing integer
+programs continue to use the original lookup ABI.
+
+## Measure compilation and execution
+
+```bash
+python examples/guppy_wasm/benchmark.py --backend selene --calls 0 1 10 100
+python examples/guppy_wasm/benchmark.py --backend both --shots 100 --repeats 5 > wasm-timings.json
+```
+
+The benchmark writes JSON containing package versions, platform, Guppy compilation
+time, backend preparation time, first-run time, and repeated-run samples. Every
+run checks the expected result. Zero calls provide a no-WASM baseline; other
+cases perform a dependent chain of additions. The generated Guppy is straight-line
+code so the benchmark also runs with compilers affected by the loop limitation.
+
+Compare repeated measurements on the same machine and package versions. Times
+include shot setup, module compilation/instantiation, runtime communication and
+result collection. “Amortized seconds per call” divides the complete run time by
+the number of calls; it is not an isolated measurement of the WASM call boundary.
+The first run is reported separately because backend initialization and caches
+can make it substantially slower. These measurements do not establish parity
+with other compiler/runtime implementations.
+
+## Supported scope
+
+- Named exports with mixed scalar `i64`/`f64` arguments and zero or one scalar result.
 - `get_context`, `dispose_context`, `lookup_by_name`, `call`, and `read_result`.
 - One HUGR module per program, with any explicitly supplied WASM modules.
 - Synchronous WASM calls on 64-bit hosts, including branches.
 
-Floating-point, `i32`, aggregate and multiple results, lookup by numeric ID,
+`i32`, `f32`, aggregate and multiple results, lookup by numeric ID,
 WASI, host imports, and programs containing loops are not supported by this initial adapter. Unsupported
 signatures and operations fail explicitly. Traps and runtime signature errors
 propagate as simulation errors. Calls use PECOS Wasmtime's default one-second

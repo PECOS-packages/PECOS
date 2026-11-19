@@ -705,32 +705,33 @@ pub fn is_valid_installation(path: &Path) -> bool {
         }
     }
 
-    super::get_llvm_version(path).is_ok_and(|version| super::is_required_llvm_version(&version))
-        && clang_runs(&path.join(&critical_executables[1]))
+    // An install validates straight after extracting both files, so each one's first
+    // execution goes through `version_output`, which waits out the write's `ETXTBSY`
+    // window instead of reporting a good install as broken.
+    //
+    // `clang` must run as well: `llvm-config` does not link `libLLVM`, so it still runs
+    // when those libraries cannot load on this host, for example a copy kept across an
+    // OS upgrade or restored from a cache built on an older release, whose `libLLVM`
+    // needs a `libxml2.so.2` the host lacks.
+    version_output(&path.join(&critical_executables[0]))
+        .is_some_and(|version| super::is_required_llvm_version(&version))
+        && version_output(&path.join(&critical_executables[1])).is_some()
 }
 
-/// Whether `clang --version` runs, which proves the shared LLVM libraries load.
-///
-/// `llvm-config` does not link `libLLVM`, so it still runs when those libraries cannot
-/// load on this host, for example a copy kept across an OS upgrade or restored from a
-/// cache built on an older release, whose `libLLVM` needs a `libxml2.so.2` the host lacks.
-fn clang_runs(clang: &Path) -> bool {
-    match std::process::Command::new(clang).arg("--version").output() {
-        Ok(output) if output.status.success() => true,
-        Ok(output) => {
-            log::warn!(
-                "{} --version exited with {}: {}",
-                clang.display(),
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-            false
-        }
-        Err(error) => {
-            log::warn!("Could not run {}: {error}", clang.display());
-            false
-        }
+/// Run `exe --version` and return its trimmed standard output if it exits successfully.
+fn version_output(exe: &Path) -> Option<String> {
+    // `run_when_executable` already logs why the file could not be run.
+    let output = crate::executable::run_when_executable(exe, &["--version"]).ok()?;
+    if output.status.success() {
+        return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
     }
+    log::warn!(
+        "{} --version exited with {}: {}",
+        exe.display(),
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    None
 }
 
 /// Return whether an LLVM installation reports shared libLLVM support.

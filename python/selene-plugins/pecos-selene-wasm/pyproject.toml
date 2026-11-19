@@ -7,7 +7,7 @@ readme = "README.md"
 license = "Apache-2.0"
 dependencies = [
     "selene-core~=0.3.0",
-    "selene-hugr-qis-compiler>=0.4.2,<0.6",
+    "selene-hugr-qis-compiler>=0.4.3,<0.6",
     "hugr~=0.18.0",
 ]
 

@@ -95,7 +95,7 @@ def main() -> None:
             from selene_sim import Quest
 
             with TemporaryDirectory(prefix="pecos-wasm-float-") as directory:
-                runner = build(function.compile(), modules, build_dir=Path(directory))
+                runner = build(function, modules, build_dir=Path(directory))
                 data = [
                     dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=1)
                 ]

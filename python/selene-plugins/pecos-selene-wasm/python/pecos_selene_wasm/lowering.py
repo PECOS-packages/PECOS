@@ -20,6 +20,8 @@ from selene_hugr_qis_compiler import compile_to_llvm_ir
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from guppylang.defs import GuppyFunctionDefinition
+
 _I64 = {
     "t": "Opaque",
     "extension": "arithmetic.int.types",
@@ -29,7 +31,78 @@ _I64 = {
     "bound": "C",
 }
 _PREFIX = "pecos_wasm_adapter_"
+_FRONTEND_METADATA = "pecos.wasm.frontend"
+_SAFE_FRONTEND = "guppy-minimal-opt-v1"
 type Json = dict[str, Json] | list[Json] | str | int | float | bool | None
+
+
+def compile_guppy(guppy_function: object) -> Package:
+    """Compile Guppy source without unsafe external-call constant folding.
+
+    Pass the returned package directly to ``build`` or ``compile_wasm``, or
+    serialize it for PECOS ``Hugr``. Do not run other optimizers on this package
+    before WASM lowering: the metadata records how it was compiled, not a proof
+    that arbitrary subsequent transformations preserved its semantics.
+    """
+    from guppylang.defs import GuppyFunctionDefinition  # noqa: PLC0415
+
+    if not isinstance(guppy_function, GuppyFunctionDefinition):
+        msg = "Function must be decorated with @guppy"
+        raise TypeError(msg)
+    # A new optimizer instance leaves the original definition and normal PECOS
+    # compile cache unchanged. Guppy compilation occurs before our HUGR pass.
+    compiled = guppy_function.with_minimal_opt().compile()
+    package = Package.from_bytes(compiled.to_bytes())
+    for graph in package.modules:
+        graph[graph.module_root].metadata[_FRONTEND_METADATA] = _SAFE_FRONTEND
+    return package
+
+
+def _has_loops(document: dict) -> bool:
+    nodes = document["nodes"]
+    if any(node.get("op") == "TailLoop" for node in nodes):
+        return True
+    blocks = {index for index, node in enumerate(nodes) if node.get("op") == "DataflowBlock"}
+    successors = {block: set() for block in blocks}
+    indegree = dict.fromkeys(blocks, 0)
+    for source, target in document["edges"]:
+        a, b = source[0], target[0]
+        if a in blocks and b in blocks and nodes[a]["parent"] == nodes[b]["parent"] and b not in successors[a]:
+            successors[a].add(b)
+            indegree[b] += 1
+    ready = [block for block, degree in indegree.items() if degree == 0]
+    visited = 0
+    while ready:
+        visited += 1
+        for successor in successors[ready.pop()]:
+            indegree[successor] -= 1
+            if indegree[successor] == 0:
+                ready.append(successor)
+    return visited != len(blocks)
+
+
+def _check_external_frontend(document: dict) -> None:
+    """Reject visible mixed-extern loops whose frontend safety is unknown."""
+    metadata = document.get("metadata")
+    if metadata and metadata[0] and metadata[0].get(_FRONTEND_METADATA) == _SAFE_FRONTEND:
+        return
+    nodes = document["nodes"]
+    declarations = {
+        index
+        for index, node in enumerate(nodes)
+        if node.get("op") == "FuncDecl" and node["signature"]["body"]["output"]
+    }
+    calls_external = any(
+        source[0] in declarations and nodes[target[0]].get("op") in {"Call", "LoadFunction"}
+        for source, target in document["edges"]
+    )
+    if calls_external and _has_loops(document):
+        msg = (
+            "Loops with ordinary external declarations require the safe Guppy frontend: "
+            "pass the Guppy function directly, or use pecos_selene_wasm.compile_guppy(function) "
+            "before serializing. Default Guppy optimization may already have corrupted this package."
+        )
+        raise ValueError(msg)
 
 
 def _order_calls(document: dict, acquisitions: set[int]) -> None:
@@ -374,7 +447,7 @@ entry:
 
 
 def compile_wasm(
-    program: bytes | Package,
+    program: bytes | Package | GuppyFunctionDefinition,
     modules: Mapping[str, bytes],
     *,
     platform: str = "helios",
@@ -383,12 +456,18 @@ def compile_wasm(
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
+    Guppy functions use the safe minimal-optimization frontend automatically.
+    Precompiled input should come directly from ``compile_guppy`` without
+    additional optimization.
+
     ``modules`` maps exact module identifiers to caller-supplied WAT or WASM
     bytes. The result requires the Selene WASM utility or WASM-enabled QIS FFI.
     """
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
         raise ValueError(msg)
+    if hasattr(program, "with_minimal_opt"):
+        program = compile_guppy(program)
     program = Package.from_bytes(program if isinstance(program, bytes) else program.to_bytes())
     if len(program.modules) != 1:
         msg = "Public WASM lowering currently requires one HUGR module"
@@ -398,6 +477,7 @@ def compile_wasm(
     serialized = graph._to_serial()  # noqa: SLF001
     serial_type = type(serialized)
     document = serialized.model_dump(mode="json")
+    _check_external_frontend(document)
     operations = []
     module_ids = {}
     for index, node in enumerate(document["nodes"]):

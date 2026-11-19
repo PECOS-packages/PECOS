@@ -255,3 +255,62 @@ def test_pecos_wasm_loops(examples, wrapper, name, expected):
     )
     data = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).run(4).to_dict()
     assert data == {label: [value] * 4 for label, value in expected.items()}
+
+
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+def test_external_loop_uses_safe_frontend_after_normal_cache(examples, monkeypatch, wrapper):
+    import re
+
+    from guppylang.library import link_name
+
+    plugin = pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["stateful"]
+    counter_module = example.Counter
+
+    @guppy.declare
+    @link_name("wasm_test_increment")
+    def external(value: int) -> int: ...
+
+    @guppy
+    def program() -> None:
+        counter = counter_module(nat(0))
+        result("counter", counter.increment())
+        counter.discard()
+        value = 0
+        for _ in range(3):
+            value = external(value)
+        result("total", value)
+
+    # Populate the ordinary per-definition cache first. WASM must not reuse it.
+    normal = pc.Guppy(program).hugr_bytes
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    prepared = pc.Guppy(program, wasm_modules=modules)
+    safe_bytes = prepared.hugr_bytes
+    assert safe_bytes is prepared.hugr_bytes
+    assert pc.Guppy(program).hugr_bytes is normal
+    assert safe_bytes != normal
+    original_compile = plugin.compile_wasm
+
+    def compile_with_native_fixture(*args, **kwargs):
+        ir = original_compile(*args, **kwargs)
+        # Implement the declared add-one function independently of lowering.
+        body = r"define i64 \1(i64 %n) {\nentry:\n  %next = add i64 %n, 1\n  ret i64 %next\n}"
+        ir, count = re.subn(
+            r"^declare i64 (@[^\s(]*wasm_test_increment[^\s(]*)\(i64\)[^\n]*$",
+            body,
+            ir,
+            flags=re.MULTILINE,
+        )
+        assert count == 1
+        return ir
+
+    monkeypatch.setattr(plugin, "compile_wasm", compile_with_native_fixture)
+    executable = prepared if wrapper == "guppy" else pc.Hugr(safe_bytes, wasm_modules=modules)
+    data = pc.sim(executable).qubits(1).quantum(pc.state_vector()).run(2).to_dict()
+    assert data == {"counter": [1, 1], "total": [3, 3]}
+
+
+def test_missing_wasm_extra_has_install_guidance(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pecos_selene_wasm", None)
+    with pytest.raises(ImportError, match=r"quantum-pecos\[wasm\]"):
+        _ = pc.Guppy(control_without_wasm, wasm_modules={}).hugr_bytes

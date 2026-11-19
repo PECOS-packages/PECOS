@@ -2669,7 +2669,7 @@ requires-dist = [
     { name = "packaging", marker = "extra == 'test'" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0" },
     { name = "selene-core", specifier = "~=0.3.0" },
-    { name = "selene-hugr-qis-compiler", specifier = ">=0.4.2,<0.6" },
+    { name = "selene-hugr-qis-compiler", specifier = ">=0.4.3,<0.6" },
     { name = "selene-sim", marker = "extra == 'test'", specifier = "~=0.3.0" },
 ]
 provides-extras = ["test"]

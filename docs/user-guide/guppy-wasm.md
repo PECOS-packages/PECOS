@@ -20,7 +20,8 @@ For PECOS, rebuild both the bindings and `pecos-qis-ffi` from this revision so
 the running QIS library exports the WASM ABI. An older installed runtime cannot
 execute these calls. The `quantum-pecos[wasm]` extra selects the utility package.
 
-The lowering has been tested with public compiler versions 0.4.2, 0.4.3, and 0.5.2, with HUGR
+The lowering requires public compiler version 0.4.3 or newer (below 0.6), and
+has been tested with 0.4.3 and 0.5.2, with HUGR
 0.18 and `tket.wasm` 0.5.0. Guppy currently exposes the WASM decorators through
 `guppylang_internals`; these imports may change in a future Guppy release.
 
@@ -93,8 +94,8 @@ data = pc.sim(pc.Guppy(addition, wasm_modules=modules)).qubits(1).quantum(pc.sta
 assert data["sum"] == [5, 5, 5, 5]
 ```
 
-Precompiled HUGR works with
-`pc.Hugr(addition.compile().to_bytes(), wasm_modules=modules)`, including the
+For precompiled HUGR, use `from pecos_selene_wasm import compile_guppy` and
+`pc.Hugr(compile_guppy(addition).to_bytes(), wasm_modules=modules)`, including the
 `Hugr.from_bytes` and `Hugr.from_file` constructors. Supply modules when creating
 the wrapper, before `sim()` lowers the program.
 
@@ -105,7 +106,7 @@ the wrapper, before `sim()` lowers the program.
 from pecos_selene_wasm import build
 from selene_sim import Quest
 
-runner = build(addition.compile(), modules)
+runner = build(addition, modules)
 shots = [
     dict(shot)
     for shot in runner.run_shots(
@@ -215,6 +216,21 @@ The lowering protects external function values during HUGR optimization using
 public barrier and indirect-call operations. This avoids a released-compiler
 constant-analysis bug that otherwise replaces loop results with initial values.
 The same protection is used by PECOS and standalone Selene.
+
+Pass Guppy source directly to `Guppy(function, wasm_modules=modules)` or
+`pecos_selene_wasm.build(function, modules)`. Both use Guppy's minimal-optimization
+frontend before applying the lowering. Normal Guppy compilation can already
+miscompile loops containing ordinary `@guppy.declare` external calls; LLVM
+optimization settings cannot repair those results.
+
+To store or transport a program, use `pecos_selene_wasm.compile_guppy(function)`
+and serialize the returned package with `.to_bytes()`. Pass that package or its
+bytes directly to WASM lowering without running additional optimizers. Its
+metadata records the safe frontend choice; it does not certify later transforms.
+Unprepared packages with visible external declarations and loops are rejected
+with instructions to recompile from source. Already optimized arbitrary HUGR
+cannot be repaired, and a compiler may have erased evidence of the original
+calls. Use the safe frontend whenever preparing Guppy for WASM execution.
 
 The implementation follows the public
 [tket.wasm specification](https://github.com/Quantinuum/tket2/blob/main/tket/tket-qsystem/src/extension/classical_compute/wasm.rs)

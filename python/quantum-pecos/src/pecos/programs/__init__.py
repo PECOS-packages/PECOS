@@ -136,6 +136,7 @@ class Guppy:
         ``@wasm_module`` declarations. Requires ``quantum-pecos[wasm]``.
         """
         self._func = func
+        self._wasm_hugr_bytes = None
         self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None
 
@@ -146,9 +147,13 @@ class Guppy:
 
     @property
     def hugr_bytes(self) -> bytes:
-        """The compiled HUGR envelope, from the shared Guppy compile cache."""
+        """The compiled HUGR envelope, using the safe frontend for WASM."""
         from pecos._compilation import guppy_to_hugr
 
+        if self._wasm_modules is not None:
+            if self._wasm_hugr_bytes is None:
+                self._wasm_hugr_bytes = guppy_to_hugr(self._func, wasm=True)
+            return self._wasm_hugr_bytes
         return guppy_to_hugr(self._func)
 
     def _to_program(self) -> "CompiledQis":

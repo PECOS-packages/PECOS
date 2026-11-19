@@ -52,8 +52,10 @@ def measure(backend: str, calls: int, shots: int, repeats: int, directory: Path)
     spec = importlib.util.spec_from_file_location(source.stem, source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    from pecos_selene_wasm import compile_guppy
+
     start = time.perf_counter()
-    package = module.main.compile()
+    package = compile_guppy(module.main) if calls else module.main.compile()
     guppy_seconds = time.perf_counter() - start
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
 

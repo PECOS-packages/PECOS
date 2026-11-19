@@ -8,8 +8,14 @@ with the released public compiler; no upstream source changes are required.
 ```python
 from pecos_selene_wasm import build
 
-runner = build(program.compile(), {module_identifier: wasm_bytes})
+runner = build(program, {module_identifier: wasm_bytes})
 ```
+
+Pass a Guppy function directly so the plugin selects its safe frontend. For
+precompiled input, use `compile_guppy(program)` from this package and pass the
+returned package or its serialized bytes directly to lowering, without further
+optimization. Ordinary external calls in loops can be miscompiled by default
+Guppy optimization; unprepared mixed-extern loop packages are rejected.
 
 Use the runner's normal Selene `run_shots` API. No PECOS simulator or Python
 bindings are required for standalone Selene execution. PECOS `sim()` uses the

@@ -4,7 +4,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-from pecos_selene_wasm import build, compile_wasm
+from pecos_selene_wasm import build, compile_guppy, compile_wasm
 from selene_sim import Quest
 from selene_sim.exceptions import SelenePanicError
 
@@ -25,7 +25,7 @@ def examples():
 def run(example, function, tmp_path, *, shots=4, processes=1, modules=None, platform="helios", opt_level=2):
     if modules is None:
         modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    runner = build(function.compile(), modules, build_dir=tmp_path, platform=platform, opt_level=opt_level)
+    runner = build(function, modules, build_dir=tmp_path, platform=platform, opt_level=opt_level)
     return [
         dict(shot)
         for shot in runner.run_shots(
@@ -196,7 +196,8 @@ def test_benchmark_checks_results_and_records_timings(tmp_path):
 
 
 @pytest.mark.parametrize("opt_level", [0, 2])
-def test_existing_external_function_value_and_discarded_result(examples, tmp_path, opt_level):
+@pytest.mark.parametrize("input_form", ["source", "package", "bytes"])
+def test_existing_external_function_value_and_discarded_result(examples, tmp_path, opt_level, input_form):
     import re
 
     from guppylang import guppy
@@ -231,9 +232,10 @@ def test_existing_external_function_value_and_discarded_result(examples, tmp_pat
 
     # Preserve first-class function loads before PECOS lowering. Default Guppy
     # optimization can already fold ordinary externs incorrectly at this stage.
-    package = program.with_minimal_opt().compile()
+    package = compile_guppy(program)
     assert any(isinstance(package.modules[0][node].op, ops.LoadFunc) for node in package.modules[0])
-    ir = compile_wasm(package, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, opt_level=opt_level)
+    prepared = {"source": program, "package": package, "bytes": package.to_bytes()}[input_form]
+    ir = compile_wasm(prepared, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, opt_level=opt_level)
     label = b"USER:INT:external"
     encoded = "".join(f"\\{byte:02X}" for byte in bytes([len(label)]) + label)
     ir += f'\n@fixture_label = private constant [{len(label) + 1} x i8] c"{encoded}"\n'
@@ -299,3 +301,34 @@ def test_hugr_tail_loop_orders_context_helpers(examples, tmp_path, opt_level):
     )
     shots = [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=2)]
     assert shots == [{"three": 4}] * 4
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+def test_unprepared_external_loop_is_rejected(examples, serialized):
+    from guppylang import guppy
+    from guppylang.library import link_name
+    from guppylang.std.builtins import nat, result
+
+    example = examples["stateful"]
+    counter_module = example.Counter
+
+    @guppy.declare
+    @link_name("wasm_test_increment")
+    def external(value: int) -> int: ...
+
+    @guppy
+    def program() -> None:
+        counter = counter_module(nat(0))
+        result("counter", counter.increment())
+        counter.discard()
+        value = 0
+        for _ in range(3):
+            value = external(value)
+        result("total", value)
+
+    package = program.compile()
+    with pytest.raises(ValueError, match="safe Guppy frontend"):
+        compile_wasm(
+            package.to_bytes() if serialized else package,
+            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        )

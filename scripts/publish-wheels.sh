@@ -101,15 +101,17 @@ if [ "$ASSUME_YES" = false ] && [ "$DRY_RUN" = false ] && [ ! -t 0 ]; then
 fi
 
 # Run twine as a standalone tool: `uv run` would sync this checkout's environment
-# (reinstalling its native packages) before every call.
-if command -v uv &> /dev/null; then
-    TWINE_CMD="uvx twine"
+# (reinstalling its native packages) before every call. Ask for the latest twine:
+# a checker older than the core-metadata version the build tools emit rejects
+# artifacts that PyPI accepts.
+if command -v uvx &> /dev/null; then
+    TWINE_CMD="uvx twine@latest"
     echo -e "${GREEN}Using uvx to run twine ($($TWINE_CMD --version 2>/dev/null | head -1))${NC}"
 elif command -v twine &> /dev/null; then
     TWINE_CMD="twine"
     echo -e "${YELLOW}Using system twine ($(twine --version 2>/dev/null | head -1)); consider using uv${NC}"
 else
-    echo -e "${RED}Error: Neither uv nor twine is installed!${NC}"
+    echo -e "${RED}Error: Neither uvx nor twine is installed!${NC}"
     echo "Install uv with: curl -LsSf https://astral.sh/uv/install.sh | sh"
     echo "Or install twine with: pip install twine"
     exit 1
@@ -129,7 +131,18 @@ fi
 
 # The package directories sit at the bundle's top level or under its dist/ directory.
 BUNDLE_ROOT="$DIST_DIR"
-[ -d "$BUNDLE_ROOT/dist" ] && BUNDLE_ROOT="$BUNDLE_ROOT/dist"
+if [ -d "$DIST_DIR/dist" ]; then
+    BUNDLE_ROOT="$DIST_DIR/dist"
+    # A package directory beside dist/ would be skipped without notice.
+    for dir in "$DIST_DIR"/*/; do
+        [ -d "$dir" ] || continue
+        name=$(basename "$dir")
+        if [ "$name" != "dist" ]; then
+            echo -e "${RED}Error: the bundle holds $name next to dist/; expected only dist/.${NC}"
+            exit 1
+        fi
+    done
+fi
 
 package_dir_for() {
     printf '%s\n' "$BUNDLE_ROOT/$1"

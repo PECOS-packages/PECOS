@@ -98,11 +98,11 @@ a plain `pecos-distribution/` would mix two versions in one directory, and the
 preflight -- complete set, consistent version, only expected files -- is the
 only thing standing between that and a stray upload.
 
-The dry run must pass its `twine check` (twine must be
-installed, e.g. `uv tool install twine`). Keep it current: build tools raise the
-core-metadata version they emit over time, and a checker older than the metadata
-rejects the artifacts even though PyPI accepts them -- `uv tool upgrade twine` if a
-check fails naming a metadata version. The script prints which twine it is using, and
+The dry run must pass its `twine check`. The script runs `uvx twine@latest` (or an
+installed `twine` when `uvx` is missing), because build tools raise the core-metadata
+version they emit over time and a checker older than the metadata rejects the
+artifacts even though PyPI accepts them; with a system `twine`, upgrade it if a check
+fails naming a metadata version. The script prints which twine it is using, and
 validates every package before uploading any of them, so a stale checker stops the run
 rather than surfacing after the first packages are already public. It prints only a
 `Distribution checks passed` summary and swallows `twine check` output unless it
@@ -124,6 +124,11 @@ uploads. The Selene plugins listed in `python/selene-plugins/release-plugins.txt
 upload first (they have no PECOS dependencies), then `pecos-rslib` ->
 `pecos-rslib-llvm` -> `quantum-pecos`, which pins both at exact versions. Any
 failure or declined prompt aborts the remaining uploads rather than continuing.
+If an upload fails part-way through one package, PyPI keeps the files that arrived and
+rejects a second upload of any of them, so a plain re-run stops at the first file.
+Finish that package with
+`uvx twine@latest upload --skip-existing pecos-distribution-<version>/<package>/*`,
+then publish each remaining package in order with `-p <package>`.
 Run the script from a checkout of the tagged commit: it publishes the packages that
 checkout lists and refuses a bundle holding any other package. Publishing `quantum-pecos` alone (`-p`) is
 blocked unless its pinned dependencies already exist on PyPI. Checks run
@@ -165,14 +170,16 @@ Check every listed Selene plugin from PyPI in its own clean environment, run fro
 outside the checkout so the installed wheel is what loads:
 
 ```
-grep -vE '^[[:space:]]*(#|$)' python/selene-plugins/release-plugins.txt | while read -r plugin; do
+failed=0
+for plugin in $(tr -d '\r' < python/selene-plugins/release-plugins.txt | grep -vE '^[[:space:]]*(#|$)'); do
   uv venv --clear "/tmp/verify-$plugin" --python 3.12 &&
     uv pip install --python "/tmp/verify-$plugin" --no-cache --prerelease=allow \
       "$plugin==<version>" &&
     (cd /tmp && "/tmp/verify-$plugin/bin/python" "$OLDPWD/scripts/ci/smoke_selene_wheel.py" \
       "${plugin//-/_}") ||
-    echo "FAILED: $plugin"
+    { echo "FAILED: $plugin"; failed=1; }
 done
+[ "$failed" = 0 ] && echo "All plugins verified" || echo "Some plugins FAILED"
 ```
 
 `smoke_selene_wheel.py` loads each plugin's native library, which a bare import does

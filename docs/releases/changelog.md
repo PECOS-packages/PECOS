@@ -105,26 +105,29 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   width it adopts. A DEM prior above 0.5 is now a configuration error
   (`ValueError`) for Fusion Blossom's DEM constructors (also `k_mwpm`,
   `perturbed_fb_corr` and the `belief_matching` families) and for correlated
-  PyMatching; `parse_correlated_dem` rejects one too. Previously a prior of
-  1.0 or more on `from_dem`, `from_dem_correlated`,
-  `from_check_matrix_correlated` and the spec families built on them,
-  `belief_matching` included, was accepted silently, as was a prior above 0.5
-  with weight factors on `from_check_matrix_correlated`, whose negative weight
-  was clamped to a small positive one (on `from_parsed_correlated` the double
-  count fixed below made it an invalid-graph error instead). Other priors above
-  0.5 gave a Fusion Blossom invalid-graph
-  error, already a `ValueError` when building directly but a `RuntimeError` as
-  a logical decoder's inner decoder, or a correlated-PyMatching FFI error
-  (`RuntimeError`); the `belief_matching` families rejected them in their BP
-  stage, already as `ValueError`, and now report the matching prior. Each DEM
-  mechanism's own prior must be at most 0.5, as upstream PyMatching requires
-  of each instruction when correlations are enabled: `DemMatchingGraph::from_dem_str` and logical-subgraph
-  extraction now check every mechanism that becomes an edge before parallel
-  mechanisms are merged, so two `error(0.7) D0 D1`, whose merged prior is
-  0.42, are rejected by `FusionBlossomDecoder::from_dem`, the spec Fusion
-  Blossom and `belief_matching` families, the union-find and A* decoders, and
-  logical-subgraph decoders whatever their inner decoder, instead of being
-  accepted. Logical
+  PyMatching; `parse_correlated_dem` rejects one too. Previously a prior of 1.0
+  or more on `from_dem`, `from_dem_correlated`, `from_check_matrix_correlated`
+  and the spec families built on them, `belief_matching` included, was accepted
+  silently, as was a prior above 0.5 with weight factors on
+  `from_check_matrix_correlated`, whose negative weight was clamped to a small
+  positive one (on `from_parsed_correlated` the double count fixed below made
+  it an invalid-graph error instead). Other priors above 0.5 gave a Fusion
+  Blossom invalid-graph error, already a `ValueError` when building directly
+  but a `RuntimeError` as a logical decoder's inner decoder, or a
+  correlated-PyMatching FFI error (`RuntimeError`); the `belief_matching`
+  families rejected them in their BP stage, already as `ValueError`, and now
+  report the matching prior. Each DEM mechanism's own prior must be at most
+  0.5, as upstream PyMatching requires of each instruction when correlations
+  are enabled. `DemMatchingGraph::from_dem_str`, commit windows and
+  logical-subgraph extraction now check every mechanism with a one- or
+  two-detector component before parallel mechanisms are merged, so two
+  `error(0.7) D0 D1`, whose merged prior is 0.42, are now rejected by
+  `FusionBlossomDecoder::from_dem`, the uncorrelated spec Fusion Blossom
+  families and `k_mwpm`, the `belief_matching` families, the union-find, A*
+  and windowed decoders, and logical-subgraph decoders whatever their inner
+  decoder. The correlated Fusion Blossom paths already checked each mechanism.
+  Python `PyMatchingDecoder.decode_batch` predictions now have the width
+  `decode_syndrome` returns instead of the graph's padded width. Logical
   decoders raise `RuntimeError` when an internally generated sub-DEM fails to
   build for another reason. A Tesseract `decode_detections` or
   `decode_with_order` index outside the model is `InvalidSyndrome` instead of
@@ -147,7 +150,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `p1 * (1 - p2) + p2 * (1 - p1)`, as its documentation and `DemMatchingGraph`
   already did, instead of `p1 + p2 - p1 * p2`, so `error(0.3) D0 D1` with
   `error(0.3) D0 D1 L0` merges to 0.42 and is accepted instead of rejected as
-  0.51.
+  0.51. `MwpfDecoder` merged parallel mechanisms the same wrong way and now
+  also merges them as independent events, so its weights change for DEMs with
+  parallel mechanisms.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,

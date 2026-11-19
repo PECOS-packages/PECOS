@@ -357,6 +357,16 @@ def test_parallel_priors_above_half_are_input_errors(family):
         LogicalSubgraphDecoder(_PARALLEL_HIGH_PRIOR_DEM, _LOGICAL_STAB_COORDS, family)
 
 
+def test_windowed_union_find_rejects_parallel_priors_above_half():
+    from pecos_rslib.decoders import DecoderSpec
+
+    # Commit windows build their matching graphs from the raw columns, so they check
+    # each mechanism's prior themselves.
+    spec = DecoderSpec.parse("windowed:step=1,buf=1,inner=pecos_uf")
+    with pytest.raises(ValueError, match=_MECHANISM_PRIOR):
+        SampleBatch([[0, 0]], [0]).decode(_PARALLEL_HIGH_PRIOR_DEM, spec, workers=1)
+
+
 # A certain mechanism gives a zero weight that the BP stage accepts, so only the matching
 # prior check rejects it.
 _CERTAIN_PRIOR_DEM = _LOGICAL_DEM.replace("error(0.1) D0 L0", "error(1) D0 L0")

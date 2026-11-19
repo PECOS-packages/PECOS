@@ -22,9 +22,11 @@ pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usiz
 /// Reject a DEM error mechanism whose own prior is above 0.5.
 ///
 /// A matching edge's weight `ln((1 - p) / p)` is negative above 0.5, so every
-/// mechanism that becomes a matching edge must have a prior of at most 0.5.
-/// Checking each mechanism, rather than the merged edge, also rejects parallel
-/// mechanisms whose independent combination falls back below 0.5.
+/// mechanism with a one- or two-detector component must have a prior of at most
+/// 0.5, as upstream PyMatching requires of each instruction. The check runs per
+/// mechanism, before parallel mechanisms are merged or correlated components
+/// cancel, so it also rejects parallel mechanisms whose independent combination
+/// falls back below 0.5.
 pub(crate) fn check_matching_prior(probability: f64) -> Result<(), DecoderError> {
     if probability > 0.5 {
         return Err(DecoderError::InvalidConfiguration(format!(
@@ -723,9 +725,9 @@ impl DemMatchingGraph {
     /// # Errors
     ///
     /// Returns [`DecoderError`] if the DEM string is malformed, or
-    /// [`DecoderError::InvalidConfiguration`] if a mechanism that becomes an
-    /// edge has a prior above 0.5. Each mechanism's own prior is checked, before
-    /// parallel mechanisms are merged.
+    /// [`DecoderError::InvalidConfiguration`] if a mechanism with a one- or
+    /// two-detector component has a prior above 0.5. Each mechanism's own prior
+    /// is checked, before parallel mechanisms are merged or components cancel.
     pub fn from_dem_str(dem: &str) -> Result<Self, DecoderError> {
         let mut edges = Vec::new();
         let mut max_detector: Option<u32> = None;

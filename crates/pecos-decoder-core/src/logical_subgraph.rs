@@ -345,17 +345,17 @@ pub fn coordinate_membership_from_dem(
 /// coordinate one ([`coordinate_membership_from_dem`]) or a back-propagation
 /// builder in a higher crate.
 ///
-/// # Errors
-///
-/// Returns [`DecoderError::InvalidConfiguration`] if a membership id is out of
-/// range, or if a mechanism that becomes a subgraph edge has a prior above
-/// 0.5; each mechanism's own prior is checked, before parallel mechanisms are
-/// merged.
-///
 /// Supports arbitrarily many observables: flips are packed into a wide
 /// [`ObsMask`] by [`ObservableDecoder::decode_obs`]. (The `u64`
 /// [`ObservableDecoder::decode_to_observables`] convenience errors above 64; the
 /// windowed paths still cap at 64 — see their constructors.)
+///
+/// # Errors
+///
+/// Returns [`DecoderError::InvalidConfiguration`] if a membership id is out of
+/// range, or if a mechanism with a one- or two-detector component has a prior
+/// above 0.5; each mechanism's own prior is checked, before parallel mechanisms
+/// are merged.
 pub fn subgraphs_from_membership(
     sdem: &SparseDem,
     membership: &[Vec<usize>],

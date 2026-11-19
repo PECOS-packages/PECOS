@@ -511,9 +511,9 @@ fn build_fusion_correlated(dem: &str) -> Result<Box<dyn ObservableDecoder>, Deco
     use pecos_decoder_core::two_pass_decoder::TwoPassDecoder;
     use std::collections::BTreeMap;
 
+    // `from_dem_str` rejects any mechanism prior above 0.5.
     let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?;
     graph.ensure_observables_fit_u64()?;
-    crate::FusionBlossomDecoder::check_matching_graph_priors(&graph).map_err(DecoderError::from)?;
     let engine_config = FusionBlossomEngineConfig {
         num_nodes: Some(graph.num_detectors),
         num_observables: graph.num_observables,
@@ -1120,11 +1120,10 @@ fn build_belief_matching_with_dems(
     use pecos_decoder_core::correlation_table::CorrelationTable;
     use std::collections::BTreeMap;
 
-    // Check the matching priors before building BP, so these families report
-    // them as the other Fusion Blossom families do.
+    // Build the matching graph before BP: `from_dem_str` rejects any mechanism prior
+    // above 0.5, so these families report it as the other Fusion Blossom families do.
     let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(matching_dem)?;
     graph.ensure_observables_fit_u64()?;
-    crate::FusionBlossomDecoder::check_matching_graph_priors(&graph).map_err(DecoderError::from)?;
     let bp = match mode {
         BeliefMatchingMode::MatchingGraphBp => {
             crate::BpUfDecoder::from_dem(bp_dem, crate::BpUfConfig::matching_bp())?

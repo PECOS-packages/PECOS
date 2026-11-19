@@ -23,6 +23,7 @@ use mwpf::mwpf_solver::{
     SolverSerialUnionFind, SolverTrait,
 };
 use mwpf::util::{HyperEdge, SolverInitializer, SyndromePattern};
+use pecos_decoder_core::correlation_table::bernoulli_xor;
 use pecos_decoder_core::dem::DemCheckMatrix;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -125,6 +126,52 @@ struct EdgeInfo {
     best_prob: f64,
 }
 
+/// Groups the DEM's mechanisms into hyperedges, one per distinct detector set.
+///
+/// Decomposed DEMs can have several mechanisms with the same detector set. They are
+/// merged as independent events (XOR: the edge fires when an odd number of them
+/// fire), and the edge keeps the observable mask of its highest-probability
+/// mechanism (the first one on ties). Mechanisms with no detectors or a zero prior
+/// are skipped.
+fn merged_edges(dem: &DemCheckMatrix) -> BTreeMap<Vec<usize>, EdgeInfo> {
+    let mut edge_map: BTreeMap<Vec<usize>, EdgeInfo> = BTreeMap::new();
+    for m in 0..dem.num_mechanisms {
+        let p = dem.error_priors[m];
+        if p <= 0.0 {
+            continue;
+        }
+
+        let vertices: Vec<usize> = (0..dem.num_detectors)
+            .filter(|&d| dem.check_matrix[[d, m]] != 0)
+            .collect();
+
+        if vertices.is_empty() {
+            continue;
+        }
+
+        // Compute this mechanism's observable mask.
+        let mut obs: u64 = 0;
+        for o in 0..dem.num_observables {
+            if dem.observable_matrix[[o, m]] != 0 {
+                obs |= 1 << o;
+            }
+        }
+
+        let entry = edge_map.entry(vertices).or_insert(EdgeInfo {
+            prob: 0.0,
+            obs_mask: obs,
+            best_prob: p,
+        });
+        entry.prob = bernoulli_xor(entry.prob, p);
+        if p > entry.best_prob {
+            entry.obs_mask = obs;
+            entry.best_prob = p;
+        }
+    }
+
+    edge_map
+}
+
 impl Solver {
     fn solve(&mut self, syndrome: SyndromePattern) {
         match self {
@@ -187,47 +234,7 @@ impl MwpfDecoder {
         dem.ensure_observables_fit_u64()
             .map_err(|e| MwpfError::InvalidDem(e.to_string()))?;
 
-        // Build hyperedges from the check matrix. Each mechanism (column) becomes
-        // one HyperEdge with all its incident detectors.
-        // Merge duplicate vertex sets and build per-edge observable masks.
-        // Decomposed DEMs can have multiple mechanisms with the same detector set.
-        // Merge by combining probabilities (independent union) and tracking the
-        // observable from the highest-probability mechanism (first-observable-wins).
-        let mut edge_map: BTreeMap<Vec<usize>, EdgeInfo> = BTreeMap::new();
-        for m in 0..dem.num_mechanisms {
-            let p = dem.error_priors[m];
-            if p <= 0.0 {
-                continue;
-            }
-
-            let vertices: Vec<usize> = (0..dem.num_detectors)
-                .filter(|&d| dem.check_matrix[[d, m]] != 0)
-                .collect();
-
-            if vertices.is_empty() {
-                continue;
-            }
-
-            // Compute this mechanism's observable mask.
-            let mut obs: u64 = 0;
-            for o in 0..dem.num_observables {
-                if dem.observable_matrix[[o, m]] != 0 {
-                    obs |= 1 << o;
-                }
-            }
-
-            let entry = edge_map.entry(vertices).or_insert(EdgeInfo {
-                prob: 0.0,
-                obs_mask: obs,
-                best_prob: p,
-            });
-            let old_p = entry.prob;
-            entry.prob = old_p + p - old_p * p;
-            if p > entry.best_prob {
-                entry.obs_mask = obs;
-                entry.best_prob = p;
-            }
-        }
+        let edge_map = merged_edges(&dem);
 
         let mut hyperedges = Vec::with_capacity(edge_map.len());
         let mut edge_obs = Vec::with_capacity(edge_map.len());
@@ -337,5 +344,21 @@ impl MwpfDecoder {
             }
         }
         max_bit
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parallel_mechanisms_merge_as_independent_events() {
+        let dem = DemCheckMatrix::from_dem_str("error(0.3) D0 D1\nerror(0.3) D0 D1 L0").unwrap();
+        let edges = merged_edges(&dem);
+        let edge = &edges[&vec![0, 1]];
+        // XOR: 0.3 * 0.7 + 0.7 * 0.3 = 0.42. A union would give 0.51.
+        assert!((edge.prob - 0.42).abs() < 1e-12, "{}", edge.prob);
+        // Equal priors keep the first mechanism's observable.
+        assert_eq!(edge.obs_mask, 0);
     }
 }

@@ -172,11 +172,9 @@ class TestPyMatchingDecoder:
             # Entries past num_detectors are the boundary nodes; set them to show they are ignored.
             rows = [shot + [1] * (width - 2) for shot in shots]
             flat = [bit for row in rows for bit in row]
-            # Batch predictions are padded to the configured observable width.
             predictions = decoder.decode_batch(flat, len(rows), syndrome_length=width)
-            for prediction, flips in zip(predictions, expected, strict=True):
-                assert [bool(bit) for bit in prediction[: len(flips)]] == flips
-                assert not any(prediction[len(flips) :])
+            # Batch predictions have the same width as decode_syndrome's.
+            assert [[bool(bit) for bit in prediction] for prediction in predictions] == expected
             assert [list(decoder.decode_syndrome(row).observable_flips) for row in rows] == expected
         with pytest.raises(ValueError, match=r"syndrome_length=5 is outside .* 2 \(one per detector\) to 4"):
             decoder.decode_batch([0] * 5, 1, syndrome_length=5)

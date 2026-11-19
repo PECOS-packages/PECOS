@@ -1180,6 +1180,17 @@ impl PyMatchingDecoder {
 
         let mut batch_result = BatchDecodingResult::from(result);
         batch_result.bit_packed = config.bit_packed_output;
+        // The backend pads predictions to the graph's observable count; trim them to the
+        // width `decode` returns.
+        let observables = self.num_decoded_observables();
+        let width = if config.bit_packed_output {
+            observables.div_ceil(BITS_PER_BYTE)
+        } else {
+            observables
+        };
+        for prediction in &mut batch_result.predictions {
+            prediction.truncate(width);
+        }
 
         // If not returning weights, clear them
         if !config.return_weights {

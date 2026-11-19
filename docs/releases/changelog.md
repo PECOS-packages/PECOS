@@ -90,7 +90,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   representation of each probability instead of fixed precision. Before,
   `generate_*_code_dem` and `pecos-zx` wrote six decimal places, so priors at or
   below about 5e-7 became `error(0.000000)`; the other writers kept six, seven or
-  eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
+  eleven significant digits.
+- **Breaking:** `DetectorErrorModel.to_string()` (and `str()`), `to_pecos_string`,
+  and the decomposed forms (`to_string_decomposed` and its source, source-graphlike,
+  terminal-graphlike, graphlike-search, two-detector-policy and maximal variants)
+  now write each prior as the shortest text that parses back to the same `f64`
+  (issue #1260). Before, priors in `[1e-4, 1e6)` kept six decimal places, so
+  `0.000123456` was written `0.000123` (three to six significant digits), and
+  smaller priors kept seven significant digits in scientific notation. Contributions
+  with the same effect are now combined in ascending probability order, so a written
+  prior no longer depends on the order its contributions were added: models
+  assembled from cached slices now match a full compile exactly. DEM text changes,
+  as do `to_mechanisms()` probabilities in their last digits and
+  `to_structured_decoder_dem()` probabilities, which are now exact; decoders built
+  from this text get slightly different weights.
 - **Breaking:** Python decoder surfaces now raise `ValueError` for caller input
   errors on spec-built, batch, sampler and logical paths, including wrong
   syndrome lengths and empty reduced support. This also covers `CssUfDecoder`

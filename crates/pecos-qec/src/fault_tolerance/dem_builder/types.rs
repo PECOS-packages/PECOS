@@ -5577,7 +5577,7 @@ impl DetectorErrorModel {
     /// Parse this model's standard DEM text and overlay opaque fault-sector labels by ID.
     ///
     /// Dimensions, coordinates, mechanism order, and probabilities are exactly those
-    /// of [`Self::to_string`], including its probability formatting (issue #1260).
+    /// of [`Self::to_string`], whose priors round-trip exactly (issue #1260).
     /// Tracked-Pauli outputs are omitted by the standard text representation.
     ///
     /// # Errors
@@ -5727,13 +5727,11 @@ impl DetectorErrorModel {
             lines.push(format!("logical_observable L{}", obs.id));
         }
 
-        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
-        for contrib in &self.contributions {
-            by_effect
-                .entry(contrib.effect.clone())
-                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
-                .or_insert(contrib.probability);
-        }
+        let by_effect = combine_independent_probs_by_key(
+            self.contributions
+                .iter()
+                .map(|contrib| (contrib.effect.clone(), contrib.probability)),
+        );
 
         for (effect, total_prob) in by_effect {
             if effect.is_empty() || total_prob <= 0.0 {
@@ -6062,7 +6060,7 @@ impl DetectorErrorModel {
         struct Accumulator {
             num_contributions: usize,
             total_probability: f64,
-            combined_probability: f64,
+            probabilities: Vec<f64>,
             source_type_counts: BTreeMap<String, usize>,
             source_type_probabilities: BTreeMap<String, f64>,
             direct_source_family_counts: BTreeMap<String, usize>,
@@ -6127,8 +6125,7 @@ impl DetectorErrorModel {
                 .or_default();
             acc.num_contributions += 1;
             acc.total_probability += contrib.probability;
-            acc.combined_probability =
-                combine_independent_probs(acc.combined_probability, contrib.probability);
+            acc.probabilities.push(contrib.probability);
 
             let source_label = source_type_label(&contrib.source_type).to_string();
             *acc.source_type_counts
@@ -6157,7 +6154,7 @@ impl DetectorErrorModel {
                     rendered_targets,
                     num_contributions: acc.num_contributions,
                     total_probability: acc.total_probability,
-                    combined_probability: acc.combined_probability,
+                    combined_probability: combine_independent_prob_set(acc.probabilities),
                     source_type_counts: acc.source_type_counts,
                     source_type_probabilities: acc.source_type_probabilities,
                     direct_source_family_counts: acc.direct_source_family_counts,
@@ -6527,14 +6524,7 @@ impl DetectorErrorModel {
     /// `to_string()` — same data, no string intermediary.
     #[must_use]
     pub fn to_mechanisms(&self) -> (Vec<MechanismTuple>, Vec<DetectorCoordinateTuple>) {
-        // Group contributions by effect
-        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
-        for contrib in &self.contributions {
-            by_effect
-                .entry(contrib.effect.standard_effect())
-                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
-                .or_insert(contrib.probability);
-        }
+        let by_effect = self.combined_standard_effect_probabilities();
 
         let mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)> = by_effect
             .into_iter()
@@ -6549,6 +6539,15 @@ impl DetectorErrorModel {
             .collect();
 
         (mechanisms, coords)
+    }
+
+    /// Groups contributions by standard effect and XOR-combines each group's probabilities.
+    fn combined_standard_effect_probabilities(&self) -> BTreeMap<FaultMechanism, f64> {
+        combine_independent_probs_by_key(
+            self.contributions
+                .iter()
+                .map(|contrib| (contrib.effect.standard_effect(), contrib.probability)),
+        )
     }
 
     pub fn mark_graphlike_decomposable(&mut self, d0: u32, d1: u32) {
@@ -6697,15 +6696,7 @@ impl DetectorErrorModel {
             lines.push(format!("logical_observable L{}", obs.id));
         }
 
-        // Group contributions by effect, combining probabilities using XOR formula
-        // (errors toggle detector bits, so two errors on same detector cancel)
-        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
-        for contrib in &self.contributions {
-            by_effect
-                .entry(contrib.effect.standard_effect())
-                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
-                .or_insert(contrib.probability);
-        }
+        let by_effect = self.combined_standard_effect_probabilities();
 
         // Output each mechanism with its total probability
         for (effect, total_prob) in by_effect {
@@ -7073,13 +7064,7 @@ impl DetectorErrorModel {
             lines.push(format!("logical_observable L{}", obs.id));
         }
 
-        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
-        for contrib in &self.contributions {
-            by_effect
-                .entry(contrib.effect.standard_effect())
-                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
-                .or_insert(contrib.probability);
-        }
+        let by_effect = self.combined_standard_effect_probabilities();
 
         let mut standalone = TerminalObservableTable::new();
         for (effect, &probability) in &by_effect {
@@ -7790,7 +7775,7 @@ impl DetectorErrorModel {
         profile_step("source_graphlike_index", &mut profile_last);
         let singleton_set = maximal_decomposition.then(|| self.collect_singleton_index());
         profile_step("singleton_index", &mut profile_last);
-        let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
+        let mut by_targets: BTreeMap<String, Vec<f64>> = BTreeMap::new();
         let mut rendered_targets_cache: BTreeMap<
             (FaultMechanism, FaultSourceType, Option<String>),
             (String, ContributionRenderStrategy),
@@ -7821,8 +7806,8 @@ impl DetectorErrorModel {
             if !targets.is_empty() && contrib.probability > 0.0 {
                 by_targets
                     .entry(targets)
-                    .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
-                    .or_insert(contrib.probability);
+                    .or_default()
+                    .push(contrib.probability);
             }
             if profile_enabled && rendered_contribs.is_multiple_of(5000) {
                 let now = std::time::Instant::now();
@@ -7838,7 +7823,8 @@ impl DetectorErrorModel {
         }
         profile_step("render_contributions", &mut profile_last);
 
-        for (targets, total_prob) in by_targets {
+        for (targets, probabilities) in by_targets {
+            let total_prob = combine_independent_prob_set(probabilities);
             if !targets.is_empty() && total_prob > 0.0 {
                 lines.push(format!(
                     "error({}) {}",
@@ -8034,40 +8020,48 @@ fn combine_independent_probs(p1: f64, p2: f64) -> f64 {
     p1 * (1.0 - p2) + p2 * (1.0 - p1)
 }
 
-/// Formats a probability value similar to Python's %g format.
-/// Uses scientific notation for very small/large values, otherwise decimal.
+/// XOR-combines a set of independent error probabilities.
+///
+/// Floating-point combination is not associative, so folding in contribution order would
+/// make a written prior depend on the order the contributions were added: a model
+/// composed from cached slices and a full compile of the same circuit would differ in the
+/// last digits. Folding in ascending order makes the result depend only on the
+/// probabilities.
+pub(crate) fn combine_independent_prob_set(mut probabilities: Vec<f64>) -> f64 {
+    probabilities.sort_unstable_by(f64::total_cmp);
+    probabilities
+        .into_iter()
+        .fold(0.0, combine_independent_probs)
+}
+
+/// Groups probabilities by key and XOR-combines each group with
+/// [`combine_independent_prob_set`].
+fn combine_independent_probs_by_key<K: Ord>(
+    items: impl IntoIterator<Item = (K, f64)>,
+) -> BTreeMap<K, f64> {
+    let mut grouped: BTreeMap<K, Vec<f64>> = BTreeMap::new();
+    for (key, probability) in items {
+        grouped.entry(key).or_default().push(probability);
+    }
+    grouped
+        .into_iter()
+        .map(|(key, probabilities)| (key, combine_independent_prob_set(probabilities)))
+        .collect()
+}
+
+/// Formats a probability with the shortest text that parses back to the same `f64`.
+///
+/// Values in `[1e-4, 1e6)` use decimal notation and others use scientific notation, as
+/// `%g` does, but no digits are dropped: a DEM written and read back keeps every prior
+/// exactly.
 fn format_probability(p: f64) -> String {
     if p == 0.0 {
         return "0".to_string();
     }
-
-    let abs_p = p.abs();
-
-    // Use scientific notation for very small or very large values
-    if (1e-4..1e6).contains(&abs_p) {
-        // Regular decimal notation
-        let formatted = format!("{p:.6}");
-        trim_trailing_zeros(&formatted)
+    if (1e-4..1e6).contains(&p.abs()) {
+        format!("{p}")
     } else {
-        // Format with up to 6 significant figures in scientific notation
-        let formatted = format!("{p:.6e}");
-        // Trim trailing zeros after decimal point
-        trim_trailing_zeros(&formatted)
-    }
-}
-
-/// Trims trailing zeros from a number string.
-fn trim_trailing_zeros(s: &str) -> String {
-    if let Some(e_pos) = s.find('e') {
-        // Scientific notation: trim zeros before 'e'
-        let (mantissa, exponent) = s.split_at(e_pos);
-        let trimmed = mantissa.trim_end_matches('0').trim_end_matches('.');
-        format!("{trimmed}{exponent}")
-    } else if s.contains('.') {
-        // Decimal notation: trim trailing zeros
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
-    } else {
-        s.to_string()
+        format!("{p:e}")
     }
 }
 
@@ -8138,6 +8132,33 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn format_probability_round_trips_exactly() {
+        for p in [
+            0.0,
+            0.001,
+            0.000_123_456,
+            0.300_000_000_000_000_04,
+            0.5,
+            1.0,
+            1e-7,
+            2.5e-10,
+            5e-324,
+            f64::MIN_POSITIVE,
+            0.999_999_999_999_9,
+        ] {
+            let text = super::format_probability(p);
+            assert_eq!(
+                text.parse::<f64>().unwrap().to_bits(),
+                p.to_bits(),
+                "{p} -> {text}"
+            );
+        }
+        assert_eq!(super::format_probability(0.000_123_456), "0.000123456");
+        assert_eq!(super::format_probability(1e-7), "1e-7");
+    }
+
     #[cfg(feature = "neo")]
     #[test]
     fn neo_unmapped_gate_rates_return_actionable_errors() {
@@ -9889,13 +9910,53 @@ mod tests {
         dem.tracked_paulis.push(DemOutput::new(4));
         let mut expected =
             pecos_decoder_core::window::StructuredDem::from_dem_str(&dem.to_string()).unwrap();
-        assert_ne!(
+        assert_eq!(
             expected.errors[0].probability.to_bits(),
             0.012_345_678_9_f64.to_bits()
         );
         expected.detector_fault_sectors[7] = Some("X".into());
         assert_eq!(expected.num_detectors, 8);
         assert_eq!(dem.to_structured_decoder_dem().unwrap(), expected);
+    }
+
+    // Folding these in either insertion order gives different last digits; the
+    // ascending fold gives 0.0174050963996108.
+    #[test]
+    fn written_priors_do_not_depend_on_contribution_order() {
+        let build = |probabilities: [f64; 3]| {
+            let mut dem = DetectorErrorModel::new();
+            dem.add_detector(DetectorDef::new(0));
+            for probability in probabilities {
+                dem.add_direct_contribution(
+                    FaultMechanism::from_unsorted([0], std::iter::empty()),
+                    probability,
+                );
+            }
+            dem
+        };
+        let first = build([0.001_43, 0.008_49, 0.007_661]);
+        let second = build([0.007_661, 0.001_43, 0.008_49]);
+
+        assert_eq!(
+            first.to_string(),
+            "detector D0\nerror(0.0174050963996108) D0"
+        );
+        assert_eq!(second.to_string(), first.to_string());
+        assert_eq!(second.to_pecos_string(), first.to_pecos_string());
+        assert_eq!(second.to_string_decomposed(), first.to_string_decomposed());
+        assert_eq!(
+            second.to_string_terminal_graphlike_decomposed().unwrap(),
+            first.to_string_terminal_graphlike_decomposed().unwrap()
+        );
+        assert_eq!(second.to_mechanisms(), first.to_mechanisms());
+        let combined = |dem: &DetectorErrorModel| {
+            dem.contribution_render_summaries_with_two_detector_direct_policy(
+                TwoDetectorDirectRenderPolicy::KeepDirect,
+            )[0]
+            .combined_probability
+            .to_bits()
+        };
+        assert_eq!(combined(&second), combined(&first));
     }
 
     #[test]

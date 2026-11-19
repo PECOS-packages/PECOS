@@ -241,7 +241,8 @@ fn measurement_noise_rejects_unrepresented_replacement_branches() {
             .build();
         match mode {
             ReplacementBranchApproximation::BranchImpact => {
-                assert!(dem.unwrap().to_string().contains("error(0.0582) D1"));
+                let text = dem.unwrap().to_string();
+                assert!(text.contains("error(0.058199999999999995) D1"), "{text}");
             }
             ReplacementBranchApproximation::ExactBranchReplay => assert!(
                 dem.unwrap_err()

@@ -354,8 +354,8 @@ by streaming and windowed decoders. The type can retain independent-error
 grouping, decomposition components, hyperedges, standard observable columns,
 and detector coordinates. `DetectorErrorModel::to_structured_decoder_dem()`
 parses exactly its standard `to_string()` text, then overlays each detector's
-opaque `fault_sector` label by ID. Probabilities use standard text formatting,
-including its rounding (issue #1260), rather than exact mechanism probabilities.
+opaque `fault_sector` label by ID. Probabilities are those of the standard text,
+which writes each combined mechanism probability exactly (issue #1260).
 Tracked-Pauli outputs are omitted by standard text rendering. Sparse detector
 IDs retain the dimensions declared by the text. This is also the definition used
 by all Python object decode paths; corpus identity certifies that same text.

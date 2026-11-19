@@ -194,6 +194,9 @@ def _dem_text(*, detectors_json: str = "[]", observables_json: str = "[]") -> st
 
 _TWO_QUBIT_DETECTORS_JSON = '[{"id":0,"records":[-2]}]'
 _TWO_QUBIT_OBSERVABLES_JSON = '[{"id":0,"records":[-1]}]'
+# p_idle_linear scales each axis by its model multiplier, and the default model's
+# multiplier is the float 1/3. rate * (1/3) can differ from rate / 3 in the last bit.
+_DEFAULT_LINEAR_MULTIPLIER = 1.0 / 3.0
 _NO_GATE_NOISE = {"p1": 0.0, "p2": 0.0, "p_meas": 0.0, "p_prep": 0.0}
 _DEV_ZERO_RZ_STRIPPED_CONTRIBUTIONS = 0
 
@@ -249,7 +252,9 @@ def test_all_idle_laws_match_pre_rust_family_dem_bytes() -> None:
         p_idle_z_quadratic_sine_rate=0.03,
     ).to_string()
 
-    assert actual == "detector D0\nlogical_observable L0\nerror(0.013129) L0\nerror(0.019423) D0"
+    assert actual == (
+        "detector D0\nlogical_observable L0\nerror(0.013128534530520248) L0\nerror(0.01942281078199452) D0"
+    )
 
 
 def test_z_linear_family_matches_pre_removed_axis_dem_bytes() -> None:
@@ -405,9 +410,9 @@ def test_structured_idle_linear_default_matches_axis_primitives(entrypoint: str)
     primitive = _structured_idle_dem(
         entrypoint,
         idle_after_2q_duration=1.0,
-        p_idle_x_linear_rate=rate / 3.0,
-        p_idle_y_linear_rate=rate / 3.0,
-        p_idle_z_linear_rate=rate / 3.0,
+        p_idle_x_linear_rate=rate * _DEFAULT_LINEAR_MULTIPLIER,
+        p_idle_y_linear_rate=rate * _DEFAULT_LINEAR_MULTIPLIER,
+        p_idle_z_linear_rate=rate * _DEFAULT_LINEAR_MULTIPLIER,
     )
 
     assert structured.to_string() == primitive.to_string()
@@ -721,9 +726,9 @@ def test_from_guppy_idle_insertion_matches_manual_pass_pipeline() -> None:
     reference_circuit.set_meta("num_measurements", "2")
     reference = DetectorErrorModel.from_circuit(
         reference_circuit,
-        p_idle_x_linear_rate=rate / 3.0,
-        p_idle_y_linear_rate=rate / 3.0,
-        p_idle_z_linear_rate=rate / 3.0,
+        p_idle_x_linear_rate=rate * _DEFAULT_LINEAR_MULTIPLIER,
+        p_idle_y_linear_rate=rate * _DEFAULT_LINEAR_MULTIPLIER,
+        p_idle_z_linear_rate=rate * _DEFAULT_LINEAR_MULTIPLIER,
         **_NO_GATE_NOISE,
     )
 
@@ -2723,7 +2728,7 @@ def test_two_qubit_gate_channel_is_converted_not_emitted_naively() -> None:
     text = build.dem.to_string()
 
     # The converted probability, not the summed-but-unconverted 0.005333.
-    assert text.count("error(0.005362)") == 3, text
+    assert text.count("error(0.005362085292012153)") == 3, text
     assert "0.005333" not in text, text
 
     # Fifteen Paulis, three surviving signatures: the Z-type ones are undetectable.

@@ -73,7 +73,7 @@ def test_detector_annotation_matches_record_metadata() -> None:
         dem = DetectorErrorModel.from_circuit(circuit, p1=0.1, p2=0.0, p_meas=0.0, p_prep=0.0)
         assert dem.num_detectors == 1
         # Each H flips readout with 2p/3 = 1/15; odd parity is 28/225.
-        assert "error(0.124444) D0" in dem.to_string()
+        assert "error(0.12444444444444444) D0" in dem.to_string()
         texts.append(dem.to_string())
     assert texts[0] == texts[1]
 

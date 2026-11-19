@@ -69,13 +69,23 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   the logical-subgraph, windowed logical-subgraph, logical-circuit and
   beam-search decoders, `LogicalAlgorithmDecoder::decode_shot`/`decode_obs`,
   `ParallelLogicalSubgraphDecoder::decode_parallel` and
-  `CommittedLogicalSubgraphDecoder::decode_active`/`commit_range`, which also
-  report their width through `ObservableDecoder::num_detectors`. PyMatching
+  `CommittedLogicalSubgraphDecoder::decode_active`/`commit_range`. All of
+  these except `ParallelLogicalSubgraphDecoder`, which has no
+  `ObservableDecoder` impl, also report their width through
+  `ObservableDecoder::num_detectors`. PyMatching
   `decode`, `decode_to_matched_pairs`, `decode_to_edges` and
   `decode_batch_with_config` accept a dense syndrome or stride of
   `num_detectors` to `num_nodes` entries, as upstream PyMatching does, so a
   boundary node below a detector no longer hides the top detectors; other
-  lengths are rejected (previously only longer ones).
+  lengths are rejected (previously only longer ones). Python
+  `PyMatchingDecoder.decode_batch` takes its row width from the input length
+  and accepts the same range, instead of requiring `num_detectors`;
+  `decode_into` and `decode_with_buffer` check the syndrome before writing to
+  the caller's buffer. Their observable buffer now holds one byte per
+  observable, like `DecodingResult::observable`, and must be at least
+  `num_observables` bytes. Before, it was sized as packed bits, but the result
+  was copied one byte per observable, so every observable past the first
+  `ceil(num_observables / 8)` was silently dropped.
   `StreamingLogicalDecoder::feed_dense`, `feed_sparse` and `feed_detection` now
   return `Result` and reject wrong lengths and out-of-range indices; Python
   `LogicalAlgorithmDecoder.feed_dense` and `feed_sparse` raise `ValueError`.
@@ -86,9 +96,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `WindowedLogicalSubgraphStrategy::new` takes the full-DEM detector count, and
   `CommittedLogicalSubgraphDecoder::new` takes only the inner decoder, whose
   width it adopts. A DEM prior above 0.5 is now a configuration error
-  (`ValueError`) for Fusion Blossom's DEM constructors (also `k_mwpm` and
-  `perturbed_fb_corr`) and for correlated PyMatching, instead of an invalid
-  graph or FFI error, including as a logical decoder's inner decoder. Logical
+  (`ValueError`) for Fusion Blossom's DEM constructors (also `k_mwpm`,
+  `perturbed_fb_corr` and the `belief_matching` families) and for correlated
+  PyMatching; `parse_correlated_dem` rejects one too. Previously a prior of
+  1.0 or more on `from_dem`, `from_dem_correlated`,
+  `from_check_matrix_correlated` and the spec families built on them,
+  `belief_matching` included, was accepted silently, as was a prior above 0.5
+  with weight factors on `from_check_matrix_correlated` and
+  `from_parsed_correlated`, whose negative weight was clamped to a small
+  positive one. Other priors above 0.5 gave a Fusion Blossom invalid-graph
+  error, already a `ValueError` when building directly but a `RuntimeError` as
+  a logical decoder's inner decoder, or a correlated-PyMatching FFI error
+  (`RuntimeError`); the `belief_matching` families rejected them in their BP
+  stage, already as `ValueError`, and now report the matching prior. Logical
   decoders raise `RuntimeError` when an internally generated sub-DEM fails to
   build for another reason. A Tesseract `decode_detections` or
   `decode_with_order` index outside the model is `InvalidSyndrome` instead of
@@ -102,6 +122,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - **Fixed:** Logical-subgraph sub-DEMs now declare their full detector and
   observable widths, so spec families no longer reject shots whose last local
   detector has no edges.
+
+- **Fixed:** `FusionBlossomDecoder::from_parsed_correlated` counted the first
+  mechanism on each edge twice when merging, so a lone prior of 0.1 became
+  0.19; each mechanism now enters the independent union once.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,

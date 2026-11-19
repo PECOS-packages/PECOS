@@ -159,6 +159,29 @@ class TestPyMatchingDecoder:
         assert decoder.num_nodes >= 3
         assert decoder.num_edges >= 4
 
+    def test_decode_batch_accepts_rows_up_to_num_nodes(self) -> None:
+        """Batch rows may carry boundary entries, as decode_syndrome and upstream allow."""
+        from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
+
+        H = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
+        decoder = PyMatchingDecoder.from_check_matrix_with_repetitions(H, repetitions=2, use_virtual_boundary=False)
+        assert (decoder.num_detectors, decoder.num_nodes) == (2, 4)
+        shots = [[1, 0], [0, 1], [1, 1]]
+        expected = [list(decoder.decode_syndrome(shot).observable_flips) for shot in shots]
+        for width in (2, 3, 4):
+            # Entries past num_detectors are the boundary nodes; set them to show they are ignored.
+            rows = [shot + [1] * (width - 2) for shot in shots]
+            flat = [bit for row in rows for bit in row]
+            # Batch predictions are padded to the configured observable width.
+            for prediction, flips in zip(decoder.decode_batch(flat, len(rows)), expected, strict=True):
+                assert [bool(bit) for bit in prediction[: len(flips)]] == flips
+                assert not any(prediction[len(flips) :])
+            assert [list(decoder.decode_syndrome(row).observable_flips) for row in rows] == expected
+        with pytest.raises(ValueError, match=r"accepts 2 \(one per detector\) to 4"):
+            decoder.decode_batch([0] * 5, 1)
+        with pytest.raises(ValueError, match="not a whole number of rows"):
+            decoder.decode_batch([0] * 5, 2)
+
     def test_from_dem_with_correlations(self) -> None:
         """Test construction from DEM with decomposition correlations enabled."""
         from pecos_rslib.decoders import PyMatchingDecoder

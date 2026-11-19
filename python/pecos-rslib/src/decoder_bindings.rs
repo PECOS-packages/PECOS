@@ -581,7 +581,9 @@ impl PyPyMatchingDecoder {
     ///
     /// # Arguments
     ///
-    /// * `detection_events` - Flattened detection events array (`num_shots` * `num_detectors` bytes)
+    /// * `detection_events` - Flattened row-major detection events, `num_shots` rows of
+    ///   one byte per node. As in `decode_syndrome`, a row has `num_detectors` to `num_nodes`
+    ///   entries; the row width is `len(detection_events) / num_shots`.
     /// * `num_shots` - Number of shots in the batch
     ///
     /// # Returns
@@ -605,7 +607,20 @@ impl PyPyMatchingDecoder {
     ) -> PyResult<Vec<Vec<u8>>> {
         use pecos_decoders::BatchConfig as RustBatchConfig;
 
-        let num_detectors = self.inner.num_detectors();
+        // Rows may be as wide as `decode_syndrome` accepts; the Rust call checks the range.
+        let row_width = if num_shots == 0 {
+            self.inner.num_detectors()
+        } else if detection_events.len().is_multiple_of(num_shots) {
+            detection_events.len() / num_shots
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detection_events has {} entries, which is not a whole number of rows for \
+                 num_shots={num_shots}; pass num_shots rows of {} to {} entries each",
+                detection_events.len(),
+                self.inner.num_detectors(),
+                self.inner.num_nodes()
+            )));
+        };
         let config = RustBatchConfig {
             bit_packed_input: false,
             bit_packed_output: false,
@@ -613,7 +628,7 @@ impl PyPyMatchingDecoder {
         };
 
         self.inner
-            .decode_batch_with_config(&detection_events, num_shots, num_detectors, config)
+            .decode_batch_with_config(&detection_events, num_shots, row_width, config)
             .map(|result| result.predictions)
             .map_err(decoder_runtime_error_to_py)
     }

@@ -324,6 +324,14 @@ _HIGH_PRIOR_DEM = _LOGICAL_DEM.replace("error(0.1) D0 L0", "error(0.7) D0 L0")
         ("perturbed_fb_corr", r"DEM edge probability 0\.\d+ is above 0\.5"),
         ("pymatching", r"DEM error probability 0\.\d+ is above 0\.5"),
         ("perturbed", r"DEM error probability 0\.\d+ is above 0\.5"),
+        ("belief_matching", r"DEM edge probability 0\.\d+ is above 0\.5"),
+        ("belief_matching_correlated", r"DEM edge probability 0\.\d+ is above 0\.5"),
+        ("belief_matching_mgbp", r"DEM edge probability 0\.\d+ is above 0\.5"),
+        pytest.param(
+            f"belief_matching_hybrid:{_HIGH_PRIOR_DEM}",
+            r"DEM edge probability 0\.\d+ is above 0\.5",
+            id="belief_matching_hybrid",
+        ),
     ],
 )
 def test_logical_subdem_prior_above_half_is_input_error(family, message):
@@ -334,6 +342,27 @@ def test_logical_subdem_prior_above_half_is_input_error(family, message):
     # Building the same backend directly classifies the prior the same way.
     with pytest.raises(ValueError, match=message):
         SampleBatch([[0, 0]], [0]).decode(_HIGH_PRIOR_DEM, DecoderSpec.parse(family), workers=1)
+
+
+# A certain mechanism gives a zero weight that the BP stage accepts, so only the matching
+# prior check rejects it.
+_CERTAIN_PRIOR_DEM = _LOGICAL_DEM.replace("error(0.1) D0 L0", "error(1) D0 L0")
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        "belief_matching",
+        "belief_matching_correlated",
+        "belief_matching_mgbp",
+        pytest.param(f"belief_matching_hybrid:{_CERTAIN_PRIOR_DEM}", id="belief_matching_hybrid"),
+    ],
+)
+def test_belief_matching_certain_prior_is_input_error(family):
+    from pecos_rslib.decoders import DecoderSpec
+
+    with pytest.raises(ValueError, match=r"DEM edge probability 1 is above 0\.5"):
+        SampleBatch([[0, 0]], [0]).decode(_CERTAIN_PRIOR_DEM, DecoderSpec.parse(family), workers=1)
 
 
 def test_raw_pymatching_invalid_error_probability():

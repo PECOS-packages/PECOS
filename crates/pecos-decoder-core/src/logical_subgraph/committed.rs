@@ -297,6 +297,47 @@ mod tests {
     }
 
     #[test]
+    fn descriptor_width_is_checked_against_the_committed_decoder() {
+        use crate::decode_budget::DecodeBudget;
+        use crate::logical_algorithm::{
+            AlgorithmDescriptor, LogicalAlgorithmDecoder, LogicalCircuitDecoder, SegmentDescriptor,
+        };
+
+        let descriptor = |num_detectors| AlgorithmDescriptor {
+            segments: vec![SegmentDescriptor {
+                num_detectors,
+                num_observables: 1,
+            }],
+            boundary_gates: vec![],
+            num_observables: 1,
+            num_frame_slots: 2,
+        };
+        // Each constructor reads one of the two `num_detectors` overrides.
+        let algorithm = |num_detectors| {
+            LogicalAlgorithmDecoder::new(Box::new(wide_decoder(1)), descriptor(num_detectors))
+        };
+        let circuit = |num_detectors| {
+            LogicalCircuitDecoder::new(
+                descriptor(num_detectors),
+                Box::new(wide_decoder(1)),
+                DecodeBudget::unlimited(),
+            )
+        };
+        assert!(matches!(
+            algorithm(2).err(),
+            Some(DecoderError::InvalidConfiguration(message))
+                if message.contains("segments total 2 detectors, but the full-circuit decoder expects 1")
+        ));
+        assert!(matches!(
+            circuit(2).err(),
+            Some(DecoderError::InvalidConfiguration(message))
+                if message.contains("segments total 2 detectors, but the decode strategy expects 1")
+        ));
+        assert_eq!(algorithm(1).unwrap().decode_shot(&[1]).unwrap(), 1);
+        assert_eq!(circuit(1).unwrap().decode_shot(&[1]).unwrap(), 1);
+    }
+
+    #[test]
     fn wide_committed_getter_returns_an_error_instead_of_panicking() {
         let mut decoder = wide_decoder(65);
         decoder.committed_obs.set(64);

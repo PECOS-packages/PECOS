@@ -155,7 +155,7 @@ fn lockstep(ops: &[Op], n: usize, seed: u64, allow_dense: bool) -> bool {
         if !allow_dense {
             assert!(
                 !sim.is_dense(),
-                "{op:?}: crossed with the dense budget disabled"
+                "seed {seed}, n {n}, step {step}, {op:?}: crossed with the dense budget disabled"
             );
         }
         crossed |= sim.is_dense();

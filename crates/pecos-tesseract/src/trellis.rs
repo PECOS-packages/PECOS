@@ -14,8 +14,7 @@
 
 use super::bridge::ffi;
 use super::decoder::{
-    TesseractError, fired_detectors, invalid_detections, reject_repeated_detections,
-    validate_syndrome_length,
+    TesseractError, checked_detections, fired_detectors, validate_syndrome_length,
 };
 use cxx::UniquePtr;
 use ndarray::ArrayView1;
@@ -209,19 +208,7 @@ impl TesseractTrellisDecoder {
         &mut self,
         detections: &ArrayView1<u64>,
     ) -> Result<TesseractTrellisResult, TesseractError> {
-        let detections_slice = detections
-            .as_slice()
-            .ok_or_else(|| invalid_detections("Detection array is not contiguous".to_string()))?;
-        if let Some(&bad) = detections_slice
-            .iter()
-            .find(|&&d| d >= self.num_detectors as u64)
-        {
-            return Err(invalid_detections(format!(
-                "detector {bad} is out of range for a model with {} detectors",
-                self.num_detectors
-            )));
-        }
-        reject_repeated_detections(detections_slice)?;
+        let detections_slice = checked_detections(detections, self.num_detectors)?;
         let result = ffi::trellis_decode_detections(self.inner.pin_mut(), detections_slice)
             .map_err(|e| TesseractError::DecodingFailed(e.what().to_string()))?;
         Ok(TesseractTrellisResult {

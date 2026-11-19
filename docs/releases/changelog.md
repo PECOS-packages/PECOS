@@ -66,16 +66,38 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   impls for Fusion Blossom, MWPF, PyMatching, Tesseract and weighted union-find
   return typed variants instead of `DecodingFailed`. Wrong lengths are rejected
   by `Decoder::decode` on both Tesseract decoders, `CssUfDecoder::decode_css`,
-  PyMatching `decode`, `decode_to_matched_pairs`, `decode_to_edges` and
-  `decode_batch_with_config` (previously only longer syndromes or strides), and
-  the logical-subgraph, logical-circuit and beam-search decoders.
+  the logical-subgraph, windowed logical-subgraph, logical-circuit and
+  beam-search decoders, `LogicalAlgorithmDecoder::decode_shot`/`decode_obs`,
+  `ParallelLogicalSubgraphDecoder::decode_parallel` and
+  `CommittedLogicalSubgraphDecoder::decode_active`/`commit_range`, which also
+  report their width through `ObservableDecoder::num_detectors`. PyMatching
+  `decode`, `decode_to_matched_pairs`, `decode_to_edges` and
+  `decode_batch_with_config` accept a dense syndrome or stride of
+  `num_detectors` to `num_nodes` entries, as upstream PyMatching does, so a
+  boundary node below a detector no longer hides the top detectors; other
+  lengths are rejected (previously only longer ones).
   `StreamingLogicalDecoder::feed_dense`, `feed_sparse` and `feed_detection` now
-  return `Result` and reject wrong lengths and out-of-range indices.
-  `LogicalAlgorithmDecoder::new` rejects a descriptor whose detector total
-  differs from its decoder's. `DecoderError::BatchSizeMismatch` now means a
+  return `Result` and reject wrong lengths and out-of-range indices; Python
+  `LogicalAlgorithmDecoder.feed_dense` and `feed_sparse` raise `ValueError`.
+  `LogicalAlgorithmDecoder::new` and `LogicalCircuitDecoder::new` reject a
+  descriptor whose detector total differs from their decoder's or strategy's,
+  so a windowed `LogicalCircuitDecoder` no longer zero-pads a short descriptor:
+  `DecodeStrategy` gains a defaulted `num_detectors`,
+  `WindowedLogicalSubgraphStrategy::new` takes the full-DEM detector count, and
+  `CommittedLogicalSubgraphDecoder::new` takes only the inner decoder, whose
+  width it adopts. A DEM prior above 0.5 is now a configuration error
+  (`ValueError`) for Fusion Blossom's DEM constructors (also `k_mwpm` and
+  `perturbed_fb_corr`) and for correlated PyMatching, instead of an invalid
+  graph or FFI error, including as a logical decoder's inner decoder. Logical
+  decoders raise `RuntimeError` when an internally generated sub-DEM fails to
+  build for another reason. A Tesseract `decode_detections` or
+  `decode_with_order` index outside the model is `InvalidSyndrome` instead of
+  `DecodingFailed`. `DecoderError::BatchSizeMismatch` now means a
   flat batch buffer of the wrong byte count, and PyMatching reports that case
-  with it instead of `Configuration`. `FusionBlossomError` gains an `Internal`
-  variant for internal `DecoderError`s, which were previously `Configuration`.
+  with it instead of `Configuration`. `From<DecoderError> for
+  FusionBlossomError` maps graph, syndrome, matrix and decoding variants to the
+  matching `FusionBlossomError` variants, and internal ones to a new `Internal`
+  variant; all were previously `Configuration`.
 
 - **Fixed:** Logical-subgraph sub-DEMs now declare their full detector and
   observable widths, so spec families no longer reject shots whose last local

@@ -350,6 +350,7 @@ impl Default for PyMatchingConfig {
 pub struct PyMatchingDecoder {
     graph: UniquePtr<ffi::PyMatchingGraph>,
     num_detectors: usize,
+    num_nodes: usize,
     config: PyMatchingConfig,
 }
 
@@ -523,9 +524,11 @@ impl PyMatchingDecoder {
         };
 
         let num_detectors = ffi::pymatching_get_num_detectors(&graph);
+        let num_nodes = ffi::pymatching_get_num_nodes(&graph);
         Ok(Self {
             graph,
             num_detectors,
+            num_nodes,
             config,
         })
     }
@@ -552,6 +555,7 @@ impl PyMatchingDecoder {
         Ok(Self {
             graph,
             num_detectors,
+            num_nodes,
             config,
         })
     }
@@ -592,9 +596,26 @@ impl PyMatchingDecoder {
     /// during graph construction and uses them during decoding.
     ///
     /// # Errors
-    /// Returns an error if the DEM string is invalid or cannot be parsed.
+    /// Returns an error if the DEM string is invalid or cannot be parsed, or
+    /// [`PyMatchingError::Configuration`] if correlations are enabled and an
+    /// error mechanism has probability above 0.5, which upstream `PyMatching`
+    /// does not support with correlations.
     pub fn from_dem_with_correlations(dem_string: &str, enable_correlations: bool) -> Result<Self> {
-        pecos_decoder_core::dem::grammar::validate_dem_text(dem_string)?;
+        use pecos_decoder_core::dem::grammar::{Kind, parse_line};
+        for line in dem_string.lines() {
+            if let Some(instruction) = parse_line(line)?
+                && enable_correlations
+                && instruction.kind == Kind::Error
+                && let Some(&probability) = instruction.args.first()
+                && probability > 0.5
+            {
+                return Err(PyMatchingError::Configuration(format!(
+                    "DEM error probability {probability} is above 0.5, which correlated \
+                     PyMatching does not support; keep every error probability at most 0.5 \
+                     or disable correlations"
+                )));
+            }
+        }
         let graph = ffi::create_pymatching_graph_from_dem_with_correlations(
             dem_string,
             enable_correlations,
@@ -613,6 +634,7 @@ impl PyMatchingDecoder {
         Ok(Self {
             graph,
             num_detectors,
+            num_nodes,
             config,
         })
     }
@@ -779,6 +801,7 @@ impl PyMatchingDecoder {
             config.merge_strategy.into(),
         );
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
+        self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
         result?;
 
         Ok(())
@@ -833,6 +856,7 @@ impl PyMatchingDecoder {
             merge_strategy.into(),
         );
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
+        self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
         result?;
 
         Ok(())
@@ -841,7 +865,7 @@ impl PyMatchingDecoder {
     /// Get the number of nodes in the graph
     #[must_use]
     pub fn num_nodes(&self) -> usize {
-        ffi::pymatching_get_num_nodes(&self.graph)
+        self.num_nodes
     }
 
     /// Get the number of detectors
@@ -923,6 +947,7 @@ impl PyMatchingDecoder {
         // PyMatching will auto-expand nodes as needed
         ffi::pymatching_set_boundary(self.graph.pin_mut(), boundary);
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
+        self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
     }
 
     /// Check if a node is a boundary node
@@ -931,15 +956,50 @@ impl PyMatchingDecoder {
         ffi::pymatching_is_boundary_node(&self.graph, node)
     }
 
+    /// Reject a dense syndrome width outside the range upstream `PyMatching` accepts.
+    ///
+    /// Dense entry `i` is node `i`, and [`Self::num_detectors`] counts only the
+    /// non-boundary nodes. When a boundary node sits below a detector, the
+    /// detector is addressable only by a syndrome longer than `num_detectors`,
+    /// so, as upstream does, any width from `num_detectors` to
+    /// [`Self::num_nodes`] (boundary entries included) is accepted. Upstream
+    /// creates no detection event at a boundary node.
+    pub(crate) fn validate_syndrome_width(&self, width: usize) -> Result<()> {
+        let num_nodes = self.num_nodes();
+        if (self.num_detectors..=num_nodes).contains(&width) {
+            return Ok(());
+        }
+        if num_nodes == self.num_detectors {
+            return Err(PyMatchingError::InvalidSyndrome {
+                expected: self.num_detectors,
+                actual: width,
+            });
+        }
+        Err(PyMatchingError::Dem(
+            pecos_decoder_core::DecoderError::InvalidSyndrome(format!(
+                "dense syndrome has {width} entries, but this graph accepts {} (one per \
+                 detector) to {num_nodes} (one per node, boundary nodes included)",
+                self.num_detectors
+            )),
+        ))
+    }
+
+    /// Reject a dense syndrome whose length [`Self::validate_syndrome_width`] rejects.
+    pub(crate) fn validate_syndrome(&self, syndrome: &[u8]) -> Result<()> {
+        self.validate_syndrome_width(syndrome.len())
+    }
+
     /// Decode detection events
     ///
     /// Automatically uses the appropriate method based on the number of observables
     ///
     /// # Errors
     ///
-    /// Returns [`PyMatchingError::InvalidSyndrome`] unless `detection_events`
-    /// has exactly [`Self::num_detectors`] entries (one per non-boundary node),
-    /// or an error if decoding fails.
+    /// Returns an invalid-syndrome error unless `detection_events` has between
+    /// [`Self::num_detectors`] and [`Self::num_nodes`] entries.
+    /// Entry `i` is node `i`, so with a boundary node below the highest
+    /// detector, the entries past `num_detectors` address the top detectors.
+    /// Also returns an error if decoding fails.
     ///
     /// # Panics
     ///
@@ -990,8 +1050,8 @@ impl PyMatchingDecoder {
     /// A value of -1 in detector2 indicates matching to boundary
     ///
     /// # Errors
-    /// Returns [`PyMatchingError::InvalidSyndrome`] unless `detection_events`
-    /// has exactly [`Self::num_detectors`] entries, or an error if matching fails.
+    /// Returns an invalid-syndrome error unless `detection_events` has a length
+    /// [`Self::decode`] accepts, or an error if matching fails.
     #[must_use = "The matched pairs should be used"]
     pub fn decode_to_matched_pairs(&mut self, detection_events: &[u8]) -> Result<Vec<MatchedPair>> {
         self.validate_syndrome(detection_events)?;
@@ -1041,9 +1101,8 @@ impl PyMatchingDecoder {
     /// These are detector pairs that form edges, not detection event pairs
     ///
     /// # Errors
-    /// Returns [`PyMatchingError::InvalidSyndrome`] unless `detection_events`
-    /// has exactly [`Self::num_detectors`] entries, or an error if edge
-    /// extraction fails.
+    /// Returns an invalid-syndrome error unless `detection_events` has a length
+    /// [`Self::decode`] accepts, or an error if edge extraction fails.
     pub fn decode_to_edges(&mut self, detection_events: &[u8]) -> Result<Vec<MatchedPair>> {
         self.validate_syndrome(detection_events)?;
         let edges = ffi::decode_to_edges(self.graph.pin_mut(), detection_events)?;
@@ -1055,7 +1114,7 @@ impl PyMatchingDecoder {
     /// # Arguments
     /// * `shots` - Detection events for all shots (flat array)
     /// * `num_shots` - Number of shots to decode
-    /// * `num_detectors` - Number of detectors per shot
+    /// * `num_detectors` - Dense entries per shot, any width [`Self::decode`] accepts
     /// * `config` - Configuration for batch decoding
     ///
     /// # Errors
@@ -1067,31 +1126,16 @@ impl PyMatchingDecoder {
         num_detectors: usize,
         config: BatchConfig,
     ) -> Result<BatchDecodingResult> {
-        // Validate input parameters
-        if num_shots == 0 {
-            return Ok(BatchDecodingResult {
-                predictions: vec![],
-                weights: vec![],
-                bit_packed: config.bit_packed_output,
-            });
-        }
-
-        // Every shot must carry exactly one entry per detector.
-        let actual_detectors = self.num_detectors();
-        if num_detectors != actual_detectors {
-            return Err(PyMatchingError::InvalidSyndrome {
-                expected: actual_detectors,
-                actual: num_detectors,
-            });
-        }
-
-        // Calculate expected shots array size
-        let expected_size = if config.bit_packed_input {
-            num_shots * num_detectors.div_ceil(8)
+        // Each shot is a dense syndrome, with the widths `decode` accepts.
+        self.validate_syndrome_width(num_detectors)?;
+        let stride = if config.bit_packed_input {
+            num_detectors.div_ceil(8)
         } else {
-            num_shots * num_detectors
+            num_detectors
         };
-
+        let expected_size = num_shots.checked_mul(stride).ok_or_else(|| {
+            PyMatchingError::Configuration("batch dimensions overflow usize".to_string())
+        })?;
         if shots.len() != expected_size {
             return Err(PyMatchingError::Dem(
                 pecos_decoder_core::DecoderError::BatchSizeMismatch {
@@ -1099,6 +1143,13 @@ impl PyMatchingDecoder {
                     actual: shots.len(),
                 },
             ));
+        }
+        if num_shots == 0 {
+            return Ok(BatchDecodingResult {
+                predictions: vec![],
+                weights: vec![],
+                bit_packed: config.bit_packed_output,
+            });
         }
 
         let result = ffi::decode_batch(
@@ -1660,6 +1711,31 @@ impl From<ffi::BatchDecodingResult> for BatchDecodingResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_validates_empty_buffers_and_size_overflow() {
+        let mut decoder = PyMatchingDecoder::from_dem("error(0.1) D0 L0\ndetector D1").unwrap();
+        for bit_packed_input in [false, true] {
+            let config = BatchConfig {
+                bit_packed_input,
+                ..BatchConfig::default()
+            };
+            assert!(matches!(
+                decoder.decode_batch_with_config(&[0], 0, 2, config),
+                Err(PyMatchingError::Dem(
+                    pecos_decoder_core::DecoderError::BatchSizeMismatch {
+                        expected: 0,
+                        actual: 1
+                    }
+                ))
+            ));
+            assert!(decoder.decode_batch_with_config(&[], 0, 2, config).is_ok());
+        }
+        assert!(matches!(
+            decoder.decode_batch_with_config(&[], usize::MAX, 2, BatchConfig::default()),
+            Err(PyMatchingError::Configuration(_))
+        ));
+    }
 
     #[test]
     fn dem_validation_precedes_backend_parsing() {

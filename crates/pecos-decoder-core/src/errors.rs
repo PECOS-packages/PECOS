@@ -82,6 +82,18 @@ pub enum DecoderError {
     Other(#[from] anyhow::Error),
 }
 
+/// Reject a dense syndrome whose length differs from the decoder's detector count.
+///
+/// # Errors
+///
+/// Returns [`DecoderError::InvalidDimensions`] if `actual != expected`.
+pub fn check_syndrome_length(expected: usize, actual: usize) -> Result<()> {
+    if actual != expected {
+        return Err(DecoderError::InvalidDimensions { expected, actual });
+    }
+    Ok(())
+}
+
 /// Specialized error for matrix operations
 #[derive(Error, Debug)]
 pub enum MatrixError {

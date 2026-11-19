@@ -26,7 +26,7 @@
 use crate::ObservableDecoder;
 use crate::clifford_frame::{conjugate_cnot, conjugate_h, conjugate_s};
 use crate::decode_budget::DecodeStrategy;
-use crate::errors::DecoderError;
+use crate::errors::{DecoderError, check_syndrome_length};
 use crate::obs_mask::ObsMask;
 
 const UNSUPPORTED_DECISION_POINT_MESSAGE: &str = "descriptor contains feed-forward decision points \
@@ -349,7 +349,7 @@ impl LogicalAlgorithmDecoder {
     /// Returns [`DecoderError::InvalidDimensions`] if the syndrome length
     /// differs from [`Self::total_detectors`], and propagates decoder failures.
     pub fn decode_shot(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        check_total_detectors(self.total_detectors(), syndrome.len())?;
+        check_syndrome_length(self.total_detectors(), syndrome.len())?;
         self.full_decoder.decode_to_observables(syndrome)
     }
 
@@ -445,17 +445,9 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
     }
 
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        check_total_detectors(self.total_detectors(), syndrome.len())?;
+        check_syndrome_length(self.total_detectors(), syndrome.len())?;
         self.full_decoder.decode_obs(syndrome)
     }
-}
-
-/// Reject a full-circuit syndrome whose length differs from the descriptor total.
-fn check_total_detectors(expected: usize, actual: usize) -> Result<(), DecoderError> {
-    if actual != expected {
-        return Err(DecoderError::InvalidDimensions { expected, actual });
-    }
-    Ok(())
 }
 
 // ============================================================================
@@ -571,7 +563,7 @@ impl StreamingLogicalDecoder {
     /// Returns [`DecoderError::InvalidDimensions`] if the slice length differs
     /// from the total detector count; the buffer is left unchanged.
     pub fn feed_dense(&mut self, syndrome: &[u8]) -> Result<(), DecoderError> {
-        check_total_detectors(self.total_detectors, syndrome.len())?;
+        check_syndrome_length(self.total_detectors, syndrome.len())?;
         self.syndrome.copy_from_slice(syndrome);
         Ok(())
     }
@@ -743,6 +735,12 @@ pub struct LogicalCircuitDecoder {
 
 impl LogicalCircuitDecoder {
     /// Build from an algorithm descriptor, decode strategy, and budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] if the descriptor is
+    /// invalid or its segment detector total differs from the detector count
+    /// the strategy reports.
     pub fn new(
         descriptor: AlgorithmDescriptor,
         strategy: Box<dyn DecodeStrategy + Send + Sync>,
@@ -757,6 +755,13 @@ impl LogicalCircuitDecoder {
             offset += seg.num_detectors;
         }
         let total_detectors = offset;
+        if let Some(strategy_detectors) = strategy.num_detectors()
+            && strategy_detectors != total_detectors
+        {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "algorithm descriptor segments total {total_detectors} detectors, but the decode strategy expects {strategy_detectors}; build the descriptor and the strategy from the same circuit"
+            )));
+        }
 
         let frame = FrameBits::new(descriptor.num_frame_slots);
         Ok(Self {
@@ -783,7 +788,7 @@ impl LogicalCircuitDecoder {
     /// Returns [`DecoderError::InvalidDimensions`] if the syndrome length
     /// differs from [`Self::total_detectors`], and propagates strategy failures.
     pub fn decode_shot(&mut self, full_syndrome: &[u8]) -> Result<u64, DecoderError> {
-        check_total_detectors(self.total_detectors, full_syndrome.len())?;
+        check_syndrome_length(self.total_detectors, full_syndrome.len())?;
         self.reset();
         self.syndrome.copy_from_slice(full_syndrome);
 
@@ -881,7 +886,7 @@ impl ObservableDecoder for LogicalCircuitDecoder {
     }
 
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        check_total_detectors(self.total_detectors, syndrome.len())?;
+        check_syndrome_length(self.total_detectors, syndrome.len())?;
         self.reset();
         self.syndrome.copy_from_slice(syndrome);
         self.strategy.decode_obs(&self.syndrome)
@@ -910,6 +915,10 @@ impl FullCircuitStrategy {
 }
 
 impl DecodeStrategy for FullCircuitStrategy {
+    fn num_detectors(&self) -> Option<usize> {
+        self.inner.num_detectors()
+    }
+
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.inner.decode_to_observables(syndrome)
     }
@@ -953,6 +962,8 @@ pub struct WindowedLogicalSubgraphStrategy {
     observable_indices: Vec<usize>,
     /// Per-subgraph sub-syndrome buffers (reusable).
     sub_syndromes: Vec<Vec<u8>>,
+    /// Full-DEM detector count; every syndrome must have exactly this length.
+    num_detectors: usize,
 }
 
 impl WindowedLogicalSubgraphStrategy {
@@ -965,17 +976,19 @@ impl WindowedLogicalSubgraphStrategy {
     ///   (each subgraph reports its observable as local bit 0). MUST line up
     ///   with `subgraph_dems` — when empty-region observables are filtered out,
     ///   pass the surviving observables' true indices, not `0..n`.
+    /// `num_detectors`: the full-DEM detector count every syndrome must match.
     /// `factory`: creates the inner decoder for each subgraph DEM.
     ///
     /// # Errors
     ///
     /// Returns `DecoderError` if the factory fails, if the three input vectors
-    /// disagree in length, or if any observable index is >= 64 (the u64
-    /// observable mask cannot hold it).
+    /// disagree in length, or if a detector map names a detector at or beyond
+    /// `num_detectors`.
     pub fn new<F>(
         subgraph_dems: Vec<String>,
         detector_maps: Vec<Vec<usize>>,
         observable_indices: Vec<usize>,
+        num_detectors: usize,
         mut factory: F,
     ) -> Result<Self, DecoderError>
     where
@@ -988,6 +1001,16 @@ impl WindowedLogicalSubgraphStrategy {
                  maps={}, obs={})",
                 detector_maps.len(),
                 observable_indices.len(),
+            )));
+        }
+        if let Some(&global) = detector_maps
+            .iter()
+            .flatten()
+            .find(|&&global| global >= num_detectors)
+        {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "WindowedLogicalSubgraphStrategy: detector map names detector {global}, \
+                 but the full DEM has {num_detectors} detectors"
             )));
         }
         let mut decoders = Vec::with_capacity(num);
@@ -1004,11 +1027,16 @@ impl WindowedLogicalSubgraphStrategy {
             detector_maps,
             observable_indices,
             sub_syndromes,
+            num_detectors,
         })
     }
 }
 
 impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.num_detectors)
+    }
+
     /// Narrowing wrapper over [`Self::decode_obs`]; errors above 64 observables.
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_obs(syndrome)?.to_u64().ok_or_else(|| {
@@ -1019,6 +1047,7 @@ impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
     }
 
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         let mut obs_mask = ObsMask::new();
 
         for (i, (dec, dmap)) in self
@@ -1035,11 +1064,7 @@ impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
             // Route global syndrome to subgraph-local syndrome
             let buf = &mut self.sub_syndromes[i];
             for (local, &global) in dmap.iter().enumerate() {
-                buf[local] = if global < syndrome.len() {
-                    syndrome[global]
-                } else {
-                    0
-                };
+                buf[local] = syndrome[global];
             }
 
             // Decode this subgraph: it reports its observable as local bit 0;
@@ -1296,6 +1321,7 @@ mod tests {
             ],
             vec![vec![0usize], vec![1usize]],
             vec![1usize, 3usize],
+            2,
             |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
         )
         .unwrap();
@@ -1312,6 +1338,7 @@ mod tests {
             vec!["error(0.1) D0 L0".to_string()],
             vec![vec![0usize]],
             vec![64usize],
+            1,
             |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
         )
         .unwrap();
@@ -1328,9 +1355,107 @@ mod tests {
             vec!["error(0.1) D0 L0".to_string()],
             vec![vec![0usize], vec![1usize]], // 2 maps for 1 dem
             vec![0usize],
+            2,
             |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
         );
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn windowed_strategy_rejects_wrong_lengths_and_out_of_range_maps() {
+        let factory =
+            |_dem: &str| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>);
+        let mut strategy = WindowedLogicalSubgraphStrategy::new(
+            vec!["error(0.1) D0 L0".to_string()],
+            vec![vec![0usize]],
+            vec![0usize],
+            2,
+            factory,
+        )
+        .unwrap();
+        for length in [0, 1, 3] {
+            assert!(
+                matches!(
+                    DecodeStrategy::decode_obs(&mut strategy, &vec![0; length]),
+                    Err(DecoderError::InvalidDimensions { expected: 2, actual }) if actual == length
+                ),
+                "length {length}"
+            );
+        }
+        assert_eq!(strategy.decode(&[0, 0]).unwrap(), 1);
+
+        let error = WindowedLogicalSubgraphStrategy::new(
+            vec!["error(0.1) D0 L0".to_string()],
+            vec![vec![2usize]],
+            vec![0usize],
+            2,
+            factory,
+        )
+        .err()
+        .expect("a detector map beyond the full DEM must be rejected");
+        assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
+        assert!(error.to_string().contains("detector 2"));
+    }
+
+    /// Reports a fixed full-circuit width, as a real full-DEM decoder does.
+    struct WidthDecoder(usize);
+    impl ObservableDecoder for WidthDecoder {
+        fn num_detectors(&self) -> Option<usize> {
+            Some(self.0)
+        }
+
+        fn decode_obs(&mut self, _: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+            Ok(crate::obs_mask::ObsMask::new())
+        }
+    }
+
+    #[test]
+    fn logical_circuit_decoder_rejects_strategy_width_mismatch() {
+        let descriptor = |num_detectors| AlgorithmDescriptor {
+            segments: vec![SegmentDescriptor {
+                num_detectors,
+                num_observables: 1,
+            }],
+            boundary_gates: vec![],
+            num_observables: 1,
+            num_frame_slots: 2,
+        };
+        let full = |width| -> Box<dyn DecodeStrategy + Send + Sync> {
+            Box::new(FullCircuitStrategy::new(Box::new(WidthDecoder(width))))
+        };
+        let windowed = |width| -> Box<dyn DecodeStrategy + Send + Sync> {
+            Box::new(
+                WindowedLogicalSubgraphStrategy::new(
+                    vec!["error(0.1) D0 L0".to_string()],
+                    vec![vec![0usize]],
+                    vec![0usize],
+                    width,
+                    |_dem| {
+                        Ok(Box::new(FixedDecoder(0)) as Box<dyn ObservableDecoder + Send + Sync>)
+                    },
+                )
+                .unwrap(),
+            )
+        };
+        for strategy in [full as fn(usize) -> _, windowed] {
+            // The descriptor's segment total sits below the strategy width, so
+            // an unchecked windowed decoder would zero-pad the missing tail.
+            let error =
+                LogicalCircuitDecoder::new(descriptor(2), strategy(3), DecodeBudget::unlimited())
+                    .err()
+                    .expect("a width mismatch must be rejected at construction");
+            assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
+            assert!(
+                error
+                    .to_string()
+                    .contains("segments total 2 detectors, but the decode strategy expects 3"),
+                "{error}"
+            );
+            let mut decoder =
+                LogicalCircuitDecoder::new(descriptor(3), strategy(3), DecodeBudget::unlimited())
+                    .unwrap();
+            assert_eq!(decoder.decode_shot(&[0, 0, 0]).unwrap(), 0);
+        }
     }
 
     #[test]

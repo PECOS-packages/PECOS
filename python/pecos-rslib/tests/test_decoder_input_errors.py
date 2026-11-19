@@ -284,9 +284,56 @@ def test_logical_algorithm_rejects_descriptor_decoder_width_mismatch():
         LogicalAlgorithmDecoder(descriptor, "pymatching")
 
 
+@pytest.mark.parametrize("budget", ["unlimited", "windowed"])
+@pytest.mark.parametrize("segment_detectors", [1, 3])
+def test_logical_circuit_rejects_descriptor_strategy_width_mismatch(budget, segment_detectors):
+    # Below the DEM width, the windowed strategy used to zero-pad the missing
+    # tail instead of rejecting the descriptor.
+    descriptor = _logical_descriptor()
+    descriptor["segments"][0]["num_detectors"] = segment_detectors
+    with pytest.raises(
+        ValueError,
+        match=f"segments total {segment_detectors} detectors, but the decode strategy expects 2",
+    ):
+        LogicalCircuitDecoder(descriptor, budget, "pymatching")
+
+
+# D1 is used by a mechanism but sits at coordinates no stabilizer claims, so
+# partitioning this model fails before any inner decoder could be built.
+_UNPARTITIONABLE_DEM = "error(0.1) D0 L0\nerror(0.1) D0 D1\ndetector(1, 0, 0) D0\ndetector(9, 9, 0) D1\n"
+
+
 def test_logical_constructor_rejects_bad_inner_spec_before_building():
-    with pytest.raises(ValueError, match="Unsupported decoder_type"):
-        LogicalSubgraphDecoder(_LOGICAL_DEM, _LOGICAL_STAB_COORDS, "unknown_decoder")
+    with pytest.raises(ValueError, match="could not be classified against stab_coords"):
+        LogicalSubgraphDecoder(_UNPARTITIONABLE_DEM, _LOGICAL_STAB_COORDS, "pymatching")
+    # The spec is parsed before the model is partitioned, so its error wins.
+    with pytest.raises(ValueError, match="Unsupported decoder_type: unknown_decoder"):
+        LogicalSubgraphDecoder(_UNPARTITIONABLE_DEM, _LOGICAL_STAB_COORDS, "unknown_decoder")
+
+
+# The logical subgraph keeps the p = 0.7 mechanism, whose matching weight is negative. The
+# sub-DEM merges it with the projected D0 D1 mechanism, so messages name the merged value.
+_HIGH_PRIOR_DEM = _LOGICAL_DEM.replace("error(0.1) D0 L0", "error(0.7) D0 L0")
+
+
+@pytest.mark.parametrize(
+    ("family", "message"),
+    [
+        ("fusion_blossom", r"DEM edge probability 0\.\d+ is above 0\.5"),
+        ("k_mwpm", r"DEM edge probability 0\.\d+ is above 0\.5"),
+        ("perturbed_fb_corr", r"DEM edge probability 0\.\d+ is above 0\.5"),
+        ("pymatching", r"DEM error probability 0\.\d+ is above 0\.5"),
+        ("perturbed", r"DEM error probability 0\.\d+ is above 0\.5"),
+    ],
+)
+def test_logical_subdem_prior_above_half_is_input_error(family, message):
+    from pecos_rslib.decoders import DecoderSpec
+
+    with pytest.raises(ValueError, match=message):
+        LogicalSubgraphDecoder(_HIGH_PRIOR_DEM, _LOGICAL_STAB_COORDS, family)
+    # Building the same backend directly classifies the prior the same way.
+    with pytest.raises(ValueError, match=message):
+        SampleBatch([[0, 0]], [0]).decode(_HIGH_PRIOR_DEM, DecoderSpec.parse(family), workers=1)
 
 
 def test_raw_pymatching_invalid_error_probability():
@@ -295,9 +342,15 @@ def test_raw_pymatching_invalid_error_probability():
 
 
 @pytest.mark.parametrize("length", [1, 3])
-@pytest.mark.parametrize("decoder_class", [PyMatchingDecoder, FusionBlossomDecoder])
-def test_raw_matching_wrong_length(decoder_class, length):
+@pytest.mark.parametrize(
+    ("decoder_class", "message"),
+    [
+        (PyMatchingDecoder, "Invalid syndrome: expected length 2, got {length}$"),
+        (FusionBlossomDecoder, "Syndrome length {length} doesn't match number of nodes 2$"),
+    ],
+)
+def test_raw_matching_wrong_length(decoder_class, message, length):
     decoder = decoder_class.from_dem(DEM)
     decoder.decode_syndrome([1, 0])
-    with pytest.raises(ValueError, match=f"{length}"):
+    with pytest.raises(ValueError, match=message.format(length=length)):
         decoder.decode_syndrome([0] * length)

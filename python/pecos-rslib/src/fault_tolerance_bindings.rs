@@ -3533,9 +3533,10 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
 /// caller input before any sub-DEM exists. `InvalidConfiguration` and
 /// `BackendUnavailable` still come from the caller: the spec's options or
 /// missing backend, or the priors of the caller's DEM (for example an
-/// `error_rate=0` model leaves no uncertain mechanism in the reduced support).
-/// Any other failure means the generated text or graph was rejected, which is
-/// an internal error.
+/// `error_rate=0` model leaves no uncertain mechanism in the reduced support,
+/// and a matching backend cannot weight a prior above 0.5). Backends report
+/// such prior errors as configuration errors. Any other failure means the generated
+/// text or graph was rejected, which is an internal error.
 fn build_subdem_decoder(
     sub_dem: &str,
     spec: &pecos_decoders::DecoderSpec,
@@ -6852,10 +6853,12 @@ impl PyLogicalCircuitDecoder {
                 effective_windowing = EffectiveWindowing::FullFallback.as_str().to_string();
                 actual_num_windows = vec![1usize; sub_dems.len()];
 
+                let num_detectors = full_osd.num_detectors();
                 let wosd = WindowedLogicalSubgraphStrategy::new(
                     sub_dems,
                     det_maps,
                     obs_indices,
+                    num_detectors,
                     |dem_str| {
                         let dec = build_subdem_decoder(dem_str, &inner_spec)?;
                         Ok(Box::new(SendWrapper(dec))
@@ -8929,5 +8932,37 @@ mod map_record_tests {
             message.contains("record 1: map has node 3 qubit 5 basis 0"),
             "{message}"
         );
+    }
+}
+
+#[cfg(test)]
+mod subdem_build_tests {
+    use super::*;
+
+    // `LogicalSubgraphDecoder` and the windowed strategy derive each sub-DEM
+    // from a caller DEM that already parsed, so no Python input reaches a
+    // rejected sub-DEM; feed the builder malformed text directly.
+    #[test]
+    fn rejected_generated_sub_dem_is_an_internal_error() {
+        let spec = pecos_decoders::DecoderSpec::parse("pymatching").unwrap();
+        let error = build_subdem_decoder("error(0.1) D0 L0 bad_target", &spec)
+            .err()
+            .expect("malformed sub-DEM text must be rejected");
+        assert!(
+            matches!(error, pecos_decoders::DecoderError::InternalError(_)),
+            "{error:?}"
+        );
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let error = decoder_build_error_to_py(error);
+            assert!(error.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py));
+            let message = error.to_string();
+            assert!(
+                message.starts_with(
+                    "RuntimeError: failed to build a decoder for an internally generated sub-DEM: "
+                ),
+                "{message}"
+            );
+        });
     }
 }

@@ -289,17 +289,14 @@ impl TesseractDecoder {
     ///
     /// Returns [`TesseractError::Dem`] carrying
     /// [`DecoderError::InvalidSyndrome`](pecos_decoder_core::DecoderError::InvalidSyndrome)
-    /// if the detection array is not contiguous or repeats a detector, or
-    /// [`TesseractError::DecodingFailed`]
-    /// if the C++ decoder fails (including a detector index outside the model).
+    /// if the detection array is not contiguous, repeats a detector, or names a
+    /// detector at or beyond `num_detectors`, or [`TesseractError::DecodingFailed`]
+    /// if the C++ decoder fails.
     pub fn decode_detections(
         &mut self,
         detections: &ArrayView1<u64>,
     ) -> Result<DecodingResult, TesseractError> {
-        let detections_slice = detections
-            .as_slice()
-            .ok_or_else(|| invalid_detections("Detection array is not contiguous".to_string()))?;
-        reject_repeated_detections(detections_slice)?;
+        let detections_slice = checked_detections(detections, self.num_detectors)?;
 
         let result = ffi::decode_detections(self.inner.pin_mut(), detections_slice)
             .map_err(|e| TesseractError::DecodingFailed(e.what().to_string()))?;
@@ -329,10 +326,7 @@ impl TesseractDecoder {
         detections: &ArrayView1<u64>,
         det_order: usize,
     ) -> Result<DecodingResult, TesseractError> {
-        let detections_slice = detections
-            .as_slice()
-            .ok_or_else(|| invalid_detections("Detection array is not contiguous".to_string()))?;
-        reject_repeated_detections(detections_slice)?;
+        let detections_slice = checked_detections(detections, self.num_detectors)?;
 
         let result =
             ffi::decode_detections_with_order(self.inner.pin_mut(), detections_slice, det_order)
@@ -456,24 +450,38 @@ impl TesseractDecoder {
     }
 }
 
+/// Borrow a sparse detection array after checking it names fired detectors.
+///
 /// Sparse detections name a set of fired detectors. Upstream's A* sets each
 /// detector bit once but counts every occurrence in its per-error detector
 /// tallies, and the trellis kernel XORs each occurrence, so a repeated index
-/// silently changes the answer in both; reject it at the boundary.
+/// silently changes the answer in both; reject it at the boundary, along with
+/// any index outside the model.
 ///
 /// # Errors
 ///
-/// Returns an [`invalid_detections`] error naming the repeated detector.
-pub(crate) fn reject_repeated_detections(detections: &[u64]) -> Result<(), TesseractError> {
+/// Returns an [`invalid_detections`] error if the array is not contiguous,
+/// names a detector at or beyond `num_detectors`, or repeats a detector.
+pub(crate) fn checked_detections<'a>(
+    detections: &'a ArrayView1<u64>,
+    num_detectors: usize,
+) -> Result<&'a [u64], TesseractError> {
+    let detections = detections
+        .as_slice()
+        .ok_or_else(|| invalid_detections("Detection array is not contiguous".to_string()))?;
+    if let Some(&bad) = detections.iter().find(|&&d| d >= num_detectors as u64) {
+        return Err(invalid_detections(format!(
+            "detector {bad} is out of range for a model with {num_detectors} detectors"
+        )));
+    }
     let mut sorted = detections.to_vec();
     sorted.sort_unstable();
-    match sorted.windows(2).find(|pair| pair[0] == pair[1]) {
-        Some(pair) => Err(invalid_detections(format!(
-            "detector {} is repeated; detections must name each fired detector once",
-            pair[0]
-        ))),
-        None => Ok(()),
+    if let Some([detector, ..]) = sorted.windows(2).find(|pair| pair[0] == pair[1]) {
+        return Err(invalid_detections(format!(
+            "detector {detector} is repeated; detections must name each fired detector once"
+        )));
     }
+    Ok(detections)
 }
 
 /// A caller-supplied detection array that is not a valid syndrome.
@@ -568,6 +576,27 @@ mod tests {
             ));
         }
         assert!(decoder.decode_obs(&[1, 0]).is_ok());
+    }
+
+    #[test]
+    fn sparse_decode_rejects_out_of_range_detector_before_backend() {
+        let mut decoder = TesseractDecoder::new(TWO_DETECTOR_DEM, TesseractConfig::default())
+            .expect("valid two-detector DEM");
+        let detections = Array1::from_vec(vec![0_u64, 2]);
+        let expected = "detector 2 is out of range for a model with 2 detectors";
+        assert!(matches!(
+            decoder.decode_detections(&detections.view()),
+            Err(TesseractError::Dem(DecoderError::InvalidSyndrome(message))) if message == expected
+        ));
+        assert!(matches!(
+            decoder.decode_with_order(&detections.view(), 0),
+            Err(TesseractError::Dem(DecoderError::InvalidSyndrome(message))) if message == expected
+        ));
+        assert!(
+            decoder
+                .decode_detections(&Array1::from_vec(vec![1_u64]).view())
+                .is_ok()
+        );
     }
 
     #[test]

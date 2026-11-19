@@ -26,7 +26,7 @@
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;
-use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::errors::{DecoderError, check_syndrome_length};
 use pecos_decoder_core::logical_subgraph::window_plan::LogicalSubgraphWindowPlan;
 use pecos_decoder_core::logical_subgraph::{
     LogicalSubgraph, MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
@@ -181,12 +181,7 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
     /// Decode every windowed per-observable subgraph and pack the flips into a
     /// wide [`ObsMask`] at each subgraph's GLOBAL observable index (no >64 cap).
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        if syndrome.len() != self.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         let mut obs_mask = ObsMask::new();
         for sg in &mut self.subgraphs {
             let n = sg.num_local;

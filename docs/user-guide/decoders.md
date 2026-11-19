@@ -192,9 +192,11 @@ configuration. This applies to `DemAwareDecoder`,
 `StructuredDemDecoder.decode_syndrome`, spec builds, `SampleBatch.decode`,
 `DemSampler` decoding, logical decoder constructors and `decode`/`decode_count`,
 and the raw `pecos_rslib.decoders` classes. Only the families with support
-reduction (Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind) check syndrome
-values: they raise `ValueError` for a byte other than 0 or 1. The other families
-treat any nonzero byte as a fired detector. Internal and backend execution
+reduction (Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind) and the
+`windowed` family check syndrome values: they raise `ValueError` for a byte
+other than 0 or 1. So do an `ensemble` with such a member and
+`WindowedLogicalSubgraphDecoder`, whose subgraphs decode through windowed
+union-find. The other families treat any nonzero byte as a fired detector. Internal and backend execution
 failures remain `RuntimeError`. Input errors abort batch decoding.
 `SampleBatch.compare_decoders` raises `ValueError` before decoding if either
 decoder's detector count differs from the batch, and otherwise counts per-shot

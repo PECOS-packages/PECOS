@@ -49,18 +49,6 @@ impl PyMatchingDecoder {
         DecodeBuffer::new(self)
     }
 
-    /// Validate syndrome length
-    pub(crate) fn validate_syndrome(&self, syndrome: &[u8]) -> Result<()> {
-        let expected = self.num_detectors();
-        if syndrome.len() != expected {
-            return Err(crate::PyMatchingError::InvalidSyndrome {
-                expected,
-                actual: syndrome.len(),
-            });
-        }
-        Ok(())
-    }
-
     /// Validate buffer size for observables
     fn validate_buffer_size(&self, buffer: &[u8], purpose: &str) -> Result<()> {
         let required_len = self.num_observables().div_ceil(BITS_PER_BYTE);
@@ -83,11 +71,11 @@ impl PyMatchingDecoder {
     /// # Errors
     ///
     /// Returns a [`PyMatchingError`](crate::PyMatchingError) if:
-    /// - The syndrome length doesn't match the number of detectors
+    /// - The syndrome length is outside the range [`Self::decode`] accepts
     /// - The observable buffer is too small
     /// - Decoding fails
     pub fn decode_into(&mut self, syndrome: &[u8], observable_buffer: &mut [u8]) -> Result<f64> {
-        self.validate_syndrome(syndrome)?;
+        // `decode` validates the syndrome length.
         self.validate_buffer_size(observable_buffer, "Observable")?;
 
         // Clear and decode

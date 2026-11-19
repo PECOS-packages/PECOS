@@ -22,7 +22,7 @@
 
 use crate::ObservableDecoder;
 use crate::decode_budget::{DecodeStrategy, DetectorRegion};
-use crate::errors::DecoderError;
+use crate::errors::{DecoderError, check_syndrome_length};
 use crate::logical_subgraph::LogicalSubgraphDecoder;
 use crate::obs_mask::ObsMask;
 
@@ -50,8 +50,11 @@ pub struct CommittedLogicalSubgraphDecoder {
 
 impl CommittedLogicalSubgraphDecoder {
     /// Wrap an existing logical-subgraph decoder with commitment tracking.
+    ///
+    /// The detector count is the inner decoder's full-DEM width.
     #[must_use]
-    pub fn new(inner: LogicalSubgraphDecoder, num_detectors: usize) -> Self {
+    pub fn new(inner: LogicalSubgraphDecoder) -> Self {
+        let num_detectors = inner.num_detectors;
         Self {
             inner,
             committed: vec![false; num_detectors],
@@ -66,6 +69,13 @@ impl CommittedLogicalSubgraphDecoder {
     /// Committed detectors are masked to 0 before passing to the
     /// inner logical-subgraph decoder. Returns the correction for the active (uncommitted)
     /// region.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidDimensions`] if the syndrome length
+    /// differs from the full-DEM detector count,
+    /// [`DecoderError::InvalidConfiguration`] above 64 observables, and
+    /// propagates inner decoder failures.
     pub fn decode_active(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_active_obs(syndrome)?.to_u64().ok_or_else(|| {
             DecoderError::InvalidConfiguration(
@@ -75,12 +85,7 @@ impl CommittedLogicalSubgraphDecoder {
     }
 
     fn decode_active_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        if syndrome.len() != self.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         // Build masked syndrome: zero out committed detectors
         for ((masked, &value), &committed) in self
             .masked_syndrome
@@ -98,6 +103,12 @@ impl CommittedLogicalSubgraphDecoder {
     /// Before committing, decodes the full syndrome to get the
     /// correction that includes the about-to-be-committed region.
     /// The committed correction is stored for accumulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidDimensions`] if the syndrome length
+    /// differs from the full-DEM detector count, before any detector is
+    /// committed, and propagates inner decoder failures.
     pub fn commit_range(
         &mut self,
         syndrome: &[u8],
@@ -154,6 +165,10 @@ impl CommittedLogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for CommittedLogicalSubgraphDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.num_detectors)
+    }
+
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
         // Full decode: committed XOR active
         let mut active = self.decode_active_obs(syndrome)?;
@@ -163,6 +178,10 @@ impl ObservableDecoder for CommittedLogicalSubgraphDecoder {
 }
 
 impl DecodeStrategy for CommittedLogicalSubgraphDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.num_detectors)
+    }
+
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_active(syndrome)
     }
@@ -222,7 +241,7 @@ mod tests {
             Ok(Box::new(FixedSingleObservable) as Box<dyn ObservableDecoder + Send + Sync>)
         })
         .unwrap();
-        CommittedLogicalSubgraphDecoder::new(inner, 1)
+        CommittedLogicalSubgraphDecoder::new(inner)
     }
 
     #[test]
@@ -251,6 +270,30 @@ mod tests {
             );
             assert!(prediction.get(num_observables - 1));
         }
+    }
+
+    #[test]
+    fn committed_decoder_rejects_wrong_lengths() {
+        let mut decoder = wide_decoder(1);
+        let region = DetectorRegion { start: 0, end: 1 };
+        for length in [0, 2] {
+            let syndrome = vec![1; length];
+            let wrong_length = |result: Result<u64, DecoderError>| {
+                matches!(
+                    result,
+                    Err(DecoderError::InvalidDimensions { expected: 1, actual }) if actual == length
+                )
+            };
+            assert!(wrong_length(decoder.decode_active(&syndrome)));
+            assert!(wrong_length(decoder.commit_range(&syndrome, &region)));
+            assert!(matches!(
+                ObservableDecoder::decode_obs(&mut decoder, &syndrome),
+                Err(DecoderError::InvalidDimensions { expected: 1, actual }) if actual == length
+            ));
+        }
+        // A rejected commit marks nothing.
+        assert_eq!(decoder.num_committed(), 0);
+        assert_eq!(decoder.decode_active(&[1]).unwrap(), 1);
     }
 
     #[test]

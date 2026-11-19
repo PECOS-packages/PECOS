@@ -513,6 +513,7 @@ fn build_fusion_correlated(dem: &str) -> Result<Box<dyn ObservableDecoder>, Deco
 
     let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?;
     graph.ensure_observables_fit_u64()?;
+    crate::FusionBlossomDecoder::check_matching_graph_priors(&graph).map_err(DecoderError::from)?;
     let engine_config = FusionBlossomEngineConfig {
         num_nodes: Some(graph.num_detectors),
         num_observables: graph.num_observables,
@@ -569,6 +570,7 @@ fn build_fusion_parallel_from_graph(
     use std::collections::BTreeMap;
 
     graph.ensure_observables_fit_u64()?;
+    crate::FusionBlossomDecoder::check_matching_graph_priors(graph).map_err(DecoderError::from)?;
     let mut round_groups: BTreeMap<u64, Vec<u32>> = BTreeMap::new();
     for (id, coord) in graph.detector_coords.iter().enumerate() {
         let time = coord

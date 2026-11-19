@@ -56,7 +56,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ObservableDecoder;
 use crate::dem::{DemMatchingGraph, MatchingEdge, SparseDem};
-use crate::errors::DecoderError;
+use crate::errors::{DecoderError, check_syndrome_length};
 use crate::obs_mask::ObsMask;
 
 // ============================================================================
@@ -473,14 +473,6 @@ pub struct LogicalSubgraphDecoder {
     sub_syndromes: Vec<Vec<u8>>,
 }
 
-/// Reject a syndrome whose length differs from the full-DEM detector count.
-fn check_syndrome_length(expected: usize, actual: usize) -> Result<(), DecoderError> {
-    if actual != expected {
-        return Err(DecoderError::InvalidDimensions { expected, actual });
-    }
-    Ok(())
-}
-
 impl LogicalSubgraphDecoder {
     /// Build from a DEM string, stabilizer coordinates, and inner decoder factory.
     ///
@@ -629,7 +621,7 @@ impl LogicalSubgraphDecoder {
     /// # Errors
     ///
     /// Returns [`DecoderError::InvalidDimensions`] if any syndrome's length
-    /// differs from [`Self::num_detectors`], before decoding any shot, and
+    /// differs from the full-DEM detector count, before decoding any shot, and
     /// propagates inner decoder failures.
     pub fn decode_count_batched(
         &mut self,
@@ -1168,5 +1160,30 @@ mod tests {
 
         let obs = dec.decode_parallel(&[0, 0]).unwrap();
         assert_eq!(obs, 0);
+    }
+
+    #[test]
+    fn test_parallel_decoder_rejects_wrong_lengths() {
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n",
+            "detector(3, 0, 0) D1\n",
+            "error(0.01) D0 L0\n",
+            "error(0.01) D1 L1\n",
+        );
+        let sc = simple_stab_coords();
+        let dec = ParallelLogicalSubgraphDecoder::from_dem(dem, &sc, |_| {
+            Ok(Box::new(NullDecoder) as Box<dyn ObservableDecoder + Send>)
+        })
+        .unwrap();
+
+        for length in [0, 1, 3] {
+            assert!(
+                matches!(
+                    dec.decode_parallel(&vec![0; length]),
+                    Err(DecoderError::InvalidDimensions { expected: 2, actual }) if actual == length
+                ),
+                "length {length}"
+            );
+        }
     }
 }

@@ -33,6 +33,9 @@ pub mod bp_trellis;
 pub mod factor;
 pub mod streaming;
 
+#[cfg(test)]
+mod prune_wide_delta_tests;
+
 pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
 pub use streaming::{StreamingMode, StreamingProgress, TrellisStreamingDecoder};
 
@@ -4599,6 +4602,31 @@ fn prune_reference(
     }
 }
 
+// A sufficient guard, not a decoder parameter or an approximation.
+//
+// Finite delta: b=delta/4 and h=delta/2 are exact. If every score is in
+// [-b,b], best-delta <= -3delta/4 < -h. Monotonic binary64 rounding gives
+// cutoff <= -h (negative overflow also satisfies this), while every score
+// >= -b >= -h. Therefore all original >= tests pass.
+//
+// Infinite delta: a finite best score gives cutoff = -inf, which every finite
+// score passes. The bound f64::MAX admits exactly the finite scores.
+//
+// The comparison against a finite bound excludes both infinities and every
+// NaN. The 1e6 threshold is no part of the proof: it only skips this scan
+// when delta is small enough that the cutoff is likely to drop states.
+fn wide_delta_all_scores_pass(scores: &[f64], delta: f64) -> bool {
+    if scores.is_empty() || delta.is_nan() || delta < 1e6 {
+        return false;
+    }
+    let bound = if delta.is_infinite() {
+        f64::MAX
+    } else {
+        delta * 0.25
+    };
+    scores.iter().all(|score| score.abs() <= bound)
+}
+
 fn prune_impl(
     frontier: &mut FrontierScratch<f64>,
     k: usize,
@@ -4629,33 +4657,56 @@ fn prune_impl(
                 )
             })
     };
-    let best = (0..frontier.parent.masses.len())
-        .min_by(better)
-        .expect("a nonempty merged frontier must have a score");
-    let cutoff = frontier.scores[best] - delta;
-    frontier.indices.clear();
-    frontier.retained.clear();
-    // Most frontiers need only their cutoff mask. Count the same decisions
-    // without writing an index for every survivor unless selection needs it.
-    let mut eligible = 0;
-    for candidate in 0..frontier.parent.masses.len() {
-        let keep = frontier.scores[candidate] >= cutoff;
-        frontier.retained.push(keep);
-        eligible += usize::from(keep);
-    }
-    if eligible > k {
-        frontier.indices.extend(
-            (0..frontier.parent.masses.len()).filter(|&candidate| frontier.retained[candidate]),
-        );
-        frontier.indices.select_nth_unstable_by(k, better);
-        frontier.indices.truncate(k);
-        // Selection uses the unchanged total-score/full-key comparator. Rebuild
-        // the mask only when the cap actually removes an eligible state.
-        frontier.retained.fill(false);
-        for &candidate in &frontier.indices {
-            frontier.retained[candidate] = true;
+    let eligible = if wide_delta_all_scores_pass(&frontier.scores, delta) {
+        let count = frontier.parent.masses.len();
+        frontier.indices.clear();
+        frontier.retained.clear();
+        if count > k {
+            // Identical to the original all-eligible filtered index sequence.
+            // Preserve the original full-key comparator and selection call.
+            frontier.indices.extend(0..count);
+            frontier.indices.select_nth_unstable_by(k, better);
+            frontier.indices.truncate(k);
+            frontier.retained.resize(count, false);
+            for &candidate in &frontier.indices {
+                frontier.retained[candidate] = true;
+            }
+        } else {
+            // Vec<bool> stores ordinary boolean byte flags; resize can fill
+            // them in bulk rather than pushing one flag per membership test.
+            frontier.retained.resize(count, true);
         }
-    }
+        count
+    } else {
+        let best = (0..frontier.parent.masses.len())
+            .min_by(better)
+            .expect("a nonempty merged frontier must have a score");
+        let cutoff = frontier.scores[best] - delta;
+        frontier.indices.clear();
+        frontier.retained.clear();
+        // Most frontiers need only their cutoff mask. Count the same decisions
+        // without writing an index for every survivor unless selection needs it.
+        let mut eligible = 0;
+        for candidate in 0..frontier.parent.masses.len() {
+            let keep = frontier.scores[candidate] >= cutoff;
+            frontier.retained.push(keep);
+            eligible += usize::from(keep);
+        }
+        if eligible > k {
+            frontier.indices.extend(
+                (0..frontier.parent.masses.len()).filter(|&candidate| frontier.retained[candidate]),
+            );
+            frontier.indices.select_nth_unstable_by(k, better);
+            frontier.indices.truncate(k);
+            // Selection uses the unchanged total-score/full-key comparator. Rebuild
+            // the mask only when the cap actually removes an eligible state.
+            frontier.retained.fill(false);
+            for &candidate in &frontier.indices {
+                frontier.retained[candidate] = true;
+            }
+        }
+        eligible
+    };
     let original_states = frontier.parent.masses.len();
     let retained_states = eligible.min(k);
     let mut dropped_log_mass = f64::NEG_INFINITY;

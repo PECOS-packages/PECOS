@@ -67,45 +67,49 @@ fn live_frame_changes_later_measurements_in_loops_and_isolates_shots_workers() {
     use pecos_engines::noise::IntoNoiseModel;
     use pecos_engines::scheduled_frame::ScheduledIdleZ;
     let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
-    for (soft, scheduled, answer) in [
-        (false, false, 0),
-        (false, false, 1),
-        (true, false, 1),
-        (false, true, 1),
-    ] {
-        let starts = Arc::new(AtomicUsize::new(0));
-        let calls = Arc::new(AtomicUsize::new(0));
-        let f = factory(
-            answer,
-            starts.clone(),
-            calls.clone(),
-            Arc::new(AtomicBool::new(false)),
-        );
-        let mut builder = MonteCarloEngine::builder()
-            .with_classical_engine(Box::new(engine(program(), Some(f), soft, scheduled)))
-            .with_quantum_engine(Box::new(StateVecEngine::new(1)))
-            .with_num_qubits(1)
-            .with_seed(42);
-        if scheduled {
-            builder = builder.with_noise_model(
-                ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
-                    .unwrap()
-                    .into_noise_model()
-                    .unwrap(),
+    for scoped in [false, true] {
+        for (soft, scheduled, answer) in [
+            (false, false, 0),
+            (false, false, 1),
+            (true, false, 1),
+            (false, true, 1),
+        ] {
+            let starts = Arc::new(AtomicUsize::new(0));
+            let calls = Arc::new(AtomicUsize::new(0));
+            let f = factory(
+                answer,
+                starts.clone(),
+                calls.clone(),
+                Arc::new(AtomicBool::new(false)),
             );
-        }
-        let mut mc = builder.build();
-        for workers in [1, 2] {
-            let shots = mc.run_with_workers(4, workers).unwrap();
-            for shot in shots.shots {
-                assert_eq!(
-                    shot.data["after"],
-                    Data::Vec(vec![Data::U32(u32::from(answer == 0)); 3])
+            let mut control = engine(program(), Some(f), soft, scheduled);
+            control.set_scoped_execution(scoped).unwrap();
+            let mut builder = MonteCarloEngine::builder()
+                .with_classical_engine(Box::new(control))
+                .with_quantum_engine(Box::new(StateVecEngine::new(1)))
+                .with_num_qubits(1)
+                .with_seed(42);
+            if scheduled {
+                builder = builder.with_noise_model(
+                    ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
+                        .unwrap()
+                        .into_noise_model()
+                        .unwrap(),
                 );
             }
+            let mut mc = builder.build();
+            for workers in [1, 2] {
+                let shots = mc.run_with_workers(4, workers).unwrap();
+                for shot in shots.shots {
+                    assert_eq!(
+                        shot.data["after"],
+                        Data::Vec(vec![Data::U32(u32::from(answer == 0)); 3])
+                    );
+                }
+            }
+            assert_eq!(starts.load(Ordering::SeqCst), 8);
+            assert_eq!(calls.load(Ordering::SeqCst), 24);
         }
-        assert_eq!(starts.load(Ordering::SeqCst), 8);
-        assert_eq!(calls.load(Ordering::SeqCst), 24);
     }
 }
 

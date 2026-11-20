@@ -53,7 +53,7 @@ def runtime(tmp_path, scheduled_support):
     return scheduled_support.build_runtime(tmp_path, 0, events=True)[0], scheduled_support.ramsey
 
 
-def builder(runtime, noise, program=None, backend="state_vector"):
+def builder(runtime, noise, program=None, backend="state_vector", *, scoped=False):
     import pecos
     import pecos_rslib as pr
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
@@ -68,6 +68,7 @@ def builder(runtime, noise, program=None, backend="state_vector"):
             custom_event_policy="capture",
         )
         .scheduled_event_batches()
+        .scoped_execution(scoped)
         .interface(pr.qis_helios_interface())
     )
     return (
@@ -83,13 +84,19 @@ def builder(runtime, noise, program=None, backend="state_vector"):
 @pytest.mark.parametrize("workers", [1, 2])
 @pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
 @pytest.mark.parametrize("worker_context", [False, True])
-def test_repeated_runs_workers_and_contexts(runtime, native_plugin, workers, backend, worker_context):
+@pytest.mark.parametrize("scoped", [False, True])
+def test_repeated_runs_workers_and_contexts(runtime, native_plugin, workers, backend, worker_context, scoped):
     import pecos_rslib as pr
 
     library, monitor = native_plugin
     noise = pr.scheduled_native_adapter(pr.scheduled_idle_noise(1), library, config=b"\x12")
     assert isinstance(noise, pr.ScheduledEventIdleNoise)
-    built = builder(runtime, noise, backend=backend).workers(workers).python_worker_context(worker_context).build()
+    built = (
+        builder(runtime, noise, backend=backend, scoped=scoped)
+        .workers(workers)
+        .python_worker_context(worker_context)
+        .build()
+    )
     assert type(built).__name__ == "QisControlSimulation"
     assert built.run(2).to_dict()["measurement_0"] == [1, 1]
     alternate_workers = 3 - workers
@@ -152,21 +159,23 @@ def test_empty_config_is_forwarded_and_factory_errors_surface(runtime, native_pl
     [(mode, RuntimeError, "native adapter") for mode in [1, 2, 3, 7, 8, 9, 17]]
     + [(10, ValueError, "adapter changed measurement order, kind or targets")],
 )
-def test_native_errors_reach_python(runtime, native_plugin, mode, error, message):
+@pytest.mark.parametrize("scoped", [False, True])
+def test_native_errors_reach_python(runtime, native_plugin, mode, error, message, scoped):
     import pecos_rslib as pr
 
     library, _ = native_plugin
     noise = pr.scheduled_native_adapter(pr.scheduled_idle_noise(1), library, config=bytes([mode]))
     with pytest.raises(error, match=message):
-        builder(runtime, noise).run(1)
+        builder(runtime, noise, scoped=scoped).run(1)
 
 
-def test_failed_run_uses_a_fresh_session(runtime, native_plugin):
+@pytest.mark.parametrize("scoped", [False, True])
+def test_failed_run_uses_a_fresh_session(runtime, native_plugin, scoped):
     import pecos_rslib as pr
 
     library, monitor = native_plugin
     noise = pr.scheduled_native_adapter(pr.scheduled_idle_noise(1), library, config=b"\x13")
-    built = builder(runtime, noise).workers(1).build()
+    built = builder(runtime, noise, scoped=scoped).workers(1).build()
     monitor.probe_fail_next_create()
     with pytest.raises(RuntimeError, match="translate status 62"):
         built.run(1)
@@ -179,7 +188,8 @@ def test_failed_run_uses_a_fresh_session(runtime, native_plugin):
 
 @pytest.mark.parametrize("probability", [0.0, 1.0])
 @pytest.mark.parametrize("backend", ["state_vector", "stabilizer"])
-def test_guppy_branch_receives_user_measurement_after_crosstalk(runtime, native_plugin, probability, backend):
+@pytest.mark.parametrize("scoped", [False, True])
+def test_guppy_branch_receives_user_measurement_after_crosstalk(runtime, native_plugin, probability, backend, scoped):
     import pecos_rslib as pr
     from guppylang import guppy
     from guppylang.std.angles import angle
@@ -209,7 +219,7 @@ def test_guppy_branch_receives_user_measurement_after_crosstalk(runtime, native_
         local_probability=probability,
     )
     noise = pr.scheduled_native_adapter(profile, library, config=b"\x0f")
-    values = builder(runtime, noise, feedback, backend).workers(2).run(4).to_dict()
+    values = builder(runtime, noise, feedback, backend, scoped=scoped).workers(2).run(4).to_dict()
     assert values["first"] == values["feedback"] == [int(probability)] * 4
 
 

@@ -43,7 +43,7 @@ def stateful_calls() -> None:
 
 @guppy
 def stateful_loop() -> None:
-    """Currently rejected because of a public compiler external-call loop bug."""
+    """Carry the result of each external call to the next iteration."""
     counter = Counter(nat(0))
     value = 0
     for _ in range(3):
@@ -73,4 +73,43 @@ def context_helpers() -> None:
 def trapped() -> None:
     counter = Counter(nat(0))
     counter.trap()
+    counter.discard()
+
+
+@guppy
+def loop_control() -> None:
+    """Exercise zero, single, nested, and result-dependent loop iterations."""
+    counter = Counter(nat(0))
+    value = 99
+    for _ in range(0):
+        value = counter.increment()
+    result("zero", value)
+    for _ in range(1):
+        value = counter.increment()
+    result("one", value)
+    for _ in range(2):
+        for _ in range(3):
+            value = counter.increment()
+    result("nested", value)
+    steps = 0
+    while value < 10 and steps < 5:
+        value = counter.increment()
+        steps += 1
+    result("condition", value)
+    result("steps", steps)
+    counter.discard()
+
+
+@guppy
+def loop_helpers() -> None:
+    """Preserve effects before, inside and after helper calls in loops."""
+    counter = Counter(nat(0))
+    counter.increment()
+    counter.discard()
+    value = 0
+    for _ in range(2):
+        value = increment_context()
+    result("helper", value)
+    counter = Counter(nat(0))
+    result("after", counter.increment())
     counter.discard()

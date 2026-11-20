@@ -261,15 +261,15 @@ jobs:
             build-llvm: true
             build-quantum-pecos: true
             job-timeout: 20
-          # 30 minutes: Windows runner preparation (disk cleanup) varies by
-          # several minutes and the pecos-rslib wheel compile alone takes
-          # 10-12, so 20 minutes cancelled a healthy build (issue #360).
+          # Cold Windows builds plus the native suites exceeded 30 minutes in
+          # run 44563413773 while compiling the final stabilizer suite. Allow
+          # that compilation to finish without removing compatibility coverage.
           - os: windows-2022
             python-version: "3.12"
             artifact-name: python-compat-smoke-windows
             build-llvm: false
             build-quantum-pecos: false
-            job-timeout: 30
+            job-timeout: 45
           - os: macOS-latest
             python-version: "3.12"
             artifact-name: python-compat-smoke-macos
@@ -422,6 +422,7 @@ jobs:
         runtime_dir=$(cargo +stable run --locked -p pecos-cli -- qis-runtime --profile debug --tests)
         export PECOS_QIS_FFI_PATH="$runtime_dir" PECOS_SELENE_DIR="$runtime_dir"
         cargo +stable test --locked -p pecos-qis --lib executor::tests
+        cargo +stable test --locked -p pecos-qis --lib ccengine::scoped_tests
 
     - name: Test StabVec numerical reference contract
       run: cargo +stable test --locked -p pecos-simulators --test stab_vec_correctness

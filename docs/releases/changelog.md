@@ -6,6 +6,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Fixed:** Validating a just-installed managed LLVM now waits out the "text file
+  busy" window left by extraction before running `llvm-config` and `clang`, instead
+  of occasionally reporting a good installation as failed.
 - **Fixed:** Union-find now rejects NaN weights instead of sorting them (undefined
   behaviour), and BeliefFind reports a BP-produced NaN log-probability ratio as an error.
 - **Breaking:** MBP now updates stored edge messages and excludes the current
@@ -33,7 +36,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and Python: measurement, preparation, idle and gate-event sources; recovery,
   optional reload on prep, partner spreading and lost-state readout. Loss is rejected
   by neo routing, runtime frames and the Selene general-noise adapter.
-
 - **Added:** Core `MeasureZLost` and `MeasureZLeakedLost` herald gates, with alphabets
   `{0, 1, 3}` and `{0, 1, 2, 3}`, and per-flavor general-noise readout matrices
   configurable from Rust, JSON, and Python. Lost rows require configured qubit loss.

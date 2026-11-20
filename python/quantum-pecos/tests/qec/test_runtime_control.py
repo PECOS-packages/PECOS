@@ -33,17 +33,22 @@ def source():
     )
 
 
-def builder(decoder, *, runtime="selene_simple_runtime", program=None, capture=True):
+def builder(decoder, *, runtime="selene_simple_runtime", program=None, capture=True, scoped=False):
     return (
         sim(Qis(source() if program is None else program))
-        .classical(selene_engine(runtime).runtime_decoder(decoder, capture_batches=True, capture_control_flow=capture))
+        .classical(
+            selene_engine(runtime)
+            .scoped_execution(enabled=scoped)
+            .runtime_decoder(decoder, capture_batches=True, capture_control_flow=capture),
+        )
         .qubits(1)
     )
 
 
 @pytest.mark.parametrize("runtime", ["selene_simple_runtime", "selene_soft_rz_runtime"])
 @pytest.mark.parametrize("worker_context", [False, True])
-def test_live_control_drives_feedback_and_restarts_on_worker_and_shot_reuse(runtime, worker_context):
+@pytest.mark.parametrize("scoped", [False, True])
+def test_live_control_drives_feedback_and_restarts_on_worker_and_shot_reuse(runtime, worker_context, scoped):
     sessions = []
 
     def factory():
@@ -81,7 +86,7 @@ def test_live_control_drives_feedback_and_restarts_on_worker_and_shot_reuse(runt
 
         return provide
 
-    runner = builder(RuntimeDecoder(provider_factory=factory), runtime=runtime).workers(2)
+    runner = builder(RuntimeDecoder(provider_factory=factory), runtime=runtime, scoped=scoped).workers(2)
     runner = runner.python_worker_context(worker_context).build()
     for _ in range(2):
         assert runner.run(4).to_dict()["after"] == [[0, 1, 0]] * 4

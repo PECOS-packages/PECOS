@@ -619,8 +619,6 @@ fn t15_lost_operands_skip_all_base_draws_and_allocation() {
         m(GateType::QFree, 0),
         m(GateType::QAlloc, 0),
         m(GateType::PX, 0),
-        m(GateType::MX, 0),
-        m(GateType::MeasureFree, 0),
         m(GateType::TrackedPauliMeta, 0),
     ] {
         let b = builder(
@@ -635,6 +633,24 @@ fn t15_lost_operands_skip_all_base_draws_and_allocation() {
             run(&mut b.build(), &[lose(0), herald(0)]),
             "baseline omitted lost gate"
         );
+    }
+    // Untracked measurements retain their operands, but lost atoms still skip
+    // every base/emission draw, including emission that would replace the gate.
+    for kind in [GateType::MX, GateType::MeasureFree] {
+        let b = builder(loss().with_idle_rate(1.0))
+            .with_p1(1.0)
+            .with_p1_emission_ratio(1.0);
+        let mut model = b.clone().build();
+        let mut baseline = b.build();
+        let mut input = ByteMessage::quantum_operations_builder();
+        input.add_gate_command(&lose(0));
+        baseline.apply_noise_on_start(&input.build()).unwrap();
+        let mut input = ByteMessage::quantum_operations_builder();
+        input.add_gate_command(&lose(0));
+        input.add_gate_command(&m(kind, 0));
+        let emitted = model.apply_noise_on_start(&input.build()).unwrap();
+        assert_eq!(emitted.quantum_ops().unwrap(), [Gate::pz(&[0]), m(kind, 0)]);
+        assert_eq!(tail(&model), tail(&baseline));
     }
     assert_eq!(
         run(
@@ -1517,18 +1533,118 @@ fn lost_mpz_without_reload_skips_prep_loss_draw() {
 }
 
 #[test]
-fn noiseless_untracked_measurements_and_custom_drop_lost_operands() {
-    for gate in [
-        m(GateType::MX, 0),
-        m(GateType::MeasureFree, 0),
-        Gate::simple(GateType::Custom, vec![0.into(), 1.into()]),
-    ] {
-        let b = builder(loss().with_idle_rate(1.0)).with_noiseless_gate(gate.gate_type);
+fn untracked_measurements_retain_lost_operands_and_custom_is_suppressed() {
+    let mut failures = Vec::new();
+    for kind in [GateType::MX, GateType::MeasureFree] {
+        for noiseless in [false, true] {
+            for trailing_measurement in [false, true] {
+                let mut results = Vec::new();
+                for lost in [false, true] {
+                    let mut b = builder(loss().with_idle_rate(1.0));
+                    if noiseless {
+                        b = b.with_noiseless_gate(kind);
+                    }
+                    let mut model = b.build();
+                    let mut input = ByteMessage::quantum_operations_builder();
+                    if lost {
+                        input.add_gate_command(&lose(0));
+                    }
+                    input.add_gate_command(&m(kind, 0));
+                    if trailing_measurement {
+                        input.add_gate_commands(&[Gate::x(&[1]), Gate::mz(&[1])]);
+                    }
+                    let EngineStage::NeedsProcessing(commands) =
+                        model.start(input.build()).unwrap()
+                    else {
+                        panic!("expected quantum commands")
+                    };
+                    let mut sim = StateVecEngine::with_seed(6, 65537);
+                    let outcomes = sim.process(commands).unwrap();
+                    results.push(
+                        model
+                            .continue_processing(outcomes)
+                            .map(|stage| match stage {
+                                EngineStage::Complete(message) => message.outcomes().unwrap(),
+                                EngineStage::NeedsProcessing(_) => {
+                                    panic!("unexpected continuation")
+                                }
+                            })
+                            .map_err(|error| error.to_string()),
+                    );
+                }
+                let tracked = usize::from(trailing_measurement);
+                let expected = format!(
+                    "Processing error: Mismatch in number of measurement outcomes ({}) and tracked measured qubits ({tracked})",
+                    tracked + 1
+                );
+                assert_eq!(results[0].as_ref().unwrap_err(), &expected);
+                if results[1].as_ref().err() != Some(&expected) {
+                    failures.push(format!(
+                        "{kind:?}, noiseless={noiseless}, trailing={trailing_measurement}: {:?}",
+                        results[1]
+                    ));
+                }
+            }
+        }
+    }
+    for noiseless in [false, true] {
+        let gate = Gate::simple(GateType::Custom, vec![0.into(), 1.into()]);
+        let mut b = builder(loss().with_idle_rate(1.0));
+        if noiseless {
+            b = b.with_noiseless_gate(gate.gate_type);
+        }
         assert_eq!(
             run(&mut b.clone().build(), &[lose(0), gate]),
             run(&mut b.build(), &[lose(0)]),
-            "baseline without the noiseless lost operation"
+            "baseline without the lost Custom operation"
         );
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn after_hooks_skip_lost_untracked_measurements_restored_by_recovery() {
+    // After-site recovery restores the atom before the after-gate hooks run. The hooks
+    // must still skip it, as they do for any one-qubit gate suppressed for loss.
+    let hook = PauliLeakageChannel::new(1.0, &weights(&[("Z", 1.0)])).unwrap();
+    for kind in [GateType::X, GateType::MX, GateType::MeasureFree] {
+        let mut model = builder(loss().with_idle_rate(1.0).add_recovery_channel(
+            LossSite::AfterSingleQubit,
+            0.0,
+            0.0,
+        ))
+        .add_p1_pauli_leakage_channel_after_gate(&hook)
+        .build();
+        let mut input = ByteMessage::quantum_operations_builder();
+        input.add_gate_commands(&[lose(0), m(kind, 0)]);
+        let EngineStage::NeedsProcessing(commands) = model.start(input.build()).unwrap() else {
+            panic!("expected quantum commands for {kind:?}")
+        };
+        let stream = commands.quantum_ops().unwrap();
+        assert_eq!(count(&stream, GateType::Z, 0), 0, "{kind:?}: {stream:?}");
+    }
+}
+
+#[test]
+fn after_recovery_then_events_on_suppressed_gate() {
+    let b = builder(
+        loss()
+            .with_idle_rate(1.0)
+            .with_lost_partner_loss_probability(0.0)
+            .add_recovery_channel(LossSite::AfterTwoQubit, 0.0, 0.0)
+            .add_events_channel(LossSite::AfterTwoQubit, 1.0, &weights(&[("IL", 1.0)])),
+    );
+    // The user guide writes the herald as one two-qubit gate; split heralds agree.
+    let joint = Gate::simple(GateType::MeasureZLost, vec![0.into(), 1.into()]);
+    for heralds in [
+        vec![joint],
+        vec![m(GateType::MeasureZLost, 0), m(GateType::MeasureZLost, 1)],
+    ] {
+        let mut gates = vec![lose(0), Gate::cx(&[(0, 1)])];
+        gates.extend(heralds);
+        let result = run(&mut b.clone().build(), &gates);
+        assert_eq!(result.0, [0, 3]);
+        assert_eq!(count(&result.1, GateType::CX, 0), 0);
     }
 }
 

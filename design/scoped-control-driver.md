@@ -2,9 +2,12 @@
 
 ## Status
 
-The generic driver is implemented. Native QIS execution still uses its existing
-staged worker. No inline FFI path, Python option, or performance improvement is
-claimed by this change.
+The generic driver, scoped FFI request callback, and opt-in Rust `QisEngine` host
+are implemented. `QisEngine::set_scoped_execution(true)` or the Rust builder's
+`.scoped_execution(true)` selects caller-stack execution through `run_with`.
+Python QIS builders expose `.scoped_execution()` as an explicit opt-in; staged
+workers remain the default. No performance improvement is claimed.
+See [the FFI contract](scoped-request-callback.md).
 
 ## Motivation and contract
 
@@ -49,15 +52,15 @@ after validating shot context, poison state and backend capacity. A zero-gate ti
 batch or custom-only event batch is not an empty wait. This change does not filter
 messages or alter the inner noise-controller loop.
 
-## Native QIS follow-up gates
+## Native QIS integration contract
 
-A future opt-in native implementation may run the compiled program on the existing
+The opt-in native implementation runs the compiled program on the existing
 Monte Carlo worker and service its runtime requests synchronously. The callback
 must still drain runtime-owned work and deliver feedback before acknowledging a
 request. Reuse staged request lowering, force-once/result lookup, tracing,
 measurement identity and terminal delivery. Retain staged execution as a fallback.
 
-Before enabling that path:
+The implementation and public regression tests enforce the following requirements:
 
 - Register a scoped callback in the exact loaded FFI library, bound to a live
   execution context. Remove registration on success, error and unwinding; clones

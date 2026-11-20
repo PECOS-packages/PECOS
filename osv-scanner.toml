@@ -139,9 +139,10 @@ id = "RUSTSEC-2026-0543"
 # chrono@0.4.45 -- unmaintained (informational advisory, all versions, no fixed release).
 # PECOS has no direct chrono dependency. Chains (all non-optional upstream deps):
 #   chrono -> fusion-blossom 0.2.12 (latest release) -> pecos-fusion-blossom -> pecos-decoders,
-#   chrono -> mwpf (git pin) -> pecos-mwpf -> pecos-decoders,
+#   chrono -> mwpf (git pin; normal and build dependency) -> pecos-mwpf -> pecos-decoders,
 #   chrono -> tket 0.22 -> zlup, and
-#   chrono -> tket (tket2 git pin) -> selene-hugr-qis-compiler -> pecos-qec (hugr feature).
+#   chrono -> tket (tket2 git pin) -> selene-hugr-qis-compiler (directly and via
+#   tket-qsystem) -> pecos-qec (hugr feature).
 # tket 0.23.0 still requires chrono, so a tket bump does not clear it.
 # Upstream owners: https://github.com/yuewuo/fusion-blossom, https://github.com/yuewuo/mwpf,
 # and https://github.com/Quantinuum/tket2. Re-check on bumps of any of these.

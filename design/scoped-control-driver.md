@@ -3,9 +3,11 @@
 ## Status
 
 The generic driver, scoped FFI request callback, and opt-in Rust `QisEngine` host
-are implemented. `QisEngine::set_scoped_execution(true)` selects caller-stack
-execution through `run_with`; staged workers remain the default. No Python
-option or performance improvement is claimed. See [the FFI contract](scoped-request-callback.md).
+are implemented. `QisEngine::set_scoped_execution(true)` or the Rust builder's
+`.scoped_execution(true)` selects caller-stack execution through `run_with`.
+Python QIS builders expose `.scoped_execution()` as an explicit opt-in; staged
+workers remain the default. No performance improvement is claimed.
+See [the FFI contract](scoped-request-callback.md).
 
 ## Motivation and contract
 

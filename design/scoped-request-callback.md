@@ -7,8 +7,9 @@ The FFI library exports `pecos_call_qmain_with_request_callback_v1` and
 service synchronous result/runtime requests on the calling thread. This is the
 FFI boundary and an opt-in Rust host integration. A `QisEngine` configured with
 `set_scoped_execution(true)` uses it through `ControlEngine::run_with`, including
-the existing Monte Carlo/HybridEngine route. Staged execution remains the default;
-Python has no new option. No private-runtime or performance result is claimed.
+the existing Monte Carlo/HybridEngine route. Python QIS builders expose an
+explicit `.scoped_execution()` opt-in; staged
+execution remains the default. No private-runtime or performance result is claimed.
 
 ## Host protocol
 
@@ -104,7 +105,7 @@ including empty or timed scheduled frames. The batch comparison excludes only
 legacy empty wait messages; it is not an equivalence guarantee for arbitrary
 noise models that deliberately change state on worker polls.
 
-Before Python activation or performance claims, validate the downstream runtime
-and matched noise profiles on this rebuilt stack. Runtime scheduling and idle
-intervals remain authoritative: the host neither reconstructs static traces nor
-reschedules emitted work.
+Before adopting the Python option downstream or making performance claims,
+validate the downstream runtime and matched noise profiles on this rebuilt stack.
+Runtime scheduling and idle intervals remain authoritative: the host neither
+reconstructs static traces nor reschedules emitted work.

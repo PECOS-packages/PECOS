@@ -21,7 +21,6 @@ use std::collections::BTreeMap;
 
 fn exact_config() -> TrellisConfig {
     TrellisConfig {
-        dropped_mass: false,
         k: usize::MAX,
         delta: f64::INFINITY,
         score_alpha: 0.8,
@@ -30,6 +29,7 @@ fn exact_config() -> TrellisConfig {
         bp_score_iterations: 0,
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
+        dropped_mass: false,
     }
 }
 
@@ -74,16 +74,32 @@ fn actual_masses(result: &TrellisResult) -> BTreeMap<u64, f64> {
 }
 
 fn assert_result_masses_bitwise_equal(left: &TrellisResult, right: &TrellisResult) {
-    assert_eq!(left.predicted, right.predicted);
-    assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+    let TrellisResult {
+        predicted,
+        log_evidence,
+        runner_up_gap,
+        logical_masses,
+        peak_retained_states: _,
+        processed_columns: _,
+        transitions: _,
+        dropped_states: _,
+        dropped_log_mass: _,
+        bp_seconds: _,
+        bp_runs: _,
+        escalation_rungs_used: _,
+        status: _,
+    } = left;
+    assert_eq!(*predicted, right.predicted);
+    assert_eq!(log_evidence.to_bits(), right.log_evidence.to_bits());
     assert_eq!(
-        left.runner_up_gap.map(f64::to_bits),
+        runner_up_gap.map(f64::to_bits),
         right.runner_up_gap.map(f64::to_bits)
     );
-    assert_eq!(left.logical_masses.len(), right.logical_masses.len());
-    for (left_mass, right_mass) in left.logical_masses.iter().zip(&right.logical_masses) {
-        assert_eq!(left_mass.logical, right_mass.logical);
-        assert_eq!(left_mass.log_mass.to_bits(), right_mass.log_mass.to_bits());
+    assert_eq!(logical_masses.len(), right.logical_masses.len());
+    for (left_mass, right_mass) in logical_masses.iter().zip(&right.logical_masses) {
+        let pecos_trellis::TrellisLogicalMass { logical, log_mass } = left_mass;
+        assert_eq!(*logical, right_mass.logical);
+        assert_eq!(log_mass.to_bits(), right_mass.log_mass.to_bits());
     }
 }
 
@@ -774,7 +790,6 @@ fn sparse_dem_factor_conversion_delegates_bitwise_with_binary_features() {
     );
     let model = FactorModel::try_from(&dem).unwrap();
     let config = TrellisConfig {
-        dropped_mass: false,
         k: 3,
         delta: 20.0,
         score_alpha: 0.8,
@@ -783,6 +798,7 @@ fn sparse_dem_factor_conversion_delegates_bitwise_with_binary_features() {
         bp_score_iterations: 4,
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
+        dropped_mass: false,
     };
     let mut direct = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
     let mut delegated = TrellisDecoder::from_factor_model(&model, config).unwrap();

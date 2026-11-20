@@ -122,7 +122,7 @@ pub struct BpTrellisConfig {
     /// Rungs reuse one model and one BP preparation. They need not be monotone.
     /// An empty ladder disables escalation and is the default.
     pub escalation: Vec<EscalationRung>,
-    /// Carry the discarded-prefix-mass diagnostic at extra pruning cost.
+    /// Accumulate and report the discarded-prefix-mass diagnostic at extra pruning cost.
     /// Defaults to false; never changes predictions or any other result field.
     pub dropped_mass: bool,
 }
@@ -376,7 +376,7 @@ impl BpTrellisDecoder {
 
 impl ObservableDecoder for BpTrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        match self.decode_with_attempt(syndrome, TrellisDecoder::attempt)? {
+        match self.decode_outcome(syndrome)? {
             BpTrellisOutcome::Decoded(result) => Ok(result.predicted),
             BpTrellisOutcome::NoPath(report) => Err(report.into_error()),
         }

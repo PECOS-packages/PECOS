@@ -18,7 +18,7 @@ struct Fixture {
     syndromes: Vec<u128>,
 }
 
-fn same_result(expected: &TrellisResult, actual: &TrellisResult, omitted: bool) {
+fn same_result(expected: &TrellisResult, actual: &TrellisResult, flag_off: bool) {
     let TrellisResult {
         predicted,
         log_evidence,
@@ -54,10 +54,11 @@ fn same_result(expected: &TrellisResult, actual: &TrellisResult, omitted: bool) 
     }
     assert_eq!(logical_masses.len(), actual.logical_masses.len());
     for (left, right) in logical_masses.iter().zip(&actual.logical_masses) {
-        assert_eq!(left.logical, right.logical);
-        assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
+        let pecos_trellis::TrellisLogicalMass { logical, log_mass } = left;
+        assert_eq!(*logical, right.logical);
+        assert_eq!(log_mass.to_bits(), right.log_mass.to_bits());
     }
-    if omitted {
+    if flag_off {
         assert!(dropped_log_mass.is_some());
         assert_eq!(actual.dropped_log_mass, None);
     } else {
@@ -71,10 +72,10 @@ fn same_result(expected: &TrellisResult, actual: &TrellisResult, omitted: bool) 
     }
 }
 
-fn same_attempt(expected: &TrellisDecodeAttempt, actual: &TrellisDecodeAttempt, omitted: bool) {
+fn same_attempt(expected: &TrellisDecodeAttempt, actual: &TrellisDecodeAttempt, flag_off: bool) {
     match (expected, actual) {
         (TrellisDecodeAttempt::Success(left), TrellisDecodeAttempt::Success(right)) => {
-            same_result(left, right, omitted);
+            same_result(left, right, flag_off);
         }
         (
             TrellisDecodeAttempt::NoPath {
@@ -120,7 +121,7 @@ fn drain(
 }
 
 #[test]
-fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
+fn fixture_attempts_preserve_mass_bits_with_both_flags_no_path_and_bp_across_budgets() {
     let mut fixtures: BTreeMap<String, Vec<Fixture>> =
         serde_json::from_str(include_str!("fixtures/models.json")).unwrap();
     let fixtures = fixtures.remove("binary").unwrap();
@@ -167,7 +168,7 @@ fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
                         .map(|bit| u8::from(syndrome & (1_u128 << bit) != 0))
                         .collect();
                     let expected = batch.decode_attempt(&shot);
-                    for omitted in [false, true] {
+                    for flag_off in [false, true] {
                         successes +=
                             usize::from(matches!(expected, TrellisDecodeAttempt::Success(_)));
                         no_paths +=
@@ -176,11 +177,11 @@ fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
                             matches!(expected, TrellisDecodeAttempt::NoPath { transitions, dropped_states, .. } if transitions > 0 && dropped_states > 0),
                         );
                         let actual = drain(
-                            if omitted { &mut skipped } else { &mut bounded },
+                            if flag_off { &mut skipped } else { &mut bounded },
                             &shot,
                             budget,
                         );
-                        same_attempt(&expected, &actual, omitted);
+                        same_attempt(&expected, &actual, flag_off);
                     }
                 }
             }
@@ -202,7 +203,7 @@ fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
 }
 
 #[test]
-fn large_wide_model_preserves_chunk_order_and_full_diagnostics() {
+fn large_wide_model_preserves_chunk_order_and_flag_on_diagnostics() {
     let dem = SparseDem {
         mechanisms: (0_u32..193)
             .map(|index| {

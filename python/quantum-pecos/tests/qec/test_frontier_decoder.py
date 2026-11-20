@@ -325,14 +325,13 @@ def test_pruning_telemetry_and_status_strings() -> None:
     assert math.exp(width_result.dropped_log_mass) == pytest.approx(0.25)
     assert width_result.status == "pruned:k"
 
-    delta = FrontierDecoder.from_dem("error(0.25) L0\n", k=2, delta=0.5, dropped_mass=True)
+    delta = FrontierDecoder.from_dem("error(0.25) L0\n", k=2, delta=0.5)
     assert delta.decode_syndrome([]).status == "pruned:delta"
 
     both = FrontierDecoder.from_dem(
         "error(0.5) L0\nerror(0.1) L1\n",
         k=3,
         delta=0.5,
-        dropped_mass=True,
     )
     assert both.decode_syndrome([]).status == "pruned:k+delta"
 

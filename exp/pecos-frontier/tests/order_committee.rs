@@ -133,7 +133,6 @@ fn ordering_and_committee_match_upstream_fixtures() {
         let mut committee = FrontierCommittee::from_sparse_dem(
             &dem,
             FrontierConfig {
-                dropped_mass: false,
                 k: fixture.pruned.k,
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,
@@ -142,6 +141,7 @@ fn ordering_and_committee_match_upstream_fixtures() {
                 bp_score_iterations: 0,
                 metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .unwrap();

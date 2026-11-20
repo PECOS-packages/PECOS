@@ -21,31 +21,48 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::BTreeMap;
 
 fn assert_bit_identical(left: &TrellisResult, right: &TrellisResult) {
-    assert_eq!(left.predicted, right.predicted);
-    assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+    let TrellisResult {
+        predicted,
+        log_evidence,
+        runner_up_gap,
+        peak_retained_states,
+        processed_columns,
+        transitions,
+        dropped_states,
+        dropped_log_mass,
+        bp_seconds,
+        bp_runs,
+        escalation_rungs_used,
+        status,
+        logical_masses,
+    } = left;
+    assert_eq!(*predicted, right.predicted);
+    assert_eq!(log_evidence.to_bits(), right.log_evidence.to_bits());
     assert_eq!(
-        left.runner_up_gap.map(f64::to_bits),
+        runner_up_gap.map(f64::to_bits),
         right.runner_up_gap.map(f64::to_bits)
     );
-    assert_eq!(left.peak_retained_states, right.peak_retained_states);
-    assert_eq!(left.processed_columns, right.processed_columns);
-    assert_eq!(left.transitions, right.transitions);
-    assert_eq!(left.dropped_states, right.dropped_states);
+    assert_eq!(*peak_retained_states, right.peak_retained_states);
+    assert_eq!(*processed_columns, right.processed_columns);
+    assert_eq!(*transitions, right.transitions);
+    assert_eq!(*dropped_states, right.dropped_states);
     assert_eq!(
-        left.dropped_log_mass.expect("enabled diagnostic").to_bits(),
+        dropped_log_mass.expect("enabled diagnostic").to_bits(),
         right
             .dropped_log_mass
             .expect("enabled diagnostic")
             .to_bits()
     );
-    assert_eq!(left.bp_seconds.to_bits(), right.bp_seconds.to_bits());
-    assert_eq!(left.escalation_rungs_used, right.escalation_rungs_used);
-    assert_eq!(left.status, right.status);
-    assert_eq!(left.logical_masses.len(), right.logical_masses.len());
-    for (left, right) in left.logical_masses.iter().zip(&right.logical_masses) {
-        assert_eq!(left.logical, right.logical);
-        assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
+    assert_eq!(bp_seconds.to_bits(), right.bp_seconds.to_bits());
+    assert_eq!(*escalation_rungs_used, right.escalation_rungs_used);
+    assert_eq!(*status, right.status);
+    assert_eq!(logical_masses.len(), right.logical_masses.len());
+    for (left, right) in logical_masses.iter().zip(&right.logical_masses) {
+        let pecos_trellis::TrellisLogicalMass { logical, log_mass } = left;
+        assert_eq!(*logical, right.logical);
+        assert_eq!(log_mass.to_bits(), right.log_mass.to_bits());
     }
+    assert_eq!(*bp_runs, right.bp_runs);
 }
 
 fn assert_no_path(error: &DecoderError, expected: &DecoderError) {

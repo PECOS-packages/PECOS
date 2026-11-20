@@ -461,15 +461,15 @@ fn dropped_mass_flag_preserves_prepared_attempts() {
             decoder.prepare(&shot).unwrap();
             skipped.prepare(&shot).unwrap();
             for params in [decoder.prune_params(), PruneParams { k: 1, delta: 0.0 }] {
-                let TrellisDecodeAttempt::Success(full) = decoder.attempt(params) else {
+                let TrellisDecodeAttempt::Success(flag_on) = decoder.attempt(params) else {
                     panic!("fixture must decode");
                 };
-                let TrellisDecodeAttempt::Success(prediction) = skipped.attempt(params) else {
+                let TrellisDecodeAttempt::Success(flag_off) = skipped.attempt(params) else {
                     panic!("flag-off attempt must decode");
                 };
-                assert_eq!(prediction.dropped_log_mass, None);
-                assert!(full.dropped_log_mass.is_some());
-                assert_retained_equal(&full, &prediction);
+                assert_eq!(flag_off.dropped_log_mass, None);
+                assert!(flag_on.dropped_log_mass.is_some());
+                assert_retained_equal(&flag_on, &flag_off);
             }
             invalid(decoder.attempt(PruneParams { k: 0, delta: 1.0 }), "k");
             invalid(skipped.attempt(PruneParams { k: 0, delta: 1.0 }), "k");
@@ -520,8 +520,9 @@ fn assert_retained_equal(a: &pecos_trellis::TrellisResult, b: &pecos_trellis::Tr
     }
     assert_eq!(logical_masses.len(), b.logical_masses.len());
     for (left, right) in logical_masses.iter().zip(&b.logical_masses) {
-        assert_eq!(left.logical, right.logical);
-        assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
+        let pecos_trellis::TrellisLogicalMass { logical, log_mass } = left;
+        assert_eq!(*logical, right.logical);
+        assert_eq!(log_mass.to_bits(), right.log_mass.to_bits());
     }
     assert!(dropped_log_mass.is_some());
     assert_eq!(b.dropped_log_mass, None);

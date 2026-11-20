@@ -234,7 +234,6 @@ fn unpruned_and_pruned_results_match_upstream_golden_fixtures() {
         assert_expected_results(
             &fixture,
             FrontierConfig {
-                dropped_mass: false,
                 k: usize::MAX,
                 delta: f64::INFINITY,
                 score_alpha: 0.8,
@@ -243,6 +242,7 @@ fn unpruned_and_pruned_results_match_upstream_golden_fixtures() {
                 bp_score_iterations: 0,
                 metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
             &fixture.expected_unpruned,
             "unpruned",
@@ -250,7 +250,6 @@ fn unpruned_and_pruned_results_match_upstream_golden_fixtures() {
         assert_expected_results(
             &fixture,
             FrontierConfig {
-                dropped_mass: false,
                 k: fixture.pruned.k,
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,
@@ -259,6 +258,7 @@ fn unpruned_and_pruned_results_match_upstream_golden_fixtures() {
                 bp_score_iterations: 0,
                 metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
             &fixture.expected_pruned,
             "pruned",

@@ -864,7 +864,6 @@ mod tests {
         let mut leg = super::FrontierDecoder::from_sparse_dem(
             &dem,
             FrontierConfig {
-                dropped_mass: false,
                 k: usize::MAX,
                 delta: f64::INFINITY,
                 score_alpha: 0.8,
@@ -873,6 +872,7 @@ mod tests {
                 bp_score_iterations: 0,
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .unwrap();
@@ -907,7 +907,6 @@ mod tests {
         let mut committee = FrontierCommittee::from_sparse_dem(
             &dem,
             FrontierConfig {
-                dropped_mass: false,
                 k: usize::MAX,
                 delta: f64::INFINITY,
                 score_alpha: 0.8,
@@ -916,6 +915,7 @@ mod tests {
                 bp_score_iterations: 0,
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .unwrap();
@@ -964,7 +964,6 @@ mod tests {
         let committee = FrontierCommittee::from_sparse_dem(
             &dem,
             FrontierConfig {
-                dropped_mass: false,
                 k: 1,
                 delta: f64::INFINITY,
                 score_alpha: 0.8,
@@ -973,6 +972,7 @@ mod tests {
                 bp_score_iterations: 5,
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .unwrap();

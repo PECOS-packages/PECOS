@@ -33,19 +33,35 @@ struct Pruning {
 fn same_result(
     expected: &FrontierCommitteeResult,
     actual: &FrontierCommitteeResult,
-    omitted: bool,
+    flag_off: bool,
 ) {
-    assert_eq!(expected.direction, actual.direction);
+    let FrontierCommitteeResult {
+        selected,
+        direction,
+        forward,
+        backward,
+    } = expected;
+    let pecos_frontier::CommitteeMember {
+        status: backward_status,
+        log_evidence: backward_log_evidence,
+    } = backward;
+    let pecos_frontier::CommitteeMember {
+        status: forward_status,
+        log_evidence: forward_log_evidence,
+    } = forward;
+    assert_eq!(*direction, actual.direction);
     assert_eq!(
-        expected.forward.log_evidence.to_bits(),
+        forward_log_evidence.to_bits(),
         actual.forward.log_evidence.to_bits()
     );
     assert_eq!(
-        expected.backward.log_evidence.to_bits(),
+        backward_log_evidence.to_bits(),
         actual.backward.log_evidence.to_bits()
     );
-    assert_eq!(expected.forward, actual.forward);
-    assert_eq!(expected.backward, actual.backward);
+    assert_eq!(*forward, actual.forward);
+    assert_eq!(*forward_status, actual.forward.status);
+    assert_eq!(*backward, actual.backward);
+    assert_eq!(*backward_status, actual.backward.status);
     let pecos_frontier::FrontierResult {
         predicted,
         log_evidence,
@@ -60,7 +76,7 @@ fn same_result(
         escalation_rungs_used,
         status,
         logical_masses,
-    } = &expected.selected;
+    } = selected;
     assert_eq!(predicted, &actual.selected.predicted);
     assert_eq!(
         log_evidence.to_bits(),
@@ -87,10 +103,11 @@ fn same_result(
     }
     assert_eq!(logical_masses.len(), actual.selected.logical_masses.len());
     for (left, right) in logical_masses.iter().zip(&actual.selected.logical_masses) {
-        assert_eq!(left.logical, right.logical);
-        assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
+        let pecos_frontier::FrontierLogicalMass { logical, log_mass } = left;
+        assert_eq!(*logical, right.logical);
+        assert_eq!(log_mass.to_bits(), right.log_mass.to_bits());
     }
-    if omitted {
+    if flag_off {
         assert!(dropped_log_mass.is_some());
         assert_eq!(actual.selected.dropped_log_mass, None);
     } else {
@@ -182,11 +199,11 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
                         let shot: Vec<_> = (0..fixture.num_detectors)
                             .map(|bit| u8::from(mask & (1_u128 << bit) != 0))
                             .collect();
-                        for omitted in [false, true] {
+                        for flag_off in [false, true] {
                             match (
                                 batch.decode(&shot),
                                 drain(
-                                    if omitted { &mut skipped } else { &mut bounded },
+                                    if flag_off { &mut skipped } else { &mut bounded },
                                     &shot,
                                     budget,
                                 ),
@@ -197,7 +214,7 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
                                         expected.forward.status == CommitteeStatus::NoPath
                                             || expected.backward.status == CommitteeStatus::NoPath,
                                     );
-                                    same_result(&expected, &actual, omitted);
+                                    same_result(&expected, &actual, flag_off);
                                 }
                                 (Err(expected), Err(actual)) => {
                                     both_no_path += usize::from(matches!(

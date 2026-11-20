@@ -597,9 +597,8 @@ impl TrellisStreamingDecoder {
     /// Process ready columns without constructing commitment snapshots.
     ///
     /// This path retains the same candidate set and correction as [`Self::advance`],
-    /// with dropped-mass telemetry controlled by the config.
-    /// It is intended
-    /// for latency-sensitive runtimes that need only the final prediction.
+    /// with dropped-mass telemetry controlled by the config. It is intended for
+    /// latency-sensitive runtimes that need only the final prediction.
     ///
     /// # Errors
     /// Returns the same no-path or internal error as [`Self::advance`].
@@ -976,7 +975,7 @@ mod scoring_prefix_plan_tests {
         let dem = model();
         for bounds in [vec![0, 2, 4, 6, 8], vec![0, 0, 2, 5, 8]] {
             for window_size in [2, 3] {
-                for full in [false, true] {
+                for flag_on in [false, true] {
                     for schedule in [0, 1, 2] {
                         let mode = StreamingMode::FixedLag {
                             detector_round_bounds: bounds.clone(),
@@ -985,7 +984,7 @@ mod scoring_prefix_plan_tests {
                         let mut a = TrellisStreamingDecoder::from_sparse_dem(
                             &dem,
                             TrellisConfig {
-                                dropped_mass: full,
+                                dropped_mass: flag_on,
                                 ..TrellisConfig::default()
                             },
                         )
@@ -993,7 +992,7 @@ mod scoring_prefix_plan_tests {
                         let mut b = TrellisStreamingDecoder::from_sparse_dem(
                             &dem,
                             TrellisConfig {
-                                dropped_mass: full,
+                                dropped_mass: flag_on,
                                 ..TrellisConfig::default()
                             },
                         )

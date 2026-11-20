@@ -188,7 +188,6 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
         let mut decoder = BpTrellisDecoder::from_sparse_dem(
             &dem,
             BpTrellisConfig {
-                dropped_mass: false,
                 k: 4,
                 delta: 12.0,
                 score_alpha: 0.6,
@@ -196,13 +195,13 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
                 merge_indistinguishable: true,
                 ordering,
                 escalation: Vec::new(),
+                dropped_mass: false,
             },
         )
         .unwrap();
         let mut trellis = TrellisDecoder::from_sparse_dem(
             &dem,
             TrellisConfig {
-                dropped_mass: false,
                 k: 4,
                 delta: 12.0,
                 score_alpha: 0.6,
@@ -211,6 +210,7 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
                 bp_score_iterations: 0,
                 metric_mode: pecos_trellis::MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .unwrap();
@@ -278,7 +278,6 @@ fn overpruning_escalation_dem() -> SparseDem {
 
 fn escalation_config(k: usize, escalation_ks: Vec<usize>) -> BpTrellisConfig {
     BpTrellisConfig {
-        dropped_mass: false,
         k,
         delta: f64::INFINITY,
         score_alpha: 0.0,
@@ -292,6 +291,7 @@ fn escalation_config(k: usize, escalation_ks: Vec<usize>) -> BpTrellisConfig {
                 delta: f64::INFINITY,
             })
             .collect(),
+        dropped_mass: false,
     }
 }
 
@@ -386,7 +386,6 @@ fn ladder_rung_matches_a_hand_built_decoder_except_accumulated_work() {
         1,
     );
     let config_for = |k, escalation_ks: Vec<usize>| BpTrellisConfig {
-        dropped_mass: false,
         k,
         delta: f64::INFINITY,
         score_alpha: 0.0,
@@ -400,6 +399,7 @@ fn ladder_rung_matches_a_hand_built_decoder_except_accumulated_work() {
                 delta: f64::INFINITY,
             })
             .collect(),
+        dropped_mass: false,
     };
     let syndrome = [0, 0, 1];
     let mut ladder = BpTrellisDecoder::from_sparse_dem(&dem, config_for(2, vec![16])).unwrap();

@@ -10,7 +10,6 @@ use std::fmt::Write;
 
 fn settings() -> FrontierConfig {
     FrontierConfig {
-        dropped_mass: false,
         k: 512,
         delta: 1e9,
         score_alpha: 0.8,
@@ -19,6 +18,7 @@ fn settings() -> FrontierConfig {
         bp_score_iterations: 0,
         metric_mode: MetricMode::LogSumExpFloat,
         int_metric_scale: 1024,
+        dropped_mass: false,
     }
 }
 fn window(blocks: Vec<Vec<u32>>, width: usize, stride: usize) -> WindowConfig {

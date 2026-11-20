@@ -36,7 +36,6 @@ fn sparse_dem(
 
 fn exact_config() -> TrellisConfig {
     TrellisConfig {
-        dropped_mass: false,
         k: usize::MAX,
         delta: f64::INFINITY,
         score_alpha: 0.8,
@@ -45,6 +44,7 @@ fn exact_config() -> TrellisConfig {
         bp_score_iterations: 0,
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
+        dropped_mass: false,
     }
 }
 
@@ -124,28 +124,49 @@ fn result_mass_map(result: &TrellisResult) -> BTreeMap<Vec<u64>, f64> {
 }
 
 fn assert_result_semantics_bitwise_equal(left: &TrellisResult, right: &TrellisResult) {
-    assert_eq!(left.predicted, right.predicted);
-    assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+    let TrellisResult {
+        predicted,
+        log_evidence,
+        runner_up_gap,
+        peak_retained_states,
+        processed_columns,
+        transitions,
+        dropped_states,
+        dropped_log_mass,
+        bp_seconds,
+        bp_runs,
+        escalation_rungs_used,
+        status,
+        logical_masses,
+    } = left;
+    assert_eq!(*predicted, right.predicted);
+    assert_eq!(log_evidence.to_bits(), right.log_evidence.to_bits());
     assert_eq!(
-        left.runner_up_gap.map(f64::to_bits),
+        runner_up_gap.map(f64::to_bits),
         right.runner_up_gap.map(f64::to_bits)
     );
-    assert_eq!(left.peak_retained_states, right.peak_retained_states);
-    assert_eq!(left.processed_columns, right.processed_columns);
-    assert_eq!(left.transitions, right.transitions);
-    assert_eq!(left.dropped_states, right.dropped_states);
+    assert_eq!(*peak_retained_states, right.peak_retained_states);
+    assert_eq!(*processed_columns, right.processed_columns);
+    assert_eq!(*transitions, right.transitions);
+    assert_eq!(*dropped_states, right.dropped_states);
     assert_eq!(
-        left.dropped_log_mass.expect("enabled diagnostic").to_bits(),
+        dropped_log_mass.expect("enabled diagnostic").to_bits(),
         right
             .dropped_log_mass
             .expect("enabled diagnostic")
             .to_bits()
     );
-    assert_eq!(left.status, right.status);
-    assert_eq!(left.logical_masses.len(), right.logical_masses.len());
-    for (left_mass, right_mass) in left.logical_masses.iter().zip(&right.logical_masses) {
-        assert_eq!(left_mass.logical, right_mass.logical);
-        assert_eq!(left_mass.log_mass.to_bits(), right_mass.log_mass.to_bits());
+    assert_eq!(*status, right.status);
+    assert_eq!(logical_masses.len(), right.logical_masses.len());
+    for (left_mass, right_mass) in logical_masses.iter().zip(&right.logical_masses) {
+        let pecos_trellis::TrellisLogicalMass { logical, log_mass } = left_mass;
+        assert_eq!(*logical, right_mass.logical);
+        assert_eq!(log_mass.to_bits(), right_mass.log_mass.to_bits());
+    }
+    assert_eq!(*bp_runs, right.bp_runs);
+    assert_eq!(*escalation_rungs_used, right.escalation_rungs_used);
+    if *bp_runs == 0 {
+        assert_eq!(bp_seconds.to_bits(), right.bp_seconds.to_bits());
     }
 }
 
@@ -414,7 +435,6 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
         2,
     );
     let pruning = TrellisConfig {
-        dropped_mass: false,
         k: 1,
         delta: f64::INFINITY,
         score_alpha: 0.0,
@@ -423,12 +443,12 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
         bp_score_iterations: 0,
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
+        dropped_mass: false,
     };
     let mut merged = TrellisDecoder::from_sparse_dem(&dem, pruning).unwrap();
     let mut hand_built = TrellisDecoder::from_sparse_dem(
         &premerged,
         TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: f64::INFINITY,
             score_alpha: 0.0,
@@ -437,13 +457,13 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
     let mut wrong_order = TrellisDecoder::from_sparse_dem(
         &moved_to_last,
         TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: f64::INFINITY,
             score_alpha: 0.0,
@@ -452,6 +472,7 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
@@ -782,7 +803,6 @@ fn overpruning_can_remove_the_only_eventually_feasible_prefix() {
         1,
     );
     let tight = TrellisConfig {
-        dropped_mass: false,
         k: 1,
         delta: 0.01,
         score_alpha: 0.0,
@@ -791,6 +811,7 @@ fn overpruning_can_remove_the_only_eventually_feasible_prefix() {
         bp_score_iterations: 0,
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
+        dropped_mass: false,
     };
     let mut overpruned = TrellisDecoder::from_sparse_dem(&dem, tight).unwrap();
     assert!(overpruned.decode(&[0, 1]).is_err());
@@ -820,7 +841,6 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
     let mut greedy = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: f64::INFINITY,
             score_alpha: 0.0,
@@ -829,6 +849,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
@@ -837,7 +858,6 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
     let mut delta_pruned = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: usize::MAX,
             delta: 0.1,
             score_alpha: 0.0,
@@ -846,6 +866,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
@@ -1070,7 +1091,6 @@ fn delta_pruning_reports_its_status_flag() {
     let mut decoder = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: usize::MAX,
             delta: 0.5,
             score_alpha: 0.0,
@@ -1079,6 +1099,7 @@ fn delta_pruning_reports_its_status_flag() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
@@ -1104,7 +1125,6 @@ fn one_prune_call_can_trigger_both_pruning_flags() {
     let mut decoder = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: 3,
             delta: 0.5,
             score_alpha: 0.0,
@@ -1113,6 +1133,7 @@ fn one_prune_call_can_trigger_both_pruning_flags() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
@@ -1141,7 +1162,6 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
     let mut prefix_only = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: f64::INFINITY,
             score_alpha: 0.0,
@@ -1150,13 +1170,13 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
     let mut suffix_scored = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: f64::INFINITY,
             score_alpha: 0.8,
@@ -1165,6 +1185,7 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
@@ -1389,7 +1410,6 @@ fn bp_scores_change_the_greedy_survivor_without_changing_its_mass() {
     );
     let syndrome = [1, 0];
     let bp_config = TrellisConfig {
-        dropped_mass: false,
         k: 1,
         delta: f64::INFINITY,
         score_alpha: 0.8,
@@ -1398,6 +1418,7 @@ fn bp_scores_change_the_greedy_survivor_without_changing_its_mass() {
         bp_score_iterations: 5,
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
+        dropped_mass: false,
     };
     let mut bp_scored = TrellisDecoder::from_sparse_dem(&dem, bp_config.clone()).unwrap();
     let mut dem_scored = TrellisDecoder::from_sparse_dem(
@@ -1528,7 +1549,6 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
     let mut on = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: true,
             bp_score_iterations: 5,
             ..off_config
         },
@@ -1571,7 +1591,6 @@ fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
     let mut with_bp = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: 10.0,
             score_alpha: 0.8,
@@ -1580,13 +1599,13 @@ fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
             bp_score_iterations: 1,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
     let mut without_bp = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: 10.0,
             score_alpha: 0.8,
@@ -1595,6 +1614,7 @@ fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
             bp_score_iterations: 0,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();
@@ -1623,7 +1643,6 @@ fn non_finite_bp_posteriors_are_an_engine_fault_not_a_no_path() {
     let mut decoder = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: 10.0,
             score_alpha: 0.8,
@@ -1632,6 +1651,7 @@ fn non_finite_bp_posteriors_are_an_engine_fault_not_a_no_path() {
             bp_score_iterations: 5,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         },
     )
     .unwrap();

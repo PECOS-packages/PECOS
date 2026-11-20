@@ -17,7 +17,9 @@ suffix-compatibility estimate. Unpruned results are exact and upstream-verified.
 
 The discarded-prefix-mass diagnostic is off by default. Set
 `FrontierConfig::dropped_mass` to `true`, or pass `dropped_mass=True` to a Python
-detailed decoder constructor, to include it at extra pruning cost.
+detailed decoder constructor, to include it. Float metrics accumulate it at
+extra pruning cost; the integer max-log metric always keeps its cheap running
+maximum.
 `dropped_log_mass` is `Option<f64>` in Rust and `float | None` in Python.
 The flag applies to every entry point and never changes predictions, retained
 logical masses, evidence, or other result fields.

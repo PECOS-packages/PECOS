@@ -163,7 +163,8 @@ pub struct TrellisConfig {
     /// Quantization units per natural-log unit for [`MetricMode::MaxLogInt`].
     /// This must be positive in every mode and is ignored by the float metric.
     pub int_metric_scale: i32,
-    /// Carry the discarded-prefix-mass diagnostic at extra pruning cost.
+    /// Report the discarded-prefix-mass diagnostic. Float metrics accumulate it
+    /// at extra pruning cost; the integer metric always keeps its cheap running maximum.
     /// Defaults to false; never changes predictions or any other result field.
     pub dropped_mass: bool,
 }
@@ -3358,7 +3359,8 @@ impl TrellisModel {
         let mut peak_retained_states = frontier.parent.masses.len();
         let mut transitions = 0;
         let mut dropped_states = 0;
-        let mut dropped_log_mass = f64::NEG_INFINITY;
+        let dropped_log_mass = &mut scratch.float_progress.dropped_log_mass;
+        *dropped_log_mass = f64::NEG_INFINITY;
         let mut k_capped = false;
         let mut delta_pruned = false;
 
@@ -3435,7 +3437,7 @@ impl TrellisModel {
             );
             dropped_states += pruned.dropped_states;
             if mode == DecodeMode::Full {
-                dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
+                *dropped_log_mass = logaddexp(*dropped_log_mass, pruned.dropped_log_mass);
             }
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
@@ -3494,7 +3496,7 @@ impl TrellisModel {
             processed_columns: columns.len(),
             transitions,
             dropped_states,
-            dropped_log_mass: self.config.dropped_mass.then_some(dropped_log_mass),
+            dropped_log_mass: self.config.dropped_mass.then_some(*dropped_log_mass),
             bp_seconds: 0.0,
             bp_runs: 0,
             escalation_rungs_used: 0,
@@ -5194,6 +5196,83 @@ mod tests {
     }
 
     #[test]
+    fn nary_dropped_mass_flag_controls_accumulation_and_observable_adapter() {
+        use crate::factor::{Factor, FactorModel, Outcome};
+        use pecos_decoder_core::ObservableDecoder;
+
+        let model = FactorModel::new(
+            vec![Factor {
+                outcomes: vec![
+                    Outcome {
+                        probability: 0.5,
+                        detectors: vec![],
+                        observables: vec![],
+                    },
+                    Outcome {
+                        probability: 0.3,
+                        detectors: vec![],
+                        observables: vec![0],
+                    },
+                    Outcome {
+                        probability: 0.2,
+                        detectors: vec![],
+                        observables: vec![1],
+                    },
+                ],
+            }],
+            0,
+            2,
+        )
+        .unwrap();
+        let mut predictions = Vec::new();
+        for dropped_mass in [false, true] {
+            let mut decoder = TrellisDecoder::from_factor_model(
+                &model,
+                TrellisConfig {
+                    k: 1,
+                    dropped_mass,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            assert!(matches!(decoder.model.kernel, super::Kernel::Nary(_)));
+            let result = decoder.decode(&[]).unwrap();
+            assert!(result.dropped_states > 0);
+            assert_eq!(result.dropped_log_mass.is_some(), dropped_mass);
+            let raw_mass = decoder.scratch.float_progress.dropped_log_mass;
+            if dropped_mass {
+                assert!(raw_mass.is_finite());
+                assert_eq!(
+                    result.dropped_log_mass.expect("enabled").to_bits(),
+                    raw_mass.to_bits()
+                );
+            } else {
+                assert_eq!(
+                    raw_mass.to_bits(),
+                    f64::NEG_INFINITY.to_bits(),
+                    "flag off must not accumulate N-ary dropped mass"
+                );
+            }
+            // Each entry point starts a fresh attempt and follows the same flag.
+            assert_eq!(decoder.decode_obs(&[]).unwrap(), result.predicted);
+            assert_eq!(
+                decoder.scratch.float_progress.dropped_log_mass.to_bits(),
+                raw_mass.to_bits()
+            );
+            assert_eq!(
+                decoder.decode_to_observables(&[]).unwrap(),
+                result.predicted.to_u64().unwrap()
+            );
+            assert_eq!(
+                decoder.scratch.float_progress.dropped_log_mass.to_bits(),
+                raw_mass.to_bits()
+            );
+            predictions.push(result.predicted);
+        }
+        assert_eq!(predictions[0], predictions[1]);
+    }
+
+    #[test]
     fn resumable_dropped_mass_flag_controls_accumulation() {
         for dropped_mass in [false, true] {
             let mut decoder = TrellisDecoder::from_dem_str(
@@ -6734,7 +6813,6 @@ mod tests {
             num_observables: 1,
         };
         let config = TrellisConfig {
-            dropped_mass: false,
             k: 1,
             delta: f64::INFINITY,
             score_alpha: 0.8,
@@ -6743,6 +6821,7 @@ mod tests {
             bp_score_iterations: 5,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         };
         let first = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
         let second = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();

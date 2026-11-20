@@ -12,20 +12,27 @@
 //! shared with `tricycle_ccz_noisy`.
 //! Exact and sampled fault-count strata retain their unconditional PMF weights.
 //! Omitted mass is reported separately from statistical uncertainty.
+//! `low_weight_estimate` instead sums every undetectable logical fault set at the
+//! fault distance and one above it, which resolves C81 where sampling cannot.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pecos_core::{PauliString, gate_type::GateType};
-use pecos_qec::BivariateTricycleCode;
 use pecos_qec::fault_tolerance::fault_sampler::{
     FaultAlternative, FaultCatalog, FaultChannel, FaultKind, FaultLocation, FaultStratumCounts,
     StochasticNoiseParams, StratifiedEstimate,
+};
+use pecos_qec::{
+    BivariateTricycleCode, connected_cluster_code_distance, undetectable_logical_sets,
 };
 use pecos_quantum::TickCircuit;
 use pecos_random::PecosRng;
 
 use crate::distillation::validate_probability;
-use crate::tricycle_ccz_noisy::{ExtractionSchedule, extraction_circuit, surrogate_supports};
+use crate::tricycle_ccz_noisy::{
+    CatalogSignatureColumns, ExtractionSchedule, catalog_signature_columns, extraction_circuit,
+    signature_alternatives, surrogate_supports,
+};
 
 #[cfg(test)]
 mod tests;
@@ -123,6 +130,178 @@ fn xor_into(target: &mut BTreeSet<usize>, values: &[usize]) {
         if !target.remove(&value) {
             target.insert(value);
         }
+    }
+}
+
+/// Contribution from all undetectable logical signature sets of one weight.
+#[derive(Clone, Debug)]
+pub struct LowWeightTerm {
+    /// Number of distinct signature columns in each set.
+    pub weight: usize,
+    /// Number of undetectable observable-flipping column sets.
+    pub number_of_sets: usize,
+    /// Sum of the distinct-location assignment coefficients.
+    pub coefficient_sum: f64,
+}
+
+/// Leading-order approximation to the postselected logical error rate.
+#[derive(Clone, Debug)]
+pub struct LowWeightEstimate {
+    /// Circuit fault distance, certified by a positive coefficient at the signature distance.
+    pub distance: usize,
+    /// Contributions at distance and distance plus one.
+    pub terms: Vec<LowWeightTerm>,
+    /// Sum of both contributions; this is not a bound.
+    pub total: f64,
+}
+
+/// Estimate postselected LER from every logical signature set at weights d and d+1.
+///
+/// Each coefficient sums exactly over assignments to distinct locations, multiplying
+/// each location's probability for the signature divided by its no-fault plus
+/// empty-signature probability. This cancels its quiet-and-harmless background
+/// against P(accepted). A location can fire at most one alternative.
+/// The omitted terms are relative O(p^2): logical sets of weight >= d+2 and
+/// acceptance normalization from undetected non-logical configurations touching
+/// a set's locations, the smallest of which has two faults. It is not a bound.
+/// At p=1e-3, C27 hook-safe gives 1.957925e-6 + 3.190297e-8, consistent with the
+/// stratified reference 2.0003e-6 +/- 3.6e-8.
+///
+/// A positive weight-d coefficient certifies that the signature distance d equals
+/// the circuit fault distance, even without closure of alternatives under products.
+/// Every failing configuration reduces to a logical signature set of weight at most
+/// its fault count, and the positive coefficient witnesses a distinct-location
+/// configuration at d. For d+1 nonempty-signature faults, cancelling repeated
+/// signatures would leave at most d-1 columns, which cannot be logical. Thus the
+/// d+1 enumeration is complete as well; empty-signature alternatives are included
+/// in the background probabilities.
+///
+/// # Errors
+/// Returns an error if no distance is found through `max_weight`, the logical-set
+/// completeness preconditions fail, or a location's background is not positive
+/// and finite. Also rejects a weight-d coefficient sum that is not positive, which cannot
+/// certify that the signature distance is the circuit fault distance.
+pub fn low_weight_estimate(
+    catalog: &FaultCatalog,
+    max_weight: usize,
+) -> Result<LowWeightEstimate, String> {
+    let alternatives = || {
+        catalog
+            .locations
+            .iter()
+            .flat_map(|location| &location.faults)
+    };
+    let detectors = alternatives()
+        .flat_map(|alternative| &alternative.affected_detectors)
+        .max()
+        .map_or(1, |row| row + 1);
+    let observables = alternatives()
+        .flat_map(|alternative| &alternative.affected_observables)
+        .max()
+        .map_or(1, |row| row + 1);
+    let columns = catalog_signature_columns(catalog, detectors, observables)?;
+    let distance = connected_cluster_code_distance(&columns.h, &columns.l, max_weight)
+        .ok_or_else(|| format!("no logical witness found through weight {max_weight}"))?
+        .distance;
+    let owners = signature_odds(catalog, &columns, harmless_background)?;
+    let mut terms = Vec::with_capacity(2);
+    for weight in [distance, distance + 1] {
+        let sets = undetectable_logical_sets(&columns.h, &columns.l, weight)
+            .map_err(|error| error.to_string())?;
+        let term = logical_set_term(weight, &sets, &owners);
+        if weight == distance
+            && term.coefficient_sum.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
+        {
+            return Err(format!(
+                "weight-{distance} coefficient sum is not positive; cannot certify that signature distance {distance} is the circuit fault distance"
+            ));
+        }
+        terms.push(term);
+    }
+    Ok(LowWeightEstimate {
+        distance,
+        total: terms.iter().map(|term| term.coefficient_sum).sum(),
+        terms,
+    })
+}
+
+fn harmless_background(location: &FaultLocation) -> f64 {
+    location.no_fault_probability
+        + location
+            .faults
+            .iter()
+            .filter(|alternative| {
+                alternative.affected_detectors.is_empty()
+                    && alternative.affected_observables.is_empty()
+            })
+            .map(|alternative| alternative.absolute_probability)
+            .sum::<f64>()
+}
+
+fn signature_odds(
+    catalog: &FaultCatalog,
+    columns: &CatalogSignatureColumns,
+    background: impl Fn(&FaultLocation) -> f64,
+) -> Result<Vec<Vec<(usize, f64)>>, String> {
+    let mut owners = vec![Vec::new(); columns.signatures.len()];
+    for (index, location) in catalog.locations.iter().enumerate() {
+        let base = background(location);
+        if !base.is_finite() || base <= 0.0 {
+            return Err(format!(
+                "location {index} has nonpositive or nonfinite background {base}"
+            ));
+        }
+        let mut probabilities = BTreeMap::<usize, f64>::new();
+        for alternative in signature_alternatives(location) {
+            let signature = (
+                alternative.affected_detectors.clone(),
+                alternative.affected_observables.clone(),
+            );
+            let column = columns
+                .signatures
+                .binary_search(&signature)
+                .expect("every positive nonempty signature has a column");
+            *probabilities.entry(column).or_default() += alternative.absolute_probability;
+        }
+        for (column, probability) in probabilities {
+            owners[column].push((index, probability / base));
+        }
+    }
+    Ok(owners)
+}
+
+fn assignment_coefficient(
+    columns: &[usize],
+    owners: &[Vec<(usize, f64)>],
+    used: &mut Vec<usize>,
+) -> f64 {
+    let Some((&column, rest)) = columns.split_first() else {
+        return 1.0;
+    };
+    let mut total = 0.0;
+    for &(location, odds) in &owners[column] {
+        if !used.contains(&location) {
+            used.push(location);
+            total += odds * assignment_coefficient(rest, owners, used);
+            used.pop();
+        }
+    }
+    total
+}
+
+fn logical_set_term(
+    weight: usize,
+    sets: &[Vec<usize>],
+    owners: &[Vec<(usize, f64)>],
+) -> LowWeightTerm {
+    let mut used = Vec::with_capacity(weight);
+    LowWeightTerm {
+        weight,
+        number_of_sets: sets.len(),
+        coefficient_sum: sets
+            .iter()
+            .map(|set| assignment_coefficient(set, owners, &mut used))
+            .sum(),
     }
 }
 

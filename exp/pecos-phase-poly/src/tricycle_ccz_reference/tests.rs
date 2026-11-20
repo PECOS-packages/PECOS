@@ -353,3 +353,199 @@ fn hook_safe_full_catalog_distance_c81() {
     .unwrap();
     hook_safe_full_catalog_distance(&code, 5);
 }
+
+#[test]
+fn low_weight_c27_matches_fixed_oracle() {
+    let code = c27();
+    let catalog =
+        paper_catalog(&code, &ExtractionSchedule::hook_safe(&code).unwrap(), 0.001).unwrap();
+    let result = low_weight_estimate(&catalog, 3).unwrap();
+    assert_eq!(result.distance, 3);
+    assert_eq!(result.terms.len(), 2);
+    for (term, (weight, count, sum)) in result
+        .terms
+        .iter()
+        .zip([(3, 315, 1.957_925e-6), (4, 3780, 3.190_297e-8)])
+    {
+        assert_eq!(term.weight, weight);
+        assert_eq!(term.number_of_sets, count);
+        assert!((term.coefficient_sum / sum - 1.0).abs() < 1e-6, "{term:?}");
+    }
+    assert!((result.total / (1.957_925e-6 + 3.190_297e-8) - 1.0).abs() < 1e-6);
+    assert!(low_weight_estimate(&catalog, 2).is_err());
+}
+
+#[test]
+fn low_weight_coefficient_matches_exact_fault_stratum() {
+    let code = c27();
+    let catalog =
+        paper_catalog(&code, &ExtractionSchedule::hook_safe(&code).unwrap(), 0.001).unwrap();
+    let columns = catalog_signature_columns(&catalog, 3 * code.hx().num_checks(), 9).unwrap();
+    let sets = undetectable_logical_sets(&columns.h, &columns.l, 3).unwrap();
+    let owners =
+        signature_odds(&catalog, &columns, |location| location.no_fault_probability).unwrap();
+    let coefficient = logical_set_term(3, &sets, &owners).coefficient_sum;
+    let no_fault: f64 = catalog
+        .locations
+        .iter()
+        .map(|location| location.no_fault_probability)
+        .product();
+    let exact = catalog
+        .exact_fault_stratum(3)
+        .unwrap()
+        .failure_probability();
+    assert!(
+        (coefficient * no_fault / exact - 1.0).abs() < 1e-9,
+        "coefficient={coefficient}, no_fault={no_fault}, exact={exact}"
+    );
+}
+
+#[test]
+fn low_weight_assignments_require_distinct_locations() {
+    let owners = vec![vec![(0, 0.2), (1, 0.3)], vec![(0, 0.5), (2, 0.7)]];
+    let actual = assignment_coefficient(&[0, 1], &owners, &mut Vec::new());
+    assert!((actual - (0.2 * 0.7 + 0.3 * 0.5 + 0.3 * 0.7)).abs() < 1e-15);
+}
+
+fn signature_fault(
+    detectors: &[usize],
+    observables: &[usize],
+    probability: f64,
+) -> FaultAlternative {
+    FaultAlternative {
+        kind: FaultKind::Pauli,
+        pauli: None,
+        affected_measurements: Vec::new(),
+        affected_detectors: detectors.to_vec(),
+        affected_observables: observables.to_vec(),
+        affected_tracked_paulis: Vec::new(),
+        conditional_probability: 0.0,
+        absolute_probability: probability,
+    }
+}
+
+fn signature_location(mut faults: Vec<FaultAlternative>) -> FaultLocation {
+    let probability: f64 = faults.iter().map(|fault| fault.absolute_probability).sum();
+    for fault in &mut faults {
+        fault.conditional_probability = fault.absolute_probability / probability;
+    }
+    FaultLocation {
+        tick: 0,
+        gate_index: 0,
+        gate_type: GateType::Z,
+        qubits: Vec::new(),
+        channel: FaultChannel::Explicit,
+        channel_probability: probability,
+        no_fault_probability: 1.0 - probability,
+        num_alternatives: faults.len(),
+        faults,
+    }
+}
+
+/// Independent exact DP over detector parities and one observable. Each location
+/// contributes either no fault or exactly one alternative, including empty signatures.
+fn exact_signature_ler(catalog: &FaultCatalog, num_detectors: usize) -> f64 {
+    let observable_mask = 1 << num_detectors;
+    let mut probabilities = vec![0.0; 2 * observable_mask];
+    probabilities[0] = 1.0;
+    for location in &catalog.locations {
+        let mut next = vec![0.0; probabilities.len()];
+        for (state, probability) in probabilities.iter().enumerate() {
+            next[state] += probability * location.no_fault_probability;
+            for fault in &location.faults {
+                let mut effect = 0;
+                for &detector in &fault.affected_detectors {
+                    effect ^= 1 << detector;
+                }
+                for &observable in &fault.affected_observables {
+                    assert_eq!(observable, 0);
+                    effect ^= observable_mask;
+                }
+                next[state ^ effect] += probability * fault.absolute_probability;
+            }
+        }
+        probabilities = next;
+    }
+    probabilities[observable_mask] / (probabilities[0] + probabilities[observable_mask])
+}
+
+#[test]
+fn low_weight_rejects_unrealizable_signature_distance() {
+    let p = 0.001;
+    let catalog = FaultCatalog {
+        locations: vec![
+            signature_location(vec![
+                signature_fault(&[0], &[0], p / 2.0), // A
+                signature_fault(&[0], &[], p / 2.0),  // B
+            ]),
+            signature_location(vec![
+                signature_fault(&[0, 1], &[], p / 2.0), // C
+                signature_fault(&[1], &[], p / 2.0),    // D
+            ]),
+            signature_location(vec![signature_fault(&[1, 2], &[], p)]), // E
+            signature_location(vec![signature_fault(&[2], &[], p)]),    // F
+        ],
+    };
+    // A+B is a weight-2 signature logical but needs two alternatives at one
+    // location. The first realizable logical is A+C+E+F, of weight four.
+    let exact = exact_signature_ler(&catalog, 3);
+    assert!((exact / 2.51e-13 - 1.0).abs() < 0.001, "exact={exact}");
+    let error = low_weight_estimate(&catalog, 2).unwrap_err();
+    assert_eq!(
+        error,
+        "weight-2 coefficient sum is not positive; cannot certify that signature distance 2 is the circuit fault distance"
+    );
+}
+
+fn repetition_bit_fault(bits: &[usize], probability: f64) -> FaultAlternative {
+    let mut flipped = [false; 5];
+    for &bit in bits {
+        flipped[bit] ^= true;
+    }
+    let detectors: Vec<_> = (0..4).filter(|&i| flipped[i] ^ flipped[i + 1]).collect();
+    let observables: Vec<_> = flipped[0].then_some(0).into_iter().collect();
+    signature_fault(&detectors, &observables, probability)
+}
+
+#[test]
+fn low_weight_matches_independent_postselected_oracle() {
+    let p = 0.01;
+    let mut locations = Vec::new();
+    for bit in 0..5 {
+        locations.push(signature_location(vec![
+            repetition_bit_fault(&[bit], p / 2.0),
+            signature_fault(&[], &[], p / 2.0),
+        ]));
+    }
+    for bit in 0..4 {
+        locations.push(signature_location(vec![
+            repetition_bit_fault(&[bit], p / 3.0),
+            repetition_bit_fault(&[bit + 1], p / 3.0),
+            repetition_bit_fault(&[bit, bit + 1], p / 3.0),
+        ]));
+    }
+    for detector in 0..4 {
+        locations.push(signature_location(vec![signature_fault(
+            &[detector],
+            &[],
+            p,
+        )]));
+    }
+    let catalog = FaultCatalog { locations };
+    let exact = exact_signature_ler(&catalog, 4);
+    let estimate = low_weight_estimate(&catalog, 2).unwrap();
+    assert_eq!(estimate.distance, 2);
+    // C=3 bounds the relative O(p^2) remainder for this toy at p=1e-2.
+    let tolerance = 3.0 * p * p * exact;
+    assert!(
+        (estimate.total - exact).abs() < tolerance,
+        "exact={exact}, estimate={}, tolerance={tolerance}",
+        estimate.total
+    );
+    let next_term = estimate.terms.iter().find(|term| term.weight == 3).unwrap();
+    assert!(
+        next_term.coefficient_sum > tolerance,
+        "weight-3 contribution={}, tolerance={tolerance}",
+        next_term.coefficient_sum
+    );
+}

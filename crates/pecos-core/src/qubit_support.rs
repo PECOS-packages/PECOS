@@ -135,6 +135,18 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_qubits_bounded_iterator_stops_at_first_exhaustion() {
+        let mut calls = 0;
+        let input = [0, 1].into_iter().scan((), |(), _| {
+            calls += 1;
+            assert_eq!(calls, 1);
+            None::<usize>
+        });
+        assert_eq!(duplicate_qubits(input), [] as [usize; 0]);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
     #[should_panic(expected = "CX requires distinct qubits; duplicated qubits: [0, 2]")]
     fn assert_distinct_qubits_reports_context_and_duplicates() {
         assert_distinct_qubits("CX", [2, 0, 1, 2, 0]);

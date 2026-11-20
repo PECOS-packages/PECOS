@@ -133,3 +133,17 @@ id = "GHSA-qwgh-2vcv-g2f7"
 # wasmtime-internal-cranelift). wasmtime 50 and main (51.0.0-dev) still require sha2 0.10.
 # Upstream owner: https://github.com/bytecodealliance/wasmtime. Re-check on wasmtime bumps.
 reason = "Transitive via wasmtime/cranelift -> sha2 0.10; block-buffer 0.10.4 stores its cursor outside the block and updates it only after the callback returns, so an unwinding callback cannot leave it out of range, and it has no ReadBuffer."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+# chrono@0.4.45 -- unmaintained (informational advisory, all versions, no fixed release).
+# PECOS has no direct chrono dependency. Chains (all non-optional upstream deps):
+#   chrono -> fusion-blossom 0.2.12 (latest release) -> pecos-fusion-blossom -> pecos-decoders,
+#   chrono -> mwpf (git pin; normal and build dependency) -> pecos-mwpf -> pecos-decoders,
+#   chrono -> tket 0.22 -> zlup, and
+#   chrono -> tket (tket2 git pin) -> selene-hugr-qis-compiler (directly and via
+#   tket-qsystem) -> pecos-qec (hugr feature).
+# tket 0.23.0 still requires chrono, so a tket bump does not clear it.
+# Upstream owners: https://github.com/yuewuo/fusion-blossom, https://github.com/yuewuo/mwpf,
+# and https://github.com/Quantinuum/tket2. Re-check on bumps of any of these.
+reason = "Transitive via fusion-blossom, mwpf and tket; unmaintained-crate warning with no fixed release, no direct PECOS use."

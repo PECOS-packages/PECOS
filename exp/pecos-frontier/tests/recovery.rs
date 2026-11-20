@@ -291,6 +291,7 @@ fn prediction_adapter_matches_full_recovery() {
             for k in [1, 8] {
                 for action in [NoPathAction::Report, NoPathAction::Fallback] {
                     let cfg = FrontierConfig {
+                        dropped_mass: true,
                         k,
                         delta: 0.0,
                         score_alpha: 0.0,
@@ -312,7 +313,7 @@ fn prediction_adapter_matches_full_recovery() {
                                     result,
                                     deltas_tried,
                                 } => {
-                                    assert!(!result.dropped_log_mass.is_nan());
+                                    assert!(result.dropped_log_mass.is_some());
                                     saw_retry_success |= deltas_tried.len() > 1;
                                     (Some(result.predicted), false, None, deltas_tried)
                                 }

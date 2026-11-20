@@ -121,7 +121,12 @@ fn snapshot_result(result: TrellisResult) -> SnapshotOutcome {
         processed_columns: result.processed_columns,
         transitions: result.transitions,
         dropped_states: result.dropped_states,
-        dropped_log_mass: hex_word(result.dropped_log_mass.to_bits()),
+        dropped_log_mass: hex_word(
+            result
+                .dropped_log_mass
+                .expect("enabled diagnostic")
+                .to_bits(),
+        ),
         escalation_rungs_used: result.escalation_rungs_used,
         status: match result.status {
             TrellisStatus::Exact => "exact",
@@ -250,7 +255,10 @@ fn configurations(fixture: &Fixture) -> Vec<(String, BpTrellisConfig)> {
     );
     let mut configs = vec![(
         "default/order=deadline/bp=5/merge=true/ladder=empty".into(),
-        BpTrellisConfig::default(),
+        BpTrellisConfig {
+            dropped_mass: true,
+            ..BpTrellisConfig::default()
+        },
     )];
     for (order, ordering) in [
         ("deadline", TrellisOrdering::Deadline),
@@ -287,6 +295,7 @@ fn configurations(fixture: &Fixture) -> Vec<(String, BpTrellisConfig)> {
                         configs.push((
                             format!("{regime}/order={order}/bp={bp}/merge={merge}/ladder={ladder}"),
                             BpTrellisConfig {
+                                dropped_mass: true,
                                 k,
                                 delta,
                                 score_alpha: alpha,

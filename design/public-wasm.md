@@ -52,3 +52,12 @@ The legacy `ForeignObject::exec` integer/clamping contract remains unchanged.
 Mixed float signatures use a separate strict scalar method, which shares trap
 and timeout reporting with the legacy path. Integer-only signatures retain the
 existing validated integer execution path.
+
+Indexed lookup uses the additive `pecos_wasm_v2_lookup_by_id` export with the
+same scalar tags and v1 call/read buffers. A target holds either a name or a
+zero-based export-list position. On invocation, the runtime resolves an index
+against `Module::exports()` from the explicit supplied bytes, including
+non-function positions, then uses the same exact signature validation as named
+calls. Guppy's public decorator uses that full export order; internal function
+indices and filtered function lists have different meanings. The lowering
+rejects indices outside the unsigned 64-bit range before emitting LLVM literals.

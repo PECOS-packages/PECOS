@@ -145,6 +145,35 @@ slots and different modules have independent instances. Every shot starts with
 fresh instances; workers do not share state. A module's optional `init` export
 must have signature `() -> ()` and runs once when that instance is first used.
 
+## Lookup by export position
+
+Guppy's `@wasm(index)` selects an export by its zero-based position in the
+module's **complete export list**. Memories, globals and tables occupy positions
+as well; this is not the internal WebAssembly function index. The Python method
+name can differ from the export name. For example, the checked-in
+`indexed_exports.wat` exports a memory at position 0 and the `sum` function at
+position 1, so its declaration uses `@wasm(1)` on a method named `add`.
+
+```bash
+python examples/guppy_wasm/indexed_exports.py --backend selene
+python examples/guppy_wasm/indexed_exports.py --backend pecos
+```
+
+These examples cover indexed integer arithmetic, mixed float/integer arguments,
+quantum feedback, stateful loops, void returns, and named calls in the same
+program. They produce sum `4`, product `20`, a named-call result `22`, float value
+`1.5`, measurement `1`, and counter results `3` then `1` after reset.
+
+The explicit module bytes supplied at execution determine export positions and
+signatures. The runtime resolves the position on a call and rejects missing
+positions, non-function exports and signature mismatches. Reordering exports
+therefore changes indexed calls even if their names remain unchanged. Prefer
+named calls when export order is not part of your module's interface.
+
+Indices must fit an unsigned 64-bit integer. Rebuild the native utility and PECOS
+QIS FFI for this feature: indexed lookup adds `pecos_wasm_v2_lookup_by_id`; the
+existing named lookup ABI remains unchanged.
+
 ## Floating-point calls
 
 Guppy `float` maps to WASM `f64` on the Helios WASM platform. Integer and float
@@ -195,12 +224,12 @@ with other compiler/runtime implementations.
 
 ## Supported scope
 
-- Named exports with mixed scalar `i64`/`f64` arguments and zero or one scalar result.
-- `get_context`, `dispose_context`, `lookup_by_name`, `call`, and `read_result`.
+- Exports selected by name or export-list position, with mixed scalar `i64`/`f64` arguments and zero or one scalar result.
+- `get_context`, `dispose_context`, `lookup_by_name`, `lookup_by_id`, `call`, and `read_result`.
 - One HUGR module per program, with any explicitly supplied WASM modules.
 - Synchronous WASM calls on 64-bit hosts, including branches and loops.
 
-`i32`, `f32`, aggregate and multiple results, lookup by numeric ID,
+`i32`, `f32`, aggregate and multiple results,
 WASI and host imports are not supported by this adapter. Unsupported
 signatures and operations fail explicitly. Traps and runtime signature errors
 propagate as simulation errors. Calls use PECOS Wasmtime's default one-second

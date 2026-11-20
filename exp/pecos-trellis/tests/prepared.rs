@@ -446,38 +446,84 @@ fn residual_precheck_skips_bp_refresh() {
 }
 
 #[test]
-fn prediction_only_attempt_matches_full() {
+fn dropped_mass_flag_preserves_prepared_attempts() {
     for integer in [false, true] {
         for (name, shot) in [
             ("three_route_collision", vec![]),
             ("overpruning_ladder", vec![0; 4]),
         ] {
-            let mut decoder = fixture(name, config(integer));
+            let mut on = config(integer);
+            on.dropped_mass = true;
+            let mut decoder = fixture(name, on);
+            let mut off = config(integer);
+            off.dropped_mass = false;
+            let mut off_decoder = fixture(name, off);
             decoder.prepare(&shot).unwrap();
+            off_decoder.prepare(&shot).unwrap();
             for params in [decoder.prune_params(), PruneParams { k: 1, delta: 0.0 }] {
-                let TrellisDecodeAttempt::Success(full) = decoder.attempt(params) else {
+                let TrellisDecodeAttempt::Success(flag_on) = decoder.attempt(params) else {
                     panic!("fixture must decode");
                 };
-                let TrellisDecodeAttempt::Success(prediction) =
-                    decoder.attempt_prediction_only(params)
-                else {
-                    panic!("prediction-only attempt must decode");
+                let TrellisDecodeAttempt::Success(flag_off) = off_decoder.attempt(params) else {
+                    panic!("flag-off attempt must decode");
                 };
-                assert_eq!(prediction.predicted, full.predicted);
-                assert!(prediction.dropped_log_mass.is_nan());
-                assert!(!full.dropped_log_mass.is_nan());
+                assert_eq!(flag_off.dropped_log_mass, None);
+                assert!(flag_on.dropped_log_mass.is_some());
+                assert_retained_equal(&flag_on, &flag_off);
             }
-            invalid(
-                decoder.attempt_prediction_only(PruneParams { k: 0, delta: 1.0 }),
-                "k",
-            );
+            invalid(decoder.attempt(PruneParams { k: 0, delta: 1.0 }), "k");
+            invalid(off_decoder.attempt(PruneParams { k: 0, delta: 1.0 }), "k");
         }
     }
 }
 
 #[test]
 #[should_panic(expected = "attempt requires a Ready prepare")]
-fn prediction_only_attempt_requires_ready() {
+fn default_attempt_requires_ready() {
     let mut decoder = fixture("overpruning_ladder", config(false));
-    let _ = decoder.attempt_prediction_only(decoder.prune_params());
+    let _ = decoder.attempt(decoder.prune_params());
+}
+
+fn assert_retained_equal(a: &pecos_trellis::TrellisResult, b: &pecos_trellis::TrellisResult) {
+    let pecos_trellis::TrellisResult {
+        predicted,
+        log_evidence,
+        runner_up_gap,
+        peak_retained_states,
+        processed_columns,
+        transitions,
+        dropped_states,
+        dropped_log_mass,
+        bp_seconds,
+        bp_runs,
+        escalation_rungs_used,
+        status,
+        logical_masses,
+    } = a;
+    assert_eq!(predicted, &b.predicted);
+    assert_eq!(log_evidence.to_bits(), b.log_evidence.to_bits());
+    assert_eq!(
+        runner_up_gap.map(f64::to_bits),
+        b.runner_up_gap.map(f64::to_bits)
+    );
+    assert_eq!(*peak_retained_states, b.peak_retained_states);
+    assert_eq!(*processed_columns, b.processed_columns);
+    assert_eq!(*transitions, b.transitions);
+    assert_eq!(*dropped_states, b.dropped_states);
+    assert_eq!(*bp_runs, b.bp_runs);
+    assert_eq!(*escalation_rungs_used, b.escalation_rungs_used);
+    assert_eq!(*status, b.status);
+    assert!(bp_seconds.is_finite() && *bp_seconds >= 0.0);
+    assert!(b.bp_seconds.is_finite() && b.bp_seconds >= 0.0);
+    if *bp_runs == 0 {
+        assert_eq!(bp_seconds.to_bits(), b.bp_seconds.to_bits());
+    }
+    assert_eq!(logical_masses.len(), b.logical_masses.len());
+    for (left, right) in logical_masses.iter().zip(&b.logical_masses) {
+        let pecos_trellis::TrellisLogicalMass { logical, log_mass } = left;
+        assert_eq!(*logical, right.logical);
+        assert_eq!(log_mass.to_bits(), right.log_mass.to_bits());
+    }
+    assert!(dropped_log_mass.is_some());
+    assert_eq!(b.dropped_log_mass, None);
 }

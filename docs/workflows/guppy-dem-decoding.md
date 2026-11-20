@@ -775,8 +775,8 @@ lines of each tab do.
 Frontier consumes `raw_text` because Python decoder providers take text by protocol.
 The matching decoders on this page take the `dem` object and project it themselves;
 `source_graphlike_text` remains only as an export example. See [Experimental Decoders](../experimental/decoders.md)
-for the full result surface, including what `status` and `dropped_log_mass` say
-about whether pruning affected the answer.
+for the full result surface, including what `status` and the opt-in `dropped_log_mass` diagnostic
+report about pruning. The latter is absent unless `dropped_mass` is enabled.
 
 ## Where to go next
 

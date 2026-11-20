@@ -313,9 +313,12 @@ def _validate(operation: dict) -> tuple[int, int]:
         msg = "Public WASM lowering requires tket.wasm 0.5.0"
         raise ValueError(msg)
     name, args = operation["name"], operation["args"]
-    if name == "lookup_by_name":
-        if args[0].get("tya") != "String":
+    if name in {"lookup_by_name", "lookup_by_id"}:
+        if name == "lookup_by_name" and args[0].get("tya") != "String":
             msg = "WASM export name must be a compile-time string"
+            raise ValueError(msg)
+        if name == "lookup_by_id" and (args[0].get("tya") != "BoundedNat" or not 0 <= args[0].get("n", -1) < 2**64):
+            msg = "WASM export index must be a compile-time unsigned 64-bit integer"
             raise ValueError(msg)
         inputs, outputs = len(_scalar_types(args[1])), len(_scalar_types(args[2]))
     elif name == "call":
@@ -345,6 +348,7 @@ declare i64 @pecos_wasm_v1_acquire(i64)
 declare i32 @pecos_wasm_v1_release(i64)
 declare i64 @pecos_wasm_v1_lookup(i64, ptr, i64, i64, i64)
 declare i64 @pecos_wasm_v2_lookup(i64, ptr, i64, ptr, i64, ptr, i64)
+declare i64 @pecos_wasm_v2_lookup_by_id(i64, i64, ptr, i64, ptr, i64)
 declare i32 @pecos_wasm_v1_call(i64, i64, ptr, i64)
 declare i32 @pecos_wasm_v1_read(i64, ptr, i64)
 declare ptr @pecos_wasm_v1_error()
@@ -380,18 +384,22 @@ entry:
   ret {{ i1, i64 }} %result
 }}
 """
-    if name == "lookup_by_name":
-        data = args[0]["arg"].encode("utf-8")
+    if name in {"lookup_by_name", "lookup_by_id"}:
         in_types, out_types = _scalar_types(args[1]), _scalar_types(args[2])
-        constants = _constant(unique, data)
-        lookup = f"@pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})"
-        if "double" in in_types + out_types:
+        constants = ""
+        if name == "lookup_by_name":
+            data = args[0]["arg"].encode("utf-8")
+            constants = _constant(unique, data)
+            lookup = f"@pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})"
+        if name == "lookup_by_id" or "double" in in_types + out_types:
             constants += _constant(unique + "_inputs", bytes(ty == "double" for ty in in_types))
             constants += _constant(unique + "_outputs", bytes(ty == "double" for ty in out_types))
-            lookup = (
-                f"@pecos_wasm_v2_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, "
-                f"ptr @{unique}_inputs, i64 {inputs}, ptr @{unique}_outputs, i64 {outputs})"
+            target = (
+                f"@pecos_wasm_v2_lookup_by_id(i64 %module, i64 {args[0]['n']}, "
+                if name == "lookup_by_id"
+                else f"@pecos_wasm_v2_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, "
             )
+            lookup = target + f"ptr @{unique}_inputs, i64 {inputs}, ptr @{unique}_outputs, i64 {outputs})"
         return constants + f"""define i64 {symbol}(i64 %module) {{
 entry:
   %handle = call i64 {lookup}

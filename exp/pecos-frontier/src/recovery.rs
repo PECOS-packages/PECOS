@@ -246,15 +246,6 @@ impl FrontierRecoveryDecoder {
         syndrome: &[u8],
         options: RecoveryOptions,
     ) -> Result<FrontierRecoveryOutcome, DecoderError> {
-        self.decode_with_attempt(syndrome, options, FrontierDecoder::attempt)
-    }
-
-    fn decode_with_attempt(
-        &mut self,
-        syndrome: &[u8],
-        options: RecoveryOptions,
-        mut attempt: impl FnMut(&mut FrontierDecoder, PruneParams) -> TrellisDecodeAttempt,
-    ) -> Result<FrontierRecoveryOutcome, DecoderError> {
         self.validate_options(options)?;
         let mut report = FrontierNoPath {
             cause: NoPathCause::Exhausted,
@@ -276,7 +267,7 @@ impl FrontierRecoveryDecoder {
         let mut params = self.inner.prune_params();
         loop {
             report.deltas_tried.push(params.delta);
-            match attempt(&mut self.inner, params) {
+            match self.inner.attempt(params) {
                 TrellisDecodeAttempt::Success(mut result) => {
                     result.transitions += report.transitions;
                     result.bp_seconds = report.bp_seconds;
@@ -407,19 +398,6 @@ impl ConfiguredFrontierDecoder {
             options: self.options,
         }
     }
-
-    // Observable callers consume only the predicted mask, so the attempts skip
-    // dropped-mass accounting; recovery decisions are identical to full attempts.
-    fn decode_prediction(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<FrontierRecoveryOutcome, DecoderError> {
-        self.decoder.decode_with_attempt(
-            syndrome,
-            self.options,
-            FrontierDecoder::attempt_prediction_only,
-        )
-    }
 }
 impl pecos_decoder_core::ObservableDecoder for ConfiguredFrontierDecoder {
     fn num_detectors(&self) -> Option<usize> {
@@ -437,7 +415,7 @@ impl pecos_decoder_core::ObservableDecoder for ConfiguredFrontierDecoder {
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::outcome::ObservableDecodeOutcome, DecoderError> {
         use pecos_decoder_core::outcome::ObservableDecodeOutcome;
-        Ok(match self.decode_prediction(syndrome)? {
+        Ok(match self.decoder.decode(syndrome, self.options)? {
             FrontierRecoveryOutcome::Decoded {
                 result,
                 deltas_tried,
@@ -510,37 +488,47 @@ mod tests {
     }
 
     #[test]
-    fn observable_adapter_decodes_prediction_only() {
-        let dem = SparseDem::from_dem_str(DEM).unwrap();
-        let config = FrontierConfig {
-            k: 8,
-            delta: 0.0,
-            score_alpha: 0.0,
-            column_order: Some(vec![0, 1, 2]),
-            ..Default::default()
-        };
-        let options = RecoveryOptions {
-            delta_max: Some(32.0),
-            on_no_path: NoPathAction::Raise,
-        };
-        let mut full = FrontierRecoveryDecoder::from_sparse_dem(&dem, config, None).unwrap();
-        let mut adapter = full.fresh_worker().with_options(options).unwrap();
-        for shot in [[0, 0, 0], [0, 0, 1]] {
-            let FrontierRecoveryOutcome::Decoded { result: full, .. } =
-                full.decode(&shot, options).unwrap()
-            else {
-                panic!("full decode must succeed");
+    fn observable_adapter_follows_dropped_mass_config() {
+        use pecos_decoder_core::ObservableDecoder;
+        let mut predictions = Vec::new();
+        for dropped_mass in [false, true] {
+            let dem = SparseDem::from_dem_str(DEM).unwrap();
+            let config = FrontierConfig {
+                dropped_mass,
+                k: 8,
+                delta: 0.0,
+                score_alpha: 0.0,
+                column_order: Some(vec![0, 1, 2]),
+                ..Default::default()
             };
-            let FrontierRecoveryOutcome::Decoded { result, .. } =
-                adapter.decode_prediction(&shot).unwrap()
-            else {
-                panic!("adapter decode must succeed");
+            let options = RecoveryOptions {
+                delta_max: Some(32.0),
+                on_no_path: NoPathAction::Raise,
             };
-            // Prediction-only success marks the skipped accounting as NaN.
-            assert!(!full.dropped_log_mass.is_nan());
-            assert!(result.dropped_log_mass.is_nan());
-            assert_eq!(result.predicted, full.predicted);
+            let mut full = FrontierRecoveryDecoder::from_sparse_dem(&dem, config, None).unwrap();
+            let mut adapter = full.fresh_worker().with_options(options).unwrap();
+            for shot in [[0, 0, 0], [0, 0, 1]] {
+                let FrontierRecoveryOutcome::Decoded { result: full, .. } =
+                    full.decode(&shot, options).unwrap()
+                else {
+                    panic!("full decode must succeed");
+                };
+                assert_eq!(full.dropped_log_mass.is_some(), dropped_mass);
+                assert_eq!(adapter.decode_obs(&shot).unwrap(), full.predicted);
+                match full.predicted.to_u64() {
+                    Some(expected) => {
+                        assert_eq!(adapter.decode_to_observables(&shot).unwrap(), expected);
+                    }
+                    None => assert!(adapter.decode_to_observables(&shot).is_err()),
+                }
+                assert_eq!(
+                    adapter.decode_outcome(&shot).unwrap().prediction,
+                    Some(full.predicted.clone())
+                );
+                predictions.push(full.predicted);
+            }
         }
+        assert_eq!(predictions[..2], predictions[2..]);
     }
 
     #[test]

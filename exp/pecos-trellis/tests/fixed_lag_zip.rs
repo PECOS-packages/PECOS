@@ -4,22 +4,6 @@ use pecos_trellis::{StreamingMode, TrellisConfig, TrellisStreamingDecoder};
 use std::fmt::Write;
 
 #[test]
-fn prediction_only_requires_reset_before_evidence() {
-    let mut decoder = TrellisStreamingDecoder::from_dem_str(
-        "error(0.1) D0 L0\nerror(0.2) D1\nerror(0.3) D2",
-        TrellisConfig::default(),
-    )
-    .unwrap();
-    decoder.feed_dense(&[1, 0, 0]).unwrap();
-    let prediction = decoder.flush_prediction_without_evidence().unwrap();
-    assert!(decoder.flush().is_err());
-    assert!(decoder.advance_prediction().is_err());
-    decoder.reset();
-    decoder.feed_dense(&[1, 0, 0]).unwrap();
-    assert_eq!(decoder.flush().unwrap().predicted, prediction);
-}
-
-#[test]
 fn fixed_lag_matches_original_zip_native_golden_predictions_and_schedule() {
     let doc: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/fixed_lag_zip_v22.json")).unwrap();
@@ -35,10 +19,11 @@ fn fixed_lag_matches_original_zip_native_golden_predictions_and_schedule() {
         dem.push('\n');
     }
     for case in doc["cases"].as_array().unwrap() {
-        for omit_evidence in [false, true] {
+        for dropped_mass in [false, true] {
             let mut decoder = TrellisStreamingDecoder::from_dem_str(
                 &dem,
                 TrellisConfig {
+                    dropped_mass,
                     k: usize::try_from(case["k"].as_u64().unwrap()).unwrap(),
                     delta: case["delta"].as_f64().unwrap(),
                     score_alpha: 0.8,
@@ -58,19 +43,10 @@ fn fixed_lag_matches_original_zip_native_golden_predictions_and_schedule() {
             let mut columns = Vec::new();
             for chunk in bits.chunks(2) {
                 decoder.feed_prefix(chunk).unwrap();
-                let advanced = if omit_evidence {
-                    decoder.advance_prediction_without_evidence()
-                } else {
-                    decoder.advance_prediction()
-                };
+                let advanced = decoder.advance_prediction();
                 columns.push(advanced.unwrap());
             }
-            let prediction = if omit_evidence {
-                decoder.flush_prediction_without_evidence()
-            } else {
-                decoder.flush_prediction()
-            }
-            .unwrap();
+            let prediction = decoder.flush_prediction().unwrap();
             assert_eq!(
                 Some(prediction.words()[0]),
                 case["prediction"].as_u64(),

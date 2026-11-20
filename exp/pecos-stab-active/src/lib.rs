@@ -30,15 +30,17 @@
 use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_random::{PecosRng, RngManageable};
+#[cfg(test)]
+use pecos_simulators::stab_tn::stab_mps::coordinate_tableau::{
+    CoordinateDecomposition, MeasurementCase,
+};
+#[cfg(test)]
+use pecos_simulators::stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
+pub use pecos_simulators::stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
 use pecos_simulators::{
     ArbitraryRotationGateable, CliffordGateable, ForcedMeasurement, MeasurementResult,
     QuantumSimulator,
 };
-#[cfg(test)]
-use pecos_stab_tn::stab_mps::coordinate_tableau::{CoordinateDecomposition, MeasurementCase};
-#[cfg(test)]
-use pecos_stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
-pub use pecos_stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
 
 mod kernels;
 mod structure;
@@ -115,7 +117,7 @@ impl StabActive {
 
     #[cfg(test)]
     fn parts(&self, pauli: &[(usize, PauliKindForDecomp)]) -> CoordinateDecomposition {
-        pecos_stab_tn::stab_mps::coordinate_tableau::decompose(
+        pecos_simulators::stab_tn::stab_mps::coordinate_tableau::decompose(
             self.structure.tableau(),
             self.structure.active(),
             pauli,

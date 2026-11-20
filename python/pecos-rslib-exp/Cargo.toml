@@ -8,7 +8,7 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Python bindings for experimental PECOS simulators (pecos-stab-tn)."
+description = "Python bindings for experimental PECOS simulators."
 publish = false
 
 [lib]
@@ -37,7 +37,6 @@ pecos-simulators.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 rayon.workspace = true
-pecos-stab-tn.workspace = true
 pecos-trellis.workspace = true
 pyo3 = { workspace = true, features = ["num-complex"] }
 num-complex.workspace = true

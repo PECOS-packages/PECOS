@@ -8,7 +8,7 @@ use num_complex::Complex64;
 use pecos_core::{BitmaskStorage, MeasId, PauliBitmaskVec, gate_type::GateType};
 use pecos_quantum::{AnnotationKind, Gate, TickCircuit};
 use pecos_simulators::SparseStabY;
-use pecos_stab_tn::stab_mps::pauli_decomp::decompose_pauli_string;
+use pecos_simulators::stab_tn::stab_mps::pauli_decomp::decompose_pauli_string;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,

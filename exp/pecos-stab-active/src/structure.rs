@@ -4,10 +4,10 @@
 //! Signed coordinate structure shared by simulation and width profiling.
 
 use pecos_core::{Angle64, BitmaskStorage, PauliBitmaskVec, QubitId};
-use pecos_simulators::{CliffordGateable, SparseStabY};
-use pecos_stab_tn::stab_mps::coordinate_tableau::{
+use pecos_simulators::stab_tn::stab_mps::coordinate_tableau::{
     self, CoordinateDecomposition, CoordinateGate, MeasurementCase,
 };
+use pecos_simulators::{CliffordGateable, SparseStabY};
 
 use crate::PauliKindForDecomp;
 

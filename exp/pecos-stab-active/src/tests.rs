@@ -491,7 +491,7 @@ fn mixed_support_and_odd_overlap() {
 }
 
 fn check_roundoff_endpoint(pair: bool) {
-    use pecos_stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
+    use pecos_simulators::stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
 
     for outcome in [false, true] {
         let mut sim = StabActive::with_seed(1, 34);

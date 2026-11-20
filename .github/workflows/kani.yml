@@ -1,0 +1,63 @@
+name: Kani
+
+permissions:
+  contents: read
+
+# Kani model-checks the `#[cfg(kani)]` proof harnesses. They currently live in
+# pecos-core only, so the job runs when that crate, its one workspace
+# dependency (pecos-random), or the workspace manifest changes, plus nightly to
+# catch toolchain or dependency drift. Kani uses its own pinned toolchain.
+on:
+  push:
+    branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'crates/pecos-core/**'
+      - 'crates/pecos-random/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/kani.yml'
+  pull_request:
+    branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'crates/pecos-core/**'
+      - 'crates/pecos-random/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/kani.yml'
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  # Pull requests cancel superseded runs. Every other event (a push to a main
+  # branch, a schedule, a dispatch) gets its own group so no trunk commit loses
+  # its validation to a later merge.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  kani:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # Each Kani release pins its own nightly toolchain and CBMC; `setup`
+      # downloads both. Bump the version deliberately and rerun the proofs.
+      - name: Install Kani
+        run: |
+          cargo install --locked --version 0.68.0 kani-verifier
+          cargo kani setup
+
+      - name: Verify pecos-core proof harnesses
+        run: cargo kani -p pecos-core -j 4 --output-format terse

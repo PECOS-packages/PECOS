@@ -1360,87 +1360,245 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
 
-    // Matrix order is |q0 q1>; use explicit complex arithmetic independently
-    // of the conjugation decompositions.
-    fn szz_family_pauli_matrix(
+    /// Entry `(row, col)` of the 2x2 Pauli matrix on qubit `q` of `p`, with
+    /// `Y = [[0, -i], [i, 0]]`. Uses explicit complex arithmetic,
+    /// independently of the conjugation decompositions.
+    fn local_pauli_entry(
+        p: &PauliBitmask,
+        q: usize,
+        row: usize,
+        col: usize,
+    ) -> num_complex::Complex64 {
+        use num_complex::Complex64;
+        match (p.x_bits.get_bit(q), p.z_bits.get_bit(q)) {
+            (false, false) => Complex64::new(f64::from(row == col), 0.0),
+            (true, false) => Complex64::new(f64::from(row != col), 0.0),
+            (false, true) => Complex64::new(
+                if row == col {
+                    if row == 0 { 1.0 } else { -1.0 }
+                } else {
+                    0.0
+                },
+                0.0,
+            ),
+            (true, true) => Complex64::new(
+                0.0,
+                if row == col {
+                    0.0
+                } else if row == 0 {
+                    -1.0
+                } else {
+                    1.0
+                },
+            ),
+        }
+    }
+
+    /// The 4x4 matrix of `p` restricted to `qubits`, in `|q0 q1>` order.
+    fn two_qubit_pauli_matrix(
         p: &PauliBitmask,
         qubits: [usize; 2],
     ) -> [[num_complex::Complex64; 4]; 4] {
-        use num_complex::Complex64;
-        let local =
-            |q: usize, row: usize, col: usize| match (p.x_bits.get_bit(q), p.z_bits.get_bit(q)) {
-                (false, false) => Complex64::new(f64::from(row == col), 0.0),
-                (true, false) => Complex64::new(f64::from(row != col), 0.0),
-                (false, true) => Complex64::new(
-                    if row == col {
-                        if row == 0 { 1.0 } else { -1.0 }
-                    } else {
-                        0.0
-                    },
-                    0.0,
-                ),
-                (true, true) => Complex64::new(
-                    0.0,
-                    if row == col {
-                        0.0
-                    } else if row == 0 {
-                        -1.0
-                    } else {
-                        1.0
-                    },
-                ),
-            };
         std::array::from_fn(|r| {
-            std::array::from_fn(|c| local(qubits[0], r / 2, c / 2) * local(qubits[1], r % 2, c % 2))
+            std::array::from_fn(|c| {
+                local_pauli_entry(p, qubits[0], r / 2, c / 2)
+                    * local_pauli_entry(p, qubits[1], r % 2, c % 2)
+            })
         })
     }
 
+    /// Complex matrix from the interleaved real/imaginary canonical layout.
+    fn complex_matrix<const N: usize>(flat: &[f64]) -> [[num_complex::Complex64; N]; N] {
+        std::array::from_fn(|r| {
+            std::array::from_fn(|c| {
+                num_complex::Complex64::new(flat[2 * (N * r + c)], flat[2 * (N * r + c) + 1])
+            })
+        })
+    }
+
+    /// `u m u^dagger` for square complex matrices.
+    fn conjugate_matrix<const N: usize>(
+        u: &[[num_complex::Complex64; N]; N],
+        m: &[[num_complex::Complex64; N]; N],
+    ) -> [[num_complex::Complex64; N]; N] {
+        std::array::from_fn(|r| {
+            std::array::from_fn(|c| {
+                (0..N)
+                    .flat_map(|i| (0..N).map(move |j| u[r][i] * m[i][j] * u[c][j].conj()))
+                    .sum()
+            })
+        })
+    }
+
+    /// The unique `(candidate, negative)` with `image == +-matrix_of(candidate)`.
+    fn unique_signed_match<'a, const N: usize>(
+        image: &[[num_complex::Complex64; N]; N],
+        candidates: &'a [PauliBitmask],
+        matrix_of: impl Fn(&PauliBitmask) -> [[num_complex::Complex64; N]; N],
+    ) -> (&'a PauliBitmask, bool) {
+        let matches: Vec<_> = candidates
+            .iter()
+            .flat_map(|candidate| [false, true].map(move |negative| (candidate, negative)))
+            .filter(|(candidate, negative)| {
+                let expected = matrix_of(candidate);
+                let sign = if *negative { -1.0 } else { 1.0 };
+                image
+                    .iter()
+                    .flatten()
+                    .zip(expected.iter().flatten())
+                    .all(|(a, b)| (*a - sign * b).norm() < 1e-12)
+            })
+            .collect();
+        assert_eq!(matches.len(), 1, "image must be exactly one signed Pauli");
+        matches[0]
+    }
+
     #[test]
-    fn szz_family_matches_canonical_matrices() {
-        use crate::gate_type::GateType;
-        use num_complex::Complex64;
+    fn single_qubit_conjugations_match_canonical_matrices() {
+        use crate::Clifford;
+        type Forward = fn(&PauliBitmask, usize) -> Conjugated;
+        type InPlace = fn(&mut PauliBitmask, usize) -> bool;
+        let cases: [(Clifford, Forward, InPlace); 10] = [
+            (
+                Clifford::X,
+                conjugate_x::<u128>,
+                conjugate_x_in_place::<u128>,
+            ),
+            (
+                Clifford::Y,
+                conjugate_y::<u128>,
+                conjugate_y_in_place::<u128>,
+            ),
+            (
+                Clifford::Z,
+                conjugate_z::<u128>,
+                conjugate_z_in_place::<u128>,
+            ),
+            (
+                Clifford::H,
+                conjugate_h::<u128>,
+                conjugate_h_in_place::<u128>,
+            ),
+            (
+                Clifford::SX,
+                conjugate_sx::<u128>,
+                conjugate_sx_in_place::<u128>,
+            ),
+            (
+                Clifford::SXdg,
+                conjugate_sxdg::<u128>,
+                conjugate_sxdg_in_place::<u128>,
+            ),
+            (
+                Clifford::SY,
+                conjugate_sy::<u128>,
+                conjugate_sy_in_place::<u128>,
+            ),
+            (
+                Clifford::SYdg,
+                conjugate_sydg::<u128>,
+                conjugate_sydg_in_place::<u128>,
+            ),
+            (
+                Clifford::SZ,
+                conjugate_sz::<u128>,
+                conjugate_sz_in_place::<u128>,
+            ),
+            (
+                Clifford::SZdg,
+                conjugate_szdg::<u128>,
+                conjugate_szdg_in_place::<u128>,
+            ),
+        ];
+        for (gate, conjugate, in_place) in cases {
+            let u = complex_matrix::<2>(&gate.canonical_1q_matrix().unwrap());
+            for q in [0, 65, 127] {
+                let paulis = [
+                    PauliBitmask::default(),
+                    PauliBitmask::x(q),
+                    PauliBitmask::y(q),
+                    PauliBitmask::z(q),
+                ];
+                let matrix_of = |p: &PauliBitmask| -> [[num_complex::Complex64; 2]; 2] {
+                    std::array::from_fn(|r| std::array::from_fn(|c| local_pauli_entry(p, q, r, c)))
+                };
+                for p in &paulis {
+                    let image = conjugate_matrix(&u, &matrix_of(p));
+                    let expected = unique_signed_match(&image, &paulis, matrix_of);
+                    let result = conjugate(p, q);
+                    assert_eq!(
+                        (&result.label, result.sign_negative),
+                        expected,
+                        "{gate:?} q={q} {p:?}"
+                    );
+                    let mut label = *p;
+                    let sign = in_place(&mut label, q);
+                    assert_eq!((&label, sign), expected, "in-place {gate:?} q={q} {p:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn two_qubit_conjugations_match_canonical_matrices() {
+        use crate::Clifford;
         type Forward = fn(&PauliBitmask, usize, usize) -> Conjugated;
         type InPlace = fn(&mut PauliBitmask, usize, usize) -> bool;
-        let cases: [(GateType, Forward, InPlace); 6] = [
+        let cases: [(Clifford, Forward, InPlace); 10] = [
             (
-                GateType::SZZ,
+                Clifford::CX,
+                conjugate_cx::<u128>,
+                conjugate_cx_in_place::<u128>,
+            ),
+            (
+                Clifford::CY,
+                conjugate_cy::<u128>,
+                conjugate_cy_in_place::<u128>,
+            ),
+            (
+                Clifford::CZ,
+                conjugate_cz::<u128>,
+                conjugate_cz_in_place::<u128>,
+            ),
+            (
+                Clifford::SWAP,
+                conjugate_swap::<u128>,
+                conjugate_swap_in_place::<u128>,
+            ),
+            (
+                Clifford::SZZ,
                 conjugate_szz::<u128>,
                 conjugate_szz_in_place::<u128>,
             ),
             (
-                GateType::SZZdg,
+                Clifford::SZZdg,
                 conjugate_szzdg::<u128>,
                 conjugate_szzdg_in_place::<u128>,
             ),
             (
-                GateType::SXX,
+                Clifford::SXX,
                 conjugate_sxx::<u128>,
                 conjugate_sxx_in_place::<u128>,
             ),
             (
-                GateType::SXXdg,
+                Clifford::SXXdg,
                 conjugate_sxxdg::<u128>,
                 conjugate_sxxdg_in_place::<u128>,
             ),
             (
-                GateType::SYY,
+                Clifford::SYY,
                 conjugate_syy::<u128>,
                 conjugate_syy_in_place::<u128>,
             ),
             (
-                GateType::SYYdg,
+                Clifford::SYYdg,
                 conjugate_syydg::<u128>,
                 conjugate_syydg_in_place::<u128>,
             ),
         ];
         for (gate, conjugate, in_place) in cases {
-            let flat = gate.canonical_2q_matrix().unwrap();
-            let u: [[Complex64; 4]; 4] = std::array::from_fn(|r| {
-                std::array::from_fn(|c| {
-                    Complex64::new(flat[2 * (4 * r + c)], flat[2 * (4 * r + c) + 1])
-                })
-            });
-            for qubits in [[0, 1], [2, 65], [65, 2]] {
+            let u = complex_matrix::<4>(&gate.canonical_2q_matrix().unwrap());
+            for qubits in [[0, 1], [2, 65], [65, 2], [127, 0]] {
                 let local = |q| {
                     [
                         PauliBitmask::default(),
@@ -1453,42 +1611,19 @@ mod tests {
                     .into_iter()
                     .flat_map(|a| local(qubits[1]).map(|b| a.multiply(&b)))
                     .collect();
+                let matrix_of = |p: &PauliBitmask| two_qubit_pauli_matrix(p, qubits);
                 for p in &paulis {
-                    let matrix = szz_family_pauli_matrix(p, qubits);
-                    let image: [[Complex64; 4]; 4] = std::array::from_fn(|r| {
-                        std::array::from_fn(|c| {
-                            (0..4)
-                                .flat_map(|i| {
-                                    (0..4).map(move |j| u[r][i] * matrix[i][j] * u[c][j].conj())
-                                })
-                                .sum()
-                        })
-                    });
-                    let matches: Vec<_> = paulis
-                        .iter()
-                        .flat_map(|candidate| {
-                            [false, true].map(move |negative| (candidate, negative))
-                        })
-                        .filter(|(candidate, negative)| {
-                            let expected = szz_family_pauli_matrix(candidate, qubits);
-                            let sign = if *negative { -1.0 } else { 1.0 };
-                            image
-                                .iter()
-                                .flatten()
-                                .zip(expected.iter().flatten())
-                                .all(|(a, b)| (*a - sign * b).norm() < 1e-12)
-                        })
-                        .collect();
-                    assert_eq!(matches.len(), 1);
+                    let image = conjugate_matrix(&u, &matrix_of(p));
+                    let expected = unique_signed_match(&image, &paulis, matrix_of);
                     let result = conjugate(p, qubits[0], qubits[1]);
                     assert_eq!(
                         (&result.label, result.sign_negative),
-                        matches[0],
+                        expected,
                         "{gate:?} {qubits:?} {p:?}"
                     );
                     let mut label = *p;
                     let sign = in_place(&mut label, qubits[0], qubits[1]);
-                    assert_eq!((&label, sign), matches[0], "in-place {gate:?} {p:?}");
+                    assert_eq!((&label, sign), expected, "in-place {gate:?} {p:?}");
                 }
             }
         }
@@ -2081,6 +2216,64 @@ mod tests {
         );
     }
 
+    /// Bits covered by `assert_bit_primitives_match_model`: every word the
+    /// starting lengths and qubits below can reach, plus one more.
+    const MODEL_BITS: usize = 11 * 64;
+
+    /// Asserts `storage` holds exactly the bits of `model`, reading every
+    /// position in range and checking that no bit is set beyond it.
+    fn assert_storage_matches<S: BitmaskStorage>(storage: &S, model: &[bool], context: &str) {
+        for (q, &expected) in model.iter().enumerate() {
+            assert_eq!(storage.get_bit(q), expected, "{context}: bit {q}");
+        }
+        assert!(
+            storage.highest_set_bit().is_none_or(|q| q < MODEL_BITS),
+            "{context}: bit set beyond the model"
+        );
+    }
+
+    /// Each bit primitive against a `Vec<bool>` model, from every starting
+    /// length up to past the `SmallVec` inline capacity of 8 words, at qubits
+    /// on word edges and past the spill point. Every bit is compared, so a
+    /// write to the wrong position anywhere in the storage fails.
+    fn assert_bit_primitives_match_model<S: BitmaskStorage + From<Vec<u64>>>() {
+        const QUBITS: [usize; 10] = [0, 1, 63, 64, 127, 128, 511, 512, 520, 600];
+        for len in 0..=9 {
+            let words: Vec<u64> = (0..len)
+                .map(|i| 0x9e37_79b9_7f4a_7c15_u64.rotate_left(u32::try_from(i).unwrap()))
+                .collect();
+            let model: Vec<bool> = (0..MODEL_BITS)
+                .map(|q| words.get(q / 64).is_some_and(|w| (w >> (q % 64)) & 1 == 1))
+                .collect();
+            assert_storage_matches(&S::from(words.clone()), &model, &format!("len={len}"));
+            for q in QUBITS {
+                let mut storage = S::from(words.clone());
+                let mut expected = model.clone();
+                storage.xor_bit(q);
+                expected[q] = !expected[q];
+                assert_storage_matches(&storage, &expected, &format!("xor_bit len={len} q={q}"));
+
+                let mut storage = S::from(words.clone());
+                let mut expected = model.clone();
+                storage.set_bit(q);
+                expected[q] = true;
+                assert_storage_matches(&storage, &expected, &format!("set_bit len={len} q={q}"));
+
+                let mut storage = S::from(words.clone());
+                let mut expected = model.clone();
+                storage.clear_bit(q);
+                expected[q] = false;
+                assert_storage_matches(&storage, &expected, &format!("clear_bit len={len} q={q}"));
+            }
+        }
+    }
+
+    #[test]
+    fn bit_primitives_match_model_across_growth() {
+        assert_bit_primitives_match_model::<Vec<u64>>();
+        assert_bit_primitives_match_model::<SmallVec<[u64; 8]>>();
+    }
+
     #[test]
     fn multiply_with_phase_handles_unequal_vec_lengths() {
         assert_unequal_length_phase_matches_reference::<Vec<u64>>();
@@ -2255,5 +2448,472 @@ mod tests {
             assert_eq!(r2.label, p);
             assert!(!(r1.sign_negative ^ r2.sign_negative));
         }
+    }
+}
+
+/// Kani proofs for the bit-parallel phase arithmetic.
+///
+/// The oracle is derived from the Y = iXZ convention rather than from the
+/// six-case product table the implementation uses. Writing a Pauli as
+/// `P(x, z) = i^(x z) X^x Z^z` and commuting `Z^za` past `X^xb` gives, per
+/// qubit, `P(a) P(b) = i^e P(a xor b)` with
+/// `e = xa za + xb zb + 2 za xb - xc zc` (mod 4), where `xc = xa xor xb`
+/// and `zc = za xor zb`. Acting on a basis state gives
+/// `P(x, z) |r> = i^(x z + 2 z r) |r xor x>`. Summing over qubits turns each
+/// product of bits into a population count.
+///
+/// Run with `cargo kani -p pecos-core`.
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// Product phase exponent from the Y = iXZ derivation, over 128 qubits.
+    fn spec_mul_exponent(lx: u128, lz: u128, rx: u128, rz: u128) -> u8 {
+        let xc = lx ^ rx;
+        let zc = lz ^ rz;
+        // Subtracting the xc zc term is adding 3 copies of it mod 4.
+        let e = (lx & lz).count_ones()
+            + (rx & rz).count_ones()
+            + 2 * (lz & rx).count_ones()
+            + 3 * (xc & zc).count_ones();
+        (e % 4) as u8
+    }
+
+    /// Basis-state phase exponent from the Y = iXZ derivation, over 128 qubits.
+    fn spec_basis_exponent(x: u128, z: u128, r: u128) -> u8 {
+        let e = (x & z).count_ones() + 2 * (z & r).count_ones();
+        (e % 4) as u8
+    }
+
+    /// A word plane of symbolic length 0..=2, plus its zero-padded u128 value.
+    fn any_plane() -> (Vec<u64>, u128) {
+        let lo: u64 = kani::any();
+        let hi: u64 = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= 2);
+        let mut words = vec![lo, hi];
+        words.truncate(len);
+        let value = match len {
+            0 => 0,
+            1 => u128::from(lo),
+            _ => u128::from(lo) | (u128::from(hi) << 64),
+        };
+        (words, value)
+    }
+
+    // Proving the product phase against the spec for all 64 or 128 qubits at
+    // once does not finish: the solver must show two different popcount
+    // circuits agree, and the cost grows from 30 s at 8 bits to over 5 minutes
+    // at 16. The proofs below check every single-qubit product at every bit
+    // position. Full width then follows from the code's shape, which is not
+    // machine-checked: each term is a popcount of a bitwise (same-position)
+    // mask, so qubits contribute independently and the sums cannot overflow.
+    // The 8-qubit window proofs are a bounded check of that shape; they would
+    // miss a term that mixes positions further apart, such as a shifted mask.
+
+    /// One symbolic qubit `(x, z)` at symbolic position `pos`, other bits clear.
+    fn one_qubit_u128(pos: u32, x: bool, z: bool) -> (u128, u128) {
+        (u128::from(x) << pos, u128::from(z) << pos)
+    }
+
+    #[kani::proof]
+    fn phase_terms_u64_matches_spec_on_each_qubit() {
+        let pos: u32 = kani::any();
+        kani::assume(pos < 64);
+        let (lx, lz) = one_qubit_u128(pos, kani::any(), kani::any());
+        let (rx, rz) = one_qubit_u128(pos, kani::any(), kani::any());
+        let word = |v: u128| u64::try_from(v).expect("pos < 64 keeps the qubit in the low word");
+        let got = (phase_terms_u64(word(lx), word(lz), word(rx), word(rz)) % 4) as u8;
+        assert_eq!(got, spec_mul_exponent(lx, lz, rx, rz));
+    }
+
+    #[kani::proof]
+    fn phase_terms_u64_matches_spec_on_8_qubits() {
+        let (lx, lz, rx, rz): (u8, u8, u8, u8) = kani::any();
+        let (lx, lz, rx, rz) = (u64::from(lx), u64::from(lz), u64::from(rx), u64::from(rz));
+        let got = (phase_terms_u64(lx, lz, rx, rz) % 4) as u8;
+        assert_eq!(
+            got,
+            spec_mul_exponent(lx.into(), lz.into(), rx.into(), rz.into())
+        );
+    }
+
+    #[kani::proof]
+    fn u128_mul_phase_exponent_matches_spec_on_each_qubit() {
+        let pos: u32 = kani::any();
+        kani::assume(pos < 128);
+        let (lx, lz) = one_qubit_u128(pos, kani::any(), kani::any());
+        let (rx, rz) = one_qubit_u128(pos, kani::any(), kani::any());
+        assert_eq!(
+            lx.mul_phase_exponent(&lz, &rx, &rz),
+            spec_mul_exponent(lx, lz, rx, rz)
+        );
+    }
+
+    /// The window straddles the two 64-bit halves. A symbolic window position
+    /// did not finish in 20 minutes.
+    #[kani::proof]
+    fn u128_mul_phase_exponent_matches_spec_on_8_qubits() {
+        let (lx, lz, rx, rz): (u8, u8, u8, u8) = kani::any();
+        let place = |v: u8| u128::from(v) << 60;
+        let (lx, lz, rx, rz) = (place(lx), place(lz), place(rx), place(rz));
+        assert_eq!(
+            lx.mul_phase_exponent(&lz, &rx, &rz),
+            spec_mul_exponent(lx, lz, rx, rz)
+        );
+    }
+
+    /// The word backend is the mod-4 sum of `phase_terms_u64` over zero-padded
+    /// words, for planes of up to two words. With the `phase_terms_u64` proofs
+    /// this checks the backend against the spec on each qubit; checking it
+    /// directly did not finish in 30 minutes. Longer planes rely on the loop
+    /// treating every word alike, which is not machine-checked.
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn vec_mul_phase_exponent_is_the_padded_word_sum() {
+        let (lx, _) = any_plane();
+        let (lz, _) = any_plane();
+        let (rx, _) = any_plane();
+        let (rz, _) = any_plane();
+        let word = |plane: &Vec<u64>, i: usize| plane.get(i).copied().unwrap_or(0);
+        let mut expected = 0;
+        for i in 0..2 {
+            expected += phase_terms_u64(word(&lx, i), word(&lz, i), word(&rx, i), word(&rz, i));
+        }
+        assert_eq!(
+            u64::from(lx.mul_phase_exponent(&lz, &rx, &rz)),
+            expected % 4
+        );
+    }
+
+    #[kani::proof]
+    fn basis_state_phase_terms_u64_matches_spec() {
+        let (x, z, r): (u64, u64, u64) = kani::any();
+        let got = (basis_state_phase_terms_u64(x, z, r) % 4) as u8;
+        assert_eq!(got, spec_basis_exponent(x.into(), z.into(), r.into()));
+    }
+
+    #[kani::proof]
+    fn u128_basis_state_phase_exponent_matches_spec() {
+        let (x, z, r): (u128, u128, u128) = kani::any();
+        assert_eq!(
+            x.basis_state_phase_exponent(&z, &r),
+            spec_basis_exponent(x, z, r)
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn vec_basis_state_phase_exponent_matches_spec() {
+        let (x, x_v) = any_plane();
+        let (z, z_v) = any_plane();
+        let (r, r_v) = any_plane();
+        assert_eq!(
+            x.basis_state_phase_exponent(&z, &r),
+            spec_basis_exponent(x_v, z_v, r_v)
+        );
+    }
+
+    // Clifford conjugation. The unit tests `*_conjugations_match_canonical_matrices`
+    // pin each gate's local rule against its canonical matrix at fixed
+    // positions. The `*_is_local` proofs extend that to every u128 Pauli and
+    // every valid position (qubits below 128, and distinct for two-qubit
+    // gates): only the target qubits change, they change exactly as at the
+    // canonical positions, and the forward and in-place forms agree. Qubits
+    // at or above 128 and coinciding two-qubit operands are excluded inputs,
+    // not proven behavior.
+    //
+    // The conjugation functions are generic over the storage backend and touch
+    // it only through `get_bit`, `xor_bit`, `set_bit` and `clear_bit`. The
+    // `*_bit_refines_u128` proofs show those four behave on `Vec<u64>` as on
+    // u128 for planes of up to two words and qubits below 128, so within those
+    // bounds the u128 proofs carry over (see below for `SmallVec`). Beyond them
+    // the unit test `bit_primitives_match_model_across_growth` covers longer
+    // storage. Proving each gate on `Vec<u64>` directly took 99 s and 10 GB for
+    // X and ran out of memory at 76 GB for H.
+
+    fn bit(v: u128, q: usize) -> u128 {
+        (v >> q) & 1
+    }
+
+    /// Value of a word plane as u128 (planes here hold at most two words).
+    fn plane_value(words: &[u64]) -> u128 {
+        let word = |i: usize| u128::from(words.get(i).copied().unwrap_or(0));
+        word(0) | (word(1) << 64)
+    }
+
+    /// Checks one single-qubit conjugation on `(x, z)` at `q` against the
+    /// same conjugation of the local Pauli at qubit 0.
+    fn check_1q(
+        x: u128,
+        z: u128,
+        out_x: u128,
+        out_z: u128,
+        sign: bool,
+        q: usize,
+        in_place: fn(&mut PauliBitmask, usize) -> bool,
+    ) {
+        let others = !(1_u128 << q);
+        assert_eq!(out_x & others, x & others);
+        assert_eq!(out_z & others, z & others);
+        let mut local = PauliBitmask {
+            x_bits: bit(x, q),
+            z_bits: bit(z, q),
+        };
+        let local_sign = in_place(&mut local, 0);
+        assert_eq!(
+            (bit(out_x, q), bit(out_z, q), sign),
+            (local.x_bits, local.z_bits, local_sign)
+        );
+    }
+
+    /// Two-qubit counterpart of `check_1q`, against qubits 0 and 1.
+    #[allow(clippy::too_many_arguments)]
+    fn check_2q(
+        x: u128,
+        z: u128,
+        out_x: u128,
+        out_z: u128,
+        sign: bool,
+        a: usize,
+        b: usize,
+        in_place: fn(&mut PauliBitmask, usize, usize) -> bool,
+    ) {
+        let others = !((1_u128 << a) | (1_u128 << b));
+        assert_eq!(out_x & others, x & others);
+        assert_eq!(out_z & others, z & others);
+        let mut local = PauliBitmask {
+            x_bits: bit(x, a) | (bit(x, b) << 1),
+            z_bits: bit(z, a) | (bit(z, b) << 1),
+        };
+        let local_sign = in_place(&mut local, 0, 1);
+        assert_eq!(
+            (
+                bit(out_x, a),
+                bit(out_z, a),
+                bit(out_x, b),
+                bit(out_z, b),
+                sign
+            ),
+            (
+                bit(local.x_bits, 0),
+                bit(local.z_bits, 0),
+                bit(local.x_bits, 1),
+                bit(local.z_bits, 1),
+                local_sign
+            )
+        );
+    }
+
+    fn any_qubit() -> usize {
+        let q: usize = kani::any();
+        kani::assume(q < 128);
+        q
+    }
+
+    macro_rules! conjugation_1q_proofs {
+        ($name:ident, $forward:ident, $in_place:ident) => {
+            #[kani::proof]
+            fn $name() {
+                let p = PauliBitmask {
+                    x_bits: kani::any(),
+                    z_bits: kani::any(),
+                };
+                let q = any_qubit();
+                let forward = $forward(&p, q);
+                let mut out = p;
+                let sign = $in_place(&mut out, q);
+                assert_eq!((&forward.label, forward.sign_negative), (&out, sign));
+                check_1q(
+                    p.x_bits,
+                    p.z_bits,
+                    out.x_bits,
+                    out.z_bits,
+                    sign,
+                    q,
+                    $in_place::<u128>,
+                );
+            }
+        };
+    }
+
+    macro_rules! conjugation_2q_proofs {
+        ($name:ident, $forward:ident, $in_place:ident) => {
+            #[kani::proof]
+            fn $name() {
+                let p = PauliBitmask {
+                    x_bits: kani::any(),
+                    z_bits: kani::any(),
+                };
+                let (a, b) = (any_qubit(), any_qubit());
+                kani::assume(a != b);
+                let forward = $forward(&p, a, b);
+                let mut out = p;
+                let sign = $in_place(&mut out, a, b);
+                assert_eq!((&forward.label, forward.sign_negative), (&out, sign));
+                check_2q(
+                    p.x_bits,
+                    p.z_bits,
+                    out.x_bits,
+                    out.z_bits,
+                    sign,
+                    a,
+                    b,
+                    $in_place::<u128>,
+                );
+            }
+        };
+    }
+
+    conjugation_1q_proofs!(conjugate_x_is_local, conjugate_x, conjugate_x_in_place);
+    conjugation_1q_proofs!(conjugate_y_is_local, conjugate_y, conjugate_y_in_place);
+    conjugation_1q_proofs!(conjugate_z_is_local, conjugate_z, conjugate_z_in_place);
+    conjugation_1q_proofs!(conjugate_h_is_local, conjugate_h, conjugate_h_in_place);
+    conjugation_1q_proofs!(conjugate_sx_is_local, conjugate_sx, conjugate_sx_in_place);
+    conjugation_1q_proofs!(
+        conjugate_sxdg_is_local,
+        conjugate_sxdg,
+        conjugate_sxdg_in_place
+    );
+    conjugation_1q_proofs!(conjugate_sy_is_local, conjugate_sy, conjugate_sy_in_place);
+    conjugation_1q_proofs!(
+        conjugate_sydg_is_local,
+        conjugate_sydg,
+        conjugate_sydg_in_place
+    );
+    conjugation_1q_proofs!(conjugate_sz_is_local, conjugate_sz, conjugate_sz_in_place);
+    conjugation_1q_proofs!(
+        conjugate_szdg_is_local,
+        conjugate_szdg,
+        conjugate_szdg_in_place
+    );
+    conjugation_2q_proofs!(conjugate_cx_is_local, conjugate_cx, conjugate_cx_in_place);
+    conjugation_2q_proofs!(conjugate_cy_is_local, conjugate_cy, conjugate_cy_in_place);
+    conjugation_2q_proofs!(conjugate_cz_is_local, conjugate_cz, conjugate_cz_in_place);
+    conjugation_2q_proofs!(
+        conjugate_swap_is_local,
+        conjugate_swap,
+        conjugate_swap_in_place
+    );
+    conjugation_2q_proofs!(
+        conjugate_szz_is_local,
+        conjugate_szz,
+        conjugate_szz_in_place
+    );
+    conjugation_2q_proofs!(
+        conjugate_szzdg_is_local,
+        conjugate_szzdg,
+        conjugate_szzdg_in_place
+    );
+    conjugation_2q_proofs!(
+        conjugate_sxx_is_local,
+        conjugate_sxx,
+        conjugate_sxx_in_place
+    );
+    conjugation_2q_proofs!(
+        conjugate_sxxdg_is_local,
+        conjugate_sxxdg,
+        conjugate_sxxdg_in_place
+    );
+    conjugation_2q_proofs!(
+        conjugate_syy_is_local,
+        conjugate_syy,
+        conjugate_syy_in_place
+    );
+    conjugation_2q_proofs!(
+        conjugate_syydg_is_local,
+        conjugate_syydg,
+        conjugate_syydg_in_place
+    );
+
+    /// A word storage built from `words`.
+    trait FromWords: BitmaskStorage {
+        fn from_words(words: Vec<u64>) -> Self;
+        fn word_len(&self) -> usize;
+        fn plane(&self) -> u128;
+    }
+
+    impl FromWords for Vec<u64> {
+        fn from_words(words: Vec<u64>) -> Self {
+            words
+        }
+        fn word_len(&self) -> usize {
+            self.len()
+        }
+        fn plane(&self) -> u128 {
+            plane_value(self)
+        }
+    }
+
+    impl FromWords for SmallVec<[u64; 8]> {
+        fn from_words(words: Vec<u64>) -> Self {
+            SmallVec::from_vec(words)
+        }
+        fn word_len(&self) -> usize {
+            self.len()
+        }
+        fn plane(&self) -> u128 {
+            plane_value(self)
+        }
+    }
+
+    /// A storage of symbolic length 0..=2 and a symbolic qubit in its range.
+    fn any_storage<S: FromWords>() -> (S, u128, usize) {
+        let (words, value) = any_plane();
+        (S::from_words(words), value, any_qubit())
+    }
+
+    /// Applies `update` and checks the result against `expected`, and that the
+    /// storage did not grow past the two words that `plane` reads.
+    fn check_update<S: FromWords>(update: fn(&mut S, usize), expected: fn(u128, u128) -> u128) {
+        let (mut storage, value, q) = any_storage::<S>();
+        update(&mut storage, q);
+        assert!(storage.word_len() <= 2);
+        assert_eq!(storage.plane(), expected(value, 1_u128 << q));
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn vec_get_bit_refines_u128() {
+        let (storage, value, q) = any_storage::<Vec<u64>>();
+        assert_eq!(storage.get_bit(q), bit(value, q) == 1);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn vec_xor_bit_refines_u128() {
+        check_update::<Vec<u64>>(|s, q| s.xor_bit(q), |v, m| v ^ m);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn vec_set_bit_refines_u128() {
+        check_update::<Vec<u64>>(|s, q| s.set_bit(q), |v, m| v | m);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn vec_clear_bit_refines_u128() {
+        check_update::<Vec<u64>>(|s, q| s.clear_bit(q), |v, m| v & !m);
+    }
+
+    // `SmallVec` has the same `get_bit`, `xor_bit`, `set_bit` and `clear_bit`
+    // source as `Vec<u64>`. Only the two that never grow the storage are proven
+    // here: CBMC runs out of memory (76 GB) encoding `SmallVec::resize`, even
+    // when an assumption makes it unreachable. The unit test
+    // `bit_primitives_match_model_across_growth` covers growth for both
+    // backends, including the spill past the inline capacity.
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn smallvec_get_bit_refines_u128() {
+        let (storage, value, q) = any_storage::<SmallVec<[u64; 8]>>();
+        assert_eq!(storage.get_bit(q), bit(value, q) == 1);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn smallvec_clear_bit_refines_u128() {
+        check_update::<SmallVec<[u64; 8]>>(|s, q| s.clear_bit(q), |v, m| v & !m);
     }
 }

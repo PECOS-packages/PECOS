@@ -2371,3 +2371,139 @@ mod tests {
         }
     }
 }
+
+/// Kani proofs for the fixed-point angle arithmetic.
+///
+/// Run with `cargo kani -p pecos-core`.
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// Signed principal representative of a 64-bit fraction in `(-2^63, 2^63]`.
+    fn signed_representative(fraction: u64) -> i128 {
+        let value = i128::from(fraction);
+        if value > 1_i128 << 63 {
+            value - (1_i128 << 64)
+        } else {
+            value
+        }
+    }
+
+    #[kani::proof]
+    fn signed_half_truncates_the_signed_representative() {
+        let fraction: u64 = kani::any();
+        // i128 division truncates toward zero, as the documentation promises.
+        let half = signed_representative(fraction) / 2;
+        let expected =
+            u64::try_from(half.rem_euclid(1_i128 << 64)).expect("rem_euclid by 2^64 fits in u64");
+        assert_eq!(Angle64::new(fraction).signed_half().fraction(), expected);
+    }
+
+    #[kani::proof]
+    fn signed_half_is_odd_except_at_half_turn() {
+        let angle = Angle64::new(kani::any());
+        kani::assume(angle != Angle64::HALF_TURN);
+        assert_eq!((-angle).signed_half(), -(angle.signed_half()));
+    }
+
+    #[kani::proof]
+    fn signed_half_is_odd_except_at_half_turn_u128() {
+        let angle = Angle128::new(kani::any());
+        kani::assume(angle != Angle128::HALF_TURN);
+        assert_eq!((-angle).signed_half(), -(angle.signed_half()));
+    }
+
+    /// Every finite factor scales without panicking, and every non-finite
+    /// factor is rejected.
+    #[kani::proof]
+    fn try_scale_total_over_all_f64_bit_patterns() {
+        let angle = Angle64::new(kani::any());
+        let factor = f64::from_bits(kani::any());
+        assert_eq!(angle.try_scale(factor).is_ok(), factor.is_finite());
+    }
+
+    // Proving `try_scale(n) == fraction * n` for every integer `n` does not
+    // finish: the solver must show two 64-bit multipliers agree, and the cost
+    // grows from 5 s at 4-bit `n` to over 5 minutes at 8 bits. The proofs below
+    // cover the exponent handling with every power of two of either sign from
+    // 2^-1022 to 2^1023, every factor of magnitude at most 2^-65 (which cannot
+    // reach half a tick), and the significand multiply with integers below 16. `try_scale_total_over_all_f64_bit_patterns`
+    // covers acceptance and panic freedom only, not the scaled value.
+
+    /// Scaling by +-2^j for every j in 0..=1023 (every finite power of two at
+    /// least one) shifts the fraction left, negating for a negative factor, and
+    /// wraps to zero from 2^64 on.
+    #[kani::proof]
+    fn try_scale_by_power_of_two_is_wrapping_shift() {
+        let fraction: u64 = kani::any();
+        let j: u64 = kani::any();
+        kani::assume(j <= 1023);
+        let negative: bool = kani::any();
+        let factor = f64::from_bits((u64::from(negative) << 63) | ((1023 + j) << 52));
+        let scaled = Angle64::new(fraction)
+            .try_scale(factor)
+            .expect("powers of two are finite");
+        let shifted = if j >= 64 { 0 } else { fraction << j };
+        let expected = if negative {
+            shifted.wrapping_neg()
+        } else {
+            shifted
+        };
+        assert_eq!(scaled.fraction(), expected);
+    }
+
+    /// Small integer factors are wrapping integer multiplication of the fraction.
+    #[kani::proof]
+    fn try_scale_by_small_integer_is_wrapping_mul() {
+        let fraction: u64 = kani::any();
+        let n: u8 = kani::any();
+        kani::assume(n < 16);
+        let scaled = Angle64::new(fraction)
+            .try_scale(f64::from(n))
+            .expect("integer factors are finite");
+        assert_eq!(scaled.fraction(), fraction.wrapping_mul(u64::from(n)));
+    }
+
+    /// Scaling by +-2^-k for every k in 1..=1022 (every normal power of two
+    /// below one) rounds the exact quotient to nearest, ties away from zero,
+    /// negating for a negative factor.
+    #[kani::proof]
+    fn try_scale_by_inverse_power_of_two_rounds_half_up() {
+        let fraction: u64 = kani::any();
+        let k: u32 = kani::any();
+        kani::assume((1..=1022).contains(&k));
+        let negative: bool = kani::any();
+        let factor = f64::from_bits((u64::from(negative) << 63) | (u64::from(1023 - k) << 52));
+        let scaled = Angle64::new(fraction)
+            .try_scale(factor)
+            .expect("powers of two are finite");
+        // From k = 65 on the quotient is below one half, so it rounds to zero.
+        let magnitude = if k <= 64 {
+            (u128::from(fraction) + (1_u128 << (k - 1))) >> k
+        } else {
+            0
+        };
+        let magnitude = u64::try_from(magnitude % (1_u128 << 64)).expect("reduced below 2^64");
+        let expected = if negative {
+            magnitude.wrapping_neg()
+        } else {
+            magnitude
+        };
+        assert_eq!(scaled.fraction(), expected);
+    }
+
+    /// Every factor with magnitude below 2^-65, subnormals and both signs
+    /// included, scales any fraction (below 2^64) to strictly less than half
+    /// a tick, so the result is zero.
+    #[kani::proof]
+    fn try_scale_by_tiny_factor_is_zero() {
+        let fraction: u64 = kani::any();
+        let bits: u64 = kani::any();
+        // Biased exponent at most 1023 - 66 means magnitude below 2^-65.
+        kani::assume((bits >> 52) & 0x7ff <= 1023 - 66);
+        let scaled = Angle64::new(fraction)
+            .try_scale(f64::from_bits(bits))
+            .expect("tiny factors are finite");
+        assert_eq!(scaled.fraction(), 0);
+    }
+}

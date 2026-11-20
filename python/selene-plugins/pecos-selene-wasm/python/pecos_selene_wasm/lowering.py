@@ -20,6 +20,8 @@ from selene_hugr_qis_compiler import compile_to_llvm_ir
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from guppylang.defs import GuppyFunctionDefinition
+
 _I64 = {
     "t": "Opaque",
     "extension": "arithmetic.int.types",
@@ -29,10 +31,81 @@ _I64 = {
     "bound": "C",
 }
 _PREFIX = "pecos_wasm_adapter_"
+_FRONTEND_METADATA = "pecos.wasm.frontend"
+_SAFE_FRONTEND = "guppy-minimal-opt-v1"
 type Json = dict[str, Json] | list[Json] | str | int | float | bool | None
 
 
-def _order_calls(document: dict) -> None:
+def compile_guppy(guppy_function: object) -> Package:
+    """Compile Guppy source without unsafe external-call constant folding.
+
+    Pass the returned package directly to ``build`` or ``compile_wasm``, or
+    serialize it for PECOS ``Hugr``. Do not run other optimizers on this package
+    before WASM lowering: the metadata records how it was compiled, not a proof
+    that arbitrary subsequent transformations preserved its semantics.
+    """
+    from guppylang.defs import GuppyFunctionDefinition  # noqa: PLC0415
+
+    if not isinstance(guppy_function, GuppyFunctionDefinition):
+        msg = "Function must be decorated with @guppy"
+        raise TypeError(msg)
+    # A new optimizer instance leaves the original definition and normal PECOS
+    # compile cache unchanged. Guppy compilation occurs before our HUGR pass.
+    compiled = guppy_function.with_minimal_opt().compile()
+    package = Package.from_bytes(compiled.to_bytes())
+    for graph in package.modules:
+        graph[graph.module_root].metadata[_FRONTEND_METADATA] = _SAFE_FRONTEND
+    return package
+
+
+def _has_loops(document: dict) -> bool:
+    nodes = document["nodes"]
+    if any(node.get("op") == "TailLoop" for node in nodes):
+        return True
+    blocks = {index for index, node in enumerate(nodes) if node.get("op") == "DataflowBlock"}
+    successors = {block: set() for block in blocks}
+    indegree = dict.fromkeys(blocks, 0)
+    for source, target in document["edges"]:
+        a, b = source[0], target[0]
+        if a in blocks and b in blocks and nodes[a]["parent"] == nodes[b]["parent"] and b not in successors[a]:
+            successors[a].add(b)
+            indegree[b] += 1
+    ready = [block for block, degree in indegree.items() if degree == 0]
+    visited = 0
+    while ready:
+        visited += 1
+        for successor in successors[ready.pop()]:
+            indegree[successor] -= 1
+            if indegree[successor] == 0:
+                ready.append(successor)
+    return visited != len(blocks)
+
+
+def _check_external_frontend(document: dict) -> None:
+    """Reject visible mixed-extern loops whose frontend safety is unknown."""
+    metadata = document.get("metadata")
+    if metadata and metadata[0] and metadata[0].get(_FRONTEND_METADATA) == _SAFE_FRONTEND:
+        return
+    nodes = document["nodes"]
+    declarations = {
+        index
+        for index, node in enumerate(nodes)
+        if node.get("op") == "FuncDecl" and node["signature"]["body"]["output"]
+    }
+    calls_external = any(
+        source[0] in declarations and nodes[target[0]].get("op") in {"Call", "LoadFunction"}
+        for source, target in document["edges"]
+    )
+    if calls_external and _has_loops(document):
+        msg = (
+            "Loops with ordinary external declarations require the safe Guppy frontend: "
+            "pass the Guppy function directly, or use pecos_selene_wasm.compile_guppy(function) "
+            "before serializing. Default Guppy optimization may already have corrupted this package."
+        )
+        raise ValueError(msg)
+
+
+def _order_calls(document: dict, acquisitions: set[int]) -> None:
     """Choose a stable dependency-respecting schedule for classical effects.
 
     Older Guppy releases leave context release/reacquisition unordered. Once
@@ -62,7 +135,7 @@ def _order_calls(document: dict) -> None:
         return None
 
     for parent, node in enumerate(nodes):
-        if node.get("op") not in {"FuncDefn", "DFG", "DataflowBlock", "Case"}:
+        if node.get("op") not in {"FuncDefn", "DFG", "DataflowBlock", "Case", "TailLoop"}:
             continue
         children = {index for index, child in enumerate(nodes) if child["parent"] == parent}
         successors = {child: set() for child in children}
@@ -72,6 +145,39 @@ def _order_calls(document: dict) -> None:
             if a is not None and b is not None and a != b and b not in successors[a]:
                 successors[a].add(b)
                 indegree[b] += 1
+        # Older Guppy orders the acquisition's success check, but can leave
+        # get_context itself unordered (and hoist it before a preceding loop).
+        # Restore those same-region predecessors when acquisition has no
+        # explicit order. Never contradict an existing dependency path.
+        for acquire in sorted(children & acquisitions):
+            if any(target == [acquire, None] for _, target in edges):
+                continue
+            guards = {
+                target[0]
+                for source, target in edges
+                if source == [acquire, 0]
+                and target[1] == 0
+                and target[0] in children
+                and nodes[target[0]].get("op") == "Conditional"
+                and not nodes[target[0]].get("other_inputs")
+            }
+            for before, after in edges.copy():
+                predecessor = before[0]
+                if after[0] not in guards or after[1] is not None or predecessor not in children:
+                    continue
+                reachable, pending = set(), [acquire]
+                while pending:
+                    current = pending.pop()
+                    if current not in reachable:
+                        reachable.add(current)
+                        pending.extend(successors[current])
+                if predecessor in reachable:
+                    continue
+                edges.append([[predecessor, None], [acquire, None]])
+                if acquire not in successors[predecessor]:
+                    successors[predecessor].add(acquire)
+                    indegree[acquire] += 1
+
         ready = [child for child, degree in indegree.items() if degree == 0]
         heapq.heapify(ready)
         schedule = []
@@ -93,38 +199,77 @@ def _order_calls(document: dict) -> None:
                     if edge not in edges:
                         edges.append(edge)
                 previous = child
+        if previous is not None:
+            # Indirect calls may be removed when their results are unused.
+            # Anchor the final effect to the region's exit, retaining the chain.
+            output = next(child for child in children if nodes[child].get("op") == "Output")
+            edge = [[previous, None], [output, None]]
+            if edge not in edges:
+                edges.append(edge)
 
 
-def _reject_loops(document: dict) -> None:
-    """Fail closed for public compiler external-call loop constant propagation.
+def _protect_external_calls(document: dict) -> None:
+    """Keep external results unknown to released HUGR constant analysis.
 
-    Compiler 0.4.2 and 0.5.2 can replace a loop-carried external call result
-    with its initial constant, including at opt_level=0. Check the entire
-    program, so a WASM call in a helper cannot bypass this restriction.
+    Compiler 0.4.x/0.5.2 treat a known external declaration's return values as
+    impossible, which can discard loop-carried results. Load the function value
+    through the public prelude Barrier before calling it indirectly. Barrier
+    has no constant-fold rule and emits as an identity, so analysis uses the
+    conservative unknown-target rule while execution calls the original export.
+    Protect existing loads too, including declarations other than WASM adapters.
     """
-    nodes = document["nodes"]
-    blocks = {index for index, node in enumerate(nodes) if node.get("op") == "DataflowBlock"}
-    successors = {block: set() for block in blocks}
-    indegree = dict.fromkeys(blocks, 0)
-    for source, target in document["edges"]:
-        a, b = source[0], target[0]
-        if a in blocks and b in blocks and nodes[a]["parent"] == nodes[b]["parent"] and b not in successors[a]:
-            successors[a].add(b)
-            indegree[b] += 1
-    ready = [block for block, degree in indegree.items() if degree == 0]
-    visited = 0
-    while ready:
-        visited += 1
-        for successor in successors[ready.pop()]:
-            indegree[successor] -= 1
-            if indegree[successor] == 0:
-                ready.append(successor)
-    if visited != len(blocks) or any(node.get("op") == "TailLoop" for node in nodes):
-        msg = (
-            "WASM programs containing loops are not supported yet: public compiler versions "
-            "0.4.2 and 0.5.2 can miscompile loop-carried external-call results"
+    nodes, edges = document["nodes"], document["edges"]
+
+    def append(node: dict) -> int:
+        index = len(nodes)
+        nodes.append(node)
+        if document.get("metadata") is not None:
+            document["metadata"].append(None)
+        return index
+
+    # Convert direct declaration calls to loads and indirect calls first.
+    for index, node in enumerate(nodes.copy()):
+        if node.get("op") != "Call":
+            continue
+        signature = node["instantiation"]
+        # No result can be misfolded; older compilers may discard void indirect calls.
+        if not signature["output"]:
+            continue
+        static_port = len(signature["input"])
+        link = next(edge for edge in edges if edge[1] == [index, static_port])
+        if nodes[link[0][0]].get("op") != "FuncDecl":
+            continue
+        load = append({**node, "op": "LoadFunction"})
+        edges.remove(link)
+        for _, target in edges:
+            if target[0] == index and target[1] is not None:
+                target[1] += 1
+        edges.extend([[link[0], [load, 0]], [[load, 0], [index, 0]]])
+        nodes[index] = {"op": "CallIndirect", "parent": node["parent"], "signature": signature}
+
+    for index, node in enumerate(nodes.copy()):
+        if node.get("op") != "LoadFunction":
+            continue
+        link = next(edge for edge in edges if edge[1] == [index, 0])
+        if nodes[link[0][0]].get("op") != "FuncDecl":
+            continue
+        signature = node["instantiation"]
+        if not signature["output"]:
+            continue
+        barrier = append(
+            {
+                "op": "Extension",
+                "parent": node["parent"],
+                "extension": "prelude",
+                "name": "Barrier",
+                "args": [{"tya": "List", "elems": [{"tya": "Type", "ty": signature}]}],
+                "signature": {"t": "G", "input": [signature], "output": [signature]},
+            },
         )
-        raise ValueError(msg)
+        for source, _ in edges:
+            if source == [index, 0]:
+                source[0] = barrier
+        edges.append([[index, 0], [barrier, 0]])
 
 
 def _replace_types(value: Json) -> Json:
@@ -140,21 +285,27 @@ def _replace_types(value: Json) -> Json:
     return {key: _replace_types(item) for key, item in value.items()}
 
 
-def _arity(argument: dict) -> int:
+def _scalar_types(argument: dict) -> list[str]:
     if argument.get("tya") != "List":
         msg = "WASM signatures must have concrete type rows"
         raise ValueError(msg)
+    types = []
     for entry in argument["elems"]:
         ty = entry.get("ty", {})
-        if not (
-            entry.get("tya") == "Type"
-            and ty.get("extension") == "arithmetic.int.types"
-            and ty.get("id") == "int"
-            and ty.get("args") == [{"tya": "BoundedNat", "n": 6}]
-        ):
-            msg = "Public WASM ABI v1 supports only scalar i64 signatures"
-            raise ValueError(msg)
-    return len(argument["elems"])
+        if entry.get("tya") == "Type" and ty.get("t") == "Opaque":
+            if (
+                ty.get("extension") == "arithmetic.int.types"
+                and ty.get("id") == "int"
+                and ty.get("args") == [{"tya": "BoundedNat", "n": 6}]
+            ):
+                types.append("i64")
+                continue
+            if ty.get("extension") == "arithmetic.float.types" and ty.get("id") == "float64" and ty.get("args") == []:
+                types.append("double")
+                continue
+        msg = "Public WASM lowering supports only scalar i64 and f64 signatures"
+        raise ValueError(msg)
+    return types
 
 
 def _validate(operation: dict) -> tuple[int, int]:
@@ -166,18 +317,18 @@ def _validate(operation: dict) -> tuple[int, int]:
         if args[0].get("tya") != "String":
             msg = "WASM export name must be a compile-time string"
             raise ValueError(msg)
-        inputs, outputs = _arity(args[1]), _arity(args[2])
+        inputs, outputs = len(_scalar_types(args[1])), len(_scalar_types(args[2]))
     elif name == "call":
-        inputs, outputs = _arity(args[0]), _arity(args[1])
+        inputs, outputs = len(_scalar_types(args[0])), len(_scalar_types(args[1]))
     elif name == "read_result":
-        inputs, outputs = 0, _arity(args[0])
+        inputs, outputs = 0, len(_scalar_types(args[0]))
     elif name in {"get_context", "dispose_context"}:
         inputs, outputs = 0, 0
     else:
         msg = f"Unsupported public WASM operation: {name}"
         raise ValueError(msg)
     if outputs > 1:
-        msg = "Public WASM ABI v1 supports zero or one i64 result"
+        msg = "Public WASM lowering supports zero or one scalar result"
         raise ValueError(msg)
     return inputs, outputs
 
@@ -193,6 +344,7 @@ declare i32 @pecos_wasm_v1_register(i64, ptr, i64)
 declare i64 @pecos_wasm_v1_acquire(i64)
 declare i32 @pecos_wasm_v1_release(i64)
 declare i64 @pecos_wasm_v1_lookup(i64, ptr, i64, i64, i64)
+declare i64 @pecos_wasm_v2_lookup(i64, ptr, i64, ptr, i64, ptr, i64)
 declare i32 @pecos_wasm_v1_call(i64, i64, ptr, i64)
 declare i32 @pecos_wasm_v1_read(i64, ptr, i64)
 declare ptr @pecos_wasm_v1_error()
@@ -230,9 +382,19 @@ entry:
 """
     if name == "lookup_by_name":
         data = args[0]["arg"].encode("utf-8")
-        return _constant(unique, data) + f"""define i64 {symbol}(i64 %module) {{
+        in_types, out_types = _scalar_types(args[1]), _scalar_types(args[2])
+        constants = _constant(unique, data)
+        lookup = f"@pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})"
+        if "double" in in_types + out_types:
+            constants += _constant(unique + "_inputs", bytes(ty == "double" for ty in in_types))
+            constants += _constant(unique + "_outputs", bytes(ty == "double" for ty in out_types))
+            lookup = (
+                f"@pecos_wasm_v2_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, "
+                f"ptr @{unique}_inputs, i64 {inputs}, ptr @{unique}_outputs, i64 {outputs})"
+            )
+        return constants + f"""define i64 {symbol}(i64 %module) {{
 entry:
-  %handle = call i64 @pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})
+  %handle = call i64 {lookup}
 {_check('handle', 64, nonzero=True)}  ret i64 %handle
 }}
 """
@@ -244,12 +406,17 @@ entry:
 }}
 """
     if name == "call":
-        parameters = "".join(f", i64 %arg{i}" for i in range(inputs))
+        in_types = _scalar_types(args[0])
+        parameters = "".join(f", {ty} %arg{i}" for i, ty in enumerate(in_types))
         packing = f"  %args = alloca [{inputs} x i64]\n"
-        for i in range(inputs):
+        for i, ty in enumerate(in_types):
+            value = f"%arg{i}"
+            if ty == "double":
+                packing += f"  %bits{i} = bitcast double {value} to i64\n"
+                value = f"%bits{i}"
             packing += (
                 f"  %ptr{i} = getelementptr [{inputs} x i64], ptr %args, i64 0, i64 {i}\n"
-                f"  store i64 %arg{i}, ptr %ptr{i}\n"
+                f"  store i64 {value}, ptr %ptr{i}\n"
             )
         return f"""define i64 {symbol}(i64 %context, i64 %function{parameters}) {{
 entry:
@@ -257,16 +424,20 @@ entry:
 {_check('status')}  ret i64 %context
 }}
 """
-    result_type = "{ i64, i64 }" if outputs else "i64"
-    result = (
-        """  %value = load i64, ptr %out
-  %pair = insertvalue { i64, i64 } poison, i64 %context, 0
-  %result = insertvalue { i64, i64 } %pair, i64 %value, 1
-  ret { i64, i64 } %result
-"""
-        if outputs
-        else "  ret i64 %context\n"
-    )
+    value_type = _scalar_types(args[0])[0] if outputs else None
+    result_type = f"{{ i64, {value_type} }}" if outputs else "i64"
+    result = "  ret i64 %context\n"
+    if outputs:
+        result = "  %bits = load i64, ptr %out\n"
+        value = "%bits"
+        if value_type == "double":
+            result += "  %value = bitcast i64 %bits to double\n"
+            value = "%value"
+        result += (
+            f"  %pair = insertvalue {result_type} poison, i64 %context, 0\n"
+            f"  %result = insertvalue {result_type} %pair, {value_type} {value}, 1\n"
+            f"  ret {result_type} %result\n"
+        )
     return f"""define {result_type} {symbol}(i64 %context) {{
 entry:
   %out = alloca i64
@@ -276,7 +447,7 @@ entry:
 
 
 def compile_wasm(
-    program: bytes | Package,
+    program: bytes | Package | GuppyFunctionDefinition,
     modules: Mapping[str, bytes],
     *,
     platform: str = "helios",
@@ -285,12 +456,18 @@ def compile_wasm(
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
+    Guppy functions use the safe minimal-optimization frontend automatically.
+    Precompiled input should come directly from ``compile_guppy`` without
+    additional optimization.
+
     ``modules`` maps exact module identifiers to caller-supplied WAT or WASM
     bytes. The result requires the Selene WASM utility or WASM-enabled QIS FFI.
     """
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
         raise ValueError(msg)
+    if hasattr(program, "with_minimal_opt"):
+        program = compile_guppy(program)
     program = Package.from_bytes(program if isinstance(program, bytes) else program.to_bytes())
     if len(program.modules) != 1:
         msg = "Public WASM lowering currently requires one HUGR module"
@@ -300,7 +477,7 @@ def compile_wasm(
     serialized = graph._to_serial()  # noqa: SLF001
     serial_type = type(serialized)
     document = serialized.model_dump(mode="json")
-    _reject_loops(document)
+    _check_external_frontend(document)
     operations = []
     module_ids = {}
     for index, node in enumerate(document["nodes"]):
@@ -349,7 +526,8 @@ def compile_wasm(
         }
         document["edges"].append([[declaration, 0], [index, len(signature["input"])]])
         adapters[name] = operation
-    _order_calls(document)
+    _order_calls(document, {index for index, operation in operations if operation["name"] == "get_context"})
+    _protect_external_calls(document)
     lowered = Hugr._from_serial(serial_type.model_validate(document))  # noqa: SLF001
     envelope = Package(modules=[lowered], extensions=program.extensions).to_bytes()
     llvm = compile_to_llvm_ir(envelope, platform=platform, opt_level=opt_level, emit_debug=emit_debug)

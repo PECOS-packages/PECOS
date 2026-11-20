@@ -47,4 +47,4 @@ pub mod wasmtime_foreign_object;
 pub use foreign_object::{DummyForeignObject, ForeignObject};
 
 #[cfg(feature = "wasm")]
-pub use wasmtime_foreign_object::WasmForeignObject;
+pub use wasmtime_foreign_object::{WasmForeignObject, WasmScalarType};

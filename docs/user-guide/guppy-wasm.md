@@ -20,7 +20,8 @@ For PECOS, rebuild both the bindings and `pecos-qis-ffi` from this revision so
 the running QIS library exports the WASM ABI. An older installed runtime cannot
 execute these calls. The `quantum-pecos[wasm]` extra selects the utility package.
 
-The lowering has been tested with public compiler versions 0.4.2, 0.4.3, and 0.5.2, with HUGR
+The lowering requires public compiler version 0.4.3 or newer (below 0.6), and
+has been tested with 0.4.3 and 0.5.2, with HUGR
 0.18 and `tket.wasm` 0.5.0. Guppy currently exposes the WASM decorators through
 `guppylang_internals`; these imports may change in a future Guppy release.
 
@@ -93,8 +94,8 @@ data = pc.sim(pc.Guppy(addition, wasm_modules=modules)).qubits(1).quantum(pc.sta
 assert data["sum"] == [5, 5, 5, 5]
 ```
 
-Precompiled HUGR works with
-`pc.Hugr(addition.compile().to_bytes(), wasm_modules=modules)`, including the
+For precompiled HUGR, use `from pecos_selene_wasm import compile_guppy` and
+`pc.Hugr(compile_guppy(addition).to_bytes(), wasm_modules=modules)`, including the
 `Hugr.from_bytes` and `Hugr.from_file` constructors. Supply modules when creating
 the wrapper, before `sim()` lowers the program.
 
@@ -105,7 +106,7 @@ the wrapper, before `sim()` lowers the program.
 from pecos_selene_wasm import build
 from selene_sim import Quest
 
-runner = build(addition.compile(), modules)
+runner = build(addition, modules)
 shots = [
     dict(shot)
     for shot in runner.run_shots(
@@ -144,27 +145,92 @@ slots and different modules have independent instances. Every shot starts with
 fresh instances; workers do not share state. A module's optional `init` export
 must have signature `() -> ()` and runs once when that instance is first used.
 
-## Initial supported scope
+## Floating-point calls
 
-- Named exports with scalar `i64` arguments and zero or one `i64` result.
+Guppy `float` maps to WASM `f64` on the Helios WASM platform. Integer and float
+arguments can be mixed in one signature, and the result can be either type.
+For example, `affine(self, value: float, scale: int, offset: float) -> float`
+matches a WAT export with `(param f64 i64 f64) (result f64)`.
+
+Run the mixed arithmetic, state, and quantum-feedback examples:
+
+```bash
+python examples/guppy_wasm/floating_point.py --backend selene
+python examples/guppy_wasm/floating_point.py --backend pecos
+```
+
+The examples produce `-4.25` from mixed arithmetic, `-4` from an explicit WASM
+float-to-integer conversion, and measurement `1` from float-controlled feedback.
+Float state is retained across context leases and reset between shots. The loop
+example finishes at `3.75` and produces measurement `1`.
+
+Float arguments and results are transported by their IEEE 754 bits. The adapter
+does not convert them to integers or clamp them. Runtime signature checks reject
+a supplied export with different argument or result types, even when arity matches.
+Actual arithmetic follows WebAssembly semantics, including traps from invalid
+float-to-integer conversions. Rebuild the native utility and PECOS QIS FFI when
+upgrading: float signatures need the new typed lookup export. Existing integer
+programs continue to use the original lookup ABI.
+
+## Measure compilation and execution
+
+```bash
+python examples/guppy_wasm/benchmark.py --backend selene --calls 0 1 10 100
+python examples/guppy_wasm/benchmark.py --backend both --shots 100 --repeats 5 > wasm-timings.json
+```
+
+The benchmark writes JSON containing package versions, platform, Guppy compilation
+time, backend preparation time, first-run time, and repeated-run samples. Every
+run checks the expected result. Zero calls provide a no-WASM baseline; other
+cases perform a dependent chain of additions. The generated Guppy is straight-line
+code to measure a fixed number of calls without adding loop-control overhead.
+
+Compare repeated measurements on the same machine and package versions. Times
+include shot setup, module compilation/instantiation, runtime communication and
+result collection. “Amortized seconds per call” divides the complete run time by
+the number of calls; it is not an isolated measurement of the WASM call boundary.
+The first run is reported separately because backend initialization and caches
+can make it substantially slower. These measurements do not establish parity
+with other compiler/runtime implementations.
+
+## Supported scope
+
+- Named exports with mixed scalar `i64`/`f64` arguments and zero or one scalar result.
 - `get_context`, `dispose_context`, `lookup_by_name`, `call`, and `read_result`.
 - One HUGR module per program, with any explicitly supplied WASM modules.
-- Synchronous WASM calls on 64-bit hosts, including branches.
+- Synchronous WASM calls on 64-bit hosts, including branches and loops.
 
-Floating-point, `i32`, aggregate and multiple results, lookup by numeric ID,
-WASI, host imports, and programs containing loops are not supported by this initial adapter. Unsupported
+`i32`, `f32`, aggregate and multiple results, lookup by numeric ID,
+WASI and host imports are not supported by this adapter. Unsupported
 signatures and operations fail explicitly. Traps and runtime signature errors
 propagate as simulation errors. Calls use PECOS Wasmtime's default one-second
 execution timeout; memory limits are currently the Wasmtime wrapper's default.
 
-**Loops fail at compilation rather than producing incorrect results.** Public
-compiler versions 0.4.2 and 0.5.2 can replace a loop-carried external-call result
-with its initial constant, even with LLVM optimization disabled. This also
-reproduces without WASM using `@guppy.declare def external() -> int: ...`,
-`value = 0; for ...: value = external()`, followed by `result("value", value)`.
-Until that compiler behavior is fixed, the adapter conservatively rejects any
-loop in a WASM program, including loops that call helpers. The regression test
-uses `stateful_loop` to verify this rejection.
+Loops execute through the PECOS-owned lowering with released public compiler
+packages. No upstream patch or custom compiler build is required. Examples in
+`stateful.py` cover counted loops, zero iterations, nested loops, result-dependent
+termination, and calls through helpers. `floating_point.py` also carries float
+results through a loop and uses the final value for quantum feedback.
+
+The lowering protects external function values during HUGR optimization using
+public barrier and indirect-call operations. This avoids a released-compiler
+constant-analysis bug that otherwise replaces loop results with initial values.
+The same protection is used by PECOS and standalone Selene.
+
+Pass Guppy source directly to `Guppy(function, wasm_modules=modules)` or
+`pecos_selene_wasm.build(function, modules)`. Both use Guppy's minimal-optimization
+frontend before applying the lowering. Normal Guppy compilation can already
+miscompile loops containing ordinary `@guppy.declare` external calls; LLVM
+optimization settings cannot repair those results.
+
+To store or transport a program, use `pecos_selene_wasm.compile_guppy(function)`
+and serialize the returned package with `.to_bytes()`. Pass that package or its
+bytes directly to WASM lowering without running additional optimizers. Its
+metadata records the safe frontend choice; it does not certify later transforms.
+Unprepared packages with visible external declarations and loops are rejected
+with instructions to recompile from source. Already optimized arbitrary HUGR
+cannot be repaired, and a compiler may have erased evidence of the original
+calls. Use the safe frontend whenever preparing Guppy for WASM execution.
 
 The implementation follows the public
 [tket.wasm specification](https://github.com/Quantinuum/tket2/blob/main/tket/tket-qsystem/src/extension/classical_compute/wasm.rs)

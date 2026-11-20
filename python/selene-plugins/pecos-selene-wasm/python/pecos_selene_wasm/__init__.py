@@ -9,11 +9,12 @@ from typing import TYPE_CHECKING
 
 from selene_core import Utility
 
-from pecos_selene_wasm.lowering import compile_wasm
+from pecos_selene_wasm.lowering import compile_guppy, compile_wasm
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from guppylang.defs import GuppyFunctionDefinition
     from hugr.package import Package
     from selene_sim import SeleneInstance
 
@@ -45,7 +46,7 @@ class WasmPlugin(Utility):
 
 
 def build(
-    program: bytes | Package,
+    program: bytes | Package | GuppyFunctionDefinition,
     modules: Mapping[str, bytes],
     *,
     platform: str = "helios",
@@ -53,7 +54,11 @@ def build(
     emit_debug: bool = False,
     **kwargs: object,
 ) -> SeleneInstance:
-    """Build a standalone Selene runner with explicit WASM module bytes."""
+    """Build Selene with explicit WASM bytes and safe compilation of Guppy source.
+
+    Precompiled input should come directly from ``compile_guppy`` without
+    additional optimization.
+    """
     # Standalone Selene is optional when this package supplies PECOS lowering.
     from selene_sim import build as selene_build  # noqa: PLC0415
 
@@ -69,4 +74,4 @@ def build(
     )
 
 
-__all__ = ["WasmPlugin", "build", "compile_wasm"]
+__all__ = ["WasmPlugin", "build", "compile_guppy", "compile_wasm"]

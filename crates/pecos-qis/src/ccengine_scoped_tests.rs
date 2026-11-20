@@ -154,10 +154,15 @@ fn engine(source: &str, scoped: bool, scheduled: bool, soft: bool) -> QisEngine 
             crate::selene_simple_runtime().unwrap()
         })
         .scheduled_batches(scheduled)
+        .scoped_execution(scoped)
+        .clone()
         .build()
         .unwrap();
     engine.set_num_qubits_hint(1);
-    engine.set_scoped_execution(scoped).unwrap();
+    assert_eq!(
+        matches!(engine.execution_mode, scoped::ExecutionMode::Scoped),
+        scoped
+    );
     engine
 }
 

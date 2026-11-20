@@ -11,7 +11,7 @@
 // the License.
 
 use pecos_decoder_core::ObservableDecoder;
-use pecos_trellis::{DecoderError, TrellisResult};
+use pecos_trellis::{DecoderError, TrellisLogicalMass, TrellisResult};
 
 pub fn assert_errors_equal(left: &DecoderError, right: &DecoderError) {
     assert_eq!(std::mem::discriminant(left), std::mem::discriminant(right));
@@ -19,37 +19,75 @@ pub fn assert_errors_equal(left: &DecoderError, right: &DecoderError) {
 }
 
 pub fn assert_results_equal(left: &TrellisResult, right: &TrellisResult) {
-    assert_eq!(left.predicted, right.predicted);
-    assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+    // Exhaustive patterns: a new result field fails to compile until it is compared.
+    let TrellisResult {
+        predicted: left_predicted,
+        log_evidence: left_log_evidence,
+        logical_masses: left_logical_masses,
+        runner_up_gap: left_runner_up_gap,
+        peak_retained_states: left_peak_retained_states,
+        processed_columns: left_processed_columns,
+        transitions: left_transitions,
+        dropped_states: left_dropped_states,
+        dropped_log_mass: left_dropped_log_mass,
+        bp_runs: left_bp_runs,
+        bp_seconds: left_bp_seconds,
+        escalation_rungs_used: left_escalation_rungs_used,
+        status: left_status,
+    } = left;
+    let TrellisResult {
+        predicted: right_predicted,
+        log_evidence: right_log_evidence,
+        logical_masses: right_logical_masses,
+        runner_up_gap: right_runner_up_gap,
+        peak_retained_states: right_peak_retained_states,
+        processed_columns: right_processed_columns,
+        transitions: right_transitions,
+        dropped_states: right_dropped_states,
+        dropped_log_mass: right_dropped_log_mass,
+        bp_runs: right_bp_runs,
+        bp_seconds: right_bp_seconds,
+        escalation_rungs_used: right_escalation_rungs_used,
+        status: right_status,
+    } = right;
+    assert_eq!(left_predicted, right_predicted);
+    assert_eq!(left_log_evidence.to_bits(), right_log_evidence.to_bits());
     assert_eq!(
-        left.runner_up_gap.map(f64::to_bits),
-        right.runner_up_gap.map(f64::to_bits)
+        left_runner_up_gap.map(f64::to_bits),
+        right_runner_up_gap.map(f64::to_bits)
     );
-    assert_eq!(left.peak_retained_states, right.peak_retained_states);
-    assert_eq!(left.processed_columns, right.processed_columns);
-    assert_eq!(left.transitions, right.transitions);
-    assert_eq!(left.dropped_states, right.dropped_states);
+    assert_eq!(left_peak_retained_states, right_peak_retained_states);
+    assert_eq!(left_processed_columns, right_processed_columns);
+    assert_eq!(left_transitions, right_transitions);
+    assert_eq!(left_dropped_states, right_dropped_states);
     assert_eq!(
-        left.dropped_log_mass.expect("enabled diagnostic").to_bits(),
-        right
-            .dropped_log_mass
+        left_dropped_log_mass.expect("enabled diagnostic").to_bits(),
+        right_dropped_log_mass
             .expect("enabled diagnostic")
             .to_bits()
     );
-    assert_eq!(left.bp_runs, right.bp_runs);
-    assert_eq!(left.escalation_rungs_used, right.escalation_rungs_used);
-    assert_eq!(left.status, right.status);
-    assert_eq!(left.logical_masses.len(), right.logical_masses.len());
-    for (left, right) in left.logical_masses.iter().zip(&right.logical_masses) {
-        assert_eq!(left.logical, right.logical);
-        assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
+    assert_eq!(left_bp_runs, right_bp_runs);
+    assert_eq!(left_escalation_rungs_used, right_escalation_rungs_used);
+    assert_eq!(left_status, right_status);
+    assert_eq!(left_logical_masses.len(), right_logical_masses.len());
+    for (left, right) in left_logical_masses.iter().zip(right_logical_masses) {
+        let TrellisLogicalMass {
+            logical: left_logical,
+            log_mass: left_log_mass,
+        } = left;
+        let TrellisLogicalMass {
+            logical: right_logical,
+            log_mass: right_log_mass,
+        } = right;
+        assert_eq!(left_logical, right_logical);
+        assert_eq!(left_log_mass.to_bits(), right_log_mass.to_bits());
     }
     // Actual BP timings vary between calls; zero timings are deterministic.
-    if left.bp_runs == 0 {
-        assert_eq!(left.bp_seconds.to_bits(), right.bp_seconds.to_bits());
+    if *left_bp_runs == 0 {
+        assert_eq!(left_bp_seconds.to_bits(), right_bp_seconds.to_bits());
     } else {
-        assert!(left.bp_seconds.is_finite() && left.bp_seconds >= 0.0);
-        assert!(right.bp_seconds.is_finite() && right.bp_seconds >= 0.0);
+        assert!(left_bp_seconds.is_finite() && *left_bp_seconds >= 0.0);
+        assert!(right_bp_seconds.is_finite() && *right_bp_seconds >= 0.0);
     }
 }
 

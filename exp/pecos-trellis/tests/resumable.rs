@@ -152,7 +152,7 @@ fn fixture_attempts_preserve_mass_bits_with_both_flags_no_path_and_bp_across_bud
             let decoder = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
             let mut batch = decoder.clone();
             let mut bounded = decoder.into_resumable().unwrap();
-            let mut skipped = TrellisDecoder::from_sparse_dem(
+            let mut off_decoder = TrellisDecoder::from_sparse_dem(
                 &dem,
                 TrellisConfig {
                     dropped_mass: false,
@@ -177,7 +177,11 @@ fn fixture_attempts_preserve_mass_bits_with_both_flags_no_path_and_bp_across_bud
                             matches!(expected, TrellisDecodeAttempt::NoPath { transitions, dropped_states, .. } if transitions > 0 && dropped_states > 0),
                         );
                         let actual = drain(
-                            if flag_off { &mut skipped } else { &mut bounded },
+                            if flag_off {
+                                &mut off_decoder
+                            } else {
+                                &mut bounded
+                            },
                             &shot,
                             budget,
                         );
@@ -193,7 +197,7 @@ fn fixture_attempts_preserve_mass_bits_with_both_flags_no_path_and_bp_across_bud
             );
             assert_eq!(
                 batch.bp_refreshes(),
-                skipped.bp_refreshes(),
+                off_decoder.bp_refreshes(),
                 "{}",
                 fixture.name
             );

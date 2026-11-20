@@ -457,14 +457,14 @@ fn dropped_mass_flag_preserves_prepared_attempts() {
             let mut decoder = fixture(name, on);
             let mut off = config(integer);
             off.dropped_mass = false;
-            let mut skipped = fixture(name, off);
+            let mut off_decoder = fixture(name, off);
             decoder.prepare(&shot).unwrap();
-            skipped.prepare(&shot).unwrap();
+            off_decoder.prepare(&shot).unwrap();
             for params in [decoder.prune_params(), PruneParams { k: 1, delta: 0.0 }] {
                 let TrellisDecodeAttempt::Success(flag_on) = decoder.attempt(params) else {
                     panic!("fixture must decode");
                 };
-                let TrellisDecodeAttempt::Success(flag_off) = skipped.attempt(params) else {
+                let TrellisDecodeAttempt::Success(flag_off) = off_decoder.attempt(params) else {
                     panic!("flag-off attempt must decode");
                 };
                 assert_eq!(flag_off.dropped_log_mass, None);
@@ -472,7 +472,7 @@ fn dropped_mass_flag_preserves_prepared_attempts() {
                 assert_retained_equal(&flag_on, &flag_off);
             }
             invalid(decoder.attempt(PruneParams { k: 0, delta: 1.0 }), "k");
-            invalid(skipped.attempt(PruneParams { k: 0, delta: 1.0 }), "k");
+            invalid(off_decoder.attempt(PruneParams { k: 0, delta: 1.0 }), "k");
         }
     }
 }

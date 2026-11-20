@@ -720,7 +720,8 @@ pub struct PyFrontierDecoder {
 #[pymethods]
 impl PyFrontierDecoder {
     /// Construct a native Frontier decoder from a Stim-format DEM string.
-    /// dropped_mass=True enables the discarded-prefix-mass diagnostic at extra pruning cost.
+    /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
+    /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
     #[staticmethod]
     #[pyo3(
@@ -764,7 +765,8 @@ impl PyFrontierDecoder {
     }
 
     /// Construct a native Frontier decoder from a multi-outcome factor model.
-    /// dropped_mass=True enables the discarded-prefix-mass diagnostic at extra pruning cost.
+    /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
+    /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
     #[staticmethod]
     #[pyo3(
@@ -935,7 +937,8 @@ pub struct PyFrontierCommitteeDecoder {
 #[pymethods]
 impl PyFrontierCommitteeDecoder {
     /// Construct a native forward/backward committee from a Stim-format DEM.
-    /// dropped_mass=True enables the discarded-prefix-mass diagnostic at extra pruning cost.
+    /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
+    /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
     #[staticmethod]
     #[pyo3(

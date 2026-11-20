@@ -185,7 +185,7 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
                 let base = FrontierCommittee::from_sparse_dem(&dem, config.clone()).unwrap();
                 let mut batch = base.clone();
                 let mut bounded = base.into_resumable();
-                let mut skipped = FrontierCommittee::from_sparse_dem(
+                let mut off_decoder = FrontierCommittee::from_sparse_dem(
                     &dem,
                     FrontierConfig {
                         dropped_mass: false,
@@ -203,7 +203,11 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
                             match (
                                 batch.decode(&shot),
                                 drain(
-                                    if flag_off { &mut skipped } else { &mut bounded },
+                                    if flag_off {
+                                        &mut off_decoder
+                                    } else {
+                                        &mut bounded
+                                    },
                                     &shot,
                                     budget,
                                 ),

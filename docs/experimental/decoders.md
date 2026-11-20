@@ -139,8 +139,9 @@ The remaining fields describe the search itself rather than the answer:
 `bp_seconds`. `dropped_log_mass` is `None` by default (`Option<f64>` in Rust,
 `float | None` in Python). Enable `dropped_mass` on the Rust config or pass
 `dropped_mass=True` to a Python detailed decoder constructor to report it. Float
-metrics accumulate it at extra pruning cost; the integer max-log metric always keeps its cheap running maximum. This never changes
-predictions or other result fields.
+metrics accumulate it at extra pruning cost; the integer max-log metric always
+keeps its cheap running maximum. This never changes predictions or other result
+fields.
 When enabled, `dropped_log_mass` counts only the mass states carried when they
 were pruned -- a state dropped early would have branched through later columns,
 so it is not a bound on the probability the answer is missing.

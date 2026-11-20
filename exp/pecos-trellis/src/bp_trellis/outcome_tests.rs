@@ -427,19 +427,19 @@ fn observable_adapter_and_escalation_follow_dropped_mass_config() {
         cfg.dropped_mass = dropped_mass;
         let mut decoder = BpTrellisDecoder::from_dem_str(OVERPRUNING, cfg).unwrap();
         let shot = [0, 0, 1];
-        let full = decoder.decode(&shot).unwrap();
-        assert_eq!(full.escalation_rungs_used, 1);
+        let result = decoder.decode(&shot).unwrap();
+        assert_eq!(result.escalation_rungs_used, 1);
         if dropped_mass {
-            assert!(full.dropped_log_mass.is_some());
+            assert!(result.dropped_log_mass.is_some());
         } else {
-            assert_eq!(full.dropped_log_mass, None);
+            assert_eq!(result.dropped_log_mass, None);
         }
-        assert_eq!(decoder.decode_obs(&shot).unwrap(), full.predicted);
+        assert_eq!(decoder.decode_obs(&shot).unwrap(), result.predicted);
         assert_eq!(
             decoder.decode_to_observables(&shot).unwrap(),
-            full.predicted.to_u64().unwrap()
+            result.predicted.to_u64().unwrap()
         );
-        predictions.push(full.predicted);
+        predictions.push(result.predicted);
     }
     assert_eq!(predictions[0], predictions[1]);
 }

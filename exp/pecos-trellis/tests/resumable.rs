@@ -18,44 +18,64 @@ struct Fixture {
     syndromes: Vec<u128>,
 }
 
-fn same_result(mut expected: TrellisResult, mut actual: TrellisResult, omitted: bool) {
-    // BP clocks measure two separate executions. Every other float is compared
-    // by bits, including signed zero and the full discarded-mass diagnostic.
-    assert!(expected.bp_seconds.is_finite() && actual.bp_seconds.is_finite());
-    if expected.bp_runs != 0 {
-        assert!(expected.bp_seconds >= 0.0 && actual.bp_seconds >= 0.0);
-        expected.bp_seconds = 0.0;
-        actual.bp_seconds = 0.0;
-    }
+fn same_result(expected: &TrellisResult, actual: &TrellisResult, flag_off: bool) {
+    let TrellisResult {
+        predicted,
+        log_evidence,
+        runner_up_gap,
+        peak_retained_states,
+        processed_columns,
+        transitions,
+        dropped_states,
+        dropped_log_mass,
+        bp_seconds,
+        bp_runs,
+        escalation_rungs_used,
+        status,
+        logical_masses,
+    } = expected;
+    assert_eq!(predicted, &actual.predicted);
+    assert_eq!(log_evidence.to_bits(), actual.log_evidence.to_bits());
     assert_eq!(
-        expected.log_evidence.to_bits(),
-        actual.log_evidence.to_bits()
-    );
-    assert_eq!(
-        expected.runner_up_gap.map(f64::to_bits),
+        runner_up_gap.map(f64::to_bits),
         actual.runner_up_gap.map(f64::to_bits)
     );
-    if omitted {
-        assert!(actual.dropped_log_mass.is_nan());
-        expected.dropped_log_mass = f64::NAN;
+    assert_eq!(*peak_retained_states, actual.peak_retained_states);
+    assert_eq!(*processed_columns, actual.processed_columns);
+    assert_eq!(*transitions, actual.transitions);
+    assert_eq!(*dropped_states, actual.dropped_states);
+    assert_eq!(*bp_runs, actual.bp_runs);
+    assert_eq!(*escalation_rungs_used, actual.escalation_rungs_used);
+    assert_eq!(*status, actual.status);
+    assert!(bp_seconds.is_finite() && *bp_seconds >= 0.0);
+    assert!(actual.bp_seconds.is_finite() && actual.bp_seconds >= 0.0);
+    if *bp_runs == 0 {
+        assert_eq!(bp_seconds.to_bits(), actual.bp_seconds.to_bits());
+    }
+    assert_eq!(logical_masses.len(), actual.logical_masses.len());
+    for (left, right) in logical_masses.iter().zip(&actual.logical_masses) {
+        let pecos_trellis::TrellisLogicalMass { logical, log_mass } = left;
+        assert_eq!(*logical, right.logical);
+        assert_eq!(log_mass.to_bits(), right.log_mass.to_bits());
+    }
+    if flag_off {
+        assert!(dropped_log_mass.is_some());
+        assert_eq!(actual.dropped_log_mass, None);
     } else {
         assert_eq!(
-            expected.dropped_log_mass.to_bits(),
-            actual.dropped_log_mass.to_bits()
+            dropped_log_mass.expect("enabled diagnostic").to_bits(),
+            actual
+                .dropped_log_mass
+                .expect("enabled diagnostic")
+                .to_bits()
         );
     }
-    for (left, right) in expected.logical_masses.iter().zip(&actual.logical_masses) {
-        assert_eq!(left.logical, right.logical);
-        assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
-    }
-    // Debug has round-trippable float representations and includes every field.
-    assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
 }
 
-fn same_attempt(expected: TrellisDecodeAttempt, actual: TrellisDecodeAttempt, omitted: bool) {
+fn same_attempt(expected: &TrellisDecodeAttempt, actual: &TrellisDecodeAttempt, flag_off: bool) {
     match (expected, actual) {
         (TrellisDecodeAttempt::Success(left), TrellisDecodeAttempt::Success(right)) => {
-            same_result(left, right, omitted);
+            same_result(left, right, flag_off);
         }
         (
             TrellisDecodeAttempt::NoPath {
@@ -73,7 +93,7 @@ fn same_attempt(expected: TrellisDecodeAttempt, actual: TrellisDecodeAttempt, om
         ) => {
             assert_eq!(format!("{a:?}"), format!("{b:?}"));
             assert_eq!((at, ad), (bt, bd));
-            assert!(ab.is_finite() && bb.is_finite() && ab >= 0.0 && bb >= 0.0);
+            assert!(ab.is_finite() && bb.is_finite() && *ab >= 0.0 && *bb >= 0.0);
         }
         (TrellisDecodeAttempt::Error(a), TrellisDecodeAttempt::Error(b)) => {
             assert_eq!(format!("{a:?}"), format!("{b:?}"));
@@ -86,14 +106,8 @@ fn drain(
     decoder: &mut TrellisResumableDecoder,
     shot: &[u8],
     budget: usize,
-    omitted: bool,
 ) -> TrellisDecodeAttempt {
-    let mut progress = if omitted {
-        decoder.begin_without_dropped_mass(shot)
-    } else {
-        decoder.begin(shot)
-    }
-    .unwrap();
+    let mut progress = decoder.begin(shot).unwrap();
     assert_eq!(decoder.progress(), Some(progress));
     while !progress.ready_to_finish {
         let before = progress.completed_columns;
@@ -107,7 +121,7 @@ fn drain(
 }
 
 #[test]
-fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
+fn fixture_attempts_preserve_mass_bits_with_both_flags_no_path_and_bp_across_budgets() {
     let mut fixtures: BTreeMap<String, Vec<Fixture>> =
         serde_json::from_str(include_str!("fixtures/models.json")).unwrap();
     let fixtures = fixtures.remove("binary").unwrap();
@@ -127,6 +141,7 @@ fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
             (4, 1e9, 0.8, 2, false),
         ] {
             let config = TrellisConfig {
+                dropped_mass: true,
                 k,
                 delta,
                 score_alpha: alpha,
@@ -134,16 +149,26 @@ fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
                 merge_indistinguishable: merge,
                 ..TrellisConfig::default()
             };
-            let decoder = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();
+            let decoder = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
             let mut batch = decoder.clone();
             let mut bounded = decoder.into_resumable().unwrap();
+            let mut off_decoder = TrellisDecoder::from_sparse_dem(
+                &dem,
+                TrellisConfig {
+                    dropped_mass: false,
+                    ..config
+                },
+            )
+            .unwrap()
+            .into_resumable()
+            .unwrap();
             for budget in [1, 2, 3, 7, 64, usize::MAX] {
                 for &syndrome in &fixture.syndromes {
                     let shot: Vec<_> = (0..fixture.num_detectors)
                         .map(|bit| u8::from(syndrome & (1_u128 << bit) != 0))
                         .collect();
-                    for omitted in [false, true] {
-                        let expected = batch.decode_attempt(&shot);
+                    let expected = batch.decode_attempt(&shot);
+                    for flag_off in [false, true] {
                         successes +=
                             usize::from(matches!(expected, TrellisDecodeAttempt::Success(_)));
                         no_paths +=
@@ -151,8 +176,16 @@ fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
                         positive_work_no_paths += usize::from(
                             matches!(expected, TrellisDecodeAttempt::NoPath { transitions, dropped_states, .. } if transitions > 0 && dropped_states > 0),
                         );
-                        let actual = drain(&mut bounded, &shot, budget, omitted);
-                        same_attempt(expected, actual, omitted);
+                        let actual = drain(
+                            if flag_off {
+                                &mut off_decoder
+                            } else {
+                                &mut bounded
+                            },
+                            &shot,
+                            budget,
+                        );
+                        same_attempt(&expected, &actual, flag_off);
                     }
                 }
             }
@@ -162,13 +195,19 @@ fn fixture_attempts_preserve_full_mass_bits_no_path_and_bp_across_budgets() {
                 "{}",
                 fixture.name
             );
+            assert_eq!(
+                batch.bp_refreshes(),
+                off_decoder.bp_refreshes(),
+                "{}",
+                fixture.name
+            );
         }
     }
     assert!(successes > 100 && no_paths > 10 && positive_work_no_paths > 0);
 }
 
 #[test]
-fn large_wide_model_preserves_chunk_order_and_full_diagnostics() {
+fn large_wide_model_preserves_chunk_order_and_flag_on_diagnostics() {
     let dem = SparseDem {
         mechanisms: (0_u32..193)
             .map(|index| {
@@ -186,6 +225,7 @@ fn large_wide_model_preserves_chunk_order_and_full_diagnostics() {
     let base = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
+            dropped_mass: true,
             k: 32,
             delta: 1e9,
             score_alpha: 0.8,
@@ -202,11 +242,7 @@ fn large_wide_model_preserves_chunk_order_and_full_diagnostics() {
         if let TrellisDecodeAttempt::Success(result) = &expected {
             saw_pruning |= result.dropped_states > 0;
         }
-        same_attempt(
-            expected,
-            drain(&mut bounded, &[0; 131], budget, false),
-            false,
-        );
+        same_attempt(&expected, &drain(&mut bounded, &[0; 131], budget), false);
     }
     assert!(saw_pruning);
 }
@@ -215,7 +251,10 @@ fn large_wide_model_preserves_chunk_order_and_full_diagnostics() {
 fn protocol_failures_cancel_reuse_and_preparation_faults_preserve_state() {
     let base = TrellisDecoder::from_dem_str(
         "error(0.2) D0 L0\nerror(0.1) D0 D1\nerror(0.3) D1",
-        TrellisConfig::default(),
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
     )
     .unwrap();
     let mut bounded = base.clone().into_resumable().unwrap();
@@ -234,18 +273,18 @@ fn protocol_failures_cancel_reuse_and_preparation_faults_preserve_state() {
     assert_eq!(bounded.progress(), None);
     let mut batch = base;
     same_attempt(
-        batch.decode_attempt(&[1, 0]),
-        drain(&mut bounded, &[1, 0], 1, false),
+        &batch.decode_attempt(&[1, 0]),
+        &drain(&mut bounded, &[1, 0], 1),
         false,
     );
     same_attempt(
-        batch.decode_attempt(&[0]),
-        drain(&mut bounded, &[0], 1, false),
+        &batch.decode_attempt(&[0]),
+        &drain(&mut bounded, &[0], 1),
         false,
     );
     same_attempt(
-        batch.decode_attempt(&[0, 1]),
-        drain(&mut bounded, &[0, 1], 2, false),
+        &batch.decode_attempt(&[0, 1]),
+        &drain(&mut bounded, &[0, 1], 2),
         false,
     );
 }
@@ -259,18 +298,26 @@ fn empty_kernel_and_unsupported_metric_have_explicit_outcomes() {
         num_observables: 131,
         detector_coords: BTreeMap::new(),
     };
-    let mut batch = TrellisDecoder::from_sparse_dem(&dem, TrellisConfig::default()).unwrap();
+    let mut batch = TrellisDecoder::from_sparse_dem(
+        &dem,
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
     let mut bounded = batch.clone().into_resumable().unwrap();
     for shot in [&[0][..], &[1][..]] {
         same_attempt(
-            batch.decode_attempt(shot),
-            drain(&mut bounded, shot, 1, false),
+            &batch.decode_attempt(shot),
+            &drain(&mut bounded, shot, 1),
             false,
         );
     }
     let integer = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
+            dropped_mass: true,
             metric_mode: MetricMode::MaxLogInt,
             ..TrellisConfig::default()
         },
@@ -285,8 +332,8 @@ fn empty_kernel_and_unsupported_metric_have_explicit_outcomes() {
     assert!(error.to_string().contains("MaxLogInt"), "{error}");
     for shot in [&[0][..], &[1][..]] {
         same_attempt(
-            integer_reference.decode_attempt(shot),
-            integer.decode_attempt(shot),
+            &integer_reference.decode_attempt(shot),
+            &integer.decode_attempt(shot),
             false,
         );
     }
@@ -314,7 +361,14 @@ fn empty_kernel_and_unsupported_metric_have_explicit_outcomes() {
         1,
     )
     .unwrap();
-    let nary = TrellisDecoder::from_factor_model(&model, TrellisConfig::default()).unwrap();
+    let nary = TrellisDecoder::from_factor_model(
+        &model,
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
     let mut nary_reference = nary.clone();
     let Err((error, mut nary)) = nary.into_resumable() else {
         panic!("N-ary kernel must be rejected");
@@ -322,8 +376,8 @@ fn empty_kernel_and_unsupported_metric_have_explicit_outcomes() {
     assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
     assert!(error.to_string().contains("N-ary"), "{error}");
     same_attempt(
-        nary_reference.decode_attempt(&[1]),
-        nary.decode_attempt(&[1]),
+        &nary_reference.decode_attempt(&[1]),
+        &nary.decode_attempt(&[1]),
         false,
     );
 }

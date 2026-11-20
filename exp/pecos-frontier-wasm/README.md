@@ -25,16 +25,14 @@ original `i32` exports remain available for existing callers. Use only the
 
 ## Build
 
-### Optional SIMD and prediction-only fast path
+### Optional SIMD and prediction methods
 
-The streaming WASM adapter skips discarded-mass evidence bookkeeping while
-preserving candidate scoring, pruning, tie-breaking, and corrections. Its
-exports return predictions and status, not confidence or evidence. Native
-callers needing full telemetry can continue using the existing default
-`advance_prediction` / `flush` APIs. The opt-in
-`advance_prediction_without_evidence` / `flush_prediction_without_evidence`
-methods require `reset` before returning to evidence-producing APIs; mixed
-use fails closed rather than returning incomplete evidence.
+The streaming WASM adapter uses `advance_prediction` / `flush_prediction` and
+inherits `dropped_mass: false` from `FrontierConfig::default()`. It skips
+discarded-mass bookkeeping while preserving candidate scoring, pruning,
+tie-breaking, and corrections. Native callers can enable the diagnostic with
+`dropped_mass: true` and retrieve it through `flush`. The config applies to all
+calls; prediction methods and detailed methods can be mixed without a reset.
 
 To enable standard WASM SIMD on a compatible runtime:
 

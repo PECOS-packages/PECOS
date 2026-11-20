@@ -95,6 +95,7 @@ fn main() {
         num_observables: model.num_observables,
     };
     let config = FrontierConfig {
+        dropped_mass: false,
         k,
         delta,
         score_alpha,

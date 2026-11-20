@@ -22,7 +22,7 @@ EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful", "floating_point"):
+    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports"):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -314,3 +314,43 @@ def test_missing_wasm_extra_has_install_guidance(monkeypatch):
     monkeypatch.setitem(sys.modules, "pecos_selene_wasm", None)
     with pytest.raises(ImportError, match=r"quantum-pecos\[wasm\]"):
         _ = pc.Guppy(control_without_wasm, wasm_modules={}).hugr_bytes
+
+
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("indexed_arithmetic", {"sum": 4, "product": 20, "named": 22}),
+        ("indexed_feedback", {"value": 1.5, "measured": 1}),
+        ("indexed_state", {"three": 3, "reset": 1}),
+    ],
+)
+def test_pecos_indexed_exports(examples, wrapper, name, expected):
+    plugin = pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["indexed_exports"]
+    function = getattr(example, name)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    program = (
+        pc.Guppy(function, wasm_modules=modules)
+        if wrapper == "guppy"
+        else pc.Hugr(plugin.compile_guppy(function).to_bytes(), wasm_modules=modules)
+    )
+    data = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).run(4).to_dict()
+    assert data == {label: [value] * 4 for label, value in expected.items()}
+
+
+def test_pecos_indexed_export_error_recovery(examples):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["indexed_exports"]
+    bad_modules = {str(example.WASM_PATH): b'(module (func (export "only")))'}
+    with pytest.raises(RuntimeError, match=r"out of range|2001"):
+        pc.sim(pc.Guppy(example.indexed_feedback, wasm_modules=bad_modules)).qubits(1).quantum(pc.state_vector()).run(1)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    data = (
+        pc.sim(pc.Guppy(example.indexed_feedback, wasm_modules=modules))
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .run(2)
+        .to_dict()
+    )
+    assert data == {"value": [1.5, 1.5], "measured": [1, 1]}

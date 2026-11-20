@@ -155,7 +155,6 @@ pub struct FrontierResumableCommittee {
 
 struct BoundedCommitteeAttempt {
     syndrome: Vec<u8>,
-    without_dropped_mass: bool,
     phase: BoundedCommitteePhase,
     forward: Option<FrontierDecodeAttempt>,
     backward: Option<FrontierDecodeAttempt>,
@@ -187,6 +186,7 @@ impl FrontierCommittee {
             ));
         }
         let FrontierConfig {
+            dropped_mass,
             k,
             delta,
             score_alpha,
@@ -200,6 +200,7 @@ impl FrontierCommittee {
         let forward = FrontierDecoder::from_sparse_dem(
             dem,
             FrontierConfig {
+                dropped_mass,
                 k,
                 delta,
                 score_alpha,
@@ -212,6 +213,7 @@ impl FrontierCommittee {
         )?;
         forward_order.reverse();
         let backward_config = FrontierConfig {
+            dropped_mass,
             k,
             delta,
             score_alpha,
@@ -318,35 +320,6 @@ impl FrontierCommittee {
         resolve_committee_attempts(forward_attempt, backward_attempt)
     }
 
-    /// Decode with full retained class masses and confidence, without the
-    /// discarded-prefix-mass diagnostic.
-    ///
-    /// This explicit opt-in uses the same configured pruning parameters,
-    /// retained states, floating-point reduction order, and committee arbitration
-    /// as [`Self::decode`]. It preserves the predicted class, complete retained
-    /// logical-mass vector, retained log evidence, class gap, directions, statuses,
-    /// transition counts, and dropped-state counts. The selected result's
-    /// [`FrontierResult::dropped_log_mass`] is unavailable and is set to `NaN`.
-    ///
-    /// Skipping that diagnostic avoids sorting discarded states and summing their
-    /// masses at every pruning step. Discarded mass is not used to score, prune,
-    /// merge, normalize the retained class masses, or select a committee leg.
-    /// Call [`Self::decode`] when the discarded-mass diagnostic is required;
-    /// its behavior and default remain unchanged.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors, including genuine no-path and non-no-path engine
-    /// failures, as [`Self::decode`]. This does not enable retries or recovery.
-    pub fn decode_without_dropped_mass(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<FrontierCommitteeResult, DecoderError> {
-        let forward_attempt = self.forward.decode_attempt_without_dropped_mass(syndrome);
-        let backward_attempt = self.backward.decode_attempt_without_dropped_mass(syndrome);
-        resolve_committee_attempts(forward_attempt, backward_attempt)
-    }
-
     /// Decode like [`Self::decode`], running the backward leg on a second thread.
     ///
     /// The legs share no state, so the result is identical to [`Self::decode`];
@@ -388,41 +361,14 @@ impl FrontierResumableCommittee {
     /// # Errors
     /// Returns `InvalidConfiguration` while another window is pending.
     pub fn begin(&mut self, syndrome: &[u8]) -> Result<FrontierBoundedProgress, DecoderError> {
-        self.begin_with_mode(syndrome, false)
-    }
-
-    /// Begin the same exact committee without discarded-mass bookkeeping.
-    ///
-    /// All retained outputs and counts are preserved. Only the selected result's
-    /// `dropped_log_mass` is unavailable (NaN), as in the unbounded opt-in API.
-    ///
-    /// # Errors
-    /// Returns the same protocol error as [`Self::begin`].
-    pub fn begin_without_dropped_mass(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<FrontierBoundedProgress, DecoderError> {
-        self.begin_with_mode(syndrome, true)
-    }
-
-    fn begin_with_mode(
-        &mut self,
-        syndrome: &[u8],
-        without_dropped_mass: bool,
-    ) -> Result<FrontierBoundedProgress, DecoderError> {
         if self.attempt.is_some() {
             return Err(DecoderError::InvalidConfiguration(
                 "finish or cancel the pending resumable committee before beginning another".into(),
             ));
         }
-        let progress = if without_dropped_mass {
-            self.forward.begin_without_dropped_mass(syndrome)?
-        } else {
-            self.forward.begin(syndrome)?
-        };
+        let progress = self.forward.begin(syndrome)?;
         self.attempt = Some(BoundedCommitteeAttempt {
             syndrome: syndrome.to_vec(),
-            without_dropped_mass,
             phase: BoundedCommitteePhase::Forward,
             forward: None,
             backward: None,
@@ -466,11 +412,7 @@ impl FrontierResumableCommittee {
                         .map(FrontierBoundedProgress::Forward);
                 }
                 state.forward = Some(self.forward.finish()?);
-                let progress = if state.without_dropped_mass {
-                    self.backward.begin_without_dropped_mass(&state.syndrome)?
-                } else {
-                    self.backward.begin(&state.syndrome)?
-                };
+                let progress = self.backward.begin(&state.syndrome)?;
                 state.phase = BoundedCommitteePhase::Backward;
                 Ok(FrontierBoundedProgress::Backward(progress))
             }
@@ -695,6 +637,7 @@ mod tests {
                     let mut result = result.clone();
                     assert!(result.bp_seconds.is_finite() && result.bp_seconds >= 0.0);
                     result.bp_seconds = 0.0;
+                    assert!(result.dropped_log_mass.is_some());
                     format!("{result:?}")
                 }
                 FrontierDecodeAttempt::NoPath {
@@ -724,6 +667,7 @@ mod tests {
             let base = FrontierCommittee::from_sparse_dem(
                 &dem,
                 FrontierConfig {
+                    dropped_mass: true,
                     k: 1,
                     bp_score_iterations,
                     merge_indistinguishable: false,
@@ -928,6 +872,7 @@ mod tests {
                 bp_score_iterations: 0,
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .unwrap();
@@ -970,6 +915,7 @@ mod tests {
                 bp_score_iterations: 0,
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .unwrap();
@@ -1026,6 +972,7 @@ mod tests {
                 bp_score_iterations: 5,
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .unwrap();
@@ -1050,7 +997,7 @@ mod tests {
             processed_columns: 0,
             transitions: 0,
             dropped_states: 0,
-            dropped_log_mass: f64::NEG_INFINITY,
+            dropped_log_mass: Some(f64::NEG_INFINITY),
             bp_seconds: 0.0,
             bp_runs: 0,
             escalation_rungs_used: 0,

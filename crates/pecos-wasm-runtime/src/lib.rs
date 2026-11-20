@@ -5,6 +5,7 @@
 //! Rust frames own resources. The generated caller handles errors afterwards.
 
 use pecos_wasm::{ForeignObject, WasmForeignObject, WasmScalarType};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -19,9 +20,15 @@ struct Context {
 }
 
 #[derive(PartialEq, Eq)]
+enum FunctionTarget {
+    Name(String),
+    ExportIndex(u64),
+}
+
+#[derive(PartialEq, Eq)]
 struct Function {
     module: u64,
-    name: String,
+    target: FunctionTarget,
     inputs: usize,
     outputs: usize,
     scalar_types: Option<(Vec<WasmScalarType>, Vec<WasmScalarType>)>,
@@ -138,7 +145,7 @@ pub fn lookup(module: u64, name: &str, inputs: usize, outputs: usize) -> Result<
     }
     lookup_function(Function {
         module,
-        name: name.into(),
+        target: FunctionTarget::Name(name.into()),
         inputs,
         outputs,
         scalar_types: None,
@@ -155,22 +162,46 @@ pub fn lookup_scalar(
     inputs: &[WasmScalarType],
     outputs: &[WasmScalarType],
 ) -> Result<u64> {
+    lookup_typed(module, FunctionTarget::Name(name.into()), inputs, outputs)
+}
+
+/// Bind a function at a zero-based position in the module's export list.
+///
+/// This matches Guppy's `@wasm(index)`: non-function exports occupy positions
+/// too. The index and exact signature are checked against the supplied module
+/// on the first call, when its instance is lazily created.
+///
+/// # Errors
+/// Rejects unknown modules, multiple results, and unrepresentable handles.
+pub fn lookup_by_id(
+    module: u64,
+    index: u64,
+    inputs: &[WasmScalarType],
+    outputs: &[WasmScalarType],
+) -> Result<u64> {
+    lookup_typed(module, FunctionTarget::ExportIndex(index), inputs, outputs)
+}
+
+fn lookup_typed(
+    module: u64,
+    target: FunctionTarget,
+    inputs: &[WasmScalarType],
+    outputs: &[WasmScalarType],
+) -> Result<u64> {
     if outputs.len() > 1 {
         return Err("WASM scalar ABI supports at most one result".into());
     }
-    if inputs
+    let scalar_types = inputs
         .iter()
         .chain(outputs)
-        .all(|ty| *ty == WasmScalarType::I64)
-    {
-        return lookup(module, name, inputs.len(), outputs.len());
-    }
+        .any(|ty| *ty == WasmScalarType::F64)
+        .then(|| (inputs.to_vec(), outputs.to_vec()));
     lookup_function(Function {
         module,
-        name: name.into(),
+        target,
         inputs: inputs.len(),
         outputs: outputs.len(),
-        scalar_types: Some((inputs.to_vec(), outputs.to_vec())),
+        scalar_types,
     })
 }
 
@@ -248,17 +279,23 @@ pub fn call(context: u64, function: u64, arguments: &[i64]) -> Result<i32> {
             .modules
             .get_mut(&function.module)
             .ok_or("Unknown WASM instance")?;
+        let name = match &function.target {
+            FunctionTarget::Name(name) => Cow::Borrowed(name.as_str()),
+            FunctionTarget::ExportIndex(index) => Cow::Owned(
+                object
+                    .exported_function_name(*index)
+                    .map_err(|e| e.to_string())?,
+            ),
+        };
         let values = if let Some((inputs, outputs)) = &function.scalar_types {
             object
-                .exec_scalar_bits(&function.name, inputs, outputs, arguments)
+                .exec_scalar_bits(&name, inputs, outputs, arguments)
                 .map_err(|e| e.to_string())?
         } else {
             object
-                .validate_i64_signature(&function.name, function.inputs, function.outputs)
+                .validate_i64_signature(&name, function.inputs, function.outputs)
                 .map_err(|e| e.to_string())?;
-            let mut values = object
-                .exec(&function.name, arguments)
-                .map_err(|e| e.to_string())?;
+            let mut values = object.exec(&name, arguments).map_err(|e| e.to_string())?;
             // The legacy API returns a sentinel zero for void exports.
             if function.outputs == 0 {
                 values.clear();
@@ -390,6 +427,39 @@ macro_rules! export_wasm_runtime {
                 $crate::lookup_scalar(
                     module,
                     name,
+                    &types(input_types, inputs)?,
+                    &types(output_types, outputs)?,
+                )
+            })
+        }
+        /// Lookup by zero-based export-list position, with the same scalar tags
+        /// as v2 named lookup. Non-function exports occupy positions as well.
+        ///
+        /// # Safety
+        /// Type arrays point to their counts of readable bytes, or may be null
+        /// when the corresponding count is zero.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn pecos_wasm_v2_lookup_by_id(
+            module: u64,
+            index: u64,
+            input_types: *const u8,
+            inputs: usize,
+            output_types: *const u8,
+            outputs: usize,
+        ) -> u64 {
+            $crate::boundary(0, || {
+                let types = |pointer: *const u8, count: usize| {
+                    if count == 0 {
+                        return $crate::scalar_types(&[]);
+                    }
+                    if pointer.is_null() {
+                        return Err("Null WASM scalar types".into());
+                    }
+                    $crate::scalar_types(unsafe { std::slice::from_raw_parts(pointer, count) })
+                };
+                $crate::lookup_by_id(
+                    module,
+                    index,
                     &types(input_types, inputs)?,
                     &types(output_types, outputs)?,
                 )
@@ -621,6 +691,57 @@ mod tests {
             integer,
             lookup_scalar(0, "add", &[WasmScalarType::I64; 2], &[WasmScalarType::I64]).unwrap()
         );
+    }
+
+    #[test]
+    fn indexed_exports_use_full_export_order_and_exact_signatures() {
+        reset().unwrap();
+        register(
+            0,
+            br#"(module
+            (memory 1)
+            (func $hidden (result i64) i64.const 999)
+            (func $second (param i64) (result i64) local.get 0 i64.const 2 i64.mul)
+            (func $first (param i64) (result i64) local.get 0 i64.const 1 i64.add)
+            (func $float (param f64) (result f64) local.get 0)
+            (export "z_first" (func $first))
+            (export "memory" (memory 0))
+            (export "a_second" (func $second))
+            (export "float" (func $float)))"#,
+        )
+        .unwrap();
+        let context = acquire(0).unwrap();
+        let integer = [WasmScalarType::I64];
+        let first = lookup_by_id(0, 0, &integer, &integer).unwrap();
+        let second = lookup_by_id(0, 2, &integer, &integer).unwrap();
+        assert_eq!(first, lookup_by_id(0, 0, &integer, &integer).unwrap());
+        assert_ne!(first, second);
+        call(context, first, &[7]).unwrap();
+        assert_eq!(read(context, 1).unwrap(), [8]);
+        call(context, second, &[7]).unwrap();
+        assert_eq!(read(context, 1).unwrap(), [14]);
+        for (index, message) in [
+            (1, "not a function"),
+            (4, "out of range"),
+            (u64::MAX, "out of range"),
+        ] {
+            let function = lookup_by_id(0, index, &integer, &integer).unwrap();
+            assert!(call(context, function, &[7]).unwrap_err().contains(message));
+        }
+        let wrong = lookup_by_id(0, 3, &integer, &integer).unwrap();
+        assert!(
+            call(context, wrong, &[7])
+                .unwrap_err()
+                .contains("signature mismatch")
+        );
+        let float = [WasmScalarType::F64];
+        let echo = lookup_by_id(0, 3, &float, &float).unwrap();
+        assert_ne!(echo, wrong);
+        // Exact transport of a negative-zero float through indexed dispatch.
+        call(context, echo, &[i64::MIN]).unwrap();
+        assert_eq!(read(context, 1).unwrap(), [i64::MIN]);
+        assert!(lookup_by_id(99, 0, &integer, &integer).is_err());
+        assert!(lookup_by_id(0, 0, &integer, &[WasmScalarType::I64; 2]).is_err());
     }
 
     #[test]

@@ -473,6 +473,30 @@ impl WasmForeignObject {
             .any(|e| e.name() == func_name && e.ty().func().is_some())
     }
 
+    /// Resolve a zero-based export-list position to a function name.
+    ///
+    /// All exports occupy positions, including memories, tables and globals.
+    /// This is the order used by Guppy's `@wasm(index)`, not the WebAssembly
+    /// internal function-index space.
+    ///
+    /// # Errors
+    /// Rejects out-of-range positions and exports that are not functions.
+    pub fn exported_function_name(&self, index: u64) -> Result<String, PecosError> {
+        let export = usize::try_from(index)
+            .ok()
+            .and_then(|index| self.module.exports().nth(index))
+            .ok_or_else(|| {
+                PecosError::Input(format!("WASM export index {index} is out of range"))
+            })?;
+        if export.ty().func().is_none() {
+            return Err(PecosError::Input(format!(
+                "WASM export index {index} is not a function ({})",
+                export.name()
+            )));
+        }
+        Ok(export.name().to_owned())
+    }
+
     /// Get the WebAssembly binary bytes
     ///
     /// This is useful for serialization and cloning.

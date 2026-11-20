@@ -301,6 +301,7 @@ fn frontier(
     fallback: Option<&str>,
 ) -> PyResult<PyExperimentalDecoderSpec> {
     let config = FrontierConfig {
+        dropped_mass: false,
         k,
         delta,
         score_alpha,
@@ -407,6 +408,7 @@ fn bp_trellis(
     escalation: Option<Vec<(usize, f64)>>,
 ) -> PyResult<PyExperimentalDecoderSpec> {
     let config = BpTrellisConfig {
+        dropped_mass: false,
         k,
         delta,
         score_alpha,

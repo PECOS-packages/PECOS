@@ -52,8 +52,11 @@ fn assert_result_bits(actual: &TrellisResult, expected: &TrellisResult) {
     assert_eq!(*transitions, expected.transitions);
     assert_eq!(*dropped_states, expected.dropped_states);
     assert_eq!(
-        dropped_log_mass.to_bits(),
-        expected.dropped_log_mass.to_bits()
+        dropped_log_mass.expect("enabled diagnostic").to_bits(),
+        expected
+            .dropped_log_mass
+            .expect("enabled diagnostic")
+            .to_bits()
     );
     assert_eq!(*escalation_rungs_used, expected.escalation_rungs_used);
     assert_eq!(*status, expected.status);
@@ -268,6 +271,7 @@ fn cross_shot_reuse_matches_fresh_decoders_bitwise() {
                             continue;
                         }
                         let config = TrellisConfig {
+                            dropped_mass: true,
                             k: if pruned { 2 } else { usize::MAX },
                             delta: if pruned {
                                 2.0

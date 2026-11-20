@@ -6,30 +6,50 @@ use pecos_trellis::{
 };
 use std::collections::BTreeMap;
 
-fn result_bits_equal(a: &TrellisResult, b: &TrellisResult, omitted: bool) {
-    assert_eq!(a.predicted, b.predicted);
-    assert_eq!(a.log_evidence.to_bits(), b.log_evidence.to_bits());
+fn result_bits_equal(a: &TrellisResult, b: &TrellisResult, flag_off: bool) {
+    let TrellisResult {
+        predicted,
+        log_evidence,
+        runner_up_gap,
+        peak_retained_states,
+        processed_columns,
+        transitions,
+        dropped_states,
+        dropped_log_mass,
+        bp_seconds,
+        bp_runs,
+        escalation_rungs_used,
+        status,
+        logical_masses,
+    } = a;
+    assert_eq!(*predicted, b.predicted);
+    assert_eq!(log_evidence.to_bits(), b.log_evidence.to_bits());
     assert_eq!(
-        a.runner_up_gap.map(f64::to_bits),
+        runner_up_gap.map(f64::to_bits),
         b.runner_up_gap.map(f64::to_bits)
     );
-    assert_eq!(a.peak_retained_states, b.peak_retained_states);
-    assert_eq!(a.processed_columns, b.processed_columns);
-    assert_eq!(a.transitions, b.transitions);
-    assert_eq!(a.dropped_states, b.dropped_states);
-    if omitted {
-        assert!(b.dropped_log_mass.is_nan());
+    assert_eq!(*peak_retained_states, b.peak_retained_states);
+    assert_eq!(*processed_columns, b.processed_columns);
+    assert_eq!(*transitions, b.transitions);
+    assert_eq!(*dropped_states, b.dropped_states);
+    if flag_off {
+        assert_eq!(b.dropped_log_mass, None);
+        assert!(dropped_log_mass.is_some());
     } else {
-        assert_eq!(a.dropped_log_mass.to_bits(), b.dropped_log_mass.to_bits());
+        assert_eq!(
+            dropped_log_mass.expect("enabled diagnostic").to_bits(),
+            b.dropped_log_mass.expect("enabled diagnostic").to_bits()
+        );
     }
-    assert_eq!(a.bp_seconds.to_bits(), b.bp_seconds.to_bits());
-    assert_eq!(a.bp_runs, b.bp_runs);
-    assert_eq!(a.escalation_rungs_used, b.escalation_rungs_used);
-    assert_eq!(a.status, b.status);
-    assert_eq!(a.logical_masses.len(), b.logical_masses.len());
-    for (a, b) in a.logical_masses.iter().zip(&b.logical_masses) {
-        assert_eq!(a.logical, b.logical);
-        assert_eq!(a.log_mass.to_bits(), b.log_mass.to_bits());
+    assert_eq!(bp_seconds.to_bits(), b.bp_seconds.to_bits());
+    assert_eq!(*bp_runs, b.bp_runs);
+    assert_eq!(*escalation_rungs_used, b.escalation_rungs_used);
+    assert_eq!(*status, b.status);
+    assert_eq!(logical_masses.len(), b.logical_masses.len());
+    for (a, b) in logical_masses.iter().zip(&b.logical_masses) {
+        let pecos_trellis::TrellisLogicalMass { logical, log_mass } = a;
+        assert_eq!(*logical, b.logical);
+        assert_eq!(log_mass.to_bits(), b.log_mass.to_bits());
     }
 }
 
@@ -45,13 +65,8 @@ fn error_equal(a: &DecoderError, b: &DecoderError) {
     assert_eq!(a.to_string(), b.to_string());
 }
 
-fn begin(stream: &mut TrellisStreamingDecoder, omitted: bool) -> usize {
-    if omitted {
-        stream.begin_bounded_advance_without_dropped_mass()
-    } else {
-        stream.begin_bounded_advance()
-    }
-    .unwrap()
+fn begin(stream: &mut TrellisStreamingDecoder) -> usize {
+    stream.begin_bounded_advance().unwrap()
 }
 
 fn drain(stream: &mut TrellisStreamingDecoder, budget: usize) -> usize {
@@ -114,6 +129,7 @@ fn every_budget_preserves_every_callback_and_all_terminal_mass_bits() {
             (16, 2.0, 0.0, false),
         ] {
             let config = TrellisConfig {
+                dropped_mass: true,
                 k,
                 delta,
                 score_alpha: alpha,
@@ -121,14 +137,20 @@ fn every_budget_preserves_every_callback_and_all_terminal_mass_bits() {
                 column_order: Some((0..dem.mechanisms.len()).collect()),
                 ..TrellisConfig::default()
             };
-            for omitted in [false, true] {
+            for flag_off in [false, true] {
                 for budget in [1, 2, 17, 64, 128] {
-                    let mut full =
+                    let mut flag_on =
                         TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
-                    let mut bounded =
-                        TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+                    let mut bounded = TrellisStreamingDecoder::from_sparse_dem(
+                        &dem,
+                        TrellisConfig {
+                            dropped_mass: !flag_off,
+                            ..config.clone()
+                        },
+                    )
+                    .unwrap();
                     for bits in 0..8 {
-                        full.reset();
+                        flag_on.reset();
                         bounded.reset();
                         let mut syndrome = vec![0; width];
                         for round in 0..4 {
@@ -144,27 +166,27 @@ fn every_budget_preserves_every_callback_and_all_terminal_mass_bits() {
                         ];
                         let mut last_processed = 0;
                         for (update, pair) in bounds.windows(2).enumerate() {
-                            full.feed_prefix(&syndrome[pair[0]..pair[1]]).unwrap();
+                            flag_on.feed_prefix(&syndrome[pair[0]..pair[1]]).unwrap();
                             bounded.feed_prefix(&syndrome[pair[0]..pair[1]]).unwrap();
-                            let pending = begin(&mut bounded, omitted);
+                            let pending = begin(&mut bounded);
                             let calls = drain(&mut bounded, budget);
                             saw_many_steps |= calls > 128;
                             if update == 3 {
-                                let a = full.flush().unwrap();
+                                let a = flag_on.flush().unwrap();
                                 let b = bounded.finish_bounded_flush().unwrap();
-                                result_bits_equal(&a, &b, omitted);
+                                result_bits_equal(&a, &b, flag_off);
                                 assert_eq!(a.processed_columns - last_processed, pending);
-                                assert_eq!(full.committed(), bounded.committed());
+                                assert_eq!(flag_on.committed(), bounded.committed());
                                 saw_pruning |= a.dropped_states > 0;
-                                begin(&mut bounded, omitted);
+                                begin(&mut bounded);
                                 assert_eq!(bounded.bounded_columns_remaining(), Some(0));
                                 result_bits_equal(
                                     &a,
                                     &bounded.finish_bounded_flush().unwrap(),
-                                    omitted,
+                                    flag_off,
                                 );
                             } else {
-                                let a = full.advance().unwrap();
+                                let a = flag_on.advance().unwrap();
                                 let b = bounded.finish_bounded_advance().unwrap();
                                 assert_eq!(
                                     a, b,
@@ -190,7 +212,14 @@ fn every_budget_preserves_every_callback_and_all_terminal_mass_bits() {
 #[test]
 fn pending_guards_freeze_inputs_modes_and_commitment_cadence_until_finish() {
     let text = "error(0.2) D0 L0\nerror(0.3) D0 L1\nerror(0.4) D1 L130";
-    let mut s = TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
+    let mut s = TrellisStreamingDecoder::from_dem_str(
+        text,
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
     assert_eq!(s.bounded_columns_remaining(), None);
     config_error(&s.step_bounded_advance(64).unwrap_err());
     config_error(&s.finish_bounded_advance().unwrap_err());
@@ -198,14 +227,11 @@ fn pending_guards_freeze_inputs_modes_and_commitment_cadence_until_finish() {
     let target = s.begin_bounded_advance().unwrap();
     assert!(target > 0);
     config_error(&s.begin_bounded_advance().unwrap_err());
-    config_error(&s.begin_bounded_advance_without_dropped_mass().unwrap_err());
     config_error(&s.feed_prefix(&[]).unwrap_err());
     config_error(&s.feed_prefix(&[0]).unwrap_err());
     config_error(&s.feed_dense(&[1, 0]).unwrap_err());
     config_error(&s.advance().unwrap_err());
     config_error(&s.advance_prediction().unwrap_err());
-    config_error(&s.advance_without_dropped_mass().unwrap_err());
-    config_error(&s.advance_prediction_without_evidence().unwrap_err());
     config_error(
         &s.set_streaming_mode(StreamingMode::DependencyDriven)
             .unwrap_err(),
@@ -222,14 +248,13 @@ fn pending_guards_freeze_inputs_modes_and_commitment_cadence_until_finish() {
     ));
     assert_eq!(s.bounded_columns_remaining(), Some(0));
     s.finish_bounded_advance().unwrap();
-    // Rejected opt-in reentry did not switch the original full drain's mode.
+    // Rejected reentry leaves the original drain intact.
     s.advance().unwrap();
     s.feed_prefix(&[0]).unwrap();
-    s.begin_bounded_advance_without_dropped_mass().unwrap();
+    s.begin_bounded_advance().unwrap();
     drain(&mut s, 1);
     s.finish_bounded_flush().unwrap();
-    config_error(&s.begin_bounded_advance().unwrap_err());
-    config_error(&s.advance().unwrap_err());
+    s.advance().unwrap();
     s.reset();
     assert_eq!(s.bounded_columns_remaining(), None);
     s.feed_dense(&[1, 0]).unwrap();
@@ -237,33 +262,48 @@ fn pending_guards_freeze_inputs_modes_and_commitment_cadence_until_finish() {
     // Reset in the middle of actual work also discards the pending operation.
     s.reset();
     s.feed_dense(&[1, 0]).unwrap();
-    s.begin_bounded_advance_without_dropped_mass().unwrap();
+    s.begin_bounded_advance().unwrap();
     s.step_bounded_advance(1).unwrap();
     s.reset();
     s.feed_dense(&[1, 0]).unwrap();
-    assert!(!s.flush().unwrap().dropped_log_mass.is_nan());
+    assert!(s.flush().unwrap().dropped_log_mass.is_some());
 }
 
 #[test]
-fn unsupported_schedule_and_empty_and_incomplete_models_do_not_change_legacy_paths() {
-    for omitted in [false, true] {
+fn unsupported_schedule_and_empty_and_incomplete_models_preserve_configured_diagnostics() {
+    for flag_off in [false, true] {
         for text in ["", "error(1) L130", "error(0.3) L130"] {
-            let mut full =
-                TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
-            let mut bounded =
-                TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
-            begin(&mut bounded, omitted);
+            let mut flag_on = TrellisStreamingDecoder::from_dem_str(
+                text,
+                TrellisConfig {
+                    dropped_mass: true,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            let mut bounded = TrellisStreamingDecoder::from_dem_str(
+                text,
+                TrellisConfig {
+                    dropped_mass: !flag_off,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            begin(&mut bounded);
             drain(&mut bounded, 64);
             result_bits_equal(
-                &full.flush().unwrap(),
+                &flag_on.flush().unwrap(),
                 &bounded.finish_bounded_flush().unwrap(),
-                omitted,
+                flag_off,
             );
         }
     }
     let mut s = TrellisStreamingDecoder::from_dem_str(
         "error(0.2) D0 L0\nerror(0.3) D1",
-        TrellisConfig::default(),
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
     )
     .unwrap();
     s.set_streaming_mode(StreamingMode::FixedLag {
@@ -272,32 +312,46 @@ fn unsupported_schedule_and_empty_and_incomplete_models_do_not_change_legacy_pat
     })
     .unwrap();
     config_error(&s.begin_bounded_advance().unwrap_err());
-    config_error(&s.begin_bounded_advance_without_dropped_mass().unwrap_err());
     assert_eq!(s.bounded_columns_remaining(), None);
     s.feed_dense(&[1, 0]).unwrap();
-    assert!(!s.flush().unwrap().dropped_log_mass.is_nan());
+    assert!(s.flush().unwrap().dropped_log_mass.is_some());
 }
 
 #[test]
-fn decoding_failures_remain_sticky_and_reset_restores_both_diagnostic_modes() {
+fn decoding_failures_remain_sticky_and_reset_preserves_each_flag_value() {
     for (text, syndrome) in [
         ("error(0.1) D0 D1 L0", [1, 0]),
         ("error(0.1) D0 L0\ndetector D1", [0, 1]),
         ("error(0.1) D0 L0\nerror(1) D1", [0, 0]),
     ] {
-        for omitted in [false, true] {
-            let mut full =
-                TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
-            let expected = full
+        let text = format!("{text}\nerror(0.25) L1\nerror(0.2) L2");
+        for flag_off in [false, true] {
+            let mut flag_on = TrellisStreamingDecoder::from_dem_str(
+                &text,
+                TrellisConfig {
+                    k: 1,
+                    dropped_mass: true,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            let expected = flag_on
                 .feed_dense(&syndrome)
-                .and_then(|()| full.flush())
+                .and_then(|()| flag_on.flush())
                 .unwrap_err();
-            let mut bounded =
-                TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
+            let mut bounded = TrellisStreamingDecoder::from_dem_str(
+                &text,
+                TrellisConfig {
+                    k: 1,
+                    dropped_mass: !flag_off,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
             let actual = bounded
                 .feed_dense(&syndrome)
                 .and_then(|()| {
-                    begin(&mut bounded, omitted);
+                    begin(&mut bounded);
                     loop {
                         if bounded.step_bounded_advance(1)?.1 {
                             break;
@@ -310,7 +364,7 @@ fn decoding_failures_remain_sticky_and_reset_restores_both_diagnostic_modes() {
             let sticky = bounded.step_bounded_advance(1).unwrap_err();
             let message = sticky.to_string();
             // A failed step leaves its drain pending; every API, including the
-            // unbounded and full-diagnostic ones, must still report the failure.
+            // unbounded and prediction-only ones, must still report the failure.
             for later in [
                 bounded.feed_prefix(&[0, 0, 0]).unwrap_err(),
                 bounded.begin_bounded_advance().unwrap_err(),
@@ -318,10 +372,7 @@ fn decoding_failures_remain_sticky_and_reset_restores_both_diagnostic_modes() {
                 bounded.finish_bounded_flush().unwrap_err(),
                 bounded.advance().unwrap_err(),
                 bounded.advance_prediction().unwrap_err(),
-                bounded.advance_without_dropped_mass().unwrap_err(),
-                bounded.advance_prediction_without_evidence().unwrap_err(),
                 bounded.flush().unwrap_err(),
-                bounded.flush_without_dropped_mass().unwrap_err(),
                 bounded.flush_prediction().unwrap_err(),
             ] {
                 assert_eq!(later.to_string(), message);
@@ -333,12 +384,22 @@ fn decoding_failures_remain_sticky_and_reset_restores_both_diagnostic_modes() {
                 [0, 0]
             };
             bounded.feed_dense(&valid).unwrap();
-            begin(&mut bounded, omitted);
+            begin(&mut bounded);
             drain(&mut bounded, 2);
-            bounded.finish_bounded_flush().unwrap();
+            let result = bounded.finish_bounded_flush().unwrap();
+            assert!(result.dropped_states > 0);
+            assert_eq!(result.dropped_log_mass.is_some(), !flag_off);
+            if let Some(mass) = result.dropped_log_mass {
+                assert!(mass.is_finite());
+            }
             bounded.reset();
             bounded.feed_dense(&valid).unwrap();
-            bounded.flush().unwrap();
+            let result = bounded.flush().unwrap();
+            assert!(result.dropped_states > 0);
+            assert_eq!(result.dropped_log_mass.is_some(), !flag_off);
+            if let Some(mass) = result.dropped_log_mass {
+                assert!(mass.is_finite());
+            }
         }
     }
 }

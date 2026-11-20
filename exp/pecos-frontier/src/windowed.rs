@@ -28,6 +28,7 @@
 //!     k: 512, delta: 1e9, score_alpha: 0.8, column_order: None,
 //!     merge_indistinguishable: false, bp_score_iterations: 0,
 //!     metric_mode: MetricMode::LogSumExpFloat, int_metric_scale: 1024,
+//!     dropped_mass: false,
 //! };
 //! let mut decoder = WindowedDecoder::from_sparse_dem(&dem, window, config, 32)?;
 //! let result = decoder.decode(&[1, 0, 0, 0, 0, 0, 0, 0, 1])?;
@@ -424,8 +425,8 @@ impl WindowedDecoder {
     /// Each model uses its own explicit deadline permutation and plain reverse.
     /// The provided `FrontierConfig.column_order` must be `None`; a global DEM
     /// permutation is not a permutation of every projected model. Other pruning
-    /// and arithmetic fields pass through unchanged. Full dropped-mass bookkeeping
-    /// remains enabled. A column budget bounds work, not elapsed milliseconds.
+    /// and arithmetic fields pass through unchanged. The diagnostic follows
+    /// `FrontierConfig::dropped_mass`. A column budget bounds work, not elapsed milliseconds.
     ///
     /// # Errors
     /// Returns model/configuration errors or a zero column-budget error.

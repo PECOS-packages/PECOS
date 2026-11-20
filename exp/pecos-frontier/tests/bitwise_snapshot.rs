@@ -126,27 +126,48 @@ fn snapshot_result(result: FrontierResult) -> SnapshotOutcome {
 }
 
 fn assert_results_bitwise_equal(left: &FrontierResult, right: &FrontierResult) {
-    assert_eq!(left.predicted, right.predicted);
-    assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+    let FrontierResult {
+        predicted,
+        log_evidence,
+        runner_up_gap,
+        peak_retained_states,
+        processed_columns,
+        transitions,
+        dropped_states,
+        dropped_log_mass,
+        bp_seconds,
+        bp_runs,
+        escalation_rungs_used,
+        status,
+        logical_masses,
+    } = left;
+    assert_eq!(*predicted, right.predicted);
+    assert_eq!(log_evidence.to_bits(), right.log_evidence.to_bits());
     assert_eq!(
-        left.runner_up_gap.map(f64::to_bits),
+        runner_up_gap.map(f64::to_bits),
         right.runner_up_gap.map(f64::to_bits)
     );
-    assert_eq!(left.peak_retained_states, right.peak_retained_states);
-    assert_eq!(left.processed_columns, right.processed_columns);
-    assert_eq!(left.transitions, right.transitions);
-    assert_eq!(left.dropped_states, right.dropped_states);
+    assert_eq!(*peak_retained_states, right.peak_retained_states);
+    assert_eq!(*processed_columns, right.processed_columns);
+    assert_eq!(*transitions, right.transitions);
+    assert_eq!(*dropped_states, right.dropped_states);
     assert_eq!(
-        left.dropped_log_mass.to_bits(),
-        right.dropped_log_mass.to_bits()
+        dropped_log_mass.expect("enabled diagnostic").to_bits(),
+        right
+            .dropped_log_mass
+            .expect("enabled diagnostic")
+            .to_bits()
     );
-    assert_eq!(left.bp_seconds.to_bits(), right.bp_seconds.to_bits());
-    assert_eq!(left.status, right.status);
-    assert_eq!(left.logical_masses.len(), right.logical_masses.len());
-    for (left_mass, right_mass) in left.logical_masses.iter().zip(&right.logical_masses) {
-        assert_eq!(left_mass.logical, right_mass.logical);
-        assert_eq!(left_mass.log_mass.to_bits(), right_mass.log_mass.to_bits());
+    assert_eq!(bp_seconds.to_bits(), right.bp_seconds.to_bits());
+    assert_eq!(*status, right.status);
+    assert_eq!(logical_masses.len(), right.logical_masses.len());
+    for (left_mass, right_mass) in logical_masses.iter().zip(&right.logical_masses) {
+        let pecos_frontier::FrontierLogicalMass { logical, log_mass } = left_mass;
+        assert_eq!(*logical, right_mass.logical);
+        assert_eq!(log_mass.to_bits(), right_mass.log_mass.to_bits());
     }
+    assert_eq!(*bp_runs, right.bp_runs);
+    assert_eq!(*escalation_rungs_used, right.escalation_rungs_used);
 }
 
 fn collect_snapshot() -> SnapshotFile {
@@ -174,6 +195,7 @@ fn collect_snapshot() -> SnapshotFile {
                     bp_score_iterations: 0,
                     metric_mode: pecos_frontier::MetricMode::default(),
                     int_metric_scale: 1024,
+                    dropped_mass: false,
                 },
             ),
             (
@@ -187,6 +209,7 @@ fn collect_snapshot() -> SnapshotFile {
                     bp_score_iterations: 0,
                     metric_mode: pecos_frontier::MetricMode::default(),
                     int_metric_scale: 1024,
+                    dropped_mass: false,
                 },
             ),
         ] {
@@ -232,6 +255,7 @@ fn collect_snapshot() -> SnapshotFile {
                 bp_score_iterations: 0,
                 metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
+                dropped_mass: false,
             },
         )
         .expect("fixture committee construction must succeed");
@@ -291,6 +315,7 @@ fn parallel_committee_matches_sequential_committee_bitwise() {
         let mut committee = FrontierCommittee::from_sparse_dem(
             &dem,
             FrontierConfig {
+                dropped_mass: true,
                 k: fixture.pruned.k,
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,
@@ -344,6 +369,7 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
             fixture.num_observables,
         );
         let off_config = FrontierConfig {
+            dropped_mass: true,
             k: usize::MAX,
             delta: f64::INFINITY,
             score_alpha: 0.8,

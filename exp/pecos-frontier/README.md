@@ -15,6 +15,15 @@ Graduation to `crates/` awaits broader real-world use.
 Pruning ranks accumulated prefix log mass plus a `score_alpha`-weighted
 suffix-compatibility estimate. Unpruned results are exact and upstream-verified.
 
+The discarded-prefix-mass diagnostic is off by default. Set
+`FrontierConfig::dropped_mass` to `true`, or pass `dropped_mass=True` to a Python
+detailed decoder constructor, to include it. Float metrics accumulate it at
+extra pruning cost; the integer max-log metric always keeps its cheap running
+maximum.
+`dropped_log_mass` is `Option<f64>` in Rust and `float | None` in Python.
+The flag applies to every entry point and never changes predictions, retained
+logical masses, evidence, or other result fields.
+
 Deterministic ordering and tie-breaking are bitwise reproducible, and the
 engine's `libm` transcendentals make outputs bit-identical across platforms.
 
@@ -44,8 +53,8 @@ The `decode_dem` example reads an existing flattened DEM and JSONL detector even
 It uses K=512, Delta=1e9, score_alpha=0.8, exact float log-sum-exp, no
 indistinguishable-error merging, BP iterations=0 and int_metric_scale=1024 (unused
 by the float metric). Each projected model uses deadline order and its plain
-reverse committee. Full retained classes, evidence, discarded mass and work
-telemetry are computed. The step budget is 32 columns; it is not a wall-time limit.
+reverse committee. The example enables `dropped_mass`; full retained classes, evidence,
+discarded mass and work telemetry are computed. The step budget is 32 columns; it is not a wall-time limit.
 `WindowedDecoder::decode` is a synchronous whole-shot call that drains every
 window before returning. The internal step budget does not bound that public
 call or a future FFI wrapper to 32 columns or a controller latency deadline.

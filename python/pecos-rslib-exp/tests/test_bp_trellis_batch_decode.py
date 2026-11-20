@@ -172,7 +172,7 @@ def test_no_path_escalation_is_used_in_batch_execution(workers):
 def test_direct_parallel_batch_matches_sequential():
     rng = random.Random(35)
     shots = [[rng.randrange(2) for _ in range(3)] for _ in range(1025)]
-    decoder = exp.BpTrellisDecoder.from_dem(DEM, k=2, escalation_ks=[16, 32])
+    decoder = exp.BpTrellisDecoder.from_dem(DEM, k=2, escalation_ks=[16, 32], dropped_mass=True)
     sequential = decoder.decode_batch(shots)
     parallel = decoder.decode_batch(shots, workers=4)
     fields = (
@@ -189,6 +189,8 @@ def test_direct_parallel_batch_matches_sequential():
     )
     assert len(parallel) == len(sequential) == len(shots)
     for actual, expected in zip(parallel, sequential, strict=True):
+        assert isinstance(actual.dropped_log_mass, float)
+        assert isinstance(expected.dropped_log_mass, float)
         assert actual.observable_flips.mask == expected.observable_flips.mask
         for field in fields:
             assert getattr(actual, field) == getattr(expected, field)
@@ -240,3 +242,17 @@ def test_resolved_rungs_and_strict_spec_route():
             bp_trellis(**options)
         with pytest.raises(ValueError, match="escalation"):
             exp.BpTrellisDecoder.from_dem(DEM, **options)
+
+
+def test_dropped_mass_is_opt_in():
+    dem = "error(0.25) L0\nerror(0.2) L1"
+    default = exp.BpTrellisDecoder.from_dem(dem, k=1).decode_syndrome([])
+    enabled = exp.BpTrellisDecoder.from_dem(dem, k=1, dropped_mass=True).decode_syndrome([])
+    assert default.dropped_log_mass is None
+    assert isinstance(enabled.dropped_log_mass, float)
+    assert default.dropped_states > 0
+    assert enabled.dropped_states > 0
+    assert math.isfinite(enabled.dropped_log_mass)
+    assert default.observable_flips.mask == enabled.observable_flips.mask
+    assert default.logical_masses == enabled.logical_masses
+    assert default.log_evidence == enabled.log_evidence

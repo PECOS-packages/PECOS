@@ -38,7 +38,7 @@ METRIC_FLIP_DEM = "error(0.20) D0 L0\nerror(0.15) D0\nerror(0.15) D0\n"
 
 
 def test_sparse_and_dense_decode_agree() -> None:
-    decoder = FrontierDecoder.from_dem(SMALL_DEM)
+    decoder = FrontierDecoder.from_dem(SMALL_DEM, dropped_mass=True)
 
     # Syndrome D0=1, D1=0 forces the first mechanism on and the second off,
     # so logical observable L0 flips and the expected mask is 1.
@@ -281,7 +281,7 @@ COMMITTEE_RESULT_FIELDS = (
 
 
 def test_committee_parallel_legs_match_sequential_decode() -> None:
-    committee = FrontierCommitteeDecoder.from_dem(CHAIN_DEM, k=2, delta=float("inf"))
+    committee = FrontierCommitteeDecoder.from_dem(CHAIN_DEM, k=2, delta=float("inf"), dropped_mass=True)
 
     for bits in range(16):
         syndrome = [(bits >> detector) & 1 for detector in range(4)]
@@ -293,6 +293,8 @@ def test_committee_parallel_legs_match_sequential_decode() -> None:
         )
 
         for result in (parallel, sparse):
+            assert isinstance(result.dropped_log_mass, float)
+            assert isinstance(sequential.dropped_log_mass, float)
             assert result.observable_flips.mask == sequential.observable_flips.mask
             for field in COMMITTEE_RESULT_FIELDS:
                 assert getattr(result, field) == getattr(sequential, field), field
@@ -317,7 +319,7 @@ def test_bp_score_iterations_and_telemetry_are_exposed() -> None:
 
 
 def test_pruning_telemetry_and_status_strings() -> None:
-    width = FrontierDecoder.from_dem("error(0.25) L0\n", k=1, delta=float("inf"))
+    width = FrontierDecoder.from_dem("error(0.25) L0\n", k=1, delta=float("inf"), dropped_mass=True)
     width_result = width.decode_syndrome([])
     assert width_result.dropped_states == 1
     assert math.exp(width_result.dropped_log_mass) == pytest.approx(0.25)
@@ -368,7 +370,7 @@ def test_decode_batch_workers_match_all_public_fields(decoder_class, metric_mode
     rng = random.Random(35)
     shots = [[rng.randrange(2) for _ in range(2)] for _ in range(1025)]
     # BP is disabled so the public wall-clock field is also exactly comparable.
-    decoder = decoder_class.from_dem(SMALL_DEM, metric_mode=metric_mode, bp_score_iterations=0)
+    decoder = decoder_class.from_dem(SMALL_DEM, metric_mode=metric_mode, bp_score_iterations=0, dropped_mass=True)
     fields = (
         "log_evidence",
         "runner_up_gap",
@@ -389,6 +391,8 @@ def test_decode_batch_workers_match_all_public_fields(decoder_class, metric_mode
     for actual_batch in (decoder.decode_batch(shots), decoder.decode_batch(shots, workers=4)):
         assert len(actual_batch) == len(sequential) == len(shots)
         for actual, expected in zip(actual_batch, sequential, strict=True):
+            assert isinstance(actual.dropped_log_mass, float)
+            assert isinstance(expected.dropped_log_mass, float)
             assert actual.observable_flips.mask == expected.observable_flips.mask
             assert list(actual.observable_flips) == list(expected.observable_flips)
             assert actual.observable_flips.indices() == expected.observable_flips.indices()
@@ -461,3 +465,32 @@ def test_committee_merge_kwarg_defaults_off_and_merges_when_enabled() -> None:
 
     assert default_committee.decode_from_defects([0]).processed_columns == 2
     assert merged_committee.decode_from_defects([0]).processed_columns == 1
+
+
+@pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
+def test_dropped_mass_is_opt_in(decoder_class) -> None:
+    dem = "error(0.25) L0\nerror(0.2) L1"
+    default = decoder_class.from_dem(dem, k=1).decode_syndrome([])
+    enabled = decoder_class.from_dem(dem, k=1, dropped_mass=True).decode_syndrome([])
+    assert default.dropped_log_mass is None
+    assert isinstance(enabled.dropped_log_mass, float)
+    assert default.dropped_states > 0
+    assert enabled.dropped_states > 0
+    assert math.isfinite(enabled.dropped_log_mass)
+    assert default.observable_flips.mask == enabled.observable_flips.mask
+    assert default.logical_masses == enabled.logical_masses
+    assert default.log_evidence == enabled.log_evidence
+
+
+def test_factor_dropped_mass_is_opt_in() -> None:
+    factors = [[(0.75, [], []), (0.25, [], [0])]]
+    default = FrontierDecoder.from_factors(factors, 0, 1, k=1).decode_syndrome([])
+    enabled = FrontierDecoder.from_factors(factors, 0, 1, k=1, dropped_mass=True).decode_syndrome([])
+    assert default.dropped_log_mass is None
+    assert isinstance(enabled.dropped_log_mass, float)
+    assert default.dropped_states > 0
+    assert enabled.dropped_states > 0
+    assert math.isfinite(enabled.dropped_log_mass)
+    assert default.observable_flips.mask == enabled.observable_flips.mask
+    assert default.logical_masses == enabled.logical_masses
+    assert default.log_evidence == enabled.log_evidence

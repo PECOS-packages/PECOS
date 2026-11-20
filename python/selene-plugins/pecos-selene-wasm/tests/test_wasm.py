@@ -14,7 +14,7 @@ EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful", "floating_point"):
+    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports"):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -332,3 +332,83 @@ def test_unprepared_external_loop_is_rejected(examples, serialized):
             package.to_bytes() if serialized else package,
             {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
         )
+
+
+@pytest.mark.parametrize("platform", ["helios", "sol"])
+@pytest.mark.parametrize("opt_level", [0, 2])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("indexed_arithmetic", {"sum": 4, "product": 20, "named": 22}),
+        ("indexed_feedback", {"value": 1.5, "measured": 1}),
+        ("indexed_state", {"three": 3, "reset": 1}),
+    ],
+)
+def test_indexed_exports(examples, tmp_path, platform, opt_level, name, expected):
+    example = examples["indexed_exports"]
+    assert (
+        run(
+            example,
+            getattr(example, name),
+            tmp_path,
+            platform=platform,
+            opt_level=opt_level,
+            processes=2,
+        )
+        == [expected] * 4
+    )
+
+
+@pytest.mark.parametrize("binary", [False, True])
+def test_index_uses_export_order_from_supplied_bytes(examples, tmp_path, binary):
+    from wasmtime import wat2wasm
+
+    example = examples["indexed_exports"]
+    # Names in the declaration file are not bindings. Replacing the explicitly
+    # supplied export at position 3 changes execution even when its name changes.
+    wat = example.WASM_PATH.read_text().replace('(export "affine"', '(export "renamed"').replace("f64.add", "f64.sub")
+    data = bytes(wat2wasm(wat)) if binary else wat.encode()
+    assert (
+        run(example, example.indexed_feedback, tmp_path, modules={str(example.WASM_PATH): data})
+        == [
+            {"value": -6.5, "measured": 0},
+        ]
+        * 4
+    )
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        (b'(module (func (export "only")))', "out of range"),
+        (b'(module (func (export "only")) (memory (export "memory") 1))', "not a function"),
+        (
+            b'(module (memory (export "memory") 1) '
+            b'(func (export "wrong") (param f64 f64) (result f64) local.get 0))',
+            "signature mismatch",
+        ),
+    ],
+)
+def test_invalid_indexed_export_traps(examples, tmp_path, data, message):
+    example = examples["indexed_exports"]
+    with pytest.raises(SelenePanicError, match=message):
+        run(example, example.indexed_arithmetic, tmp_path, modules={str(example.WASM_PATH): data})
+
+
+@pytest.mark.parametrize("index", [-1, 2**64, 2**64 + 2])
+def test_index_must_fit_unsigned_64_bits(examples, index):
+    from hugr import ops, tys
+    from hugr.envelope import EnvelopeConfig, EnvelopeFormat
+
+    example = examples["indexed_exports"]
+    package = compile_guppy(example.indexed_arithmetic)
+    for graph in package.modules:
+        for node in graph:
+            operation = graph[node].op
+            if isinstance(operation, ops.ExtOp) and operation.op_def().name == "lookup_by_id":
+                operation.args[0] = tys.BoundedNatArg(index)
+    # The JSON envelope permits out-of-range BoundedNat values; binary model
+    # encoding rejects them earlier. They must never reach LLVM's truncation.
+    envelope = package.to_bytes(EnvelopeConfig(format=EnvelopeFormat.JSON))
+    with pytest.raises(ValueError, match="unsigned 64-bit"):
+        compile_wasm(envelope, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()})

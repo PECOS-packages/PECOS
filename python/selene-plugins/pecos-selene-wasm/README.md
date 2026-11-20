@@ -2,7 +2,8 @@
 
 This package lowers Guppy's public `tket.wasm` operations and supplies a Selene
 Utility plugin backed by Wasmtime. It supports mixed signed 64-bit integer and double-precision float arguments,
-with zero or one scalar result and explicit module bytes. Branches and loops run
+with zero or one scalar result and explicit module bytes. Exports can be selected
+by name or zero-based position in the complete export list (`@wasm(index)`). Branches and loops run
 with the released public compiler; no upstream source changes are required.
 
 ```python

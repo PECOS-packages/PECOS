@@ -14,6 +14,8 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use tempfile::NamedTempFile;
 
+mod scoped_execution;
+
 /// Process-wide singleton for the QIS FFI library.
 ///
 /// On macOS, loading the same dynamic library multiple times creates separate
@@ -226,8 +228,10 @@ impl SharedLibrary {
 // FFI function type aliases for dlopen symbol lookup
 type ResetInterfaceFn = unsafe extern "C" fn();
 type GetOperationsFn = unsafe extern "C" fn() -> *mut OperationCollector;
-type CallQmainFn = unsafe extern "C" fn(extern "C" fn(u64) -> u64) -> u64;
-type CallVoidMainFn = unsafe extern "C" fn(extern "C" fn()) -> u64;
+// Program frames may be traversed by Windows longjmp. The outer guard catches
+// that transfer and remains a non-unwinding C boundary.
+type CallQmainFn = unsafe extern "C" fn(unsafe extern "C-unwind" fn(u64) -> u64) -> u64;
+type CallVoidMainFn = unsafe extern "C" fn(unsafe extern "C-unwind" fn()) -> u64;
 
 /// The entry-point shape found in a compiled QIR program, bundled with the
 /// matching setjmp wrapper from the FFI runtime. Each variant pairs the function
@@ -235,11 +239,11 @@ type CallVoidMainFn = unsafe extern "C" fn(extern "C" fn()) -> u64;
 /// `void main()` through the qmain wrapper) is undefined behaviour.
 enum ExecutionEntryPoint<'a> {
     Qmain {
-        func: Symbol<'a, extern "C" fn(u64) -> u64>,
+        func: Symbol<'a, unsafe extern "C-unwind" fn(u64) -> u64>,
         call: Symbol<'a, CallQmainFn>,
     },
     VoidMain {
-        func: Symbol<'a, extern "C" fn()>,
+        func: Symbol<'a, unsafe extern "C-unwind" fn()>,
         call: Symbol<'a, CallVoidMainFn>,
     },
 }
@@ -1269,7 +1273,7 @@ impl QisHeliosInterface {
         // Prefer `qmain` (Helios profile); fall back to `main` (void-return form).
         // We look up qmain first because it's the only one we want to call
         // through the i64-returning wrapper.
-        let qmain_fn: Result<Symbol<'a, extern "C" fn(u64) -> u64>, _> =
+        let qmain_fn: Result<Symbol<'a, unsafe extern "C-unwind" fn(u64) -> u64>, _> =
             unsafe { program_lib.get(b"qmain\0") };
 
         if let Ok(func) = qmain_fn {
@@ -1287,7 +1291,7 @@ impl QisHeliosInterface {
 
         // No qmain -- try `main` and dispatch through the void-main wrapper so
         // we don't read a garbage value out of the return register.
-        let main_fn: Symbol<'a, extern "C" fn()> = unsafe {
+        let main_fn: Symbol<'a, unsafe extern "C-unwind" fn()> = unsafe {
             program_lib.get(b"main\0").map_err(|e| {
                 InterfaceError::ExecutionError(format!(
                     "Failed to find qmain or main entry point: {e}"
@@ -1937,7 +1941,11 @@ entry:
     fn execute_program(
         &mut self,
         measurements: Option<&BTreeMap<usize, bool>>,
+        mut scoped: Option<&mut scoped_execution::RequestHost<'_>>,
     ) -> Result<OperationCollector, InterfaceError> {
+        // Reject host-side nested execution before context registration/reset;
+        // the native guard alone is too late to protect the outer context.
+        let _execution_scope = scoped_execution::ExecutionScope::enter()?;
         // Verify the executable path is set
         let so_path = self.executable_path.as_ref().ok_or_else(|| {
             InterfaceError::ExecutionError(
@@ -2055,11 +2063,17 @@ entry:
             // FFI Rust guard export → C setjmp → program qmain/main → FFI QIS or
             // selene_* adapter → thread-local operation collection. Termination
             // transfers to the C guard, which cleans up and restores the handler.
-            let (entry_label, result) = match &entry_point {
-                // SAFETY: Symbols were resolved with matching entry/guard ABIs.
-                ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
-                // SAFETY: Symbols were resolved with matching entry/guard ABIs.
-                ExecutionEntryPoint::VoidMain { func, call } => ("main", unsafe { call(**func) }),
+            let (entry_label, result) = if let Some(host) = scoped.as_mut() {
+                scoped_execution::call(pecos_qis_lib.inner(), ctx, &entry_point, host)?
+            } else {
+                match &entry_point {
+                    // SAFETY: Symbols were resolved with matching entry/guard ABIs.
+                    ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
+                    // SAFETY: Symbols were resolved with matching entry/guard ABIs.
+                    ExecutionEntryPoint::VoidMain { func, call } => {
+                        ("main", unsafe { call(**func) })
+                    }
+                }
             };
             // Read the error while this worker still has its context registered.
             // A type mismatch is fatal even if the program returned normally.
@@ -2287,7 +2301,33 @@ impl QisInterface for QisHeliosInterface {
 
     fn collect_operations(&mut self) -> Result<OperationCollector, InterfaceError> {
         // Execute the program and collect operations (no pre-populated measurements)
-        self.execute_program(None)
+        self.execute_program(None, None)
+    }
+
+    fn supports_scoped_execution(&self) -> bool {
+        true
+    }
+
+    fn collect_operations_scoped(
+        &mut self,
+        request: &mut dyn FnMut(u64) -> Result<(), InterfaceError>,
+    ) -> Result<OperationCollector, InterfaceError> {
+        if !self.dynamic_mode {
+            return Err(InterfaceError::ExecutionError(
+                "Scoped execution requires dynamic mode".into(),
+            ));
+        }
+        let mut host = scoped_execution::RequestHost::new(request);
+        let execution = self.execute_program(None, Some(&mut host));
+        // Program guards and TLS registration have returned before propagating
+        // a host failure. No unwind crosses the C callback or program frames.
+        if let Some(payload) = host.panic.take() {
+            std::panic::resume_unwind(payload);
+        }
+        if let Some(error) = host.error.take() {
+            return Err(error);
+        }
+        execution
     }
 
     fn execute_with_measurements(
@@ -2296,7 +2336,7 @@ impl QisInterface for QisHeliosInterface {
     ) -> Result<OperationCollector, InterfaceError> {
         // Execute with pre-populated measurements via the cdylib
         // This enables dynamic circuits where conditionals depend on measurement results
-        self.execute_program(Some(&measurements))
+        self.execute_program(Some(&measurements), None)
     }
 
     fn set_program_shot(&mut self, shot: u64) {
@@ -2465,6 +2505,13 @@ mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
+
+    // Keep the compiled ABI probe in the executor::tests filter used by the
+    // Python compatibility smoke builds on all supported host platforms.
+    #[test]
+    fn compiled_entries_use_scoped_requests_in_the_selected_ffi() {
+        super::scoped_request_tests::run_compiled_entries();
+    }
 
     // Only primitive/pointer ABI types: this oracle also runs on Windows.
     #[test]
@@ -4648,3 +4695,6 @@ mod selene_tests;
 
 #[cfg(test)]
 mod abi_tests;
+
+#[cfg(test)]
+mod scoped_request_tests;

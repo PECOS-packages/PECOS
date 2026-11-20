@@ -244,6 +244,16 @@ impl PyQisEngineBuilder {
         Ok(self.clone())
     }
 
+    /// Execute synchronously on the Monte Carlo worker through the existing
+    /// noise/quantum feedback loop. Staged execution remains the default.
+    /// Requires a supporting interface at build time. Cannot detach an unresponsive
+    /// native program; cancellation requires cooperative checkpoints.
+    #[pyo3(signature = (enabled = true))]
+    fn scoped_execution(&mut self, enabled: bool) -> Self {
+        self.inner = self.inner.clone().scoped_execution(enabled);
+        self.clone()
+    }
+
     /// Opt into mandatory scheduled transport; pair with scheduled_idle_z(),
     /// scheduled_idle_noise(), or scheduled_local_noise().
     #[pyo3(signature = (enabled = true))]

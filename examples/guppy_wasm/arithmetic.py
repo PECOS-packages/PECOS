@@ -96,7 +96,7 @@ def run_selene(function, shots: int = 4) -> dict:
     from pecos_selene_wasm import build
 
     with TemporaryDirectory(prefix="pecos-guppy-wasm-") as build_dir:
-        instance = build(function.compile(), {str(WASM_PATH): WASM_PATH.read_bytes()}, build_dir=Path(build_dir))
+        instance = build(function, {str(WASM_PATH): WASM_PATH.read_bytes()}, build_dir=Path(build_dir))
         results = {}
         for shot in instance.run_shots(
             simulator=selene_sim.Quest(),

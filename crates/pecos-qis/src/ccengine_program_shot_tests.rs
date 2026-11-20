@@ -3,7 +3,7 @@ use super::*;
 use pecos_engines::{ClassicalControlEngineBuilder, MonteCarloEngine, StateVecEngine};
 use pecos_random::{PCG32_INIT_STATE, PCGRandom};
 
-fn program() -> String {
+pub(super) fn program() -> String {
     let declaration = crate::selene_test_ir::declaration("selene_get_current_shot", "ptr");
     let call = crate::selene_test_ir::call("abi", "selene_get_current_shot", "ptr null");
     format!(

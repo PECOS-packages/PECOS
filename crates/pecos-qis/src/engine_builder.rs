@@ -14,6 +14,7 @@ pub struct QisEngineBuilder {
     decoder_batch_capture: bool,
     decoder_control_capture: bool,
     scheduled_transport: ScheduledTransport,
+    scoped_execution: bool,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
@@ -28,6 +29,7 @@ impl Clone for QisEngineBuilder {
             decoder_batch_capture: self.decoder_batch_capture,
             decoder_control_capture: self.decoder_control_capture,
             scheduled_transport: self.scheduled_transport,
+            scoped_execution: self.scoped_execution,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
             // Clone the interface builder if present
@@ -52,6 +54,7 @@ impl QisEngineBuilder {
             decoder_batch_capture: false,
             decoder_control_capture: false,
             scheduled_transport: ScheduledTransport::Off,
+            scoped_execution: false,
             interface: None,
             interface_builder: None,
             program_source: None,
@@ -292,6 +295,19 @@ impl QisEngineBuilder {
         Ok(self)
     }
 
+    /// Run the program synchronously on its Monte Carlo worker through the
+    /// existing noise/quantum engine feedback loop. Staged execution is the default.
+    ///
+    /// Requires an interface supporting scoped execution (checked at build time).
+    /// Scoped execution cannot detach an unresponsive native program; it requires
+    /// cooperative cancellation checkpoints. Direct `start`/`continue_processing`
+    /// driving is unavailable in this mode. Runtime scheduling is unchanged.
+    #[must_use]
+    pub fn scoped_execution(mut self, enabled: bool) -> Self {
+        self.scoped_execution = enabled;
+        self
+    }
+
     /// Preserve original native batches in mandatory transport. Requires the
     /// matching scheduled noise capability and an admitted state-vector or stabilizer simulator.
     /// Enabling preserves v7 if selected; disabling turns all scheduled transport off.
@@ -419,6 +435,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
 
             // Store the builder and program source so clones can recreate their interfaces
             engine.set_dynamic_config(dyn_clone::clone_box(&**builder), &compiled_source);
+            engine.set_scoped_execution(self.scoped_execution)?;
 
             log::debug!(
                 "Dynamic engine created, interface present: {}",

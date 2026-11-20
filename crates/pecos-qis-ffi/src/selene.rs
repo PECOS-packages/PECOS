@@ -738,6 +738,20 @@ unsafe fn native_read(future: u64, boolean: bool) -> SeleneU64Result {
             "selene future read",
         )
     };
+    if response.error_code == 0 && boolean && response.value > 1 {
+        // Validate at the typed boundary for every host, including custom
+        // runtimes. Integer/leakage futures retain their full-width values.
+        unsafe {
+            ffi::fatal_ffi_input(
+                "selene future read",
+                "Boolean response must be 0 or 1".into(),
+            );
+        };
+        return SeleneU64Result {
+            error_code: 1,
+            value: 0,
+        };
+    }
     if response.error_code == 0
         && let Err(reason) = record_native_read(future)
     {
@@ -1387,8 +1401,8 @@ fn invalidate_native_future_provenance() -> Result<(), String> {
 }
 
 unsafe extern "C-unwind" {
-    fn pecos_guard_qmain_with_setjmp(qmain: unsafe extern "C" fn(u64) -> u64) -> u64;
-    fn pecos_guard_void_main_with_setjmp(main: unsafe extern "C" fn()) -> u64;
+    fn pecos_guard_qmain_with_setjmp(qmain: unsafe extern "C-unwind" fn(u64) -> u64) -> u64;
+    fn pecos_guard_void_main_with_setjmp(main: unsafe extern "C-unwind" fn()) -> u64;
 }
 
 /// Run a program with the C recovery guard and shot lifecycle.
@@ -1396,9 +1410,11 @@ unsafe extern "C-unwind" {
 /// # Safety
 /// The entry point must be valid and obey the recovery discipline. Nested
 /// guards and re-entrant calls holding context locks are unsupported.
+/// Rust program entries must permit unwinding for Windows longjmp; they must
+/// still have no live destructors across recovery on any platform.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_call_qmain_with_setjmp(
-    qmain: unsafe extern "C" fn(u64) -> u64,
+    qmain: unsafe extern "C-unwind" fn(u64) -> u64,
 ) -> u64 {
     // This frame is outside the setjmp/transfer interval. The C-unwind import
     // lets an escaping program panic reach this C boundary, where it aborts.
@@ -1410,8 +1426,12 @@ pub unsafe extern "C" fn pecos_call_qmain_with_setjmp(
 /// # Safety
 /// The entry point must be valid and obey the recovery discipline. Nested
 /// guards and re-entrant calls holding context locks are unsupported.
+/// Rust program entries must permit unwinding for Windows longjmp; they must
+/// still have no live destructors across recovery on any platform.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_call_void_main_with_setjmp(main: unsafe extern "C" fn()) -> u64 {
+pub unsafe extern "C" fn pecos_call_void_main_with_setjmp(
+    main: unsafe extern "C-unwind" fn(),
+) -> u64 {
     // This frame is outside the setjmp/transfer interval. The C-unwind import
     // lets an escaping program panic reach this C boundary, where it aborts.
     unsafe { pecos_guard_void_main_with_setjmp(main) }

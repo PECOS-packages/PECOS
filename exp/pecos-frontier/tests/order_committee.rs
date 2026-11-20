@@ -133,6 +133,7 @@ fn ordering_and_committee_match_upstream_fixtures() {
         let mut committee = FrontierCommittee::from_sparse_dem(
             &dem,
             FrontierConfig {
+                dropped_mass: false,
                 k: fixture.pruned.k,
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,

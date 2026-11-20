@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 
 fn exact_config() -> TrellisConfig {
     TrellisConfig {
+        dropped_mass: false,
         k: usize::MAX,
         delta: f64::INFINITY,
         score_alpha: 0.8,
@@ -316,6 +317,7 @@ fn nary_maxlog_dropped_mass_is_the_largest_discarded_route_across_columns() {
         let mut decoder = TrellisDecoder::from_factor_model(
             &model,
             TrellisConfig {
+                dropped_mass: true,
                 k: 1,
                 delta: 1_000_000.0,
                 score_alpha: 0.0,
@@ -330,7 +332,10 @@ fn nary_maxlog_dropped_mass_is_the_largest_discarded_route_across_columns() {
 
         assert_eq!(result.dropped_states, 6, "{factors:?}");
         assert_eq!(
-            result.dropped_log_mass.to_bits(),
+            result
+                .dropped_log_mass
+                .expect("enabled diagnostic")
+                .to_bits(),
             expected_dropped_mass.to_bits(),
             "{factors:?}"
         );
@@ -769,6 +774,7 @@ fn sparse_dem_factor_conversion_delegates_bitwise_with_binary_features() {
     );
     let model = FactorModel::try_from(&dem).unwrap();
     let config = TrellisConfig {
+        dropped_mass: false,
         k: 3,
         delta: 20.0,
         score_alpha: 0.8,

@@ -10,6 +10,7 @@ use std::fmt::Write;
 
 fn settings() -> FrontierConfig {
     FrontierConfig {
+        dropped_mass: false,
         k: 512,
         delta: 1e9,
         score_alpha: 0.8,
@@ -40,7 +41,16 @@ fn hyperedges_permuted_empty_blocks_future_effects_and_final_tail() {
         4,
         2,
     );
-    let mut decoder = WindowedDecoder::from_sparse_dem(&dem, config, settings(), 32).unwrap();
+    let mut decoder = WindowedDecoder::from_sparse_dem(
+        &dem,
+        config,
+        FrontierConfig {
+            dropped_mass: true,
+            ..settings()
+        },
+        32,
+    )
+    .unwrap();
     let plan = decoder.plan();
     assert_eq!(plan.windows().len(), 2);
     assert_eq!(plan.windows()[0].detector_ids, [3, 2, 0]);
@@ -55,6 +65,13 @@ fn hyperedges_permuted_empty_blocks_future_effects_and_final_tail() {
     assert_eq!(result.windows[0].selected_joint_class.to_u64(), Some(29));
     assert_eq!(result.windows[1].observed, [0, 1, 1]);
     assert_eq!(result.windows[1].selected_joint_class.to_u64(), Some(6));
+    assert!(
+        result
+            .windows
+            .iter()
+            .filter_map(|window| window.committee.as_ref())
+            .all(|committee| committee.selected.dropped_log_mass.is_some())
+    );
     assert_eq!(result, decoder.decode(&[1, 0, 1, 1]).unwrap());
 }
 
@@ -231,15 +248,33 @@ fn bounded_pruned_window_matches_direct_full_result_for_repeated_shots() {
     let mut config = window(vec![vec![]], 8, 2);
     config.zero_policy = ZeroSyndromePolicy::Decode;
     config.detector_free_error_owners = (0..40).map(|j| (j, 0)).collect();
-    let mut decoder = WindowedDecoder::from_sparse_dem(&dem, config, settings(), 32).unwrap();
-    let mut direct_settings = settings();
-    direct_settings.column_order = Some(deadline_column_order(&dem).unwrap());
-    let mut direct = FrontierCommittee::from_sparse_dem(&dem, direct_settings).unwrap();
-    for _ in 0..2 {
-        let expected = direct.decode(&[]).unwrap();
-        let actual = decoder.decode(&[]).unwrap();
-        assert_eq!(actual.windows[0].committee.as_ref(), Some(&expected));
-        assert!(expected.selected.dropped_states > 0);
-        assert!(actual.windows[0].step_calls >= 6);
+    for dropped_mass in [false, true] {
+        let settings = FrontierConfig {
+            dropped_mass,
+            ..settings()
+        };
+        let mut decoder =
+            WindowedDecoder::from_sparse_dem(&dem, config.clone(), settings.clone(), 32).unwrap();
+        let mut direct_settings = settings;
+        direct_settings.column_order = Some(deadline_column_order(&dem).unwrap());
+        let mut direct = FrontierCommittee::from_sparse_dem(&dem, direct_settings).unwrap();
+        for _ in 0..2 {
+            let expected = direct.decode(&[]).unwrap();
+            let actual = decoder.decode(&[]).unwrap();
+            assert_eq!(actual.windows[0].committee.as_ref(), Some(&expected));
+            assert!(expected.selected.dropped_states > 0);
+            assert_eq!(expected.selected.dropped_log_mass.is_some(), dropped_mass);
+            assert_eq!(
+                actual.windows[0]
+                    .committee
+                    .as_ref()
+                    .unwrap()
+                    .selected
+                    .dropped_log_mass
+                    .is_some(),
+                dropped_mass
+            );
+            assert!(actual.windows[0].step_calls >= 6);
+        }
     }
 }

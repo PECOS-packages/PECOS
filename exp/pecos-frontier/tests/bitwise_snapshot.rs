@@ -137,8 +137,11 @@ fn assert_results_bitwise_equal(left: &FrontierResult, right: &FrontierResult) {
     assert_eq!(left.transitions, right.transitions);
     assert_eq!(left.dropped_states, right.dropped_states);
     assert_eq!(
-        left.dropped_log_mass.to_bits(),
-        right.dropped_log_mass.to_bits()
+        left.dropped_log_mass.expect("enabled diagnostic").to_bits(),
+        right
+            .dropped_log_mass
+            .expect("enabled diagnostic")
+            .to_bits()
     );
     assert_eq!(left.bp_seconds.to_bits(), right.bp_seconds.to_bits());
     assert_eq!(left.status, right.status);
@@ -166,6 +169,7 @@ fn collect_snapshot() -> SnapshotFile {
             (
                 "unpruned",
                 FrontierConfig {
+                    dropped_mass: false,
                     k: usize::MAX,
                     delta: f64::INFINITY,
                     score_alpha: 0.8,
@@ -179,6 +183,7 @@ fn collect_snapshot() -> SnapshotFile {
             (
                 "pruned",
                 FrontierConfig {
+                    dropped_mass: false,
                     k: fixture.pruned.k,
                     delta: fixture.pruned.delta,
                     score_alpha: 0.8,
@@ -224,6 +229,7 @@ fn collect_snapshot() -> SnapshotFile {
         let mut committee = FrontierCommittee::from_sparse_dem(
             &dem,
             FrontierConfig {
+                dropped_mass: false,
                 k: fixture.pruned.k,
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,
@@ -291,6 +297,7 @@ fn parallel_committee_matches_sequential_committee_bitwise() {
         let mut committee = FrontierCommittee::from_sparse_dem(
             &dem,
             FrontierConfig {
+                dropped_mass: true,
                 k: fixture.pruned.k,
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,
@@ -344,6 +351,7 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
             fixture.num_observables,
         );
         let off_config = FrontierConfig {
+            dropped_mass: true,
             k: usize::MAX,
             delta: f64::INFINITY,
             score_alpha: 0.8,
@@ -357,6 +365,7 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
         let mut on = FrontierDecoder::from_sparse_dem(
             &dem,
             FrontierConfig {
+                dropped_mass: true,
                 bp_score_iterations: 5,
                 ..off_config
             },

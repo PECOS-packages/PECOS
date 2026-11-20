@@ -6,6 +6,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** Trellis, Frontier and BpTrellis results no longer compute
+  `dropped_log_mass` by default. Set `dropped_mass` on the config (Rust) or
+  `dropped_mass=True` (Python detailed decoders) to get it. The field is now
+  `Option<f64>` / `float | None`. The Rust methods that skipped it per call
+  (`*_without_dropped_mass`, `attempt_prediction_only`,
+  `*_prediction_without_evidence`) are removed because the default now skips.
+
 - **Fixed:** Validating a just-installed managed LLVM now waits out the "text file
   busy" window left by extraction before running `llvm-config` and `clang`, instead
   of occasionally reporting a good installation as failed.

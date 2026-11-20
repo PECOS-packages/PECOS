@@ -163,6 +163,9 @@ pub struct TrellisConfig {
     /// Quantization units per natural-log unit for [`MetricMode::MaxLogInt`].
     /// This must be positive in every mode and is ignored by the float metric.
     pub int_metric_scale: i32,
+    /// Carry the discarded-prefix-mass diagnostic at extra pruning cost.
+    /// Defaults to false; never changes predictions or any other result field.
+    pub dropped_mass: bool,
 }
 
 /// Pruning parameters for one attempt, validated against its decoder's model.
@@ -265,6 +268,7 @@ impl Default for TrellisConfig {
             bp_score_iterations: 0,
             metric_mode: MetricMode::LogSumExpFloat,
             int_metric_scale: 1024,
+            dropped_mass: false,
         }
     }
 }
@@ -411,17 +415,18 @@ pub struct TrellisResult {
     /// Number of merged boundary states discarded across all pruning calls in
     /// the successful rung.
     pub dropped_states: u64,
-    /// Log-sum-exp of the log masses of all states discarded by float pruning,
-    /// or negative infinity when no state was discarded. Under `maxlog_int`,
-    /// this is the largest dropped quantized route mass divided by the scale.
+    /// When enabled, `Some` of the log-sum-exp of log masses discarded by float
+    /// pruning, or `Some(f64::NEG_INFINITY)` when no state was discarded.
+    /// Under `maxlog_int`, the value is the largest dropped quantized route
+    /// mass divided by the scale.
     ///
     /// This accounts for retained prefix mass discarded at pruning time. It is
     /// not a bound on true lost posterior mass: a state dropped early would
     /// otherwise have branched through later columns.
     /// For an escalated `BpTrellis` result, this covers only the
     /// successful rung.
-    /// Prediction-only decoding skips computing this field.
-    pub dropped_log_mass: f64,
+    /// Present only when `TrellisConfig::dropped_mass` is true; otherwise `None`.
+    pub dropped_log_mass: Option<f64>,
     /// Wall-clock seconds spent producing BP-informed suffix scores for this
     /// shot. This is zero when BP scoring is disabled or pruning cannot run.
     /// Escalation reuses these scores, so this time is attached once.
@@ -2028,7 +2033,6 @@ pub struct TrellisResumableDecoder {
 struct BoundedBinaryAttempt {
     next_column: usize,
     total_columns: usize,
-    mode: DecodeMode,
     bp_ran: bool,
     bp_seconds: f64,
     terminal: Option<TrellisDecodeAttempt>,
@@ -2630,33 +2634,11 @@ impl TrellisDecoder {
     /// policies.
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
-        self.decode_attempt_with_mode(syndrome, DecodeMode::Full)
-    }
-
-    /// Decode without the discarded-mass diagnostic, retaining all other results.
-    ///
-    /// Retained class masses, evidence, confidence inputs and decoding decisions
-    /// use the same arithmetic and ordering as [`Self::decode_attempt`]. On a
-    /// successful result, `dropped_log_mass` is unavailable and set to NaN.
-    /// Preparation, error provenance and all existing default APIs are unchanged.
-    #[must_use]
-    pub fn decode_attempt_without_dropped_mass(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
-        self.decode_attempt_with_mode(syndrome, DecodeMode::PredictionOnly)
-    }
-
-    fn decode_attempt_with_mode(
-        &mut self,
-        syndrome: &[u8],
-        mode: DecodeMode,
-    ) -> TrellisDecodeAttempt {
         match self.prepare(syndrome) {
-            Ok(TrellisPrepared::Ready { .. }) => self.attempt_with_mode(
-                PruneParams {
-                    k: self.model.config.k,
-                    delta: self.model.config.delta,
-                },
-                mode,
-            ),
+            Ok(TrellisPrepared::Ready { .. }) => self.attempt(PruneParams {
+                k: self.model.config.k,
+                delta: self.model.config.delta,
+            }),
             Ok(TrellisPrepared::Residual { .. }) => TrellisDecodeAttempt::NoPath {
                 error: unexplainable_error(),
                 transitions: 0,
@@ -2711,22 +2693,6 @@ impl TrellisDecoder {
     /// Panics unless the latest prepare completed `Ready`.
     #[must_use]
     pub fn attempt(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
-        self.attempt_with_mode(params, DecodeMode::Full)
-    }
-
-    /// Run a fresh DP attempt on the prepared shot for its prediction only.
-    /// `LogSumExpFloat` kernels skip dropped-mass accounting, and every metric mode
-    /// reports `dropped_log_mass` as NaN on success. Validation and readiness
-    /// requirements are the same as for [`Self::attempt`].
-    ///
-    /// # Panics
-    /// Panics unless the latest prepare completed `Ready`.
-    #[must_use]
-    pub fn attempt_prediction_only(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
-        self.attempt_with_mode(params, DecodeMode::PredictionOnly)
-    }
-
-    fn attempt_with_mode(&mut self, params: PruneParams, mode: DecodeMode) -> TrellisDecodeAttempt {
         if let Err(error) = self.validate_attempt_params(params) {
             return TrellisDecodeAttempt::Error(error);
         }
@@ -2734,7 +2700,7 @@ impl TrellisDecoder {
             .scratch
             .prepared
             .expect("attempt requires a Ready prepare");
-        let mut attempt = self.model.decode_attempt(&mut self.scratch, params, mode);
+        let mut attempt = self.model.decode_attempt(&mut self.scratch, params);
         if let TrellisDecodeAttempt::Success(result) = &mut attempt {
             result.bp_runs = u32::from(bp_ran);
         }
@@ -2828,7 +2794,7 @@ impl TrellisDecoder {
 }
 
 impl TrellisResumableDecoder {
-    /// Prepare a full-syndrome batch attempt with all diagnostics enabled.
+    /// Prepare a full-syndrome batch attempt with the configured diagnostics.
     ///
     /// Preparation failures are retained as structured terminal attempts and
     /// reported by `finish`; they are never inferred from an error string.
@@ -2837,28 +2803,6 @@ impl TrellisResumableDecoder {
     /// # Errors
     /// Returns `InvalidConfiguration` if another attempt is still pending.
     pub fn begin(&mut self, syndrome: &[u8]) -> Result<TrellisBoundedProgress, DecoderError> {
-        self.begin_with_mode(syndrome, DecodeMode::Full)
-    }
-
-    /// Begin the same exact attempt without the discarded-mass diagnostic.
-    ///
-    /// All retained results and counters are unchanged; only successful
-    /// `dropped_log_mass` is NaN. This explicit choice applies to one attempt.
-    ///
-    /// # Errors
-    /// Returns the same protocol error as [`Self::begin`].
-    pub fn begin_without_dropped_mass(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<TrellisBoundedProgress, DecoderError> {
-        self.begin_with_mode(syndrome, DecodeMode::PredictionOnly)
-    }
-
-    fn begin_with_mode(
-        &mut self,
-        syndrome: &[u8],
-        mode: DecodeMode,
-    ) -> Result<TrellisBoundedProgress, DecoderError> {
         if self.attempt.is_some() {
             return Err(DecoderError::InvalidConfiguration(
                 "finish or cancel the pending resumable attempt before beginning another".into(),
@@ -2871,7 +2815,6 @@ impl TrellisResumableDecoder {
         let mut state = BoundedBinaryAttempt {
             next_column: 0,
             total_columns,
-            mode,
             bp_ran: false,
             bp_seconds: 0.0,
             terminal: None,
@@ -2948,7 +2891,7 @@ impl TrellisResumableDecoder {
                 delta: model.config.delta,
             },
             BinaryRangeOptions {
-                mode: state.mode,
+                mode: model.decode_mode(),
                 known_count: None,
             },
         );
@@ -3001,15 +2944,12 @@ impl TrellisResumableDecoder {
         if let Some(terminal) = state.terminal {
             return Ok(terminal);
         }
-        let mut result = TrellisModel::finish_binary(
+        let mut result = self.decoder.model.finish_binary(
             &self.decoder.scratch.float_progress,
             state.total_columns,
             state.bp_seconds,
         );
         result.bp_runs = u32::from(state.bp_ran);
-        if state.mode == DecodeMode::PredictionOnly {
-            result.dropped_log_mass = f64::NAN;
-        }
         Ok(TrellisDecodeAttempt::Success(result))
     }
 
@@ -3040,13 +2980,21 @@ struct BinaryRangeOptions {
 }
 
 impl TrellisModel {
+    fn decode_mode(&self) -> DecodeMode {
+        if self.config.dropped_mass {
+            DecodeMode::Full
+        } else {
+            DecodeMode::PredictionOnly
+        }
+    }
+
     fn decode_attempt(
         &self,
         scratch: &mut TrellisScratch,
         params: PruneParams,
-        mode: DecodeMode,
     ) -> TrellisDecodeAttempt {
-        let mut attempt = match (self.config.metric_mode, &self.kernel) {
+        let mode = self.decode_mode();
+        match (self.config.metric_mode, &self.kernel) {
             (MetricMode::LogSumExpFloat, Kernel::Binary(_)) => {
                 self.decode_attempt_binary(scratch, params, mode)
             }
@@ -3059,13 +3007,7 @@ impl TrellisModel {
             (MetricMode::MaxLogInt, Kernel::Nary(_)) => {
                 self.decode_attempt_nary_maxlog(scratch, params)
             }
-        };
-        if mode == DecodeMode::PredictionOnly
-            && let TrellisDecodeAttempt::Success(result) = &mut attempt
-        {
-            result.dropped_log_mass = f64::NAN;
         }
-        attempt
     }
 
     fn decode_attempt_binary(
@@ -3106,7 +3048,7 @@ impl TrellisModel {
                 BinaryFailure::UnusableScores => TrellisDecodeAttempt::Error(failure.error()),
             };
         }
-        TrellisDecodeAttempt::Success(Self::finish_binary(progress, columns.len(), bp_seconds))
+        TrellisDecodeAttempt::Success(self.finish_binary(progress, columns.len(), bp_seconds))
     }
 
     /// The binary float column walk shared by batch and streaming.
@@ -3309,6 +3251,7 @@ impl TrellisModel {
     }
 
     fn finish_binary(
+        &self,
         progress: &BinaryProgress,
         processed_columns: usize,
         bp_seconds: f64,
@@ -3370,7 +3313,7 @@ impl TrellisModel {
             processed_columns,
             transitions,
             dropped_states,
-            dropped_log_mass,
+            dropped_log_mass: self.config.dropped_mass.then_some(dropped_log_mass),
             bp_seconds,
             bp_runs: 0,
             escalation_rungs_used: 0,
@@ -3551,7 +3494,7 @@ impl TrellisModel {
             processed_columns: columns.len(),
             transitions,
             dropped_states,
-            dropped_log_mass,
+            dropped_log_mass: self.config.dropped_mass.then_some(dropped_log_mass),
             bp_seconds: 0.0,
             bp_runs: 0,
             escalation_rungs_used: 0,
@@ -3659,6 +3602,7 @@ impl TrellisModel {
         }
 
         finish_maxlog_decode(
+            self.config.dropped_mass,
             frontier,
             scale,
             MaxLogDecodeStats {
@@ -3761,6 +3705,7 @@ impl TrellisModel {
         }
 
         finish_maxlog_decode(
+            self.config.dropped_mass,
             frontier,
             scale,
             MaxLogDecodeStats {
@@ -3828,10 +3773,7 @@ impl TrellisModel {
 
 impl ObservableDecoder for TrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        Ok(self
-            .decode_attempt_with_mode(syndrome, DecodeMode::PredictionOnly)
-            .into_result()?
-            .predicted)
+        Ok(self.decode_attempt(syndrome).into_result()?.predicted)
     }
 
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
@@ -4960,6 +4902,7 @@ fn suffix_compatibility_score_int(
 }
 
 fn finish_maxlog_decode(
+    dropped_mass: bool,
     frontier: &FrontierScratch<i64>,
     scale: i32,
     stats: MaxLogDecodeStats,
@@ -5011,11 +4954,13 @@ fn finish_maxlog_decode(
         processed_columns: stats.processed_columns,
         transitions: stats.transitions,
         dropped_states: stats.dropped_states,
-        dropped_log_mass: if stats.dropped_log_mass == INT_METRIC_NEG_INF {
-            f64::NEG_INFINITY
-        } else {
-            i64_to_f64(stats.dropped_log_mass) / scale_f64
-        },
+        dropped_log_mass: dropped_mass.then(|| {
+            if stats.dropped_log_mass == INT_METRIC_NEG_INF {
+                f64::NEG_INFINITY
+            } else {
+                i64_to_f64(stats.dropped_log_mass) / scale_f64
+            }
+        }),
         bp_seconds: stats.bp_seconds,
         bp_runs: 0,
         escalation_rungs_used: 0,
@@ -5167,8 +5112,129 @@ mod tests {
     };
     use std::collections::BTreeMap;
 
+    fn assert_retained_equal(a: &super::TrellisResult, b: &super::TrellisResult) {
+        let super::TrellisResult {
+            predicted,
+            log_evidence,
+            runner_up_gap,
+            peak_retained_states,
+            processed_columns,
+            transitions,
+            dropped_states,
+            dropped_log_mass,
+            bp_seconds,
+            bp_runs,
+            escalation_rungs_used,
+            status,
+            logical_masses,
+        } = a;
+        assert_eq!(predicted, &b.predicted);
+        assert_eq!(log_evidence.to_bits(), b.log_evidence.to_bits());
+        assert_eq!(
+            runner_up_gap.map(f64::to_bits),
+            b.runner_up_gap.map(f64::to_bits)
+        );
+        assert_eq!(*peak_retained_states, b.peak_retained_states);
+        assert_eq!(*processed_columns, b.processed_columns);
+        assert_eq!(*transitions, b.transitions);
+        assert_eq!(*dropped_states, b.dropped_states);
+        assert_eq!(*bp_runs, b.bp_runs);
+        assert_eq!(*escalation_rungs_used, b.escalation_rungs_used);
+        assert_eq!(*status, b.status);
+        assert!(bp_seconds.is_finite() && *bp_seconds >= 0.0);
+        assert!(b.bp_seconds.is_finite() && b.bp_seconds >= 0.0);
+        if *bp_runs == 0 {
+            assert_eq!(bp_seconds.to_bits(), b.bp_seconds.to_bits());
+        }
+        assert_eq!(logical_masses.len(), b.logical_masses.len());
+        for (left, right) in logical_masses.iter().zip(&b.logical_masses) {
+            assert_eq!(left.logical, right.logical);
+            assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
+        }
+        assert!(dropped_log_mass.is_some());
+        assert_eq!(b.dropped_log_mass, None);
+    }
+
     #[test]
-    fn direct_without_dropped_mass_preserves_retained_results_and_errors() {
+    fn dropped_mass_flag_controls_accumulation_and_observable_adapter() {
+        use pecos_decoder_core::ObservableDecoder;
+        assert!(!TrellisConfig::default().dropped_mass);
+        assert!(!super::bp_trellis::BpTrellisConfig::default().dropped_mass);
+        let mut predictions = Vec::new();
+        for dropped_mass in [false, true] {
+            let mut decoder = TrellisDecoder::from_dem_str(
+                "error(0.25) L0\nerror(0.2) L1",
+                TrellisConfig {
+                    dropped_mass,
+                    k: 1,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            let full = decoder.decode(&[]).unwrap();
+            assert!(full.dropped_states > 0);
+            assert_eq!(full.dropped_log_mass.is_some(), dropped_mass);
+            assert_eq!(
+                decoder.scratch.float_progress.dropped_log_mass == f64::NEG_INFINITY,
+                !dropped_mass
+            );
+            let predicted = decoder.decode_obs(&[]).unwrap();
+            assert_eq!(predicted, full.predicted);
+            assert_eq!(
+                decoder.scratch.float_progress.dropped_log_mass == f64::NEG_INFINITY,
+                !dropped_mass
+            );
+            assert_eq!(
+                decoder.decode_to_observables(&[]).unwrap(),
+                predicted.to_u64().unwrap()
+            );
+            predictions.push(predicted);
+        }
+        assert_eq!(predictions[0], predictions[1]);
+    }
+
+    #[test]
+    fn resumable_dropped_mass_flag_controls_accumulation() {
+        for dropped_mass in [false, true] {
+            let mut decoder = TrellisDecoder::from_dem_str(
+                "error(0.25) L0\nerror(0.2) L1",
+                TrellisConfig {
+                    dropped_mass,
+                    k: 1,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap()
+            .into_resumable()
+            .unwrap();
+            let mut progress = decoder.begin(&[]).unwrap();
+            while !progress.ready_to_finish {
+                progress = decoder.step(1).unwrap();
+            }
+            let super::TrellisDecodeAttempt::Success(result) = decoder.finish().unwrap() else {
+                panic!("pruning must retain a path");
+            };
+            let progress = &decoder.decoder.scratch.float_progress;
+            assert!(progress.dropped_states > 0);
+            assert_eq!(result.dropped_states, progress.dropped_states);
+            if dropped_mass {
+                assert!(progress.dropped_log_mass.is_finite());
+                assert_eq!(
+                    result.dropped_log_mass.expect("enabled").to_bits(),
+                    progress.dropped_log_mass.to_bits()
+                );
+            } else {
+                assert_eq!(
+                    progress.dropped_log_mass.to_bits(),
+                    f64::NEG_INFINITY.to_bits()
+                );
+                assert_eq!(result.dropped_log_mass, None);
+            }
+        }
+    }
+
+    #[test]
+    fn dropped_mass_flag_preserves_retained_results_and_errors() {
         use super::TrellisDecodeAttempt::{Error, NoPath, Success};
         let dem = SparseDem {
             mechanisms: vec![
@@ -5183,13 +5249,16 @@ mod tests {
         let mut full = TrellisDecoder::from_sparse_dem(
             &dem,
             TrellisConfig {
+                dropped_mass: true,
                 k: 1,
                 delta: 1.0,
                 ..TrellisConfig::default()
             },
         )
         .unwrap();
-        let mut diagnostic = full.fresh_worker();
+        let mut config = full.model.config.clone();
+        config.dropped_mass = false;
+        let mut skipped = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();
         let mut syndromes: Vec<Vec<u8>> = (0..8)
             .map(|value| (0..3).map(|bit| (value >> bit) & 1).collect())
             .collect();
@@ -5197,12 +5266,12 @@ mod tests {
         for syndrome in syndromes {
             match (
                 full.decode_attempt(&syndrome),
-                diagnostic.decode_attempt_without_dropped_mass(&syndrome),
+                skipped.decode_attempt(&syndrome),
             ) {
-                (Success(expected), Success(mut actual)) => {
-                    assert!(actual.dropped_log_mass.is_nan());
-                    actual.dropped_log_mass = expected.dropped_log_mass;
-                    assert_eq!(actual, expected);
+                (Success(expected), Success(actual)) => {
+                    assert_eq!(actual.dropped_log_mass, None);
+                    assert!(expected.dropped_log_mass.is_some());
+                    assert_retained_equal(&expected, &actual);
                 }
                 (
                     NoPath {
@@ -5222,7 +5291,7 @@ mod tests {
                     assert_eq!((at, ad, ab.to_bits()), (bt, bd, bb.to_bits()));
                 }
                 (Error(a), Error(b)) => assert_eq!(a.to_string(), b.to_string()),
-                _ => panic!("full and diagnostic modes disagree on failure provenance"),
+                _ => panic!("flag-on and flag-off decoders disagree on failure provenance"),
             }
         }
     }
@@ -6665,6 +6734,7 @@ mod tests {
             num_observables: 1,
         };
         let config = TrellisConfig {
+            dropped_mass: false,
             k: 1,
             delta: f64::INFINITY,
             score_alpha: 0.8,

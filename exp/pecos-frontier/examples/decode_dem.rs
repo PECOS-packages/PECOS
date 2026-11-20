@@ -25,6 +25,7 @@ const COLUMN_BUDGET: usize = 32;
 
 fn settings() -> FrontierConfig {
     FrontierConfig {
+        dropped_mass: true,
         k: 512,
         delta: 1_000_000_000.0,
         score_alpha: 0.8,
@@ -137,7 +138,7 @@ fn telemetry(result: &FrontierCommitteeResult, width: usize) -> Value {
         "direction":match result.direction {CommitteeDirection::Forward=>"forward",CommitteeDirection::Backward=>"backward"},
         "selected":{"status":status,"log_evidence":float(selected.log_evidence),"runner_up_gap":selected.runner_up_gap.map(float),
             "peak_retained_states":selected.peak_retained_states,"processed_columns":selected.processed_columns,
-            "transitions":selected.transitions,"dropped_states":selected.dropped_states,"dropped_log_mass":float(selected.dropped_log_mass),
+            "transitions":selected.transitions,"dropped_states":selected.dropped_states,"dropped_log_mass":selected.dropped_log_mass.map(float),
             "bp_seconds":float(selected.bp_seconds),"bp_runs":selected.bp_runs,"escalation_rungs_used":selected.escalation_rungs_used,
             "logical_masses":selected.logical_masses.iter().map(|mass|json!({"logical":bits(&mass.logical,width),"log_mass":float(mass.log_mass)})).collect::<Vec<_>>()},
         "forward":{"status":format!("{:?}",result.forward.status),"log_evidence":float(result.forward.log_evidence)},

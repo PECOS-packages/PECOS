@@ -171,7 +171,7 @@ impl State {
             self.status = STATUS_DECODE_ERROR;
             return false;
         }
-        if let Ok(predicted) = decoder.flush_prediction_without_evidence() {
+        if let Ok(predicted) = decoder.flush_prediction() {
             self.store_result(&predicted);
             self.status = STATUS_OK;
             true
@@ -219,7 +219,7 @@ impl State {
             self.status = STATUS_DECODE_ERROR;
             return None;
         }
-        if let Ok(columns_processed) = decoder.advance_prediction_without_evidence() {
+        if let Ok(columns_processed) = decoder.advance_prediction() {
             let processed = columns_processed.saturating_sub(self.stream_columns_processed);
             self.stream_columns_processed = columns_processed;
             self.status = STATUS_OK;
@@ -236,7 +236,7 @@ impl State {
             self.status = STATUS_MODEL_ERROR;
             return false;
         };
-        if let Ok(predicted) = decoder.flush_prediction_without_evidence() {
+        if let Ok(predicted) = decoder.flush_prediction() {
             self.store_result(&predicted);
             self.status = STATUS_OK;
             true

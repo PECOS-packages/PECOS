@@ -134,7 +134,12 @@ fn snapshot_result(result: TrellisResult) -> SnapshotOutcome {
         processed_columns: result.processed_columns,
         transitions: result.transitions,
         dropped_states: result.dropped_states,
-        dropped_log_mass: hex_word(result.dropped_log_mass.to_bits()),
+        dropped_log_mass: hex_word(
+            result
+                .dropped_log_mass
+                .expect("enabled diagnostic")
+                .to_bits(),
+        ),
         escalation_rungs_used: result.escalation_rungs_used,
         status: match result.status {
             TrellisStatus::Exact => "exact",
@@ -364,6 +369,7 @@ fn configurations(
                         configs.push((
                             format!("{metric}/{regime}/bp={bp}/merge={merge}/order={order}"),
                             TrellisConfig {
+                                dropped_mass: true,
                                 k,
                                 delta,
                                 score_alpha: alpha,

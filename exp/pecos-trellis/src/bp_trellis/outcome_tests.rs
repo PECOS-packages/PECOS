@@ -11,6 +11,7 @@ const OVERPRUNING: &str = "error(0.4) D0\nerror(0.4) D1\nerror(0.1) D0 D1 D2 L0"
 
 fn config(k: usize, rungs: &[(usize, f64)]) -> BpTrellisConfig {
     BpTrellisConfig {
+        dropped_mass: false,
         k,
         delta: f64::INFINITY,
         score_alpha: 0.0,
@@ -416,4 +417,39 @@ fn residual_report_has_no_bp_work_when_bp_enabled() {
     assert_eq!(report.bp_runs, 0);
     assert_eq!(report.bp_seconds.to_bits(), 0.0_f64.to_bits());
     assert_eq!(decoder.inner.bp_refreshes(), before);
+}
+
+#[test]
+fn observable_adapter_and_escalation_follow_dropped_mass_config() {
+    let mut predictions = Vec::new();
+    for dropped_mass in [false, true] {
+        let mut cfg = config(1, &[(8, 100.0)]);
+        cfg.dropped_mass = dropped_mass;
+        let mut decoder = BpTrellisDecoder::from_dem_str(OVERPRUNING, cfg).unwrap();
+        let shot = [0, 0, 1];
+        let full = decoder.decode(&shot).unwrap();
+        assert_eq!(full.escalation_rungs_used, 1);
+        let BpTrellisOutcome::Decoded(result) = decoder
+            .decode_with_attempt(&shot, TrellisDecoder::attempt)
+            .unwrap()
+        else {
+            panic!("rung must recover");
+        };
+        if dropped_mass {
+            assert_eq!(
+                result.dropped_log_mass.expect("enabled").to_bits(),
+                full.dropped_log_mass.expect("enabled").to_bits()
+            );
+        } else {
+            assert_eq!(result.dropped_log_mass, None);
+            assert_eq!(full.dropped_log_mass, None);
+        }
+        assert_eq!(decoder.decode_obs(&shot).unwrap(), full.predicted);
+        assert_eq!(
+            decoder.decode_to_observables(&shot).unwrap(),
+            full.predicted.to_u64().unwrap()
+        );
+        predictions.push(full.predicted);
+    }
+    assert_eq!(predictions[0], predictions[1]);
 }

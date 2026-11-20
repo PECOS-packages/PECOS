@@ -134,9 +134,13 @@ if result.runner_up_gap is not None:
 The remaining fields describe the search itself rather than the answer:
 `log_evidence` (total retained log evidence under the default float metric),
 `status` (`"exact"` when nothing was pruned), `dropped_states` and
-`dropped_log_mass` (what pruning discarded),
+`dropped_log_mass` (the optional discarded-prefix-mass diagnostic),
 `peak_retained_states`, `processed_columns`, `escalation_rungs_used`, and
-`bp_seconds`. `dropped_log_mass` counts only the mass states carried when they
+`bp_seconds`. `dropped_log_mass` is `None` by default (`Option<f64>` in Rust,
+`float | None` in Python). Enable `dropped_mass` on the Rust config or pass
+`dropped_mass=True` to a Python detailed decoder constructor to compute it at
+extra pruning cost. This never changes predictions or other result fields.
+When enabled, `dropped_log_mass` counts only the mass states carried when they
 were pruned -- a state dropped early would have branched through later columns,
 so it is not a bound on the probability the answer is missing.
 

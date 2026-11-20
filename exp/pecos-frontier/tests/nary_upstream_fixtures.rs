@@ -215,6 +215,7 @@ fn unpruned_and_pruned_nary_results_match_upstream_golden_fixtures() {
         assert_expected_results(
             &fixture,
             FrontierConfig {
+                dropped_mass: false,
                 k: usize::MAX,
                 delta: f64::INFINITY,
                 score_alpha: 0.8,
@@ -230,6 +231,7 @@ fn unpruned_and_pruned_nary_results_match_upstream_golden_fixtures() {
         assert_expected_results(
             &fixture,
             FrontierConfig {
+                dropped_mass: false,
                 k: fixture.pruned.k,
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,

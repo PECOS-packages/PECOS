@@ -3,7 +3,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
 
-//! Only the discarded-prefix-mass diagnostic may differ in the opt-in API.
+//! Only the discarded-prefix-mass diagnostic may differ between flag-on and flag-off decoders.
 
 use pecos_frontier::{
     CommitteeDirection, FrontierCommittee, FrontierCommitteeResult, FrontierConfig,
@@ -49,6 +49,7 @@ fn dense(mask: u128, count: usize) -> Vec<u8> {
 
 fn config(k: usize, delta: f64, column_order: Option<Vec<usize>>, bp: usize) -> FrontierConfig {
     FrontierConfig {
+        dropped_mass: true,
         k,
         delta,
         score_alpha: 0.8,
@@ -78,12 +79,12 @@ fn confidence_bits(result: &FrontierResult) -> u64 {
 
 fn assert_retained_bits(full: &FrontierResult, skipped: &FrontierResult) {
     assert!(
-        !full.dropped_log_mass.is_nan(),
-        "default full diagnostic must remain available"
+        full.dropped_log_mass.is_some(),
+        "enabled diagnostic must remain available"
     );
     assert!(
-        skipped.dropped_log_mass.is_nan(),
-        "opt-in diagnostic must be explicitly unavailable"
+        skipped.dropped_log_mass.is_none(),
+        "disabled diagnostic must be unavailable"
     );
     assert_eq!(full.predicted, skipped.predicted);
     assert_eq!(full.log_evidence.to_bits(), skipped.log_evidence.to_bits());
@@ -139,7 +140,7 @@ fn assert_attempts(full: FrontierDecodeAttempt, skipped: FrontierDecodeAttempt) 
             assert_eq!(format!("{left:?}"), format!("{right:?}"));
             false
         }
-        _ => panic!("opt-in changed success/no-path/error provenance"),
+        _ => panic!("dropped_mass changed success/no-path/error provenance"),
     }
 }
 
@@ -176,8 +177,14 @@ fn all_fixture_retained_outputs_and_committee_arbitration_are_bitwise_equal() {
             ] {
                 let options = config(k, delta, fixture.forward_ordering.clone(), 0);
                 let mut full = FrontierCommittee::from_sparse_dem(&model, options.clone()).unwrap();
-                let mut skipped =
-                    FrontierCommittee::from_sparse_dem(&model, options.clone()).unwrap();
+                let mut skipped = FrontierCommittee::from_sparse_dem(
+                    &model,
+                    FrontierConfig {
+                        dropped_mass: false,
+                        ..options.clone()
+                    },
+                )
+                .unwrap();
                 // Each leg is also checked independently, including the losing
                 // leg's entire retained class vector, not only its summary.
                 let order = options
@@ -190,7 +197,14 @@ fn all_fixture_retained_outputs_and_committee_arbitration_are_bitwise_equal() {
                     options.column_order = Some(column_order);
                     engines.push((
                         FrontierDecoder::from_sparse_dem(&model, options.clone()).unwrap(),
-                        FrontierDecoder::from_sparse_dem(&model, options).unwrap(),
+                        FrontierDecoder::from_sparse_dem(
+                            &model,
+                            FrontierConfig {
+                                dropped_mass: false,
+                                ..options
+                            },
+                        )
+                        .unwrap(),
                     ));
                 }
                 for mask in &fixture.syndromes {
@@ -198,27 +212,23 @@ fn all_fixture_retained_outputs_and_committee_arbitration_are_bitwise_equal() {
                     for (left, right) in &mut engines {
                         assert_attempts(
                             left.decode_attempt(&observed),
-                            right.decode_attempt_without_dropped_mass(&observed),
+                            right.decode_attempt(&observed),
                         );
                     }
-                    match (
-                        full.decode(&observed),
-                        skipped.decode_without_dropped_mass(&observed),
-                    ) {
+                    match (full.decode(&observed), skipped.decode(&observed)) {
                         (Ok(left), Ok(right)) => {
                             assert_committee(&left, &right);
                             successes += 1;
                             backward += usize::from(left.direction == CommitteeDirection::Backward);
-                            // The default method remains full even after using
-                            // the opt-in API on this same stateful committee.
+                            // Repeated calls preserve the configured diagnostic mode.
                             let again = skipped.decode(&observed).unwrap();
-                            assert_eq!(left, again);
+                            assert_eq!(right, again);
                         }
                         (Err(left), Err(right)) => {
                             assert_eq!(format!("{left:?}"), format!("{right:?}"));
                             failed += 1;
                         }
-                        _ => panic!("opt-in changed committee success/no-path outcome"),
+                        _ => panic!("dropped_mass changed committee success/no-path outcome"),
                     }
                 }
             }
@@ -248,36 +258,44 @@ fn forced_zero_wide_labels_bp_and_invalid_input_preserve_retained_results() {
         for k in [1, 2, 512] {
             let options = config(k, 1e9, None, bp);
             let mut left = FrontierDecoder::from_sparse_dem(&model, options.clone()).unwrap();
-            let mut right = FrontierDecoder::from_sparse_dem(&model, options.clone()).unwrap();
+            let mut right = FrontierDecoder::from_sparse_dem(
+                &model,
+                FrontierConfig {
+                    dropped_mass: false,
+                    ..options.clone()
+                },
+            )
+            .unwrap();
             let mut full = FrontierCommittee::from_sparse_dem(&model, options.clone()).unwrap();
-            let mut skipped = FrontierCommittee::from_sparse_dem(&model, options).unwrap();
+            let mut skipped = FrontierCommittee::from_sparse_dem(
+                &model,
+                FrontierConfig {
+                    dropped_mass: false,
+                    ..options.clone()
+                },
+            )
+            .unwrap();
             for mask in 0..8 {
                 let observed = dense(mask, 3);
                 assert_attempts(
                     left.decode_attempt(&observed),
-                    right.decode_attempt_without_dropped_mass(&observed),
+                    right.decode_attempt(&observed),
                 );
-                match (
-                    full.decode(&observed),
-                    skipped.decode_without_dropped_mass(&observed),
-                ) {
+                match (full.decode(&observed), skipped.decode(&observed)) {
                     (Ok(a), Ok(b)) => assert_committee(&a, &b),
                     (Err(a), Err(b)) => assert_eq!(format!("{a:?}"), format!("{b:?}")),
                     _ => panic!("different committee outcome"),
                 }
             }
             assert_eq!(left.bp_refreshes(), right.bp_refreshes());
-            assert_attempts(
-                left.decode_attempt(&[0]),
-                right.decode_attempt_without_dropped_mass(&[0]),
-            );
+            assert_attempts(left.decode_attempt(&[0]), right.decode_attempt(&[0]));
             let a = full.decode(&[0]).unwrap_err();
-            let b = skipped.decode_without_dropped_mass(&[0]).unwrap_err();
+            let b = skipped.decode(&[0]).unwrap_err();
             assert_eq!(format!("{a:?}"), format!("{b:?}"));
             // Recovery after an invalid call uses the same strict defaults.
             assert_attempts(
                 left.decode_attempt(&[0, 0, 0]),
-                right.decode_attempt_without_dropped_mass(&[0, 0, 0]),
+                right.decode_attempt(&[0, 0, 0]),
             );
         }
     }

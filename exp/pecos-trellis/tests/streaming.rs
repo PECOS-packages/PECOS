@@ -32,8 +32,11 @@ fn assert_bit_identical(left: &TrellisResult, right: &TrellisResult) {
     assert_eq!(left.transitions, right.transitions);
     assert_eq!(left.dropped_states, right.dropped_states);
     assert_eq!(
-        left.dropped_log_mass.to_bits(),
-        right.dropped_log_mass.to_bits()
+        left.dropped_log_mass.expect("enabled diagnostic").to_bits(),
+        right
+            .dropped_log_mass
+            .expect("enabled diagnostic")
+            .to_bits()
     );
     assert_eq!(left.bp_seconds.to_bits(), right.bp_seconds.to_bits());
     assert_eq!(left.escalation_rungs_used, right.escalation_rungs_used);
@@ -112,6 +115,7 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
             order.shuffle(&mut rng);
         }
         let config = TrellisConfig {
+            dropped_mass: true,
             column_order: Some(order),
             k: [usize::MAX, 1, 4, 16][case % 4],
             delta: if case % 3 == 0 { f64::INFINITY } else { 2.0 },
@@ -210,6 +214,7 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
 fn forced_future_detector_delays_first_column() {
     let text = "error(1) D1\nerror(0.1) D0 L0\nerror(0.2) D1";
     let config = TrellisConfig {
+        dropped_mass: true,
         column_order: Some(vec![0, 1, 2]),
         ..TrellisConfig::default()
     };
@@ -234,7 +239,10 @@ fn no_path_errors_match_and_persist_until_reset() {
         ("error(0.1) D0 L0\ndetector D1", [0, 1], true),
         ("error(0.1) D0 L0\nerror(1) D1", [0, 0], true),
     ] {
-        let config = TrellisConfig::default();
+        let config = TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        };
         let expected = TrellisDecoder::from_dem_str(text, config.clone())
             .unwrap()
             .decode(&syndrome)
@@ -268,6 +276,7 @@ fn no_path_errors_match_and_persist_until_reset() {
 fn late_pruning_can_create_unanimity_after_last_toggle() {
     let text = "error(0.4) L0\nerror(0.5) D0 D1\nerror(0.1) D0 D1\nerror(0.1) D2";
     let config = TrellisConfig {
+        dropped_mass: true,
         k: 2,
         score_alpha: 0.0,
         ..TrellisConfig::default()
@@ -292,7 +301,10 @@ fn late_pruning_can_create_unanimity_after_last_toggle() {
 #[test]
 fn empty_models_forced_bits_and_dimensions() {
     for text in ["", "error(1) L130", "error(0.3) L0"] {
-        let config = TrellisConfig::default();
+        let config = TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        };
         let mut stream = TrellisStreamingDecoder::from_dem_str(text, config.clone()).unwrap();
         let progress = stream.advance().unwrap();
         if text == "error(1) L130" {
@@ -306,8 +318,14 @@ fn empty_models_forced_bits_and_dimensions() {
             .unwrap();
         assert_bit_identical(&stream.flush().unwrap(), &expected);
     }
-    let mut stream =
-        TrellisStreamingDecoder::from_dem_str("error(0.1) D0", TrellisConfig::default()).unwrap();
+    let mut stream = TrellisStreamingDecoder::from_dem_str(
+        "error(0.1) D0",
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
     assert!(matches!(
         stream.flush(),
         Err(DecoderError::InvalidDimensions {
@@ -405,7 +423,10 @@ fn word_boundaries_and_nonmonotone_column_detectors() {
         "error(1) D64 L129\nerror(0.2) D65 L65\nerror(0.3) D0 L0\nerror(0.4) D64 L64",
     )
     .unwrap();
-    let config = TrellisConfig::default();
+    let config = TrellisConfig {
+        dropped_mass: true,
+        ..TrellisConfig::default()
+    };
     let model = FactorModel::try_from(&dem).unwrap();
     let mut stream = TrellisStreamingDecoder::from_factor_model(&model, config.clone()).unwrap();
     let mut syndrome = vec![0; 66];
@@ -458,7 +479,10 @@ fn assert_stored_failure(later: &[u8]) {
 fn dense_requires_a_complete_fresh_shot_and_flush_exposes_commitments() {
     let mut stream = TrellisStreamingDecoder::from_dem_str(
         "error(0.1) D0 L0\nerror(0.1) D1 L1",
-        TrellisConfig::default(),
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
     )
     .unwrap();
     assert!(matches!(
@@ -481,7 +505,10 @@ fn dense_requires_a_complete_fresh_shot_and_flush_exposes_commitments() {
     stream.feed_prefix(&[0]).unwrap();
     let mut batch = TrellisDecoder::from_dem_str(
         "error(0.1) D0 L0\nerror(0.1) D1 L1",
-        TrellisConfig::default(),
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
     )
     .unwrap();
     let expected = batch.decode(&[1, 0]).unwrap();

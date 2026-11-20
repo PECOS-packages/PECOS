@@ -56,7 +56,6 @@ struct ScoringPrefixPlan {
 #[derive(Clone, Copy, Debug)]
 struct BoundedAdvance {
     end: usize,
-    without_dropped_mass: bool,
 }
 
 impl ScoringPrefixPlan {
@@ -102,7 +101,6 @@ pub struct TrellisStreamingDecoder {
     column_rounds: Vec<usize>,
     scoring_prefix_plans: Vec<ScoringPrefixPlan>,
     arrived_round: usize,
-    evidence_omitted: bool,
     bounded_advance: Option<BoundedAdvance>,
 }
 
@@ -186,7 +184,6 @@ impl TrellisStreamingDecoder {
             column_rounds: Vec::new(),
             scoring_prefix_plans: Vec::new(),
             arrived_round: 0,
-            evidence_omitted: false,
             bounded_advance: None,
         };
         stream.reset();
@@ -194,7 +191,7 @@ impl TrellisStreamingDecoder {
     }
 
     /// Select a schedule before starting a shot. Cached compact model and
-    /// prediction-only fast paths are reused. Fixed-lag changes finite-width
+    /// prediction methods are reused. Fixed-lag changes finite-width
     /// pruning and is not promised to equal batch/dependency-driven decoding.
     ///
     /// # Errors
@@ -398,27 +395,6 @@ impl TrellisStreamingDecoder {
         Ok(self.take_progress())
     }
 
-    /// Process ready columns and report commitments without discarded-mass bookkeeping.
-    ///
-    /// The schedule, retained frontier, commitment snapshots, and work counts are
-    /// identical to [`Self::advance`]. Only the accumulated mass of discarded
-    /// states is omitted. Finish with [`Self::flush_without_dropped_mass`] to
-    /// obtain all retained logical masses, evidence, and runner-up confidence.
-    /// Its `dropped_log_mass` is unavailable and is reported as NaN.
-    ///
-    /// Like [`Self::advance_prediction_without_evidence`], this opts the current
-    /// shot out of full diagnostic mode: [`Self::advance`],
-    /// [`Self::advance_prediction`], [`Self::flush`], and
-    /// [`Self::flush_prediction`] require a reset afterward. Earlier full-mode
-    /// advances may be followed by this method. Reset restores the full API.
-    ///
-    /// # Errors
-    /// Returns the same no-path or internal error as [`Self::advance`].
-    pub fn advance_without_dropped_mass(&mut self) -> Result<StreamingProgress, DecoderError> {
-        self.advance_prediction_mode(crate::DecodeMode::PredictionOnly)?;
-        Ok(self.take_progress())
-    }
-
     /// Begin a resumable dependency-driven advance at the current detector prefix.
     ///
     /// This captures exactly the target of [`Self::advance`], without doing column
@@ -429,35 +405,15 @@ impl TrellisStreamingDecoder {
     /// Commitments are checked only at finish, preserving the unbounded callback's
     /// check cadence and the order of `newly_committed`.
     ///
-    /// Detectors, schedule, scoring inputs, and diagnostic mode cannot change
+    /// Detectors, schedule, and scoring inputs cannot change
     /// during the drain. Feed and unbounded processing methods reject that state.
     /// Reset cancels the drain and starts a fresh shot. A column budget bounds
     /// actual columns of DP work, not wall-clock time or total decision latency.
     ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for `FixedLag`, reentry, or full diagnostics
-    /// after omitted bookkeeping; returns a stored decoding failure unchanged.
+    /// Returns `InvalidConfiguration` for `FixedLag` or reentry;
+    /// returns a stored decoding failure unchanged.
     pub fn begin_bounded_advance(&mut self) -> Result<usize, DecoderError> {
-        self.begin_bounded_advance_mode(false)
-    }
-
-    /// Begin the same resumable advance without discarded-mass bookkeeping.
-    ///
-    /// All retained work and terminal output are unchanged. Only the terminal
-    /// `dropped_log_mass` is unavailable (NaN). This opts out of full diagnostic
-    /// mode until reset, as [`Self::advance_without_dropped_mass`] does.
-    ///
-    /// # Errors
-    /// Returns the same errors as [`Self::begin_bounded_advance`], except that
-    /// earlier omitted bookkeeping is allowed.
-    pub fn begin_bounded_advance_without_dropped_mass(&mut self) -> Result<usize, DecoderError> {
-        self.begin_bounded_advance_mode(true)
-    }
-
-    fn begin_bounded_advance_mode(
-        &mut self,
-        without_dropped_mass: bool,
-    ) -> Result<usize, DecoderError> {
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
@@ -467,19 +423,10 @@ impl TrellisStreamingDecoder {
                 "bounded advance supports only dependency-driven streaming".into(),
             ));
         }
-        if !without_dropped_mass && self.evidence_omitted {
-            return Err(DecoderError::InvalidConfiguration(
-                "reset before requesting evidence after prediction-only streaming".into(),
-            ));
-        }
         let end = self.ready.partition_point(|required| {
             required.is_none_or(|detector| detector < self.arrived_count)
         });
-        self.evidence_omitted |= without_dropped_mass;
-        self.bounded_advance = Some(BoundedAdvance {
-            end,
-            without_dropped_mass,
-        });
+        self.bounded_advance = Some(BoundedAdvance { end });
         Ok(end - self.next_column)
     }
 
@@ -520,11 +467,6 @@ impl TrellisStreamingDecoder {
             .next_column
             .saturating_add(max_columns)
             .min(advance.end);
-        let mode = if advance.without_dropped_mass {
-            crate::DecodeMode::PredictionOnly
-        } else {
-            crate::DecodeMode::Full
-        };
         if let Err(failure) = self.model.process_binary_range_with_prefixes(
             &mut self.progress,
             &self.observed,
@@ -535,7 +477,7 @@ impl TrellisStreamingDecoder {
                 delta: self.model.config.delta,
             },
             crate::BinaryRangeOptions {
-                mode,
+                mode: self.model.decode_mode(),
                 known_count: None,
             },
             None,
@@ -565,8 +507,8 @@ impl TrellisStreamingDecoder {
     /// Finish a fully fed, drained terminal advance with the full retained result.
     ///
     /// This does no column work. Commitment checks and the terminal constructor
-    /// are identical to `flush`; only an explicitly omitted `dropped_log_mass`
-    /// is NaN. This invocation and the preceding step invocations have separate
+    /// are identical to `flush`, including the configured dropped-mass diagnostic.
+    /// This invocation and the preceding step invocations have separate
     /// costs; a column budget is not a terminal-construction time bound.
     ///
     /// # Errors
@@ -583,9 +525,9 @@ impl TrellisStreamingDecoder {
             return Err(failure.error());
         }
         self.ensure_shot_complete()?;
-        let advance = self.ensure_bounded_advance_drained()?;
+        self.ensure_bounded_advance_drained()?;
         self.finish_bounded_advance()?;
-        Ok(self.terminal_result(advance.without_dropped_mass))
+        Ok(self.terminal_result())
     }
 
     /// Check uncommitted logicals and report commitments found since the last snapshot.
@@ -606,7 +548,7 @@ impl TrellisStreamingDecoder {
     /// # Panics
     /// Panics if any column remains unprocessed or a committed bit disagrees with
     /// the final prediction; both indicate an engine invariant violation.
-    fn terminal_result(&self, omit_dropped_mass: bool) -> TrellisResult {
+    fn terminal_result(&self) -> TrellisResult {
         let Kernel::Binary(columns) = &self.model.kernel else {
             unreachable!("streaming constructors validate the binary kernel");
         };
@@ -615,10 +557,9 @@ impl TrellisStreamingDecoder {
             columns.len(),
             "flush must process every column"
         );
-        let mut result = TrellisModel::finish_binary(&self.progress, self.next_column, 0.0);
-        if omit_dropped_mass {
-            result.dropped_log_mass = f64::NAN;
-        }
+        let result = self
+            .model
+            .finish_binary(&self.progress, self.next_column, 0.0);
         for logical in set_bits(&self.committed_mask) {
             let value = self.committed[logical / WORD_BITS] & (1_u64 << (logical % WORD_BITS)) != 0;
             assert!(
@@ -656,38 +597,19 @@ impl TrellisStreamingDecoder {
     /// Process ready columns without constructing commitment snapshots.
     ///
     /// This path retains the same candidate set and correction as [`Self::advance`],
-    /// including dropped-mass telemetry, so it can safely be mixed with `flush`.
+    /// with dropped-mass telemetry controlled by the config.
     /// It is intended
     /// for latency-sensitive runtimes that need only the final prediction.
     ///
     /// # Errors
     /// Returns the same no-path or internal error as [`Self::advance`].
     pub fn advance_prediction(&mut self) -> Result<usize, DecoderError> {
-        self.advance_prediction_mode(crate::DecodeMode::Full)
-    }
-
-    /// Prediction-only streaming without discarded-mass evidence telemetry.
-    /// Candidate scoring and retention are unchanged. Do not use full-result
-    /// evidence/diagnostics after this call; reset before returning to full mode.
-    ///
-    /// # Errors
-    /// Returns the same no-path or internal failure as [`Self::advance_prediction`].
-    pub fn advance_prediction_without_evidence(&mut self) -> Result<usize, DecoderError> {
-        self.advance_prediction_mode(crate::DecodeMode::PredictionOnly)
-    }
-
-    fn advance_prediction_mode(&mut self, mode: crate::DecodeMode) -> Result<usize, DecoderError> {
         // A stored failure outranks protocol errors, as in feed and flush. A
         // failed bounded step leaves its drain pending until reset.
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
         self.ensure_no_bounded_advance()?;
-        if mode == crate::DecodeMode::Full && self.evidence_omitted {
-            return Err(DecoderError::InvalidConfiguration(
-                "reset before requesting evidence after prediction-only streaming".into(),
-            ));
-        }
         let (end, known_count) = match &self.mode {
             StreamingMode::DependencyDriven => (
                 self.ready
@@ -709,7 +631,6 @@ impl TrellisStreamingDecoder {
                 )
             }
         };
-        self.evidence_omitted |= mode == crate::DecodeMode::PredictionOnly;
         // Delayed advances can include columns from earlier rounds. Use a plan
         // only when both the range and the known detector count match exactly.
         let prefix_ends = self
@@ -725,7 +646,10 @@ impl TrellisStreamingDecoder {
                 k: self.model.config.k,
                 delta: self.model.config.delta,
             },
-            crate::BinaryRangeOptions { mode, known_count },
+            crate::BinaryRangeOptions {
+                mode: self.model.decode_mode(),
+                known_count,
+            },
             prefix_ends,
         ) {
             self.failure = Some(failure);
@@ -763,36 +687,7 @@ impl TrellisStreamingDecoder {
 
         self.ensure_shot_complete()?;
         self.advance()?;
-        Ok(self.terminal_result(false))
-    }
-
-    /// Finish a fully fed shot with complete retained results and no dropped mass.
-    ///
-    /// This uses the same column schedule and terminal-result construction as
-    /// [`Self::flush`]. Prediction, every retained logical mass, retained
-    /// `log_evidence`, runner-up gap, commitments, status, and counts are
-    /// unchanged on the same build and platform. Only `dropped_log_mass` is
-    /// unavailable and set to NaN; its discarded-state accumulation is skipped.
-    /// This is not a prediction-only terminal result.
-    ///
-    /// May follow full advances, [`Self::advance_without_dropped_mass`], or
-    /// [`Self::advance_prediction_without_evidence`]. Existing full-mode methods
-    /// still require a reset once discarded-mass bookkeeping has been omitted.
-    /// Flushing does not reset the shot, and repeated calls return the same result.
-    /// Remaining commitments are visible through [`Self::committed`].
-    ///
-    /// # Errors
-    /// Returns the same incomplete-shot, no-path, or internal errors as [`Self::flush`].
-    ///
-    /// # Panics
-    /// Panics on the same engine invariant violations as [`Self::flush`].
-    pub fn flush_without_dropped_mass(&mut self) -> Result<TrellisResult, DecoderError> {
-        if let Some(failure) = self.failure {
-            return Err(failure.error());
-        }
-        self.ensure_shot_complete()?;
-        self.advance_without_dropped_mass()?;
-        Ok(self.terminal_result(true))
+        Ok(self.terminal_result())
     }
 
     /// Finish a fully fed shot and return only the predicted logical mask.
@@ -810,24 +705,11 @@ impl TrellisStreamingDecoder {
     /// Panics if the validated streaming model fails to process every column
     /// after the complete syndrome has arrived.
     pub fn flush_prediction(&mut self) -> Result<ObsMask, DecoderError> {
-        self.flush_prediction_mode(crate::DecodeMode::Full)
-    }
-
-    /// Terminal correction only, with discarded-mass telemetry disabled.
-    ///
-    /// # Errors
-    /// Returns the same errors as [`Self::flush_prediction`], with no-path or
-    /// internal failures from [`Self::advance_prediction_without_evidence`].
-    pub fn flush_prediction_without_evidence(&mut self) -> Result<ObsMask, DecoderError> {
-        self.flush_prediction_mode(crate::DecodeMode::PredictionOnly)
-    }
-
-    fn flush_prediction_mode(&mut self, mode: crate::DecodeMode) -> Result<ObsMask, DecoderError> {
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
         self.ensure_shot_complete()?;
-        self.advance_prediction_mode(mode)?;
+        self.advance_prediction()?;
         let Kernel::Binary(columns) = &self.model.kernel else {
             unreachable!("streaming constructors validate the binary kernel");
         };
@@ -872,7 +754,6 @@ impl TrellisStreamingDecoder {
         self.committed_mask.fill(0);
         self.pending_commitments.clear();
         self.failure = None;
-        self.evidence_omitted = false;
         self.bounded_advance = None;
         self.progress.reset(&self.model);
         self.check_commitments();
@@ -1015,7 +896,6 @@ mod fixed_lag_tests {
         decoder.feed_prefix(&[1, 0, 1]).unwrap();
         assert!(decoder.flush().is_err());
         assert!(decoder.flush_prediction().is_err());
-        assert!(decoder.flush_prediction_without_evidence().is_err());
         decoder.feed_prefix(&[]).unwrap();
         assert!(decoder.flush().unwrap().predicted.get(0));
     }
@@ -1104,12 +984,18 @@ mod scoring_prefix_plan_tests {
                         };
                         let mut a = TrellisStreamingDecoder::from_sparse_dem(
                             &dem,
-                            TrellisConfig::default(),
+                            TrellisConfig {
+                                dropped_mass: full,
+                                ..TrellisConfig::default()
+                            },
                         )
                         .unwrap();
                         let mut b = TrellisStreamingDecoder::from_sparse_dem(
                             &dem,
-                            TrellisConfig::default(),
+                            TrellisConfig {
+                                dropped_mass: full,
+                                ..TrellisConfig::default()
+                            },
                         )
                         .unwrap();
                         a.set_streaming_mode(mode.clone()).unwrap();
@@ -1131,27 +1017,17 @@ mod scoring_prefix_plan_tests {
                                     || round == bounds.len() - 1
                                 {
                                     for _ in 0..2 {
-                                        let mode = if full {
-                                            crate::DecodeMode::Full
-                                        } else {
-                                            crate::DecodeMode::PredictionOnly
-                                        };
                                         assert_eq!(
-                                            format!("{:?}", a.advance_prediction_mode(mode)),
-                                            format!("{:?}", b.advance_prediction_mode(mode))
+                                            format!("{:?}", a.advance_prediction()),
+                                            format!("{:?}", b.advance_prediction())
                                         );
                                         compare(&a, &b);
                                     }
                                 }
                             }
-                            let mode = if full {
-                                crate::DecodeMode::Full
-                            } else {
-                                crate::DecodeMode::PredictionOnly
-                            };
                             assert_eq!(
-                                format!("{:?}", a.flush_prediction_mode(mode)),
-                                format!("{:?}", b.flush_prediction_mode(mode))
+                                format!("{:?}", a.flush_prediction()),
+                                format!("{:?}", b.flush_prediction())
                             );
                             compare(&a, &b);
                         }
@@ -1219,5 +1095,57 @@ mod scoring_prefix_plan_tests {
         assert_eq!(plan.for_range(63, 5..8), None);
         assert_eq!(plan.for_range(64, 4..8), None);
         assert_eq!(plan.for_range(64, 5..9), None);
+    }
+}
+
+#[cfg(test)]
+mod dropped_mass_tests {
+    use super::*;
+
+    fn check_accumulation(bounded: bool) {
+        for dropped_mass in [false, true] {
+            let mut decoder = TrellisStreamingDecoder::from_dem_str(
+                "error(0.25) L0\nerror(0.2) L1",
+                TrellisConfig {
+                    dropped_mass,
+                    k: 1,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            decoder.feed_dense(&[]).unwrap();
+            let result = if bounded {
+                decoder.begin_bounded_advance().unwrap();
+                while !decoder.step_bounded_advance(1).unwrap().1 {}
+                decoder.finish_bounded_flush().unwrap()
+            } else {
+                decoder.flush().unwrap()
+            };
+            assert!(decoder.progress.dropped_states > 0);
+            assert_eq!(result.dropped_states, decoder.progress.dropped_states);
+            if dropped_mass {
+                assert!(decoder.progress.dropped_log_mass.is_finite());
+                assert_eq!(
+                    result.dropped_log_mass.expect("enabled").to_bits(),
+                    decoder.progress.dropped_log_mass.to_bits()
+                );
+            } else {
+                assert_eq!(
+                    decoder.progress.dropped_log_mass.to_bits(),
+                    f64::NEG_INFINITY.to_bits()
+                );
+                assert_eq!(result.dropped_log_mass, None);
+            }
+        }
+    }
+
+    #[test]
+    fn streaming_flush_dropped_mass_flag_controls_accumulation() {
+        check_accumulation(false);
+    }
+
+    #[test]
+    fn bounded_streaming_flush_dropped_mass_flag_controls_accumulation() {
+        check_accumulation(true);
     }
 }

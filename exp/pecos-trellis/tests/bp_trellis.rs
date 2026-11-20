@@ -71,6 +71,7 @@ fn defaults_identity_dem() -> SparseDem {
 #[test]
 fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
     let defaults = BpTrellisConfig::default();
+    assert!(!defaults.dropped_mass);
     assert_eq!(defaults.k, 8);
     assert_eq!(defaults.delta.to_bits(), 100.0_f64.to_bits());
     assert_eq!(defaults.score_alpha.to_bits(), 0.8_f64.to_bits());
@@ -86,10 +87,23 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
         (0..dem.mechanisms.len()).collect::<Vec<_>>()
     );
 
-    let mut decoder = BpTrellisDecoder::from_sparse_dem(&dem, defaults).unwrap();
+    let default_result = BpTrellisDecoder::from_sparse_dem(&dem, defaults.clone())
+        .unwrap()
+        .decode(&[0; 6])
+        .unwrap();
+    assert_eq!(default_result.dropped_log_mass, None);
+    let mut decoder = BpTrellisDecoder::from_sparse_dem(
+        &dem,
+        BpTrellisConfig {
+            dropped_mass: true,
+            ..defaults
+        },
+    )
+    .unwrap();
     let mut explicit_deadline = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
+            dropped_mass: true,
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
@@ -104,6 +118,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
     let mut time_order = TrellisDecoder::from_sparse_dem(
         &dem,
         TrellisConfig {
+            dropped_mass: true,
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
@@ -118,6 +133,8 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
 
     let syndrome = [0; 6];
     let actual = decoder.decode(&syndrome).unwrap();
+    assert_eq!(default_result.predicted, actual.predicted);
+    assert_eq!(default_result.logical_masses, actual.logical_masses);
     let expected = explicit_deadline.decode(&syndrome).unwrap();
     let time_order_result = time_order.decode(&syndrome).unwrap();
 
@@ -125,8 +142,14 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
     assert!(actual.dropped_states > 0, "the finite default K must prune");
     assert_results_bitwise_equal_except_timing(&actual, &expected);
     assert_ne!(
-        actual.dropped_log_mass.to_bits(),
-        time_order_result.dropped_log_mass.to_bits(),
+        actual
+            .dropped_log_mass
+            .expect("enabled diagnostic")
+            .to_bits(),
+        time_order_result
+            .dropped_log_mass
+            .expect("enabled diagnostic")
+            .to_bits(),
         "this fixture must distinguish deadline order from DEM order"
     );
     assert!(decoder.build_seconds() >= 0.0);
@@ -165,6 +188,7 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
         let mut decoder = BpTrellisDecoder::from_sparse_dem(
             &dem,
             BpTrellisConfig {
+                dropped_mass: false,
                 k: 4,
                 delta: 12.0,
                 score_alpha: 0.6,
@@ -178,6 +202,7 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
         let mut trellis = TrellisDecoder::from_sparse_dem(
             &dem,
             TrellisConfig {
+                dropped_mass: false,
                 k: 4,
                 delta: 12.0,
                 score_alpha: 0.6,
@@ -253,6 +278,7 @@ fn overpruning_escalation_dem() -> SparseDem {
 
 fn escalation_config(k: usize, escalation_ks: Vec<usize>) -> BpTrellisConfig {
     BpTrellisConfig {
+        dropped_mass: false,
         k,
         delta: f64::INFINITY,
         score_alpha: 0.0,
@@ -360,6 +386,7 @@ fn ladder_rung_matches_a_hand_built_decoder_except_accumulated_work() {
         1,
     );
     let config_for = |k, escalation_ks: Vec<usize>| BpTrellisConfig {
+        dropped_mass: false,
         k,
         delta: f64::INFINITY,
         score_alpha: 0.0,
@@ -419,6 +446,7 @@ fn parallel_batch_matches_bp_ladder_shot_for_shot() {
     // Detector 5 is untouched, providing terminal NoPath shots as well.
     let dem = sparse_dem(mechanisms, 6, 2);
     let config = BpTrellisConfig {
+        dropped_mass: true,
         k: 1,
         delta: f64::INFINITY,
         score_alpha: 0.01,
@@ -464,8 +492,14 @@ fn parallel_batch_matches_bp_ladder_shot_for_shot() {
                         expected.log_evidence.to_bits()
                     );
                     assert_eq!(
-                        actual.dropped_log_mass.to_bits(),
-                        expected.dropped_log_mass.to_bits()
+                        actual
+                            .dropped_log_mass
+                            .expect("enabled diagnostic")
+                            .to_bits(),
+                        expected
+                            .dropped_log_mass
+                            .expect("enabled diagnostic")
+                            .to_bits()
                     );
                     assert_eq!(
                         actual.runner_up_gap.map(f64::to_bits),

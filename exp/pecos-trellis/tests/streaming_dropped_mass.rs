@@ -9,7 +9,8 @@ use pecos_trellis::{
 use std::collections::BTreeMap;
 
 fn retained_bits_equal(full: &TrellisResult, omitted: &TrellisResult) {
-    assert!(omitted.dropped_log_mass.is_nan());
+    assert!(full.dropped_log_mass.is_some());
+    assert_eq!(omitted.dropped_log_mass, None);
     assert_eq!(full.predicted, omitted.predicted);
     assert_eq!(full.log_evidence.to_bits(), omitted.log_evidence.to_bits());
     assert_eq!(
@@ -93,6 +94,7 @@ fn callbacks_and_all_retained_terminal_bits_match_both_schedules_and_reset() {
                 order.reverse();
             }
             let config = TrellisConfig {
+                dropped_mass: true,
                 k,
                 delta,
                 score_alpha: alpha,
@@ -104,8 +106,14 @@ fn callbacks_and_all_retained_terminal_bits_match_both_schedules_and_reset() {
                 let bounds = vec![0, 0, width / 4, width / 2, width, width];
                 let mut full =
                     TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
-                let mut omitted =
-                    TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+                let mut omitted = TrellisStreamingDecoder::from_sparse_dem(
+                    &dem,
+                    TrellisConfig {
+                        dropped_mass: false,
+                        ..config.clone()
+                    },
+                )
+                .unwrap();
                 if let Some(window_size) = lag {
                     let mode = StreamingMode::FixedLag {
                         detector_round_bounds: bounds.clone(),
@@ -126,10 +134,7 @@ fn callbacks_and_all_retained_terminal_bits_match_both_schedules_and_reset() {
                         };
                     }
                     syndrome[row(10) as usize] = 1;
-                    assert!(same_outcome(
-                        full.advance(),
-                        omitted.advance_without_dropped_mass()
-                    ));
+                    assert!(same_outcome(full.advance(), omitted.advance()));
                     let mut failed = false;
                     for (arrival, pair) in bounds.windows(2).enumerate() {
                         if !same_outcome(
@@ -144,7 +149,7 @@ fn callbacks_and_all_retained_terminal_bits_match_both_schedules_and_reset() {
                             continue;
                         }
                         let a = full.advance();
-                        let b = omitted.advance_without_dropped_mass();
+                        let b = omitted.advance();
                         if let Ok(progress) = &a {
                             saw_commit |= !progress.newly_committed.is_empty();
                         }
@@ -153,16 +158,13 @@ fn callbacks_and_all_retained_terminal_bits_match_both_schedules_and_reset() {
                             break;
                         }
                         assert_eq!(full.committed(), omitted.committed());
-                        assert!(same_outcome(
-                            full.advance(),
-                            omitted.advance_without_dropped_mass()
-                        ));
+                        assert!(same_outcome(full.advance(), omitted.advance()));
                     }
-                    match (full.flush(), omitted.flush_without_dropped_mass()) {
+                    match (full.flush(), omitted.flush()) {
                         (Ok(a), Ok(b)) => {
                             assert!(!failed);
                             retained_bits_equal(&a, &b);
-                            retained_bits_equal(&a, &omitted.flush_without_dropped_mass().unwrap());
+                            retained_bits_equal(&a, &omitted.flush().unwrap());
                             assert_eq!(full.committed(), omitted.committed());
                             pruned |= a.dropped_states > 0;
                             success_count += 1;
@@ -180,58 +182,52 @@ fn callbacks_and_all_retained_terminal_bits_match_both_schedules_and_reset() {
 }
 
 #[test]
-fn mixing_guards_empty_models_and_reset_keep_the_existing_contract() {
+fn empty_models_and_reset_preserve_configured_diagnostics() {
     for text in [
         "",
         "error(1) L130",
         "error(0.3) L0",
         "error(0.2) D0 L130\nerror(0.3) D1",
     ] {
-        let mut full =
-            TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
-        let mut omitted =
-            TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
+        let mut full = TrellisStreamingDecoder::from_dem_str(
+            text,
+            TrellisConfig {
+                dropped_mass: true,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let mut omitted = TrellisStreamingDecoder::from_dem_str(
+            text,
+            TrellisConfig {
+                dropped_mass: false,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
         let width = SparseDem::from_dem_str(text).unwrap().num_detectors;
         let syndrome = vec![0; width];
-        // A full advance may precede the opt-in call, including already processed columns.
+        // Repeated advances include already processed columns.
         assert_eq!(full.advance().unwrap(), omitted.advance().unwrap());
         full.feed_dense(&syndrome).unwrap();
         omitted.feed_dense(&syndrome).unwrap();
-        assert_eq!(
-            full.advance().unwrap(),
-            omitted.advance_without_dropped_mass().unwrap()
-        );
+        assert_eq!(full.advance().unwrap(), omitted.advance().unwrap());
         let expected = full.flush().unwrap();
-        retained_bits_equal(&expected, &omitted.flush_without_dropped_mass().unwrap());
-        for error in [
-            omitted.advance().unwrap_err(),
-            omitted.advance_prediction().unwrap_err(),
-            omitted.flush().unwrap_err(),
-            omitted.flush_prediction().unwrap_err(),
-        ] {
-            assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
-            assert!(
-                error
-                    .to_string()
-                    .contains("reset before requesting evidence")
-            );
-        }
+        retained_bits_equal(&expected, &omitted.flush().unwrap());
         omitted.reset();
         omitted.feed_dense(&syndrome).unwrap();
         let restored = omitted.flush().unwrap();
-        assert_eq!(expected, restored);
-        assert!(!restored.dropped_log_mass.is_nan());
-        // The old prediction-only path keeps its existing guard but can opt into
-        // the newly explicit retained terminal result without recovering diagnostics.
+        retained_bits_equal(&expected, &restored);
+        // Prediction methods can be followed by a detailed flush.
         omitted.reset();
         omitted.feed_dense(&syndrome).unwrap();
-        omitted.advance_prediction_without_evidence().unwrap();
-        retained_bits_equal(&expected, &omitted.flush_without_dropped_mass().unwrap());
+        omitted.advance_prediction().unwrap();
+        retained_bits_equal(&expected, &omitted.flush().unwrap());
         omitted.reset();
         omitted.feed_dense(&syndrome).unwrap();
-        omitted.flush_prediction_without_evidence().unwrap();
-        assert!(omitted.flush().is_err());
-        retained_bits_equal(&expected, &omitted.flush_without_dropped_mass().unwrap());
+        omitted.flush_prediction().unwrap();
+        assert!(omitted.flush().is_ok());
+        retained_bits_equal(&expected, &omitted.flush().unwrap());
     }
 }
 
@@ -243,10 +239,22 @@ fn errors_incomplete_rounds_and_sticky_failures_match() {
         ("error(0.1) D0 L0\nerror(1) D1", [0, 0]),
     ] {
         for fixed in [false, true] {
-            let mut a =
-                TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
-            let mut b =
-                TrellisStreamingDecoder::from_dem_str(text, TrellisConfig::default()).unwrap();
+            let mut a = TrellisStreamingDecoder::from_dem_str(
+                text,
+                TrellisConfig {
+                    dropped_mass: true,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            let mut b = TrellisStreamingDecoder::from_dem_str(
+                text,
+                TrellisConfig {
+                    dropped_mass: false,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
             if fixed {
                 let mode = StreamingMode::FixedLag {
                     detector_round_bounds: vec![0, 1, 2, 2],
@@ -255,21 +263,15 @@ fn errors_incomplete_rounds_and_sticky_failures_match() {
                 a.set_streaming_mode(mode.clone()).unwrap();
                 b.set_streaming_mode(mode).unwrap();
             }
-            errors_equal(
-                &a.flush().unwrap_err(),
-                &b.flush_without_dropped_mass().unwrap_err(),
-            );
+            errors_equal(&a.flush().unwrap_err(), &b.flush().unwrap_err());
             assert!(same_outcome(
                 a.feed_prefix(&syndrome[..1]),
                 b.feed_prefix(&syndrome[..1])
             ));
-            assert!(same_outcome(a.advance(), b.advance_without_dropped_mass()));
+            assert!(same_outcome(a.advance(), b.advance()));
             same_outcome(a.feed_prefix(&syndrome[1..]), b.feed_prefix(&syndrome[1..]));
-            same_outcome(a.advance(), b.advance_without_dropped_mass());
-            errors_equal(
-                &a.flush().unwrap_err(),
-                &b.flush_without_dropped_mass().unwrap_err(),
-            );
+            same_outcome(a.advance(), b.advance());
+            errors_equal(&a.flush().unwrap_err(), &b.flush().unwrap_err());
             // Sticky stored failure wins over later incomplete/overflow errors.
             same_outcome(a.feed_prefix(&[0, 0, 0]), b.feed_prefix(&[0, 0, 0]));
             a.reset();
@@ -281,16 +283,25 @@ fn errors_incomplete_rounds_and_sticky_failures_match() {
             };
             a.feed_dense(&good).unwrap();
             b.feed_dense(&good).unwrap();
-            retained_bits_equal(
-                &a.flush().unwrap(),
-                &b.flush_without_dropped_mass().unwrap(),
-            );
+            retained_bits_equal(&a.flush().unwrap(), &b.flush().unwrap());
         }
     }
-    let mut a = TrellisStreamingDecoder::from_dem_str("error(0.1) D0 L0", TrellisConfig::default())
-        .unwrap();
-    let mut b = TrellisStreamingDecoder::from_dem_str("error(0.1) D0 L0", TrellisConfig::default())
-        .unwrap();
+    let mut a = TrellisStreamingDecoder::from_dem_str(
+        "error(0.1) D0 L0",
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
+    let mut b = TrellisStreamingDecoder::from_dem_str(
+        "error(0.1) D0 L0",
+        TrellisConfig {
+            dropped_mass: false,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
     let mode = StreamingMode::FixedLag {
         detector_round_bounds: vec![0, 1, 1],
         window_size: 2,
@@ -303,16 +314,10 @@ fn errors_incomplete_rounds_and_sticky_failures_match() {
     );
     a.feed_prefix(&[0]).unwrap();
     b.feed_prefix(&[0]).unwrap();
-    errors_equal(
-        &a.flush().unwrap_err(),
-        &b.flush_without_dropped_mass().unwrap_err(),
-    );
+    errors_equal(&a.flush().unwrap_err(), &b.flush().unwrap_err());
     a.feed_prefix(&[]).unwrap();
     b.feed_prefix(&[]).unwrap();
-    retained_bits_equal(
-        &a.flush().unwrap(),
-        &b.flush_without_dropped_mass().unwrap(),
-    );
+    retained_bits_equal(&a.flush().unwrap(), &b.flush().unwrap());
 }
 
 #[test]
@@ -322,10 +327,22 @@ fn binary_factors_match_and_bp_and_integer_rejections_are_unchanged() {
     )
     .unwrap();
     let model = FactorModel::try_from(&dem).unwrap();
-    let mut a =
-        TrellisStreamingDecoder::from_factor_model(&model, TrellisConfig::default()).unwrap();
-    let mut b =
-        TrellisStreamingDecoder::from_factor_model(&model, TrellisConfig::default()).unwrap();
+    let mut a = TrellisStreamingDecoder::from_factor_model(
+        &model,
+        TrellisConfig {
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
+    let mut b = TrellisStreamingDecoder::from_factor_model(
+        &model,
+        TrellisConfig {
+            dropped_mass: false,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
     let mut bits = [0; 66];
     bits[0] = 1;
     bits[64] = 1;
@@ -333,15 +350,9 @@ fn binary_factors_match_and_bp_and_integer_rejections_are_unchanged() {
     for chunk in bits.chunks(17) {
         a.feed_prefix(chunk).unwrap();
         b.feed_prefix(chunk).unwrap();
-        assert_eq!(
-            a.advance().unwrap(),
-            b.advance_without_dropped_mass().unwrap()
-        );
+        assert_eq!(a.advance().unwrap(), b.advance().unwrap());
     }
-    retained_bits_equal(
-        &a.flush().unwrap(),
-        &b.flush_without_dropped_mass().unwrap(),
-    );
+    retained_bits_equal(&a.flush().unwrap(), &b.flush().unwrap());
     for config in [
         TrellisConfig {
             bp_score_iterations: 1,

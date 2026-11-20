@@ -28,6 +28,7 @@ fn sparse_dem(
 
 fn exact_config() -> FrontierConfig {
     FrontierConfig {
+        dropped_mass: false,
         k: usize::MAX,
         delta: f64::INFINITY,
         score_alpha: 0.8,

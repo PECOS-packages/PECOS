@@ -31,11 +31,10 @@ struct Pruning {
 }
 
 fn same_result(
-    mut expected: FrontierCommitteeResult,
-    mut actual: FrontierCommitteeResult,
+    expected: &FrontierCommitteeResult,
+    actual: &FrontierCommitteeResult,
     omitted: bool,
 ) {
-    assert!(expected.selected.bp_seconds.is_finite() && actual.selected.bp_seconds.is_finite());
     assert_eq!(expected.direction, actual.direction);
     assert_eq!(
         expected.forward.log_evidence.to_bits(),
@@ -45,52 +44,73 @@ fn same_result(
         expected.backward.log_evidence.to_bits(),
         actual.backward.log_evidence.to_bits()
     );
+    assert_eq!(expected.forward, actual.forward);
+    assert_eq!(expected.backward, actual.backward);
+    let pecos_frontier::FrontierResult {
+        predicted,
+        log_evidence,
+        runner_up_gap,
+        peak_retained_states,
+        processed_columns,
+        transitions,
+        dropped_states,
+        dropped_log_mass,
+        bp_seconds,
+        bp_runs,
+        escalation_rungs_used,
+        status,
+        logical_masses,
+    } = &expected.selected;
+    assert_eq!(predicted, &actual.selected.predicted);
     assert_eq!(
-        expected.selected.log_evidence.to_bits(),
+        log_evidence.to_bits(),
         actual.selected.log_evidence.to_bits()
     );
     assert_eq!(
-        expected.selected.runner_up_gap.map(f64::to_bits),
+        runner_up_gap.map(f64::to_bits),
         actual.selected.runner_up_gap.map(f64::to_bits)
     );
-    for (left, right) in expected
-        .selected
-        .logical_masses
-        .iter()
-        .zip(&actual.selected.logical_masses)
-    {
+    assert_eq!(*peak_retained_states, actual.selected.peak_retained_states);
+    assert_eq!(*processed_columns, actual.selected.processed_columns);
+    assert_eq!(*transitions, actual.selected.transitions);
+    assert_eq!(*dropped_states, actual.selected.dropped_states);
+    assert_eq!(*bp_runs, actual.selected.bp_runs);
+    assert_eq!(
+        *escalation_rungs_used,
+        actual.selected.escalation_rungs_used
+    );
+    assert_eq!(*status, actual.selected.status);
+    assert!(bp_seconds.is_finite() && *bp_seconds >= 0.0);
+    assert!(actual.selected.bp_seconds.is_finite() && actual.selected.bp_seconds >= 0.0);
+    if *bp_runs == 0 {
+        assert_eq!(bp_seconds.to_bits(), actual.selected.bp_seconds.to_bits());
+    }
+    assert_eq!(logical_masses.len(), actual.selected.logical_masses.len());
+    for (left, right) in logical_masses.iter().zip(&actual.selected.logical_masses) {
         assert_eq!(left.logical, right.logical);
         assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
     }
-    if expected.selected.bp_runs != 0 {
-        assert!(expected.selected.bp_seconds >= 0.0 && actual.selected.bp_seconds >= 0.0);
-        expected.selected.bp_seconds = 0.0;
-        actual.selected.bp_seconds = 0.0;
-    }
     if omitted {
-        assert!(actual.selected.dropped_log_mass.is_nan());
-        expected.selected.dropped_log_mass = f64::NAN;
+        assert!(dropped_log_mass.is_some());
+        assert_eq!(actual.selected.dropped_log_mass, None);
     } else {
         assert_eq!(
-            expected.selected.dropped_log_mass.to_bits(),
-            actual.selected.dropped_log_mass.to_bits()
+            dropped_log_mass.expect("enabled diagnostic").to_bits(),
+            actual
+                .selected
+                .dropped_log_mass
+                .expect("enabled diagnostic")
+                .to_bits()
         );
     }
-    assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
 }
 
 fn drain(
     decoder: &mut FrontierResumableCommittee,
     shot: &[u8],
     budget: usize,
-    omitted: bool,
 ) -> Result<FrontierCommitteeResult, DecoderError> {
-    let mut progress = if omitted {
-        decoder.begin_without_dropped_mass(shot)
-    } else {
-        decoder.begin(shot)
-    }
-    .unwrap();
+    let mut progress = decoder.begin(shot).unwrap();
     assert!(matches!(progress, FrontierBoundedProgress::Forward(_)));
     while progress != FrontierBoundedProgress::Ready {
         let before = progress;
@@ -136,6 +156,7 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
             };
             for bp in [0, 2] {
                 let config = FrontierConfig {
+                    dropped_mass: true,
                     k: fixture.pruned.k,
                     delta: fixture.pruned.delta,
                     score_alpha: 0.8,
@@ -144,9 +165,18 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
                     bp_score_iterations: bp,
                     ..FrontierConfig::default()
                 };
-                let base = FrontierCommittee::from_sparse_dem(&dem, config).unwrap();
+                let base = FrontierCommittee::from_sparse_dem(&dem, config.clone()).unwrap();
                 let mut batch = base.clone();
                 let mut bounded = base.into_resumable();
+                let mut skipped = FrontierCommittee::from_sparse_dem(
+                    &dem,
+                    FrontierConfig {
+                        dropped_mass: false,
+                        ..config
+                    },
+                )
+                .unwrap()
+                .into_resumable();
                 for budget in [1, 2, 3, 7, 64, usize::MAX] {
                     for &mask in &fixture.syndromes {
                         let shot: Vec<_> = (0..fixture.num_detectors)
@@ -155,7 +185,11 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
                         for omitted in [false, true] {
                             match (
                                 batch.decode(&shot),
-                                drain(&mut bounded, &shot, budget, omitted),
+                                drain(
+                                    if omitted { &mut skipped } else { &mut bounded },
+                                    &shot,
+                                    budget,
+                                ),
                             ) {
                                 (Ok(expected), Ok(actual)) => {
                                     successes += 1;
@@ -163,7 +197,7 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
                                         expected.forward.status == CommitteeStatus::NoPath
                                             || expected.backward.status == CommitteeStatus::NoPath,
                                     );
-                                    same_result(expected, actual, omitted);
+                                    same_result(&expected, &actual, omitted);
                                 }
                                 (Err(expected), Err(actual)) => {
                                     both_no_path += usize::from(matches!(
@@ -187,7 +221,10 @@ fn all_fixture_committees_preserve_bits_direction_fallback_and_bp() {
 fn protocol_guards_cancel_reuse_and_dimension_faults_preserve_resolution() {
     let base = FrontierCommittee::from_dem_str(
         "error(0.2) D0 L0\nerror(0.1) D0 D1\nerror(0.3) D1",
-        FrontierConfig::default(),
+        FrontierConfig {
+            dropped_mass: true,
+            ..FrontierConfig::default()
+        },
     )
     .unwrap();
     let mut bounded = base.clone().into_resumable();
@@ -206,8 +243,8 @@ fn protocol_guards_cancel_reuse_and_dimension_faults_preserve_resolution() {
     assert_eq!(bounded.progress(), None);
     let mut batch = base;
     for shot in [&[1, 0][..], &[0][..], &[0, 1][..]] {
-        match (batch.decode(shot), drain(&mut bounded, shot, 1, false)) {
-            (Ok(expected), Ok(actual)) => same_result(expected, actual, false),
+        match (batch.decode(shot), drain(&mut bounded, shot, 1)) {
+            (Ok(expected), Ok(actual)) => same_result(&expected, &actual, false),
             (Err(expected), Err(actual)) => {
                 assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
             }
@@ -222,6 +259,7 @@ fn cancel_during_backward_phase_leaves_both_legs_reusable() {
         let base = FrontierCommittee::from_dem_str(
             "error(0.2) D0 L0\nerror(0.1) D0 D1\nerror(0.3) D1\nerror(0.05) D1 D2 L1\nerror(0.1) D2",
             FrontierConfig {
+                dropped_mass: true,
                 bp_score_iterations,
                 ..FrontierConfig::default()
             },
@@ -246,8 +284,8 @@ fn cancel_during_backward_phase_leaves_both_legs_reusable() {
         assert_eq!(bounded.progress(), None);
         for shot in [&[0, 1, 1][..], &[1, 1, 0][..]] {
             for budget in [1, 2, usize::MAX] {
-                match (batch.decode(shot), drain(&mut bounded, shot, budget, false)) {
-                    (Ok(expected), Ok(actual)) => same_result(expected, actual, false),
+                match (batch.decode(shot), drain(&mut bounded, shot, budget)) {
+                    (Ok(expected), Ok(actual)) => same_result(&expected, &actual, false),
                     (Err(expected), Err(actual)) => {
                         assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
                     }
@@ -261,12 +299,19 @@ fn cancel_during_backward_phase_leaves_both_legs_reusable() {
 #[test]
 fn empty_and_forced_models_still_run_both_leg_phases() {
     for text in ["detector D0", "error(1) D0 L0\ndetector D1"] {
-        let base = FrontierCommittee::from_dem_str(text, FrontierConfig::default()).unwrap();
+        let base = FrontierCommittee::from_dem_str(
+            text,
+            FrontierConfig {
+                dropped_mass: true,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap();
         let mut batch = base.clone();
         let mut bounded = base.into_resumable();
         for shot in [&[0][..], &[1][..], &[1, 0][..]] {
-            match (batch.decode(shot), drain(&mut bounded, shot, 1, false)) {
-                (Ok(expected), Ok(actual)) => same_result(expected, actual, false),
+            match (batch.decode(shot), drain(&mut bounded, shot, 1)) {
+                (Ok(expected), Ok(actual)) => same_result(&expected, &actual, false),
                 (Err(expected), Err(actual)) => {
                     assert_eq!(format!("{expected:?}"), format!("{actual:?}"));
                 }

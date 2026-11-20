@@ -30,8 +30,11 @@ pub fn assert_results_equal(left: &TrellisResult, right: &TrellisResult) {
     assert_eq!(left.transitions, right.transitions);
     assert_eq!(left.dropped_states, right.dropped_states);
     assert_eq!(
-        left.dropped_log_mass.to_bits(),
-        right.dropped_log_mass.to_bits()
+        left.dropped_log_mass.expect("enabled diagnostic").to_bits(),
+        right
+            .dropped_log_mass
+            .expect("enabled diagnostic")
+            .to_bits()
     );
     assert_eq!(left.bp_runs, right.bp_runs);
     assert_eq!(left.escalation_rungs_used, right.escalation_rungs_used);

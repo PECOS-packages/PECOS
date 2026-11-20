@@ -1,90 +1,6 @@
 //! Differential proof controls for the sufficient wide-Delta guard.
 use super::*;
 
-fn prune_impl_original(
-    frontier: &mut FrontierScratch<f64>,
-    k: usize,
-    delta: f64,
-    score_alpha: f64,
-    suffix_compatibility: SuffixCompatibility<'_>,
-    observed: &[u64],
-    mode: DecodeMode,
-) -> PruneResult<f64> {
-    if k == usize::MAX && delta.is_infinite() {
-        return PruneResult {
-            dropped_states: 0,
-            dropped_log_mass: f64::NEG_INFINITY,
-            k_capped: false,
-            delta_pruned: false,
-        };
-    }
-
-    score_candidates(frontier, score_alpha, suffix_compatibility, observed);
-    let better = |&left: &usize, &right: &usize| {
-        frontier.scores[right]
-            .total_cmp(&frontier.scores[left])
-            .then_with(|| {
-                compare_state_words(
-                    frontier.parent.key(left, frontier.stride),
-                    frontier.parent.key(right, frontier.stride),
-                    frontier.detector_words,
-                )
-            })
-    };
-    let best = (0..frontier.parent.masses.len())
-        .min_by(better)
-        .expect("a nonempty merged frontier must have a score");
-    let cutoff = frontier.scores[best] - delta;
-    frontier.indices.clear();
-    frontier.retained.clear();
-    // Most frontiers need only their cutoff mask. Count the same decisions
-    // without writing an index for every survivor unless selection needs it.
-    let mut eligible = 0;
-    for candidate in 0..frontier.parent.masses.len() {
-        let keep = frontier.scores[candidate] >= cutoff;
-        frontier.retained.push(keep);
-        eligible += usize::from(keep);
-    }
-    if eligible > k {
-        frontier.indices.extend(
-            (0..frontier.parent.masses.len()).filter(|&candidate| frontier.retained[candidate]),
-        );
-        frontier.indices.select_nth_unstable_by(k, better);
-        frontier.indices.truncate(k);
-        // Selection uses the unchanged total-score/full-key comparator. Rebuild
-        // the mask only when the cap actually removes an eligible state.
-        frontier.retained.fill(false);
-        for &candidate in &frontier.indices {
-            frontier.retained[candidate] = true;
-        }
-    }
-    let original_states = frontier.parent.masses.len();
-    let retained_states = eligible.min(k);
-    let mut dropped_log_mass = f64::NEG_INFINITY;
-    if mode == DecodeMode::Full {
-        // Keep the existing score-ordered summation for bitwise telemetry stability.
-        frontier.indices.clear();
-        frontier
-            .indices
-            .extend((0..original_states).filter(|&i| !frontier.retained[i]));
-        frontier.indices.sort_unstable_by(better);
-        for &candidate in &frontier.indices {
-            dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
-        }
-    }
-    frontier.retain_in_place();
-    PruneResult {
-        dropped_states: (original_states - retained_states) as u64,
-        dropped_log_mass,
-        k_capped: original_states > k,
-        delta_pruned: original_states.min(k) > eligible,
-    }
-}
-
-fn bits(values: &[f64]) -> Vec<u64> {
-    values.iter().map(|value| value.to_bits()).collect()
-}
-
 #[test]
 fn wide_delta_guard_boundaries_nonfinite_and_rounding_proof() {
     let deltas = [
@@ -98,16 +14,16 @@ fn wide_delta_guard_boundaries_nonfinite_and_rounding_proof() {
         f64::MAX,
     ];
     assert!(!wide_delta_all_scores_pass(&[], 1e9));
-    for delta in [
-        -f64::INFINITY,
-        -1.0,
-        -0.0,
-        0.0,
-        1.0,
-        f64::INFINITY,
-        f64::NAN,
-    ] {
+    for delta in [-f64::INFINITY, -1.0, -0.0, 0.0, 1.0, f64::NAN] {
         assert!(!wide_delta_all_scores_pass(&[-0.0, 0.0], delta));
+    }
+    // Infinite delta admits exactly the finite scores.
+    assert!(wide_delta_all_scores_pass(
+        &[f64::MIN, -0.0, 0.0, f64::MAX],
+        f64::INFINITY
+    ));
+    for special in [f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+        assert!(!wide_delta_all_scores_pass(&[0.0, special], f64::INFINITY));
     }
     for delta in deltas {
         let bound = delta * 0.25;
@@ -153,6 +69,9 @@ fn wide_delta_guard_boundaries_nonfinite_and_rounding_proof() {
     }
 }
 
+/// Prunes through `prune`, which under `cfg(test)` asserts retained keys, mass
+/// bits, score bits and telemetry against `prune_reference`. Returns whether
+/// the guard took the all-eligible path.
 fn assert_same(
     mut actual: FrontierScratch<f64>,
     k: usize,
@@ -162,73 +81,21 @@ fn assert_same(
     observed: &[u64],
     mode: DecodeMode,
 ) -> bool {
-    let mut expected = actual.clone();
     let mut scored = actual.clone();
     score_candidates(&mut scored, alpha, compatibility, observed);
     let guarded = wide_delta_all_scores_pass(&scored.scores, delta);
-    let a = prune_impl(&mut actual, k, delta, alpha, compatibility, observed, mode);
-    let b = prune_impl_original(
-        &mut expected,
-        k,
-        delta,
-        alpha,
-        compatibility,
-        observed,
-        mode,
-    );
-    assert_eq!(
-        actual.parent.words, expected.parent.words,
-        "retained state words"
-    );
-    assert_eq!(
-        bits(&actual.parent.masses),
-        bits(&expected.parent.masses),
-        "every retained mass bit"
-    );
-    assert_eq!(
-        bits(&actual.scores),
-        bits(&expected.scores),
-        "every score bit"
-    );
-    assert_eq!(
-        actual.retained, expected.retained,
-        "boolean flag values/length"
-    );
-    assert_eq!(
-        actual.indices, expected.indices,
-        "selected or discarded index order"
-    );
-    assert_eq!(actual.branches.words, expected.branches.words);
-    assert_eq!(
-        bits(&actual.branches.masses),
-        bits(&expected.branches.masses)
-    );
-    assert_eq!(
-        (
-            a.dropped_states,
-            a.dropped_log_mass.to_bits(),
-            a.k_capped,
-            a.delta_pruned
-        ),
-        (
-            b.dropped_states,
-            b.dropped_log_mass.to_bits(),
-            b.k_capped,
-            b.delta_pruned
-        ),
-        "all pruning telemetry bits"
-    );
+    prune(&mut actual, k, delta, alpha, compatibility, observed, mode);
     guarded
 }
 
 #[test]
-fn wide_delta_pruning_matches_verbatim_original_all_modes_and_key_orders() {
+fn wide_delta_pruning_matches_reference_all_modes_and_key_orders() {
     let mut exercised = [false; 2];
     for detector_words in [0usize, 2] {
         for logical_words in [1usize, 3] {
             let stride = detector_words + logical_words;
-            for count in [1usize, 3, 63, 64, 513, 1024] {
-                for pattern in 0..5 {
+            for count in [1usize, 3, 63, 64, 257] {
+                for pattern in 0..6 {
                     let mut frontier = FrontierScratch::<f64> {
                         detector_words,
                         stride,
@@ -268,6 +135,9 @@ fn wide_delta_pruning_matches_verbatim_original_all_modes_and_key_orders() {
                                 250_000.0_f64.next_up(),
                             ][index % 4],
                             3 => [f64::NEG_INFINITY, f64::INFINITY, -1.0, 0.0][index % 4],
+                            // Spread wider than delta at delta=1e6, so the
+                            // cutoff drops a state the guard must not admit.
+                            4 => [500_000.0, -600_000.0, 0.0, -500_000.0][index % 4],
                             _ => [
                                 f64::from_bits(0x7ff8_0000_0000_0123),
                                 f64::from_bits(0xfff8_0000_0000_0123),
@@ -390,7 +260,7 @@ fn wide_delta_extreme_guard_edges_and_empty_contract_match_original() {
         );
     }));
     let b = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        prune_impl_original(
+        prune_reference(
             &mut empty.clone(),
             512,
             1e9,

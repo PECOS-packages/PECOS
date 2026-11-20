@@ -4603,16 +4603,27 @@ fn prune_reference(
 }
 
 // A sufficient guard, not a decoder parameter or an approximation.
-// For finite delta >= 1e6, b=delta/4 and h=delta/2 are exact normal values.
-// If every score is in [-b,b], best-delta <= -3delta/4 < -h. Monotonic
-// binary64 rounding gives cutoff <= -h (negative overflow also satisfies
-// this), while every score >= -b >= -h. Therefore all original >= tests pass.
-// The comparison against finite b excludes both infinities and every NaN.
+//
+// Finite delta: b=delta/4 and h=delta/2 are exact. If every score is in
+// [-b,b], best-delta <= -3delta/4 < -h. Monotonic binary64 rounding gives
+// cutoff <= -h (negative overflow also satisfies this), while every score
+// >= -b >= -h. Therefore all original >= tests pass.
+//
+// Infinite delta: a finite best score gives cutoff = -inf, which every finite
+// score passes. The bound f64::MAX admits exactly the finite scores.
+//
+// The comparison against a finite bound excludes both infinities and every
+// NaN. The 1e6 threshold is no part of the proof: it only skips this scan
+// when delta is small enough that the cutoff is likely to drop states.
 fn wide_delta_all_scores_pass(scores: &[f64], delta: f64) -> bool {
-    if scores.is_empty() || !delta.is_finite() || delta < 1e6 {
+    if scores.is_empty() || delta.is_nan() || delta < 1e6 {
         return false;
     }
-    let bound = delta * 0.25;
+    let bound = if delta.is_infinite() {
+        f64::MAX
+    } else {
+        delta * 0.25
+    };
     scores.iter().all(|score| score.abs() <= bound)
 }
 

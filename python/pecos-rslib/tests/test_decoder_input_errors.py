@@ -169,7 +169,7 @@ def test_all_spec_families_reject_wrong_length(family, length):
         decoder.decode_syndrome([0] * length)
 
 
-@pytest.mark.parametrize("family", ["tesseract", "tesseract_trellis", "bp_osd"])
+@pytest.mark.parametrize("family", ["tesseract", "tesseract_trellis", "bp_osd", "mwpf"])
 def test_logical_subdem_preserves_unconnected_detector(family):
     decoder = LogicalSubgraphDecoder.from_membership("error(0.1) D1 L0", [[1, 0]], family)
     assert decoder.decode(bytes([0, 0])) == 0

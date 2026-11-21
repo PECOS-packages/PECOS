@@ -207,8 +207,8 @@ impl Solver {
 /// in the DEM becomes one hyperedge in the solver, preserving correlations
 /// that MWPM decoders must decompose away.
 pub struct MwpfDecoder {
-    /// The MWPF solver instance.
-    solver: Solver,
+    /// The MWPF solver, or `None` when the model has no edges, so no detector can fire.
+    solver: Option<Solver>,
     /// Per-edge observable bitmask (indexed by deduped edge index).
     edge_obs: Vec<u64>,
     /// Number of detectors.
@@ -238,57 +238,73 @@ impl MwpfDecoder {
 
         let edge_map = merged_edges(&dem);
 
-        // MWPF requires every vertex to have an edge, so only detectors that some
-        // mechanism can flip become vertices, numbered in detector order.
-        let mut vertex_of_detector = vec![None; dem.num_detectors];
-        let mut num_vertices = 0;
-        let mut hyperedges = Vec::with_capacity(edge_map.len());
-        let mut edge_obs = Vec::with_capacity(edge_map.len());
+        // Keep the edges that can fire with a finite weight. Mechanisms that cancel
+        // exactly (for example two certain ones) leave probability 0, and a subnormal
+        // prior overflows the weight; neither edge can ever be chosen.
+        let mut kept = Vec::with_capacity(edge_map.len());
         for (detectors, info) in edge_map {
-            // Mechanisms that cancel exactly (for example two certain ones) never fire
-            // the edge, and its weight would be infinite.
-            if info.prob == 0.0 {
-                continue;
-            }
             let weight = if info.prob < 1.0 {
                 ((1.0 - info.prob) / info.prob).ln()
             } else {
                 0.0
             };
-            let vertices = detectors
-                .iter()
-                .map(|&detector| {
-                    *vertex_of_detector[detector].get_or_insert_with(|| {
-                        num_vertices += 1;
-                        num_vertices - 1
-                    })
-                })
-                .collect();
-            hyperedges.push(HyperEdge::new(vertices, weight.into()));
-            edge_obs.push(info.obs_mask);
+            if weight.is_finite() {
+                kept.push((detectors, weight, info.obs_mask));
+            }
         }
 
-        let initializer = Arc::new(SolverInitializer::new(num_vertices, hyperedges));
-        let solver_config = config.to_solver_config();
-        let solver = match config.solver_type {
-            MwpfSolverType::UnionFind => {
-                Solver::UnionFind(SolverSerialUnionFind::new(&initializer, solver_config))
+        // MWPF requires every vertex to have an edge, so only detectors that some
+        // kept edge flips become vertices, numbered in ascending detector order.
+        // When every detector has an edge, vertex i is detector i.
+        let mut vertex_of_detector = vec![None; dem.num_detectors];
+        for (detectors, _, _) in &kept {
+            for &detector in detectors {
+                vertex_of_detector[detector] = Some(0);
             }
-            MwpfSolverType::SingleHair => {
-                Solver::SingleHair(SolverSerialSingleHair::new(&initializer, solver_config))
-            }
-            MwpfSolverType::JointSingleHair => Solver::JointSingleHair(
-                SolverSerialJointSingleHair::new(&initializer, solver_config),
-            ),
-            MwpfSolverType::BpHybrid => {
-                let base = SolverBase {
-                    inner: mwpf::mwpf_solver::SolverEnum::SolverSerialJointSingleHair(
-                        SolverSerialJointSingleHair::new(&initializer, solver_config),
-                    ),
-                };
-                // BP with 50 iterations and 0.5 application ratio (paper defaults).
-                Solver::BpHybrid(SolverBPWrapper::new(base, 50, 0.5))
-            }
+        }
+        let mut num_vertices = 0;
+        for vertex in vertex_of_detector.iter_mut().flatten() {
+            *vertex = num_vertices;
+            num_vertices += 1;
+        }
+        let mut hyperedges = Vec::with_capacity(kept.len());
+        let mut edge_obs = Vec::with_capacity(kept.len());
+        for (detectors, weight, obs_mask) in kept {
+            let vertices = detectors
+                .iter()
+                .filter_map(|&detector| vertex_of_detector[detector])
+                .collect();
+            hyperedges.push(HyperEdge::new(vertices, weight.into()));
+            edge_obs.push(obs_mask);
+        }
+
+        // MWPF rejects an empty graph. With no edges no detector can fire, so
+        // `decode_syndrome` answers every shot without a solver.
+        let solver = if hyperedges.is_empty() {
+            None
+        } else {
+            let initializer = Arc::new(SolverInitializer::new(num_vertices, hyperedges));
+            let solver_config = config.to_solver_config();
+            Some(match config.solver_type {
+                MwpfSolverType::UnionFind => {
+                    Solver::UnionFind(SolverSerialUnionFind::new(&initializer, solver_config))
+                }
+                MwpfSolverType::SingleHair => {
+                    Solver::SingleHair(SolverSerialSingleHair::new(&initializer, solver_config))
+                }
+                MwpfSolverType::JointSingleHair => Solver::JointSingleHair(
+                    SolverSerialJointSingleHair::new(&initializer, solver_config),
+                ),
+                MwpfSolverType::BpHybrid => {
+                    let base = SolverBase {
+                        inner: mwpf::mwpf_solver::SolverEnum::SolverSerialJointSingleHair(
+                            SolverSerialJointSingleHair::new(&initializer, solver_config),
+                        ),
+                    };
+                    // BP with 50 iterations and 0.5 application ratio (paper defaults).
+                    Solver::BpHybrid(SolverBPWrapper::new(base, 50, 0.5))
+                }
+            })
         };
 
         Ok(Self {
@@ -307,15 +323,15 @@ impl MwpfDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `MwpfError::InvalidSyndrome` if the syndrome length differs from
-    /// `num_detectors`, or if a detector that no error mechanism can flip fired.
+    /// Returns `MwpfError::InvalidDimensions` if the syndrome length differs from
+    /// `num_detectors`, or `MwpfError::InvalidSyndrome` if a detector that no error
+    /// mechanism can flip fired.
     pub fn decode_syndrome(&mut self, syndrome: &[u8]) -> Result<MwpfDecodingResult> {
         if syndrome.len() != self.num_detectors {
-            return Err(MwpfError::InvalidSyndrome(format!(
-                "expected {} detectors, got {}",
-                self.num_detectors,
-                syndrome.len()
-            )));
+            return Err(MwpfError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual: syndrome.len(),
+            });
         }
         // Reuse defect buffer across shots
         self.defect_buf.clear();
@@ -340,10 +356,14 @@ impl MwpfDecoder {
             });
         }
 
-        self.solver
-            .solve(SyndromePattern::new_vertices(self.defect_buf.clone()));
-        let output = self.solver.subgraph();
-        self.solver.clear();
+        // Every fired detector has a vertex, so some edge exists and so does the solver.
+        let solver = self
+            .solver
+            .as_mut()
+            .expect("a fired detector with a vertex implies the model has an edge and a solver");
+        solver.solve(SyndromePattern::new_vertices(self.defect_buf.clone()));
+        let output = solver.subgraph();
+        solver.clear();
 
         // Compute observable mask from the correction subgraph.
         let mut observable_mask = 0u64;
@@ -411,6 +431,54 @@ mod tests {
     }
 
     #[test]
+    fn models_without_edges_decode_only_empty_syndromes() {
+        for dem in [
+            "detector D0",
+            "error(0) D0 D1",
+            "error(0.1) L0\ndetector D0",
+            "error(1) D0 D1\nerror(1) D0 D1",
+            "error(1e-320) D0 D1",
+        ] {
+            let mut decoder = MwpfDecoder::from_dem(dem, MwpfConfig::default()).unwrap();
+            let width = decoder.num_detectors();
+            assert_eq!(decoder.num_edges(), 0, "{dem}");
+            assert_eq!(
+                decoder
+                    .decode_syndrome(&vec![0; width])
+                    .unwrap()
+                    .observable_mask,
+                0
+            );
+            let mut fired = vec![0; width];
+            fired[0] = 1;
+            assert!(
+                matches!(
+                    decoder.decode_syndrome(&fired),
+                    Err(MwpfError::InvalidSyndrome(_))
+                ),
+                "{dem}"
+            );
+        }
+    }
+
+    #[test]
+    fn vertices_follow_detector_order() {
+        // Edge keys iterate as [0, 2], [1], [2]; vertices must still be 0, 1, 2.
+        let decoder = MwpfDecoder::from_dem(
+            "error(0.1) D0 D2\nerror(0.1) D1\nerror(0.1) D2",
+            MwpfConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(decoder.vertex_of_detector, [Some(0), Some(1), Some(2)]);
+        let decoder = MwpfDecoder::from_dem(
+            "error(0.1) D1 D3\nerror(0.1) D3\ndetector D0\ndetector D2",
+            MwpfConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(decoder.vertex_of_detector, [None, Some(0), None, Some(1)]);
+    }
+
+    #[test]
     fn detectors_without_mechanisms_are_supported_until_they_fire() {
         let mut decoder = MwpfDecoder::from_dem(
             "error(0.1) D1 L0\ndetector D0\ndetector D2",
@@ -434,7 +502,10 @@ mod tests {
         }
         assert!(matches!(
             decoder.decode_syndrome(&[0, 1]),
-            Err(MwpfError::InvalidSyndrome(message)) if message == "expected 3 detectors, got 2"
+            Err(MwpfError::InvalidDimensions {
+                expected: 3,
+                actual: 2
+            })
         ));
     }
 }

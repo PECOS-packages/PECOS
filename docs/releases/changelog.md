@@ -126,18 +126,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   families and `k_mwpm`, the `belief_matching` families, the union-find, A*
   and windowed decoders, and logical-subgraph decoders whatever their inner
   decoder. The correlated Fusion Blossom paths already checked each mechanism.
-  Commit windows check every column, so a windowed decoder with an
-  uncorrelated PyMatching inner now also rejects a single prior above 0.5,
-  which the non-windowed `pymatching_uncorrelated` still accepts. PyMatching
+  Commit windows check every column, so a windowed decoder with an uncorrelated
+  PyMatching inner now also rejects a single prior above 0.5, which the
+  non-windowed `pymatching_uncorrelated` still accepts. PyMatching
   `decode_batch_with_config` (and Python `decode_batch`) predictions now have
-  the width `decode` returns instead of the graph's padded width, and `add_edge` and `add_boundary_edge` widen that width
-  to cover any observable index they are given; before, flips on such an
-  observable were dropped by `decode`. `MwpfDecoder` accepts detectors that no
-  mechanism can flip, which used to panic when building the solver, and
-  reports them as `InvalidSyndrome` only if they fire; it also rejects a
-  syndrome of the wrong length. Logical
-  decoders raise `RuntimeError` when an internally generated sub-DEM fails to
-  build for another reason. A Tesseract `decode_detections` or
+  the width `decode` returns instead of the graph's padded width, and `add_edge`
+  and `add_boundary_edge` widen that width to cover any observable index they
+  are given; before, flips on such an observable were dropped by `decode`.
+  `MwpfDecoder` accepts detectors that no mechanism can flip and models with no
+  edges at all (including parallel mechanisms that cancel exactly), which used
+  to panic when building the solver, and reports such a detector as the new
+  `MwpfError::InvalidSyndrome` only if it fires; a syndrome of the wrong length
+  is the new `MwpfError::InvalidDimensions`. Logical decoders raise
+  `RuntimeError` when an internally generated sub-DEM fails to build for another
+  reason. A Tesseract `decode_detections` or
   `decode_with_order` index outside the model is `InvalidSyndrome` instead of
   `DecodingFailed`. `DecoderError::BatchSizeMismatch` now means a
   flat batch buffer of the wrong byte count, and PyMatching reports that case

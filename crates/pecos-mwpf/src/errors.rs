@@ -32,6 +32,15 @@ pub enum MwpfError {
     /// Syndrome the model cannot produce
     #[error("Invalid syndrome: {0}")]
     InvalidSyndrome(String),
+
+    /// Syndrome of the wrong length
+    #[error("Invalid syndrome length: expected {expected} detectors, got {actual}")]
+    InvalidDimensions {
+        /// Number of detectors in the model
+        expected: usize,
+        /// Length of the syndrome given
+        actual: usize,
+    },
 }
 
 /// Result type for MWPF operations
@@ -47,6 +56,9 @@ impl From<MwpfError> for pecos_decoder_core::DecoderError {
             MwpfError::DecodingFailed(msg) => pecos_decoder_core::DecoderError::DecodingFailed(msg),
             MwpfError::InvalidSyndrome(msg) => {
                 pecos_decoder_core::DecoderError::InvalidSyndrome(msg)
+            }
+            MwpfError::InvalidDimensions { expected, actual } => {
+                pecos_decoder_core::DecoderError::InvalidDimensions { expected, actual }
             }
         }
     }

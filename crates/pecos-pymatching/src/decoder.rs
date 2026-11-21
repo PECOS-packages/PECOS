@@ -780,12 +780,16 @@ impl PyMatchingDecoder {
 
     /// Widen the decoded observable count to cover `observables`.
     ///
-    /// The backend graph grows to fit any observable index it is given; `decode`
-    /// returns `config.num_observables` entries, so it must grow with it or flips on
-    /// the new observables would be dropped.
-    fn include_observables(&mut self, observables: &[ObservableId]) {
-        if let Some(&max) = observables.iter().max() {
-            self.config.num_observables = self.config.num_observables.max(max + 1);
+    /// `decode` returns `config.num_observables` entries, so it must cover every
+    /// observable an edge carries or flips on it would be dropped. The backend graph
+    /// grows on its own only when a new edge is added, not when a parallel edge is
+    /// merged, so both counts are raised together through `ensure_num_observables`.
+    fn include_observables(&mut self, observables: &[ObservableId]) -> Result<()> {
+        match observables.iter().max() {
+            Some(&max) if max >= self.config.num_observables => {
+                self.ensure_num_observables(max + 1)
+            }
+            _ => Ok(()),
         }
     }
 
@@ -814,7 +818,7 @@ impl PyMatchingDecoder {
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
         self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
         result?;
-        self.include_observables(observables);
+        self.include_observables(observables)?;
 
         Ok(())
     }
@@ -870,7 +874,7 @@ impl PyMatchingDecoder {
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
         self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
         result?;
-        self.include_observables(observables);
+        self.include_observables(observables)?;
 
         Ok(())
     }
@@ -1752,6 +1756,29 @@ impl From<ffi::BatchDecodingResult> for BatchDecodingResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_edge_observable_past_64_is_decoded() {
+        let config = PyMatchingConfig {
+            num_nodes: Some(2),
+            num_observables: 1,
+            ..Default::default()
+        };
+        let mut decoder = PyMatchingDecoder::new(config).unwrap();
+        decoder
+            .add_edge(0, 1, &[3], Some(2.0), Some(0.1), None)
+            .unwrap();
+        // A lighter parallel edge replaces the observables of the existing edge, so
+        // the backend graph does not grow on its own.
+        decoder
+            .add_edge(0, 1, &[70], Some(1.0), Some(0.1), None)
+            .unwrap();
+        assert_eq!(decoder.num_decoded_observables(), 71);
+        let observable = decoder.decode(&[1, 1]).unwrap().observable;
+        assert_eq!(observable.len(), 71);
+        assert_eq!(observable[70], 1);
+        assert_eq!(observable.iter().filter(|&&bit| bit != 0).count(), 1);
+    }
 
     #[test]
     fn added_edge_observables_are_decoded_in_single_and_batch_paths() {

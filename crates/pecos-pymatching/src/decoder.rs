@@ -1312,10 +1312,7 @@ impl PyMatchingDecoder {
         let result = ffi::add_noise(&self.graph, num_samples, rng_seed)?;
 
         // Convert BatchDecodingResult to proper noise result
-        // The backend writes one row per sample at the graph's observable count;
-        // return the width `decode` uses.
-        let row_width = self.num_observables();
-        let num_observables = self.num_decoded_observables();
+        let num_observables = self.num_observables();
         let num_detectors = self.num_detectors();
 
         let mut errors = Vec::with_capacity(num_samples);
@@ -1323,7 +1320,7 @@ impl PyMatchingDecoder {
 
         // Unpack the results
         for sample in 0..num_samples {
-            let error_start = sample * row_width;
+            let error_start = sample * num_observables;
             let error_end = error_start + num_observables;
             let error_vec: Vec<u8> = result.predictions[error_start..error_end].to_vec();
             errors.push(error_vec);
@@ -1779,7 +1776,7 @@ mod tests {
         let unpacked = decoder
             .decode_batch_with_config(&[1, 1], 1, 2, BatchConfig::default())
             .unwrap();
-        assert_eq!(unpacked.predictions, [single.clone()]);
+        assert_eq!(unpacked.predictions, std::slice::from_ref(&single));
 
         let packed_config = BatchConfig {
             bit_packed_output: true,

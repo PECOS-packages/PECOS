@@ -23,7 +23,7 @@ pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usiz
 ///
 /// A matching edge's weight `ln((1 - p) / p)` is negative above 0.5, so every
 /// mechanism with a one- or two-detector component must have a prior of at most
-/// 0.5, as upstream PyMatching requires of each instruction. The check runs per
+/// 0.5, as upstream `PyMatching` requires of each instruction. The check runs per
 /// mechanism, before parallel mechanisms are merged or correlated components
 /// cancel, so it also rejects parallel mechanisms whose independent combination
 /// falls back below 0.5.

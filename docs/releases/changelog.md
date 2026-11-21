@@ -129,9 +129,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Commit windows check every column, so a windowed decoder with an
   uncorrelated PyMatching inner now also rejects a single prior above 0.5,
   which the non-windowed `pymatching_uncorrelated` still accepts. PyMatching
-  `decode_batch_with_config` (and Python `decode_batch`) predictions and
-  `add_noise` error rows now have the width `decode` returns instead of the
-  graph's padded width, and `add_edge` and `add_boundary_edge` widen that width
+  `decode_batch_with_config` (and Python `decode_batch`) predictions now have
+  the width `decode` returns instead of the graph's padded width, and `add_edge` and `add_boundary_edge` widen that width
   to cover any observable index they are given; before, flips on such an
   observable were dropped by `decode`. `MwpfDecoder` accepts detectors that no
   mechanism can flip, which used to panic when building the solver, and

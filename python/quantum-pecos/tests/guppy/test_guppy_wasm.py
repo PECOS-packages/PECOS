@@ -354,3 +354,40 @@ def test_pecos_indexed_export_error_recovery(examples):
         .to_dict()
     )
     assert data == {"value": [1.5, 1.5], "measured": [1, 1]}
+
+
+def test_pecos_parity_cli_executes_public_workloads(tmp_path):
+    import json
+
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    output = tmp_path / "pecos.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(EXAMPLES / "parity/parity.py"),
+            "run",
+            "--backend",
+            "pecos",
+            "--output",
+            str(output),
+            "--stack-tag",
+            "ci-pecos",
+            "--host-tag",
+            "ci",
+            "--shots",
+            "2",
+            "--repeats",
+            "1",
+            "--workers",
+            "2",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+    report = json.loads(output.read_text())
+    assert len(report["cases"]) >= 19
+    assert all(case["status"] == "completed" for case in report["cases"])

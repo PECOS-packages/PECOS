@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "suite_id": "guppy-wasm-scalar-v1",
+  "description": "Initial scalar workload coverage; passing this suite does not establish complete stack parity.",
+  "cases": [
+    {
+      "id": "integer-addition",
+      "source": "arithmetic.py",
+      "function": "addition",
+      "module": "arithmetic.wat",
+      "expected": {
+        "sum": 5
+      }
+    },
+    {
+      "id": "integer-chain",
+      "source": "arithmetic.py",
+      "function": "chained_arithmetic",
+      "module": "arithmetic.wat",
+      "expected": {
+        "product": 20
+      }
+    },
+    {
+      "id": "integer-feedback",
+      "source": "arithmetic.py",
+      "function": "conditional_x",
+      "module": "arithmetic.wat",
+      "expected": {
+        "measured": true
+      }
+    },
+    {
+      "id": "state-context-isolation",
+      "source": "stateful.py",
+      "function": "stateful_calls",
+      "module": "counter.wat",
+      "expected": {
+        "three": 3,
+        "four": 4,
+        "independent": 1,
+        "cleared": 1
+      }
+    },
+    {
+      "id": "state-helper-order",
+      "source": "stateful.py",
+      "function": "context_helpers",
+      "module": "counter.wat",
+      "expected": {
+        "second": 2,
+        "third": 3
+      }
+    },
+    {
+      "id": "counted-loop",
+      "source": "stateful.py",
+      "function": "stateful_loop",
+      "module": "counter.wat",
+      "expected": {
+        "three": 3
+      }
+    },
+    {
+      "id": "loop-boundaries",
+      "source": "stateful.py",
+      "function": "loop_control",
+      "module": "counter.wat",
+      "expected": {
+        "zero": 99,
+        "one": 1,
+        "nested": 7,
+        "condition": 10,
+        "steps": 3
+      }
+    },
+    {
+      "id": "loop-helper-order",
+      "source": "stateful.py",
+      "function": "loop_helpers",
+      "module": "counter.wat",
+      "expected": {
+        "helper": 3,
+        "after": 4
+      }
+    },
+    {
+      "id": "mixed-scalars",
+      "source": "floating_point.py",
+      "function": "mixed_arithmetic",
+      "module": "floating_point.wat",
+      "expected": {
+        "value": -4.25,
+        "integer": -4
+      }
+    },
+    {
+      "id": "float-feedback",
+      "source": "floating_point.py",
+      "function": "float_feedback",
+      "module": "floating_point.wat",
+      "expected": {
+        "measured": true
+      }
+    },
+    {
+      "id": "float-state",
+      "source": "floating_point.py",
+      "function": "float_state",
+      "module": "floating_point.wat",
+      "expected": {
+        "initial": 0.0,
+        "retained": -2.5
+      }
+    },
+    {
+      "id": "float-loop",
+      "source": "floating_point.py",
+      "function": "float_loop",
+      "module": "floating_point.wat",
+      "expected": {
+        "value": 3.75,
+        "measured": true
+      }
+    },
+    {
+      "id": "indexed-arithmetic",
+      "source": "indexed_exports.py",
+      "function": "indexed_arithmetic",
+      "module": "indexed_exports.wat",
+      "expected": {
+        "sum": 4,
+        "product": 20,
+        "named": 22
+      }
+    },
+    {
+      "id": "indexed-feedback",
+      "source": "indexed_exports.py",
+      "function": "indexed_feedback",
+      "module": "indexed_exports.wat",
+      "expected": {
+        "value": 1.5,
+        "measured": true
+      }
+    },
+    {
+      "id": "indexed-state",
+      "source": "indexed_exports.py",
+      "function": "indexed_state",
+      "module": "indexed_exports.wat",
+      "expected": {
+        "three": 3,
+        "reset": 1
+      }
+    },
+    {
+      "id": "wasm-unreachable",
+      "source": "stateful.py",
+      "function": "trapped",
+      "module": "counter.wat",
+      "expected_error": "wasm_trap"
+    },
+    {
+      "id": "fresh-runner-after-trap",
+      "source": "stateful.py",
+      "function": "stateful_calls",
+      "module": "counter.wat",
+      "expected": {
+        "three": 3,
+        "four": 4,
+        "independent": 1,
+        "cleared": 1
+      }
+    },
+    {
+      "id": "dependent-calls-100",
+      "source": "parity/throughput.py",
+      "function": "calls_100",
+      "module": "counter.wat",
+      "expected": {
+        "value": 100
+      }
+    },
+    {
+      "id": "dependent-calls-1000",
+      "source": "parity/throughput.py",
+      "function": "calls_1000",
+      "module": "counter.wat",
+      "expected": {
+        "value": 1000
+      }
+    }
+  ]
+}

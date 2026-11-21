@@ -265,3 +265,14 @@ The implementation follows the public
 [tket.wasm specification](https://github.com/Quantinuum/tket2/blob/main/tket/tket-qsystem/src/extension/classical_compute/wasm.rs)
 and Selene's public
 [Utility interface](https://github.com/Quantinuum/selene/blob/main/selene-core/python/selene_core/utility.py).
+
+## Compare against another Guppy/WASM stack
+
+The [public comparison bundle](https://github.com/PECOS-packages/PECOS/tree/dev/examples/guppy_wasm/parity)
+provides 19 workloads with independent expected answers, public PECOS and Selene
+runners, and an adapter contract for a separately installed reference stack.
+It checks scalar calls, state, loops, quantum feedback and traps, and separates
+preparation, first-run and repeat timings. The handoff archive contains only
+allowlisted public sources; reference adapters and environments stay local.
+Passing this suite demonstrates conformance on its workloads, not full stack
+or performance parity.

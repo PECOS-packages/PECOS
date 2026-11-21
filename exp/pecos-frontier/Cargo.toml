@@ -21,10 +21,15 @@ libm.workspace = true
 name = "pecos_frontier"
 
 [dev-dependencies]
+criterion.workspace = true
 rand.workspace = true
 rand_xoshiro.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[[bench]]
+name = "decode"
+harness = false
 
 [lints]
 workspace = true

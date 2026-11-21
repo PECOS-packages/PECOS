@@ -83,6 +83,18 @@ impl StabActive {
         }
     }
 
+    /// Largest active width whose complex amplitude vector can be indexed on this platform.
+    #[must_use]
+    pub const fn max_supported_active_width() -> usize {
+        (isize::MAX.unsigned_abs() / size_of::<Complex64>()).ilog2() as usize
+    }
+
+    /// Configured maximum active width, including any caller override.
+    #[must_use]
+    pub const fn max_active_width(&self) -> usize {
+        self.max_width
+    }
+
     /// Set the maximum permitted active width, retaining the represented state.
     ///
     /// # Panics
@@ -91,7 +103,7 @@ impl StabActive {
     #[must_use]
     pub fn with_max_active_width(mut self, limit: usize) -> Self {
         assert!(
-            limit <= (isize::MAX.unsigned_abs() / size_of::<Complex64>()).ilog2() as usize,
+            limit <= Self::max_supported_active_width(),
             "active width limit cannot index a complex vector"
         );
         assert!(

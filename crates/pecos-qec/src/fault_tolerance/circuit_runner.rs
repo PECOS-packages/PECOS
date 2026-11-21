@@ -423,6 +423,7 @@ fn apply_gate<S: CliffordGateable>(sim: &mut S, gate: &pecos_core::Gate) {
         GateType::PZ | GateType::QAlloc => {
             sim.pz(&qubits);
         }
+        gate if gate.is_detection() => {}
         GateType::QFree
         | GateType::Idle
         | GateType::MeasCrosstalkGlobalPayload

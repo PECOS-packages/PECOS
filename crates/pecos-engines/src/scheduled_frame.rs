@@ -555,7 +555,18 @@ impl IntoNoiseModel for ScheduledNoise {
     }
 }
 
+/// Explain why a non-collapsing detection gate cannot be encoded on a wire.
+#[must_use]
+pub fn unsupported_detection_message(gate: GateType) -> String {
+    format!(
+        "{gate} is a non-collapsing detect gate, which this wire cannot carry; remove it or run the circuit on a non-scheduled engine"
+    )
+}
+
 pub(crate) fn unsupported_scheduled_gate(gate_type: GateType) -> PecosError {
+    if gate_type.is_detection() {
+        return error(&unsupported_detection_message(gate_type));
+    }
     let fix = if matches!(
         gate_type,
         GateType::MeasureZLost | GateType::MeasureZLeakedLost
@@ -1496,6 +1507,24 @@ mod header_tests {
             );
             bytes[4..8].copy_from_slice(&version.to_le_bytes());
             decode(&bytes).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod detection_tests {
+    use super::*;
+    #[test]
+    fn detects_rejected_by_scheduled_wire() {
+        for kind in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let error = fields(&Gate::simple(kind, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&format!("{kind} is a non-collapsing detect gate")));
         }
     }
 }

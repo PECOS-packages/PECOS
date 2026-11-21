@@ -130,6 +130,11 @@ say that its outcome was leaked. The
 current circuit allocator does not automatically assign IDs to every `MeasureLeaked` gate,
 so `MZ_L[m?]` is possible even though the operation produces a runtime result.
 
+Non-collapsing detection uses `DL` (`DetectLeaked`), `DLo` (`DetectLost`), and
+`DLL` (`DetectLeakedLost`), with the same colour and measurement-family brackets as
+the Z heralds. Explicit result IDs display as, for example, `DLo[m7]`; missing IDs
+show `m?` when IDs are enabled. Detection does not allocate Boolean records.
+
 Trace visualization preserves `MeasureLeaked` as a native gate and renders it as
 `MZ_L`, retaining each runtime result ID. This is distinct from
 `qis_operation_trace_to_tick_circuit`, whose analysis replay projects it onto

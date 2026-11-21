@@ -519,7 +519,9 @@ fn split_batched_tick_commands(circuit: &mut TickCircuit) {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
 
-            let split_gates: Vec<Gate> = if batch.gate_count() == 0 {
+            // Keep detection operands and result IDs intact across passes (amendment 17).
+            let split_gates: Vec<Gate> = if gate.gate_type.is_detection() || batch.gate_count() == 0
+            {
                 vec![gate.clone()]
             } else {
                 batch

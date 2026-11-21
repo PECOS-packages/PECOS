@@ -6,6 +6,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Added:** Non-collapsing `DetectLeaked`, `DetectLost`, and `DetectLeakedLost` gates,
+  with location-based readout matrices, no gate noise, and no Boolean measurement record.
+- **Fixed:** DAG-to-tick conversion preserves positional outcome order between Z
+  heralds and record-bearing measurements on different qubits.
+
 - **Breaking:** Trellis, Frontier and BpTrellis results no longer report
   `dropped_log_mass` by default, and float metrics no longer pay to accumulate it.
   The integer max-log metric still keeps its cheap running maximum. Set

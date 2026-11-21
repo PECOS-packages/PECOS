@@ -1110,6 +1110,33 @@ impl Gate {
         )
     }
 
+    /// Create a non-collapsing `DetectLeaked` gate on multiple qubits.
+    #[must_use]
+    pub fn detect_leaked(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::DetectLeaked,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create a non-collapsing `DetectLost` gate on multiple qubits.
+    #[must_use]
+    pub fn detect_lost(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::DetectLost,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create a non-collapsing `DetectLeakedLost` gate on multiple qubits.
+    #[must_use]
+    pub fn detect_leaked_lost(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::simple(
+            GateType::DetectLeakedLost,
+            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
     /// Deprecated spelling of [`Gate::measure_z_leaked`].
     #[deprecated(note = "renamed to Gate::measure_z_leaked")]
     #[must_use]
@@ -1407,16 +1434,17 @@ impl Gate {
                 self.gate_type, duplicates
             ));
         }
-        let is_measurement = matches!(
-            self.gate_type,
-            GateType::MX
-                | GateType::MZ
-                | GateType::MeasureZLeaked
-                | GateType::MeasureZLost
-                | GateType::MeasureZLeakedLost
-                | GateType::MeasureFree
-                | GateType::MPZ
-        );
+        let is_measurement = self.gate_type.is_detection()
+            || matches!(
+                self.gate_type,
+                GateType::MX
+                    | GateType::MZ
+                    | GateType::MeasureZLeaked
+                    | GateType::MeasureZLost
+                    | GateType::MeasureZLeakedLost
+                    | GateType::MeasureFree
+                    | GateType::MPZ
+            );
         if is_measurement {
             if !self.meas_ids.is_empty() && self.meas_ids.len() != self.qubits.len() {
                 return Err(format!(

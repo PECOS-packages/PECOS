@@ -3380,6 +3380,9 @@ def tick_circuit_to_stim(
             msg = f"Unsupported traced Clifford RXYXY2Q angles: theta={theta!r}, phi={phi!r}"
             raise ValueError(msg)
 
+        if gate.gate_type.is_detection():
+            msg = f"{gate_name} has no Stim form; remove it"
+            raise ValueError(msg)
         if is_supported_noop_or_metadata_gate(gate.gate_type):
             return [], None
         msg = f"Unsupported gate for Stim export: {gate_name}"

@@ -69,6 +69,8 @@ pub struct BiasedDepolarizingNoiseModel {
     p2: f64,
     /// Random number generator
     rng: NoiseRng<PecosRng>,
+    /// Expected reply length and indices whose detection outcomes bypass bias.
+    detection_outcomes: Option<(usize, Vec<usize>)>,
 }
 
 impl ProbabilityValidator for BiasedDepolarizingNoiseModel {}
@@ -116,6 +118,7 @@ impl BiasedDepolarizingNoiseModel {
             p1,
             p2,
             rng: NoiseRng::default(),
+            detection_outcomes: None,
         })
     }
 
@@ -195,6 +198,9 @@ impl BiasedDepolarizingNoiseModel {
 
         for gate in gates {
             match gate.gate_type {
+                GateType::DetectLeaked | GateType::DetectLost | GateType::DetectLeakedLost => {
+                    builder.add_gate_command(gate);
+                }
                 GateType::X
                 | GateType::Z
                 | GateType::Y
@@ -326,9 +332,19 @@ impl BiasedDepolarizingNoiseModel {
     /// Returns a `PecosError` if applying bias fails
     fn apply_bias_to_message(&mut self, message: ByteMessage) -> Result<ByteMessage, PecosError> {
         // Parse the message to extract the measurement results
+        let record = self.detection_outcomes.take();
         let outcomes = message.outcomes()?;
 
-        // If the message doesn't contain measurements, return it unchanged
+        // Validate only detection-bearing replies; preserve detect-free behavior.
+        if let Some((expected, indices)) = &record
+            && !indices.is_empty()
+            && *expected != outcomes.len()
+        {
+            return Err(PecosError::Processing(format!(
+                "Mismatch in number of reply outcomes ({}) and recorded outcome-producing operands ({expected})",
+                outcomes.len()
+            )));
+        }
         if outcomes.is_empty() {
             return Ok(message);
         }
@@ -338,6 +354,12 @@ impl BiasedDepolarizingNoiseModel {
             .into_iter()
             .enumerate()
             .map(|(index, outcome)| {
+                if record
+                    .as_ref()
+                    .is_some_and(|(_, indices)| indices.binary_search(&index).is_ok())
+                {
+                    return outcome;
+                }
                 let index_u32 = u32::try_from(index).unwrap_or(u32::MAX);
                 let (_biased_index, biased_outcome) =
                     self.apply_bias_to_measurement(index_u32, outcome);
@@ -505,12 +527,27 @@ impl ControlEngine for BiasedDepolarizingNoiseModel {
         // For quantum operations, apply gate noise
         trace!("BiasedDepolarizingNoise::start - applying noise to quantum operations");
 
+        self.detection_outcomes = None;
         // Parse the input as quantum operations
         let gates: Vec<crate::Gate> = input.quantum_ops()?;
         if gates.iter().any(Gate::is_channel) {
             return Err(Self::channel_gate_error());
         }
 
+        let mut count = 0;
+        let mut detection_indices = Vec::new();
+        for gate in &gates {
+            if gate.gate_type.is_detection() {
+                detection_indices.extend(count..count + gate.qubits.len());
+            }
+            if gate.gate_type.consumes_measurement_record()
+                || gate.gate_type.is_recordless_z_measurement()
+                || gate.gate_type.is_detection()
+            {
+                count += gate.qubits.len();
+            }
+        }
+        self.detection_outcomes = Some((count, detection_indices));
         // Apply noise to the gates
         let noisy_gates = self.apply_noise_to_gates(&gates);
 
@@ -529,7 +566,7 @@ impl ControlEngine for BiasedDepolarizingNoiseModel {
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        // No state to reset
+        self.detection_outcomes = None;
         Ok(())
     }
 }

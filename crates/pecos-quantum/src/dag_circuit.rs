@@ -764,16 +764,17 @@ pub struct DagCircuit {
 }
 
 fn supports_measurement_target(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::MX
-            | GateType::MZ
-            | GateType::MeasureFree
-            | GateType::MeasureZLeaked
-            | GateType::MeasureZLost
-            | GateType::MeasureZLeakedLost
-            | GateType::MPZ
-    )
+    gate_type.is_detection()
+        || matches!(
+            gate_type,
+            GateType::MX
+                | GateType::MZ
+                | GateType::MeasureFree
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost
+                | GateType::MPZ
+        )
 }
 
 // A DAG has no custom-gate registry with which to validate angle payloads.

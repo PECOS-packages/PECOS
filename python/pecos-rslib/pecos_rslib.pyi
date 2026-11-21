@@ -2096,6 +2096,7 @@ class GateType:
 
     @property
     def name(self) -> str: ...
+    def is_detection(self) -> bool: ...
 
 class Gate:
     """Quantum gate or stored TickCircuit gate batch."""
@@ -2325,6 +2326,21 @@ class TickHandle:
         qubits: Sequence[int],
         meas_ids: Sequence[int],
     ) -> list[tuple[int, int, int]]: ...
+    def detect_leaked_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def detect_lost_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def detect_leaked_lost_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
     def measure_leaked_with_ids(
         self,
         qubits: Sequence[int],

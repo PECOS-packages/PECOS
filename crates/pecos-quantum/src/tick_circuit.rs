@@ -672,7 +672,9 @@ fn gate_batch_has_zero_physical_duration(gate: GateBatchRef<'_>) -> bool {
 // Runtime herald measurements emit outcomes too, even though they are not
 // automatically allocated Boolean analysis records. Preserve their ordering.
 pub(crate) fn is_measurement_for_scheduling(gate_type: GateType) -> bool {
-    gate_type.consumes_measurement_record() || gate_type.is_recordless_z_measurement()
+    gate_type.consumes_measurement_record()
+        || gate_type.is_recordless_z_measurement()
+        || gate_type.is_detection()
 }
 
 impl Tick {
@@ -2780,7 +2782,10 @@ impl TickCircuit {
     /// wait operations with duration-dependent `p_idle` noise.
     ///
     /// Metadata-only ticks (all batches `GateType::is_meta`) are zero
-    /// physical duration and receive no idle gates.
+    /// physical duration and receive no idle gates. Ticks containing only detection,
+    /// metadata, or explicitly zero-duration batches also receive no idle gates.
+    /// Detection takes no physical time and must remain in separate ticks when
+    /// filling idles; scheduling passes do not isolate detection automatically.
     ///
     /// # Panics
     ///
@@ -2789,6 +2794,9 @@ impl TickCircuit {
     /// on meta-occupied qubits impossible, so the accounting would be
     /// silently wrong. Emit meta batches in their own tick (as
     /// `tracked_pauli` does).
+    /// Also panics if a tick mixes detection with physical gate batches, or
+    /// explicitly zero-duration batches with physical batches. Emit detect gates
+    /// in their own ticks, optionally with metadata or zero-duration batches.
     ///
     /// # Example
     ///
@@ -2809,6 +2817,20 @@ impl TickCircuit {
         }
 
         for tick in &mut self.ticks {
+            if tick
+                .iter_gate_batches()
+                .any(|gate| gate.gate_type.is_detection())
+            {
+                assert!(
+                    tick.iter_gate_batches().all(|gate| {
+                        gate.gate_type.is_detection()
+                            || gate.gate_type.is_meta()
+                            || gate_batch_has_zero_physical_duration(gate)
+                    }),
+                    "fill_idle_gates: tick mixes detect and physical gates; emit detect gates in their own tick"
+                );
+                continue;
+            }
             // Metadata-only and explicitly zero-duration ticks preserve
             // ordering but must not create physical idle periods.
             let batch_count = tick.gate_batches().len();
@@ -3941,7 +3963,7 @@ impl From<&DagCircuit> for TickCircuit {
                     )
                     .max()
                     .unwrap_or(0);
-                if gate.gate_type.consumes_measurement_record() {
+                if is_measurement_for_scheduling(gate.gate_type) {
                     target_idx = target_idx.max(last_measurement_tick);
                     last_measurement_tick = target_idx;
                 }
@@ -6825,6 +6847,9 @@ mod tests {
     #[test]
     fn compaction_preserves_herald_measurement_order_and_ids() {
         for kinds in [
+            [GateType::MZ, GateType::DetectLeaked, GateType::MZ],
+            [GateType::MZ, GateType::DetectLost, GateType::MZ],
+            [GateType::MZ, GateType::DetectLeakedLost, GateType::MZ],
             [GateType::MZ, GateType::MeasureZLeaked, GateType::MZ],
             [GateType::MZ, GateType::MeasureZLost, GateType::MZ],
             [GateType::MZ, GateType::MeasureZLeakedLost, GateType::MZ],
@@ -6855,7 +6880,18 @@ mod tests {
                 }
                 let outcomes = |c: &TickCircuit| -> Vec<_> {
                     c.iter_gate_batches()
-                        .filter(|batch| is_measurement_for_scheduling(batch.gate_type))
+                        .filter(|batch| {
+                            matches!(
+                                batch.gate_type,
+                                GateType::MZ
+                                    | GateType::MeasureZLeaked
+                                    | GateType::MeasureZLost
+                                    | GateType::MeasureZLeakedLost
+                                    | GateType::DetectLeaked
+                                    | GateType::DetectLost
+                                    | GateType::DetectLeakedLost
+                            )
+                        })
                         .map(|batch| {
                             let g = batch.as_gate();
                             (g.gate_type, g.qubits.to_vec(), g.meas_ids.to_vec())
@@ -6869,10 +6905,18 @@ mod tests {
                         compact(&mut compacted);
                         assert_eq!(outcomes(&compacted), expected);
                         for tick in compacted.ticks() {
-                            for batch in tick
-                                .iter_gate_batches()
-                                .filter(|b| is_measurement_for_scheduling(b.gate_type))
-                            {
+                            for batch in tick.iter_gate_batches().filter(|b| {
+                                matches!(
+                                    b.gate_type,
+                                    GateType::MZ
+                                        | GateType::MeasureZLeaked
+                                        | GateType::MeasureZLost
+                                        | GateType::MeasureZLeakedLost
+                                        | GateType::DetectLeaked
+                                        | GateType::DetectLost
+                                        | GateType::DetectLeakedLost
+                                )
+                            }) {
                                 assert_eq!(batch.attrs().count(), 1);
                             }
                         }

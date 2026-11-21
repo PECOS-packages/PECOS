@@ -1938,6 +1938,9 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         | GateType::MeasureZLeaked
         | GateType::MeasureZLost
         | GateType::MeasureZLeakedLost
+        | GateType::DetectLeaked
+        | GateType::DetectLost
+        | GateType::DetectLeakedLost
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::PX
@@ -3684,5 +3687,23 @@ mod tests {
             pass_count == total,
             "Not all cases passed: {pass_count}/{total}"
         );
+    }
+}
+
+#[cfg(test)]
+mod detection_tests {
+    use super::*;
+
+    #[test]
+    fn detection_is_not_a_unitary_matrix() {
+        for kind in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let panic = std::panic::catch_unwind(|| gate_to_matrix(kind, &[0], 1)).unwrap_err();
+            let message = panic.downcast_ref::<String>().expect("gate-naming panic");
+            assert!(message.contains(&kind.to_string()));
+        }
     }
 }

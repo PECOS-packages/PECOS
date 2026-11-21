@@ -135,6 +135,7 @@ fn reference_unitary(sim: &mut DenseStateVec, gate: &Gate) {
         GateType::U => {
             sim.u(angles[0], angles[1], angles[2], qs);
         }
+        gate if gate.is_detection() => {}
         GateType::QFree
         | GateType::Idle
         | GateType::MeasCrosstalkGlobalPayload

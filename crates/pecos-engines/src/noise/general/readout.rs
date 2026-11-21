@@ -12,18 +12,21 @@ enum TrueState {
     One,
     Leaked,
     Lost,
+    Present,
 }
 
-/// Conditional readout probabilities for one Z-measurement flavor.
+/// Conditional readout probabilities for one measurement or detection flavor.
 ///
-/// Rows name true states (`"0"`, `"1"`, `"leaked"`, or `"lost"`); columns
-/// name outcomes in the flavor's alphabet. Missing rows retain legacy readout.
+/// Z-measurement rows name true states (`"0"`, `"1"`, `"leaked"`, or `"lost"`).
+/// Detection rows instead name locations (`"present"`, `"leaked"`, or `"lost"`).
+/// Columns name outcomes in the flavor's alphabet. Missing rows retain legacy
+/// measurement readout or the nominal detection outcome without a draw.
 /// A well-formed `lost` row can be constructed, but model building rejects it
 /// until qubit loss is configured.
 #[derive(Debug, Clone)]
 pub struct ReadoutMatrix {
     pub(super) flavor: GateType,
-    rows: [Option<WeightedSampler<u8>>; 4],
+    rows: [Option<WeightedSampler<u8>>; 5],
 }
 
 impl ReadoutMatrix {
@@ -34,7 +37,7 @@ impl ReadoutMatrix {
     /// [`Self::new`] validates whether the resolved gate can own a matrix.
     pub fn parse_flavor(name: &str) -> Result<GateType, PecosError> {
         name.parse().map_err(|message| PecosError::Input(format!(
-            "invalid readout flavor {name:?}: {message}; use MZ, MeasureZLeaked, MeasureZLost, or MeasureZLeakedLost"
+            "invalid readout flavor {name:?}: {message}; use MZ, MeasureZLeaked, MeasureZLost, MeasureZLeakedLost, DetectLeaked, DetectLost, or DetectLeakedLost"
         )))
     }
 
@@ -57,6 +60,9 @@ impl ReadoutMatrix {
             GateType::MeasureZLeaked => &[0, 1, 2],
             GateType::MeasureZLost => &[0, 1, 3],
             GateType::MeasureZLeakedLost => &[0, 1, 2, 3],
+            GateType::DetectLeaked => &[0, 2],
+            GateType::DetectLost => &[0, 3],
+            GateType::DetectLeakedLost => &[0, 2, 3],
             GateType::MPZ => {
                 return Err(PecosError::Input(format!(
                     "readout {flavor}: MPZ uses MZ's readout matrix; configure MZ"
@@ -64,7 +70,7 @@ impl ReadoutMatrix {
             }
             _ => {
                 return Err(PecosError::Input(format!(
-                    "readout {flavor}: {flavor} has no readout matrix; flavors are MZ, MeasureZLeaked, MeasureZLost, MeasureZLeakedLost"
+                    "readout {flavor}: {flavor} has no readout matrix; flavors are MZ, MeasureZLeaked, MeasureZLost, MeasureZLeakedLost, DetectLeaked, DetectLost, DetectLeakedLost"
                 )));
             }
         };
@@ -75,7 +81,24 @@ impl ReadoutMatrix {
         }
         let mut compiled = std::array::from_fn(|_| None);
         for (row, weights) in rows {
+            let valid_rows: &[&str] = if flavor.is_detection() {
+                &["present", "leaked", "lost"]
+            } else {
+                &["0", "1", "leaked", "lost"]
+            };
+            if !valid_rows.contains(&row.as_str()) {
+                return Err(invalid(
+                    row,
+                    format!("{row:?}"),
+                    if flavor.is_detection() {
+                        "use row present, leaked, or lost"
+                    } else {
+                        "use row 0, 1, leaked, or lost"
+                    },
+                ));
+            }
             let state = match row.as_str() {
+                "present" => TrueState::Present,
                 "0" => TrueState::Zero,
                 "1" => TrueState::One,
                 "leaked" => TrueState::Leaked,
@@ -164,6 +187,8 @@ impl GeneralNoiseModel {
             TrueState::Lost
         } else if state == MeasurementState::Leaked {
             TrueState::Leaked
+        } else if flavor.is_detection() {
+            TrueState::Present
         } else if outcome == 0 {
             TrueState::Zero
         } else {

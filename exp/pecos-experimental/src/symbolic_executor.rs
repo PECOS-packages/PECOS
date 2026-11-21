@@ -383,7 +383,10 @@ pub(crate) fn named_action(
             release: true,
         },
         GateType::QFree => NamedAction::Marker { release: true },
-        GateType::I
+        GateType::DetectLeaked
+        | GateType::DetectLost
+        | GateType::DetectLeakedLost
+        | GateType::I
         | GateType::Idle
         | GateType::MeasCrosstalkGlobalPayload
         | GateType::MeasCrosstalkLocalPayload

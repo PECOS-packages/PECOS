@@ -213,6 +213,9 @@ fn apply_gate_classifies_supported_transparent_and_unsupported_gates() {
         );
     }
     let transparent_gates = [
+        Gate::detect_leaked(&[0]),
+        Gate::detect_lost(&[0]),
+        Gate::detect_leaked_lost(&[0]),
         Gate::px(&[0]),
         Gate::pz(&[0]),
         Gate::qalloc(&[0]),

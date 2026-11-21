@@ -87,7 +87,10 @@ def test_readout_accepts_integer_probability() -> None:
 def test_unknown_readout_flavor_names_choices() -> None:
     with pytest.raises(ValueError, match="typo") as caught:
         general_noise().with_readout("typo", {"0": {"0": 1}})
-    for part in ["typo", "use MZ, MeasureZLeaked, MeasureZLost, or MeasureZLeakedLost"]:
+    for part in [
+        "typo",
+        "use MZ, MeasureZLeaked, MeasureZLost, MeasureZLeakedLost, DetectLeaked, DetectLost, or DetectLeakedLost",
+    ]:
         assert part in str(caught.value)
 
 

@@ -110,6 +110,12 @@ pub enum GateType {
     MeasureZLost = 108,
     /// Measure Z with alphabet {0, 1, 2, 3}, where 2 means leaked and 3 means lost.
     MeasureZLeakedLost = 109,
+    /// Non-collapsing leakage detection with alphabet {0, 2}.
+    DetectLeaked = 110,
+    /// Non-collapsing loss detection with alphabet {0, 3}.
+    DetectLost = 111,
+    /// Non-collapsing leakage/loss detection with alphabet {0, 2, 3}.
+    DetectLeakedLost = 112,
     // TODO: MPauli instead of the other variants?
     /// Prepare the +1 eigenstate of X.
     PX = 130,
@@ -486,6 +492,9 @@ impl TryFrom<u8> for GateType {
             107 => GateType::MPZ,
             108 => GateType::MeasureZLost,
             109 => GateType::MeasureZLeakedLost,
+            110 => GateType::DetectLeaked,
+            111 => GateType::DetectLost,
+            112 => GateType::DetectLeakedLost,
             130 => GateType::PX,
             134 => GateType::PZ,
             135 => GateType::QAlloc,
@@ -617,6 +626,18 @@ impl GateType {
         )
     }
 
+    /// Non-collapsing loss/leakage detection: one outcome per operand, no
+    /// measurement record, and identity on the quantum state. Despite that
+    /// identity action, it is not convertible to a unitary; unitary conversions
+    /// retain their invariant panic for detection gates.
+    #[must_use]
+    pub const fn is_detection(self) -> bool {
+        matches!(
+            self,
+            Self::DetectLeaked | Self::DetectLost | Self::DetectLeakedLost
+        )
+    }
+
     /// Returns the Pauli basis of a gate that produces a measurement record.
     /// Record-less gates, including `MeasureZLeaked`, `MeasureZLost`, and
     /// `MeasureZLeakedLost`, return `None`.
@@ -673,6 +694,9 @@ impl GateType {
             | GateType::MeasureZLeaked
             | GateType::MeasureZLost
             | GateType::MeasureZLeakedLost
+            | GateType::DetectLeaked
+            | GateType::DetectLost
+            | GateType::DetectLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::MeasCrosstalkGlobalPayload
@@ -741,6 +765,9 @@ impl GateType {
             | GateType::MeasureZLeaked
             | GateType::MeasureZLost
             | GateType::MeasureZLeakedLost
+            | GateType::DetectLeaked
+            | GateType::DetectLost
+            | GateType::DetectLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::PX
@@ -903,8 +930,11 @@ impl fmt::Display for GateType {
             GateType::MX => write!(f, "MX"),
             GateType::MZ => write!(f, "MZ"),
             GateType::MeasureZLeaked => write!(f, "MeasureZLeaked"),
+            GateType::DetectLeaked => write!(f, "DetectLeaked"),
             GateType::MeasureZLost => write!(f, "MeasureZLost"),
+            GateType::DetectLost => write!(f, "DetectLost"),
             GateType::MeasureZLeakedLost => write!(f, "MeasureZLeakedLost"),
+            GateType::DetectLeakedLost => write!(f, "DetectLeakedLost"),
             GateType::MeasureFree => write!(f, "MeasureFree"),
             GateType::MPZ => write!(f, "MPZ"),
             GateType::PX => write!(f, "PX"),
@@ -982,8 +1012,11 @@ impl std::str::FromStr for GateType {
             "MEASURE" | "MEASUREZ" | "MZ" | "MEASURE Z" => Ok(GateType::MZ),
             "MEASUREFREE" | "MZFREE" => Ok(GateType::MeasureFree),
             "MEASUREZLEAKED" | "MEASURELEAKED" => Ok(GateType::MeasureZLeaked),
+            "DETECTLEAKED" => Ok(GateType::DetectLeaked),
             "MEASUREZLOST" => Ok(GateType::MeasureZLost),
+            "DETECTLOST" => Ok(GateType::DetectLost),
             "MEASUREZLEAKEDLOST" => Ok(GateType::MeasureZLeakedLost),
+            "DETECTLEAKEDLOST" => Ok(GateType::DetectLeakedLost),
             "MPZ" => Ok(GateType::MPZ),
             "PX" | "INIT |+>" => Ok(GateType::PX),
             "PREP" | "PZ" | "INIT" | "INIT |0>" | "RESET" => Ok(GateType::PZ),
@@ -1880,5 +1913,60 @@ mod tests {
 
         // Validate qubit count
         assert_eq!(qubits.len(), gate_type.quantum_arity());
+    }
+}
+
+#[cfg(test)]
+mod detection_tests {
+    use super::GateType;
+    use crate::{Gate, MeasId};
+
+    #[test]
+    fn detection_wire_names_record_policy_and_arity() {
+        for byte in u8::MIN..=u8::MAX {
+            if let Ok(kind) = GateType::try_from(byte) {
+                assert_eq!(kind.is_detection(), (110..=112).contains(&byte));
+            }
+        }
+        for (byte, name, gate) in [
+            (110, "DetectLeaked", Gate::detect_leaked(&[2, 0])),
+            (111, "DetectLost", Gate::detect_lost(&[2, 0])),
+            (112, "DetectLeakedLost", Gate::detect_leaked_lost(&[2, 0])),
+        ] {
+            let kind = GateType::try_from(byte).unwrap();
+            assert_eq!(kind as u8, byte);
+            assert_eq!(kind.to_string(), name);
+            assert_eq!(name.parse::<GateType>().unwrap(), kind);
+            assert_eq!(name.to_lowercase().parse::<GateType>().unwrap(), kind);
+            assert!(!kind.consumes_measurement_record());
+            assert!(!kind.is_recordless_z_measurement());
+            assert!(!kind.is_meta());
+            assert_eq!(kind.measured_pauli(), None);
+            assert_eq!(kind.quantum_arity(), 1);
+            assert_eq!(kind.classical_arity(), 0);
+            let error = crate::unitary_rep::Unitary::try_named(kind)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(name));
+            let panic =
+                std::panic::catch_unwind(|| crate::unitary_rep::Unitary::named(kind)).unwrap_err();
+            assert!(panic.downcast_ref::<String>().unwrap().contains(name));
+            assert_eq!(gate.gate_type, kind);
+            gate.validate().unwrap();
+            let mut explicit = gate;
+            explicit
+                .meas_ids
+                .extend([MeasId::from_raw(9), MeasId::from_raw(4)]);
+            explicit.validate().unwrap();
+            explicit.meas_ids.pop();
+            assert!(
+                explicit
+                    .validate()
+                    .unwrap_err()
+                    .contains("measurement-id count")
+            );
+            Gate::simple(kind, vec![]).validate().unwrap();
+        }
+        assert!("DL".parse::<GateType>().is_err());
     }
 }

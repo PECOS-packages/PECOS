@@ -452,6 +452,23 @@ mod tests {
     use crate::simulator::SeleneSimulator;
 
     #[test]
+    fn simulator_rejects_detection() {
+        for gate in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let mut builder = ByteMessage::quantum_operations_builder();
+            builder.add_gate_command(&pecos_core::Gate::simple(gate, vec![0.into()]));
+            let error = SeleneSimulator::process(&mut ZeroSimulator, &builder.build())
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(error.contains(&format!("{gate} is a non-collapsing detect gate")));
+        }
+    }
+
+    #[test]
     fn simulator_measures_new_heralds() {
         for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
             let mut builder = ByteMessage::quantum_operations_builder();

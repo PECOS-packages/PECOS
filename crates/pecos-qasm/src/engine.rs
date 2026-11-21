@@ -755,6 +755,9 @@ impl QASMEngine {
             | GateType::U2q
             | GateType::RXY1Q
             | GateType::U => self.process_parameterized_gate(gate.gate_type, &qubits, &gate.angles),
+            GateType::DetectLeaked | GateType::DetectLost | GateType::DetectLeakedLost => Err(
+                PecosError::Processing(format!("{} has no QASM form; remove it", gate.gate_type)),
+            ),
             GateType::MX
             | GateType::MZ
             | GateType::MeasureZLeaked
@@ -1902,6 +1905,21 @@ impl fmt::Debug for QASMEngine {
 mod tests {
     use super::*;
     use pecos_core::gate_type::GateType;
+
+    #[test]
+    fn detection_has_no_qasm_form() {
+        for kind in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let error = QASMEngine::default()
+                .process_native_gate(&pecos_core::Gate::simple(kind, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&format!("{kind} has no QASM form; remove it")));
+        }
+    }
 
     #[test]
     fn heralds_require_measurement_mapping() {

@@ -388,6 +388,11 @@ pub struct PyGateType {
 
 #[pymethods]
 impl PyGateType {
+    /// Whether this gate produces non-collapsing loss/leakage detection outcomes.
+    fn is_detection(&self) -> bool {
+        self.inner.is_detection()
+    }
+
     /// Get the name of this gate type.
     #[getter]
     fn name(&self) -> String {
@@ -4744,6 +4749,48 @@ impl PyTickHandle {
         let gate_idx = handle.add_measurement_with_ids(py, Gate::mz(&qubits), &meas_ids)?;
         let tick_idx = handle.tick_idx;
         Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
+    }
+
+    /// Insert non-collapsing detection with externally assigned result IDs.
+    /// IDs are reserved without creating Boolean annotation references.
+    fn detect_leaked_with_ids(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+        meas_ids: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_measurement_with_ids(py, Gate::detect_leaked(&qubits), &meas_ids)?;
+        Ok(slf)
+    }
+
+    /// Insert non-collapsing detection with externally assigned result IDs.
+    /// IDs are reserved without creating Boolean annotation references.
+    fn detect_lost_with_ids(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+        meas_ids: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_measurement_with_ids(py, Gate::detect_lost(&qubits), &meas_ids)?;
+        Ok(slf)
+    }
+
+    /// Insert non-collapsing detection with externally assigned result IDs.
+    /// IDs are reserved without creating Boolean annotation references.
+    fn detect_leaked_lost_with_ids(
+        slf: Py<Self>,
+        py: Python<'_>,
+        qubits: Vec<usize>,
+        meas_ids: Vec<usize>,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py).add_measurement_with_ids(
+            py,
+            Gate::detect_leaked_lost(&qubits),
+            &meas_ids,
+        )?;
+        Ok(slf)
     }
 
     /// Insert a leakage-aware Z measurement with externally assigned result IDs.

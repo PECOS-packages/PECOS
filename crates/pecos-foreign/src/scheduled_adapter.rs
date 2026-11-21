@@ -267,6 +267,11 @@ fn gate_words(g: &Gate) -> Result<[u64; 5], PecosError> {
         GateType::PZ => (5, 1, 0),
         GateType::MZ => (6, 1, 0),
         GateType::MeasureZLeaked => (7, 1, 0),
+        gate if gate.is_detection() => {
+            return Err(error(
+                pecos_engines::scheduled_frame::unsupported_detection_message(gate),
+            ));
+        }
         _ => return Err(error("unsupported native adapter source gate")),
     };
     if g.qubits.len() != n
@@ -515,6 +520,21 @@ impl ScheduledBatchAdapter for Session {
 mod tests {
     use super::*;
     use pecos_engines::scheduled_frame::{TimedBatch, encode_timed_batches};
+
+    #[test]
+    fn native_adapter_rejects_detection() {
+        for kind in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let error = gate_words(&Gate::simple(kind, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&format!("{kind} is a non-collapsing detect gate")));
+        }
+    }
+
     #[test]
     fn ffi_words_match_transport_exactly_including_low_angle_bits() {
         let gates = vec![

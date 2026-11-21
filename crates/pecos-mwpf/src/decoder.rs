@@ -228,6 +228,11 @@ impl MwpfDecoder {
     ///
     /// Returns `MwpfError` if the DEM is malformed or the solver cannot be
     /// constructed.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic for any input: every detector of a kept edge is given a
+    /// vertex before the hyperedges are built.
     pub fn from_dem(dem_str: &str, config: MwpfConfig) -> Result<Self> {
         let dem = DemCheckMatrix::from_dem_str(dem_str)
             .map_err(|e| MwpfError::InvalidDem(e.to_string()))?;
@@ -256,23 +261,31 @@ impl MwpfDecoder {
         // MWPF requires every vertex to have an edge, so only detectors that some
         // kept edge flips become vertices, numbered in ascending detector order.
         // When every detector has an edge, vertex i is detector i.
-        let mut vertex_of_detector = vec![None; dem.num_detectors];
+        let mut has_edge = vec![false; dem.num_detectors];
         for (detectors, _, _) in &kept {
             for &detector in detectors {
-                vertex_of_detector[detector] = Some(0);
+                has_edge[detector] = true;
             }
         }
+        let mut vertex_of_detector = Vec::with_capacity(dem.num_detectors);
         let mut num_vertices = 0;
-        for vertex in vertex_of_detector.iter_mut().flatten() {
-            *vertex = num_vertices;
-            num_vertices += 1;
+        for detector_has_edge in has_edge {
+            if detector_has_edge {
+                vertex_of_detector.push(Some(num_vertices));
+                num_vertices += 1;
+            } else {
+                vertex_of_detector.push(None);
+            }
         }
         let mut hyperedges = Vec::with_capacity(kept.len());
         let mut edge_obs = Vec::with_capacity(kept.len());
         for (detectors, weight, obs_mask) in kept {
             let vertices = detectors
                 .iter()
-                .filter_map(|&detector| vertex_of_detector[detector])
+                .map(|&detector| {
+                    vertex_of_detector[detector]
+                        .expect("every detector of a kept edge was given a vertex above")
+                })
                 .collect();
             hyperedges.push(HyperEdge::new(vertices, weight.into()));
             edge_obs.push(obs_mask);
@@ -326,6 +339,11 @@ impl MwpfDecoder {
     /// Returns `MwpfError::InvalidDimensions` if the syndrome length differs from
     /// `num_detectors`, or `MwpfError::InvalidSyndrome` if a detector that no error
     /// mechanism can flip fired.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic for any input: a fired detector with a vertex belongs to a
+    /// kept edge, so the solver exists whenever there is a defect to decode.
     pub fn decode_syndrome(&mut self, syndrome: &[u8]) -> Result<MwpfDecodingResult> {
         if syndrome.len() != self.num_detectors {
             return Err(MwpfError::InvalidDimensions {

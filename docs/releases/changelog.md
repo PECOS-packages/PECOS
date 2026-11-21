@@ -139,14 +139,14 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `MwpfError::InvalidSyndrome` only if it fires; a syndrome of the wrong length
   is the new `MwpfError::InvalidDimensions`. Logical decoders raise
   `RuntimeError` when an internally generated sub-DEM fails to build for another
-  reason. A Tesseract `decode_detections` or
-  `decode_with_order` index outside the model is `InvalidSyndrome` instead of
-  `DecodingFailed`. `DecoderError::BatchSizeMismatch` now means a
-  flat batch buffer of the wrong byte count, and PyMatching reports that case
-  with it instead of `Configuration`. `From<DecoderError> for
-  FusionBlossomError` maps graph, syndrome, matrix and decoding variants to the
-  matching `FusionBlossomError` variants, and internal ones to a new `Internal`
-  variant; all were previously `Configuration`.
+  reason. A Tesseract `decode_detections` or `decode_with_order` index outside
+  the model is `InvalidSyndrome` instead of `DecodingFailed`.
+  `DecoderError::BatchSizeMismatch` now means a flat batch buffer of the wrong
+  byte count, and PyMatching reports that case with it instead of
+  `Configuration`. `From<DecoderError> for FusionBlossomError` maps graph,
+  syndrome, matrix and decoding variants to the matching `FusionBlossomError`
+  variants, and internal ones to a new `Internal` variant; all were previously
+  `Configuration`.
 
 - **Fixed:** Logical-subgraph sub-DEMs now declare their full detector and
   observable widths, so spec families no longer reject shots whose last local

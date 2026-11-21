@@ -569,8 +569,9 @@ fn build_fusion_parallel_from_graph(
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     use std::collections::BTreeMap;
 
+    // Both callers build `graph` with `from_dem_str`, which already rejects any
+    // mechanism prior above 0.5.
     graph.ensure_observables_fit_u64()?;
-    crate::FusionBlossomDecoder::check_matching_graph_priors(graph).map_err(DecoderError::from)?;
     let mut round_groups: BTreeMap<u64, Vec<u32>> = BTreeMap::new();
     for (id, coord) in graph.detector_coords.iter().enumerate() {
         let time = coord

@@ -778,6 +778,17 @@ impl PyMatchingDecoder {
         Self::from_check_matrix_with_config_internal(matrix, &config)
     }
 
+    /// Widen the decoded observable count to cover `observables`.
+    ///
+    /// The backend graph grows to fit any observable index it is given; `decode`
+    /// returns `config.num_observables` entries, so it must grow with it or flips on
+    /// the new observables would be dropped.
+    fn include_observables(&mut self, observables: &[ObservableId]) {
+        if let Some(&max) = observables.iter().max() {
+            self.config.num_observables = self.config.num_observables.max(max + 1);
+        }
+    }
+
     /// Add an edge between two nodes with configuration
     ///
     /// # Errors
@@ -803,6 +814,7 @@ impl PyMatchingDecoder {
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
         self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
         result?;
+        self.include_observables(observables);
 
         Ok(())
     }
@@ -858,6 +870,7 @@ impl PyMatchingDecoder {
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
         self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
         result?;
+        self.include_observables(observables);
 
         Ok(())
     }
@@ -1299,7 +1312,10 @@ impl PyMatchingDecoder {
         let result = ffi::add_noise(&self.graph, num_samples, rng_seed)?;
 
         // Convert BatchDecodingResult to proper noise result
-        let num_observables = self.num_observables();
+        // The backend writes one row per sample at the graph's observable count;
+        // return the width `decode` uses.
+        let row_width = self.num_observables();
+        let num_observables = self.num_decoded_observables();
         let num_detectors = self.num_detectors();
 
         let mut errors = Vec::with_capacity(num_samples);
@@ -1307,7 +1323,7 @@ impl PyMatchingDecoder {
 
         // Unpack the results
         for sample in 0..num_samples {
-            let error_start = sample * num_observables;
+            let error_start = sample * row_width;
             let error_end = error_start + num_observables;
             let error_vec: Vec<u8> = result.predictions[error_start..error_end].to_vec();
             errors.push(error_vec);
@@ -1739,6 +1755,42 @@ impl From<ffi::BatchDecodingResult> for BatchDecodingResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn added_edge_observables_are_decoded_in_single_and_batch_paths() {
+        let config = PyMatchingConfig {
+            num_nodes: Some(2),
+            num_observables: 1,
+            ..Default::default()
+        };
+        let mut decoder = PyMatchingDecoder::new(config).unwrap();
+        // Observable 5 lies past the configured count of 1.
+        decoder
+            .add_edge(0, 1, &[5], Some(1.0), Some(0.1), None)
+            .unwrap();
+        decoder
+            .add_boundary_edge(0, &[], Some(3.0), Some(0.01), None)
+            .unwrap();
+        assert_eq!(decoder.num_decoded_observables(), 6);
+
+        let single = decoder.decode(&[1, 1]).unwrap().observable;
+        assert_eq!(single, [0, 0, 0, 0, 0, 1]);
+
+        let unpacked = decoder
+            .decode_batch_with_config(&[1, 1], 1, 2, BatchConfig::default())
+            .unwrap();
+        assert_eq!(unpacked.predictions, [single.clone()]);
+
+        let packed_config = BatchConfig {
+            bit_packed_output: true,
+            ..BatchConfig::default()
+        };
+        let packed = decoder
+            .decode_batch_with_config(&[1, 1], 1, 2, packed_config)
+            .unwrap();
+        // Six observables pack into one byte, with observable 5 in bit 5.
+        assert_eq!(packed.predictions, [vec![1_u8 << 5]]);
+    }
 
     #[test]
     fn batch_validates_empty_buffers_and_size_overflow() {

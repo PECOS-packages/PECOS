@@ -213,6 +213,8 @@ pub struct MwpfDecoder {
     edge_obs: Vec<u64>,
     /// Number of detectors.
     num_detectors: usize,
+    /// MWPF vertex of each detector; `None` for a detector no mechanism can flip.
+    vertex_of_detector: Vec<Option<usize>>,
     /// Reusable buffer for defect vertices (avoids per-shot allocation).
     defect_buf: Vec<usize>,
 }
@@ -236,19 +238,37 @@ impl MwpfDecoder {
 
         let edge_map = merged_edges(&dem);
 
+        // MWPF requires every vertex to have an edge, so only detectors that some
+        // mechanism can flip become vertices, numbered in detector order.
+        let mut vertex_of_detector = vec![None; dem.num_detectors];
+        let mut num_vertices = 0;
         let mut hyperedges = Vec::with_capacity(edge_map.len());
         let mut edge_obs = Vec::with_capacity(edge_map.len());
-        for (vertices, info) in edge_map {
+        for (detectors, info) in edge_map {
+            // Mechanisms that cancel exactly (for example two certain ones) never fire
+            // the edge, and its weight would be infinite.
+            if info.prob == 0.0 {
+                continue;
+            }
             let weight = if info.prob < 1.0 {
                 ((1.0 - info.prob) / info.prob).ln()
             } else {
                 0.0
             };
+            let vertices = detectors
+                .iter()
+                .map(|&detector| {
+                    *vertex_of_detector[detector].get_or_insert_with(|| {
+                        num_vertices += 1;
+                        num_vertices - 1
+                    })
+                })
+                .collect();
             hyperedges.push(HyperEdge::new(vertices, weight.into()));
             edge_obs.push(info.obs_mask);
         }
 
-        let initializer = Arc::new(SolverInitializer::new(dem.num_detectors, hyperedges));
+        let initializer = Arc::new(SolverInitializer::new(num_vertices, hyperedges));
         let solver_config = config.to_solver_config();
         let solver = match config.solver_type {
             MwpfSolverType::UnionFind => {
@@ -275,6 +295,7 @@ impl MwpfDecoder {
             solver,
             edge_obs,
             num_detectors: dem.num_detectors,
+            vertex_of_detector,
             defect_buf: Vec::new(),
         })
     }
@@ -286,13 +307,29 @@ impl MwpfDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `MwpfError::DecodingFailed` if decoding fails.
+    /// Returns `MwpfError::InvalidSyndrome` if the syndrome length differs from
+    /// `num_detectors`, or if a detector that no error mechanism can flip fired.
     pub fn decode_syndrome(&mut self, syndrome: &[u8]) -> Result<MwpfDecodingResult> {
+        if syndrome.len() != self.num_detectors {
+            return Err(MwpfError::InvalidSyndrome(format!(
+                "expected {} detectors, got {}",
+                self.num_detectors,
+                syndrome.len()
+            )));
+        }
         // Reuse defect buffer across shots
         self.defect_buf.clear();
-        for (i, &v) in syndrome.iter().enumerate() {
-            if v != 0 {
-                self.defect_buf.push(i);
+        for (detector, &value) in syndrome.iter().enumerate() {
+            if value == 0 {
+                continue;
+            }
+            match self.vertex_of_detector.get(detector) {
+                Some(Some(vertex)) => self.defect_buf.push(*vertex),
+                _ => {
+                    return Err(MwpfError::InvalidSyndrome(format!(
+                        "detector {detector} fired but no error mechanism in the DEM can flip it"
+                    )));
+                }
             }
         }
 
@@ -360,5 +397,44 @@ mod tests {
         assert!((edge.prob - 0.42).abs() < 1e-12, "{}", edge.prob);
         // Equal priors keep the first mechanism's observable.
         assert_eq!(edge.obs_mask, 0);
+    }
+
+    #[test]
+    fn mechanisms_that_cancel_exactly_leave_no_edge() {
+        let mut decoder = MwpfDecoder::from_dem(
+            "error(1) D0 D1\nerror(1) D0 D1\nerror(0.1) D0",
+            MwpfConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(decoder.num_edges(), 1);
+        assert_eq!(decoder.decode_syndrome(&[1, 0]).unwrap().subgraph.len(), 1);
+    }
+
+    #[test]
+    fn detectors_without_mechanisms_are_supported_until_they_fire() {
+        let mut decoder = MwpfDecoder::from_dem(
+            "error(0.1) D1 L0\ndetector D0\ndetector D2",
+            MwpfConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(decoder.num_detectors(), 3);
+        assert_eq!(
+            decoder.decode_syndrome(&[0, 1, 0]).unwrap().observable_mask,
+            1
+        );
+        assert_eq!(
+            decoder.decode_syndrome(&[0, 0, 0]).unwrap().observable_mask,
+            0
+        );
+        for syndrome in [[1, 0, 0], [0, 0, 1]] {
+            assert!(matches!(
+                decoder.decode_syndrome(&syndrome),
+                Err(MwpfError::InvalidSyndrome(message)) if message.contains("no error mechanism")
+            ));
+        }
+        assert!(matches!(
+            decoder.decode_syndrome(&[0, 1]),
+            Err(MwpfError::InvalidSyndrome(message)) if message == "expected 3 detectors, got 2"
+        ));
     }
 }

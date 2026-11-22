@@ -17,7 +17,15 @@ EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports", "integer32", "memory_lifecycle"):
+    for name in (
+        "arithmetic",
+        "stateful",
+        "floating_point",
+        "indexed_exports",
+        "integer32",
+        "memory_lifecycle",
+        "managed_objects",
+    ):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -629,3 +637,74 @@ def test_initialization_policy_changes_in_reused_build_directory(examples, tmp_p
         runner = build(example.memory_operations, modules, build_dir=tmp_path, wasm_auto_init=auto_init)
         shots = [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
         assert shots[0]["initialized"] == expected
+
+
+def test_managed_objects_use_scalar_abi_and_fresh_stores(examples, tmp_path):
+    example = examples["managed_objects"]
+    expected = {"initial": 7, "next": 8, "sum": 5, "retained": 8, "independent": 7}
+    runner = build(
+        example.managed_state,
+        {str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()},
+        build_dir=tmp_path,
+    )
+    for _ in range(2):
+        shots = [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=2)]
+        assert shots == [expected] * 4
+
+
+@pytest.mark.parametrize("backend", ["selene", "pecos"])
+def test_gc_allocating_loop_times_out_and_recovers(tmp_path, backend):
+    if backend == "pecos":
+        pytest.importorskip("pecos")
+    import subprocess
+    import sys
+
+    script = tmp_path / "gc_timeout.py"
+    script.write_text(
+        """
+import importlib.util, sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+spec = importlib.util.spec_from_file_location("arithmetic", Path(sys.argv[2]) / "arithmetic.py")
+example = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(example)
+loop = b"""
+        + repr("""(module
+(type $cell (struct (field i64)))
+(global $last (mut (ref null $cell)) (ref.null $cell))
+(func (export "add") (param i64 i64) (result i64)
+  (loop $again local.get 0 struct.new $cell global.set $last br $again)
+  i64.const 0))""")
+        + """
+def execute(data, directory, timeout=2.0):
+    modules = {str(example.WASM_PATH): data}
+    if sys.argv[1] == "selene":
+        from pecos_selene_wasm import build
+        from selene_sim import Quest
+        runner = build(example.addition, modules, build_dir=Path(directory), wasm_timeout_seconds=timeout)
+        return [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
+    import pecos as pc
+    program = pc.Guppy(example.addition, wasm_modules=modules, wasm_timeout_seconds=timeout)
+    return pc.sim(program).qubits(1).quantum(pc.state_vector()).run(1).to_dict()
+with TemporaryDirectory() as directory:
+    try:
+        execute(loop, directory, timeout=0.05)
+    except Exception as error:
+        if "timed out" not in str(error):
+            raise
+    else:
+        raise RuntimeError("allocating loop did not time out")
+with TemporaryDirectory() as directory:
+    result = execute(example.WASM_PATH.read_bytes(), directory)
+    if result not in ([{"sum": 5}], {"sum": [5]}):
+        raise RuntimeError("execution did not recover after GC timeout")
+""",
+    )
+    completed = subprocess.run(
+        [sys.executable, str(script), backend, str(EXAMPLES)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr

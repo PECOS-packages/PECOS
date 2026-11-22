@@ -796,6 +796,48 @@ mod tests {
     use super::WasmForeignObject;
 
     #[test]
+    fn managed_roots_survive_collection_and_stores_are_independent() {
+        use crate::ForeignObject;
+        let module = super::CompiledWasmModule::new(
+            br#"(module
+            (type $node (struct (field (mut i64)) (field (mut (ref null $node)))))
+            (global $live (mut (ref null $node)) (ref.null $node))
+            (func (export "init")
+                i64.const 42 ref.null $node struct.new $node global.set $live)
+            (func (export "cycle") (local $node (ref null $node))
+                i64.const 9 ref.null $node struct.new $node local.tee $node
+                local.get $node struct.set $node 1)
+            (func (export "get") (result i64) global.get $live struct.get $node 0)
+            (func (export "increment")
+                global.get $live global.get $live struct.get $node 0
+                i64.const 1 i64.add struct.set $node 0)
+            (func (export "reference") (result (ref null $node)) global.get $live)
+            (func (export "consume") (param (ref null $node))))"#,
+        )
+        .unwrap();
+        let mut first = module.instantiate().unwrap();
+        let mut second = module.instantiate().unwrap();
+        first.exec("init", &[]).unwrap();
+        second.exec("init", &[]).unwrap();
+        for expected in 43..51 {
+            first.exec("increment", &[]).unwrap();
+            for _ in 0..1000 {
+                first.exec("cycle", &[]).unwrap();
+            }
+            // Explicitly invoke collection: allocation alone does not prove
+            // that a moving collector preserves live module roots.
+            first.store.write().gc(None).unwrap();
+            assert_eq!(first.exec("get", &[]).unwrap(), [expected]);
+            assert_eq!(second.exec("get", &[]).unwrap(), [42]);
+        }
+        assert!(first.validate_i64_signature("reference", 0, 1).is_err());
+        assert!(first.validate_i64_signature("consume", 1, 0).is_err());
+        first.teardown();
+        second.store.write().gc(None).unwrap();
+        assert_eq!(second.exec("get", &[]).unwrap(), [42]);
+    }
+
+    #[test]
     fn positive_deadlines_round_up_and_leave_epoch_headroom() {
         for (seconds, expected) in [
             (f64::from_bits(1), 1),

@@ -80,6 +80,7 @@ tket = { version = "0.22", default-features = false }
 # --- WebAssembly ---
 wasmtime = { version = "48.0.10", default-features = false, features = [
   "cranelift",
+  "gc-copying", # Scalar exports may use managed structs and arrays internally.
   "runtime",
   "wat",
   "std",

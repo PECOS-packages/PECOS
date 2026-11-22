@@ -22,7 +22,7 @@ EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports", "integer32"):
+    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports", "integer32", "memory_lifecycle"):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -493,3 +493,55 @@ def test_pecos_timeout_propagates_through_guppy_and_hugr(examples, tmp_path, mon
     ):
         assert pc.sim(program).qubits(1).quantum(pc.state_vector()).run(2).to_dict() == {"sum": [5, 5]}
     assert len(emitted) == 3
+
+
+@pytest.mark.parametrize("value", [0, 1, None, "false"])
+def test_pecos_rejects_invalid_auto_init(value):
+    for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match="wasm_auto_init"):
+            constructor(source, wasm_modules={}, wasm_auto_init=value)
+
+
+def test_auto_init_opt_out_requires_modules():
+    for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match="requires explicit wasm_modules"):
+            constructor(source, wasm_auto_init=False)
+
+
+@pytest.mark.parametrize("auto_init", [True, False])
+@pytest.mark.parametrize("explicit", [True, False])
+def test_pecos_memory_lifecycle_initialization(examples, tmp_path, auto_init, explicit):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    example = examples["memory_lifecycle"]
+    function = example.explicit_initialization if explicit else example.memory_operations
+    data = plugin.compile_guppy(function).to_bytes()
+    path = tmp_path / "memory.hugr"
+    path.write_bytes(data)
+    options = {
+        "wasm_modules": {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        "wasm_auto_init": auto_init,
+        "wasm_timeout_seconds": 2.5,
+    }
+    initial = 42 if auto_init else 11
+    expected = (
+        {"before": initial, "after": initial + 31}
+        if explicit
+        else {
+            "initialized": initial,
+            "incremented": initial + 1,
+            "old_pages": 1,
+            "pages": 2,
+            "zero": 0,
+            "stored": -7,
+            "indirect": 12,
+            "growth_refused": -1,
+        }
+    )
+    for program in (
+        pc.Guppy(function, **options),
+        pc.Hugr.from_bytes(data, **options),
+        pc.Hugr.from_file(path, **options),
+    ):
+        runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).build()
+        for _ in range(2):
+            assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}

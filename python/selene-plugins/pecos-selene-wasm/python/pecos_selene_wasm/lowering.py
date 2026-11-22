@@ -470,6 +470,7 @@ def compile_wasm(
     emit_debug: bool = False,
     wasm_int_width: int = 64,
     wasm_timeout_seconds: float = 1.0,
+    wasm_auto_init: bool = True,
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
@@ -485,7 +486,12 @@ def compile_wasm(
     defaulting to one second, with approximately 10 ms clock resolution.
     The result requires the Selene WASM utility or WASM-enabled QIS FFI;
     nondefault timeouts require native ``pecos_wasm_v2_register`` support.
+    ``wasm_auto_init=False`` skips optional exported init (not WASM start),
+    requiring ``pecos_wasm_v3_register``. The default preserves automatic init.
     """
+    if type(wasm_auto_init) is not bool:
+        msg = "wasm_auto_init must be a bool"
+        raise ValueError(msg)
     try:
         valid_timeout = (
             type(wasm_timeout_seconds) in (int, float)
@@ -590,7 +596,9 @@ def compile_wasm(
     if not re.search(r"^declare void @panic\(i32, ptr\)", llvm, re.MULTILINE):
         llvm += "\ndeclare void @panic(i32, ptr)\n"
     llvm += _ABI
-    if wasm_timeout_seconds != 1.0:
+    if not wasm_auto_init:
+        llvm += "\ndeclare i32 @pecos_wasm_v3_register(i64, ptr, i64, double, i32)\n"
+    elif wasm_timeout_seconds != 1.0:
         llvm += "\ndeclare i32 @pecos_wasm_v2_register(i64, ptr, i64, double)\n"
     setup = "  %wasm_reset = call i32 @pecos_wasm_v1_reset()\n" + _check("wasm_reset")
     for identifier, module_id in module_ids.items():
@@ -598,7 +606,13 @@ def compile_wasm(
         global_name = f"pecos_wasm_module_{digest}_{module_id}"
         llvm += _constant(global_name, data)
         status = f"wasm_module_{module_id}"
-        if wasm_timeout_seconds == 1.0:
+        if not wasm_auto_init:
+            timeout_literal = "0x" + struct.pack(">d", wasm_timeout_seconds).hex().upper()
+            setup += (
+                f"  %{status} = call i32 @pecos_wasm_v3_register(i64 {module_id}, "
+                f"ptr @{global_name}, i64 {len(data)}, double {timeout_literal}, i32 1)\n"
+            )
+        elif wasm_timeout_seconds == 1.0:
             setup += (
                 f"  %{status} = call i32 @pecos_wasm_v1_register(i64 {module_id}, "
                 f"ptr @{global_name}, i64 {len(data)})\n"

@@ -633,11 +633,14 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
     Ok(ByteMessage::new(&bytes))
 }
 
-// The event envelope needs nested v6 bytes, not an aligned message or owned gates.
-pub(crate) fn encode_borrowed_batch<'a>(
+// Reuse call-local scratch storage for nested v6 frames. On error the contents
+// are not a frame and must not be consumed; the next call clears them again.
+pub(crate) fn encode_borrowed_batch_into<'a>(
+    bytes: &mut Vec<u8>,
     metadata: [u64; 4],
     gates: impl Iterator<Item = &'a Gate> + Clone,
-) -> Result<Vec<u8>, PecosError> {
+) -> Result<(), PecosError> {
+    bytes.clear();
     let count = gates.clone().count();
     let size = count
         .checked_mul(40)
@@ -646,13 +649,19 @@ pub(crate) fn encode_borrowed_batch<'a>(
     if size > MAX_SCHEDULE_BYTES {
         return Err(error("schedule transport size limit"));
     }
-    let mut bytes = frame_bytes(size, 1)?;
-    write_batch(&mut bytes, metadata, count, gates)?;
-    Ok(bytes)
+    frame_bytes_into(bytes, size, 1)?;
+    write_batch(bytes, metadata, count, gates)
 }
 
 fn frame_bytes(size: usize, count: usize) -> Result<Vec<u8>, PecosError> {
     let mut bytes = Vec::new();
+    frame_bytes_into(&mut bytes, size, count)?;
+    Ok(bytes)
+}
+
+// Callers supply an empty buffer, possibly retaining capacity from a prior frame.
+fn frame_bytes_into(bytes: &mut Vec<u8>, size: usize, count: usize) -> Result<(), PecosError> {
+    debug_assert_eq!(bytes.as_slice(), b"");
     bytes
         .try_reserve_exact(size)
         .map_err(|_| processing_error("schedule allocation failed"))?;
@@ -673,7 +682,7 @@ fn frame_bytes(size: usize, count: usize) -> Result<Vec<u8>, PecosError> {
             .map_err(|_| error("size overflow"))?
             .to_le_bytes(),
     );
-    Ok(bytes)
+    Ok(())
 }
 
 fn write_batch<'a>(
@@ -1351,9 +1360,44 @@ mod timing_tests {
     fn borrowed_encoder_checks_size_before_allocating_and_checks_fields() {
         let gate = Gate::pz(&[0]);
         let too_many = std::iter::repeat_n(&gate, MAX_SCHEDULE_BYTES / 40);
-        let err = encode_borrowed_batch([0; 4], too_many).unwrap_err();
+        let mut bytes = Vec::new();
+        let err = encode_borrowed_batch_into(&mut bytes, [0; 4], too_many).unwrap_err();
         assert!(err.to_string().contains("schedule transport size limit"));
-        assert!(encode_borrowed_batch([0; 4], std::iter::once(&Gate::x(&[0]))).is_err());
+        assert_eq!(bytes.capacity(), 0);
+        assert!(
+            encode_borrowed_batch_into(&mut bytes, [0; 4], std::iter::once(&Gate::x(&[0])))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn borrowed_encoder_reuses_storage_without_stale_bytes_after_errors() {
+        let mut bytes = Vec::new();
+        let gates = [
+            Gate::rxy1q(Angle64::new(1), Angle64::new(u64::MAX), &[2]),
+            Gate::mz(&[0]),
+            Gate::pz(&[1]),
+        ];
+        encode_borrowed_batch_into(&mut bytes, [7, 3, 11, 5], gates.iter()).unwrap();
+        let pointer = bytes.as_ptr();
+        let capacity = bytes.capacity();
+        // Include a failed partial write, followed by shorter and empty frames.
+        let invalid = [gates[0].clone(), Gate::x(&[0])];
+        assert!(encode_borrowed_batch_into(&mut bytes, [0; 4], invalid.iter()).is_err());
+        for count in [1, 0, 3, 2] {
+            let source = TimedBatch {
+                runtime_shot_id: 7,
+                batch_index: 9,
+                start_nanos: 23,
+                duration_nanos: 4,
+                gates: gates[..count].to_vec(),
+            };
+            let expected = encode_timed_batches(&[source]).unwrap();
+            encode_borrowed_batch_into(&mut bytes, [7, 9, 23, 4], gates[..count].iter()).unwrap();
+            assert_eq!(bytes, expected.as_bytes());
+            assert_eq!(bytes.as_ptr(), pointer);
+            assert_eq!(bytes.capacity(), capacity);
+        }
     }
 
     fn config() -> ScheduledNoise {

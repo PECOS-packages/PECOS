@@ -23,6 +23,7 @@ def examples():
         "floating_point",
         "indexed_exports",
         "integer32",
+        "mixed_integers",
         "memory_lifecycle",
         "managed_objects",
     ):
@@ -474,10 +475,10 @@ def test_i32_mode_rejects_i64_module(examples, tmp_path):
         [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
 
 
-@pytest.mark.parametrize("width", [16, 32.0, True, "32"])
+@pytest.mark.parametrize("width", [16, 32.0, True, "32", "AUTO"])
 def test_invalid_integer_width_is_rejected(examples, width):
     example = examples["integer32"]
-    with pytest.raises(ValueError, match=re.escape(f"wasm_int_width must be 32 or 64; got {width!r}")):
+    with pytest.raises(ValueError, match=re.escape(f"wasm_int_width must be 32 or 64, or 'auto'; got {width!r}")):
         compile_wasm(example.boundaries, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, wasm_int_width=width)
 
 
@@ -578,7 +579,7 @@ UNPRINTABLE_CASES = [
     [
         ("wasm_auto_init", "wasm_auto_init must be True or False; got "),
         ("wasm_timeout_seconds", "wasm_timeout_seconds must be a positive finite number of seconds; got "),
-        ("wasm_int_width", "wasm_int_width must be 32 or 64; got "),
+        ("wasm_int_width", "wasm_int_width must be 32 or 64, or 'auto'; got "),
     ],
 )
 def test_rejected_option_errors_survive_unprintable_values(value, described, option, prefix):
@@ -708,3 +709,55 @@ with TemporaryDirectory() as directory:
         timeout=120,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize("width", ["auto", 32, 64])
+def test_mixed_integer_widths(examples, tmp_path, width):
+    example = examples["mixed_integers"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    llvm = compile_wasm(example.mixed, modules, wasm_int_width=width)
+    assert ("@pecos_wasm_v3_lookup" in llvm) == (width == "auto")
+    assert "call i32 @pecos_wasm_v3_register" not in llvm
+    runner = build(example.mixed, modules, build_dir=tmp_path, wasm_int_width=width)
+
+    def shots():
+        return [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=2)]
+
+    if width == "auto":
+        expected = {"small": -2147483648, "large": 4294967308, "small_indexed": -3, "large_indexed": 4294967293}
+        assert shots() == [expected] * 4
+        assert shots() == [expected] * 4
+    else:
+        with pytest.raises(SelenePanicError, match="signature mismatch"):
+            shots()
+
+
+@pytest.mark.parametrize("missing", ["pecos_wasm_v3_lookup", "pecos_wasm_v3_lookup_by_id"])
+def test_automatic_width_requires_new_native_lookup(examples, tmp_path, monkeypatch, missing):
+    from types import SimpleNamespace
+
+    import pecos_selene_wasm
+
+    symbols = {name: object() for name in ("pecos_wasm_v3_lookup", "pecos_wasm_v3_lookup_by_id") if name != missing}
+    monkeypatch.setattr(pecos_selene_wasm.ctypes, "CDLL", lambda _path: SimpleNamespace(**symbols))
+    example = examples["mixed_integers"]
+    with pytest.raises(RuntimeError, match="Automatic WASM integer widths require"):
+        build(
+            example.mixed,
+            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            build_dir=tmp_path,
+            wasm_int_width="auto",
+        )
+
+
+def test_automatic_width_preserves_float_lanes(examples, tmp_path):
+    example = examples["floating_point"]
+    runner = build(
+        example.mixed_arithmetic,
+        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        build_dir=tmp_path,
+        wasm_int_width="auto",
+    )
+    assert [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=2)] == [
+        {"value": -4.25, "integer": -4},
+    ] * 2

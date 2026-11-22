@@ -49,9 +49,9 @@ def test_valid_compiler_options_are_forwarded(monkeypatch: pytest.MonkeyPatch, o
     assert calls == [(b"package", {"opt_level": opt_level, "platform": platform, "emit_debug": False})]
 
 
-@pytest.mark.parametrize("width", [16, 32.0, True, "32", None])
+@pytest.mark.parametrize("width", [16, 32.0, True, "32", "AUTO", None])
 def test_invalid_wasm_int_width_names_the_value(width: object) -> None:
-    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64; got ") as error:
+    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64, or 'auto'; got ") as error:
         hugr_lowering.validate_wasm_options({"m": b""}, width)
     assert str(error.value).endswith(repr(width))
 
@@ -105,7 +105,7 @@ def test_rejected_option_errors_survive_unprintable_values(
 ) -> None:
     monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", None)
     checks = [
-        ("wasm_int_width must be 32 or 64; got ", lambda: hugr_lowering.validate_wasm_options({}, value)),
+        ("wasm_int_width must be 32 or 64, or 'auto'; got ", lambda: hugr_lowering.validate_wasm_options({}, value)),
         ("wasm_auto_init must be True or False; got ", lambda: hugr_lowering.validate_wasm_auto_init(value, {})),
         (
             "wasm_timeout_seconds must be a positive finite number of seconds; got ",

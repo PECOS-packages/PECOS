@@ -37,6 +37,8 @@ pub enum WasmScalarType {
     /// Signed 32-bit integer in a Guppy 64-bit transport slot. Arguments wrap to their
     /// low 32 bits and results are sign-extended into the 64-bit transport slot.
     I32,
+    /// Select i32 or i64 from the actual export signature for each integer lane.
+    IntegerAuto,
 }
 
 /// Length of each tick in milliseconds (10ms per tick)
@@ -437,6 +439,10 @@ impl WasmForeignObject {
                 (WasmScalarType::I64, wasmtime::ValType::I64)
                     | (WasmScalarType::I32, wasmtime::ValType::I32)
                     | (WasmScalarType::F64, wasmtime::ValType::F64)
+                    | (
+                        WasmScalarType::IntegerAuto,
+                        wasmtime::ValType::I32 | wasmtime::ValType::I64
+                    )
             )
         };
         if arguments.len() != inputs.len()
@@ -455,19 +461,23 @@ impl WasmForeignObject {
                 "WASM scalar signature mismatch for {name}"
             )));
         }
-        let values: Vec<_> = inputs
-            .iter()
+        // The complete signature is validated before any execution. IntegerAuto
+        // resolves each lane independently; float lanes remain exact.
+        let values: Vec<_> = signature
+            .params()
             .zip(arguments)
             .map(|(ty, bits)| match ty {
-                WasmScalarType::I64 => Val::I64(*bits),
-                WasmScalarType::I32 => {
-                    // WebAssembly integer narrowing preserves the low bits.
+                wasmtime::ValType::I64 => Ok(Val::I64(*bits)),
+                wasmtime::ValType::I32 => {
                     let [a, b, c, d, ..] = bits.to_le_bytes();
-                    Val::I32(i32::from_le_bytes([a, b, c, d]))
+                    Ok(Val::I32(i32::from_le_bytes([a, b, c, d])))
                 }
-                WasmScalarType::F64 => Val::F64(u64::from_ne_bytes(bits.to_ne_bytes())),
+                wasmtime::ValType::F64 => Ok(Val::F64(u64::from_ne_bytes(bits.to_ne_bytes()))),
+                _ => Err(PecosError::Input(
+                    "Unsupported WASM scalar argument type".into(),
+                )),
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         let mut results = vec![Val::I64(0); outputs.len()];
         store.set_epoch_deadline(Self::calculate_max_ticks(self.timeout_seconds));
         func.call(&mut *store, &values, &mut results)

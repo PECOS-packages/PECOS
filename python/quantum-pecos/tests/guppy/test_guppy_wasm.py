@@ -32,6 +32,7 @@ def examples():
         "floating_point",
         "indexed_exports",
         "integer32",
+        "mixed_integers",
         "memory_lifecycle",
         "managed_objects",
     ):
@@ -100,7 +101,7 @@ def test_guppy_wasm_hugr_roundtrip(examples, name, exports) -> None:
 
 
 def test_program_wasm_options_are_validated_on_construction() -> None:
-    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64; got 16$"):
+    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64, or 'auto'; got 16$"):
         pc.Hugr(b"unused", wasm_modules={"m": b""}, wasm_int_width=16)
     with pytest.raises(ValueError, match=rf"^wasm_int_width=32 requires explicit wasm_modules; {PASS_MODULES}$"):
         pc.Hugr.from_bytes(b"unused", wasm_int_width=32)
@@ -580,3 +581,37 @@ def test_pecos_managed_objects_use_fresh_stores(examples):
     )
     for _ in range(2):
         assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
+
+
+def test_pecos_mixed_integer_widths(examples, tmp_path):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    example = examples["mixed_integers"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    data = plugin.compile_guppy(example.mixed).to_bytes()
+    path = tmp_path / "mixed.hugr"
+    path.write_bytes(data)
+    programs = (
+        pc.Guppy(example.mixed, wasm_modules=modules, wasm_int_width="auto"),
+        pc.Hugr.from_file(path, wasm_modules=modules, wasm_int_width="auto"),
+        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_int_width="auto"),
+    )
+    expected = {"small": -2147483648, "large": 4294967308, "small_indexed": -3, "large_indexed": 4294967293}
+    for program in programs:
+        runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).build()
+        for _ in range(2):
+            assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
+
+
+@pytest.mark.parametrize("width", [True, 32.0, 64.0, "32", "AUTO", None])
+def test_pecos_rejects_invalid_integer_width(width):
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        message = f"wasm_int_width must be 32 or 64, or 'auto'; got {reprlib.repr(width)}"
+        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+            constructor(source, wasm_modules={}, wasm_int_width=width)
+
+
+def test_pecos_auto_integer_width_requires_modules():
+    message = rf"^wasm_int_width='auto' requires explicit wasm_modules; {PASS_MODULES}$"
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match=message):
+            constructor(source, wasm_int_width="auto")

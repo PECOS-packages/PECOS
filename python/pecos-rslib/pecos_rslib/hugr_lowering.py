@@ -349,18 +349,21 @@ def _describe_value(value: object) -> str:
 
 
 def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_width: object) -> None:
-    """Reject a WASM integer width outside 32/64, or a non-default width without modules.
+    """Reject a WASM integer width other than 32, 64 or 'auto', or a non-default width without modules.
 
     Raises:
-        ValueError: If ``wasm_int_width`` is not the int 32 or 64, or is 32 while
-            ``wasm_modules`` is None.
+        ValueError: If ``wasm_int_width`` is not the int 32 or 64 or the string 'auto',
+            or is not 64 while ``wasm_modules`` is None.
     """
-    if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-        msg = f"wasm_int_width must be 32 or 64; got {_describe_value(wasm_int_width)}"
+    if not (
+        (type(wasm_int_width) is int and wasm_int_width in (32, 64))
+        or (type(wasm_int_width) is str and wasm_int_width == "auto")
+    ):
+        msg = f"wasm_int_width must be 32 or 64, or 'auto'; got {_describe_value(wasm_int_width)}"
         raise ValueError(msg)
     if wasm_modules is None and wasm_int_width != 64:
         msg = (
-            f"wasm_int_width={wasm_int_width} requires explicit wasm_modules; "
+            f"wasm_int_width={wasm_int_width!r} requires explicit wasm_modules; "
             "pass wasm_modules={module_name: wasm_bytes}"
         )
         raise ValueError(msg)
@@ -411,7 +414,7 @@ def compile_hugr_to_qis(
     opt_level: int = 2,
     emit_debug: bool = False,
     wasm_modules: Mapping[str, bytes] | None = None,
-    wasm_int_width: int = 64,
+    wasm_int_width: int | str = 64,
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
 ) -> str:
@@ -423,7 +426,8 @@ def compile_hugr_to_qis(
         opt_level: LLVM optimization level.
         emit_debug: Whether to emit debug information.
         wasm_modules: Explicit module identifier to WAT/WASM bytes mapping.
-        wasm_int_width: Exact native WASM integer width, 32 or 64 (default).
+        wasm_int_width: Native WASM integer width: 32, 64 (default), or "auto"
+            to select each integer lane from the actual export signature.
         wasm_timeout_seconds: Positive finite per-execution WASM limit (default 1).
         wasm_auto_init: Automatically invoke optional init exports (default True).
 

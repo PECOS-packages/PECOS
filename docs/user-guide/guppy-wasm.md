@@ -426,10 +426,26 @@ foreign-object API's clamping behavior.
 
 The width applies to every integer WASM signature in the program, including
 precompiled programs supplied through `Hugr(..., wasm_int_width=32)` or
-`compile_wasm(..., wasm_int_width=32)`. Mixed 32/64-bit integer modules in one
-program are not supported by this option. The default remains 64: supplying an
+`compile_wasm(..., wasm_int_width=32)`. Use `wasm_int_width="auto"` for mixed 32/64-bit exports in one program. The default remains 64: supplying an
 `i32` export to a default-width program, or an `i64` export in 32-bit mode, fails
 signature validation. Float signatures retain their existing `f64` behavior.
+
+### Mixed integer widths
+
+Run `python examples/guppy_wasm/mixed_integers.py --backend selene` (or
+`--backend pecos`). Pass `wasm_int_width="auto"` to `build`, `compile_wasm`,
+`Guppy`, or `Hugr` to select each integer argument and result width from the
+actual WASM export signature. Named and indexed calls both support this mode.
+For example, the same program can call an i32 addition returning `-2147483648`
+on overflow and an i64 addition returning `4294967308` without narrowing.
+
+Automatic mode retains the i32 wrapping and sign-extension rules above and
+requires exact `f64` signatures for float lanes. It uses the supplied WASM
+payload's widths, rather than enforcing the declaration's platform width;
+use strict 32 or 64 mode when that enforcement is required. Other scalar types,
+references, and aggregate results are not enabled by this option. Rebuild both
+the native utility and PECOS QIS FFI to use the version-3 lookup entry points.
+The default remains strict 64-bit mode.
 
 ## Compare against another Guppy/WASM stack
 

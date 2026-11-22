@@ -62,6 +62,102 @@ impl StoreContext {
     }
 }
 
+/// Immutable compiled WebAssembly code that can create independent instances.
+///
+/// Clones share compiled code and the epoch clock, never stores or mutable WASM
+/// state. Retaining this value avoids recompilation between shots.
+#[derive(Clone, Debug)]
+pub struct CompiledWasmModule {
+    bytes: Arc<[u8]>,
+    engine: Engine,
+    module: Module,
+    clock: Arc<EpochClock>,
+}
+
+#[derive(Debug)]
+struct EpochClock {
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for EpochClock {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+impl CompiledWasmModule {
+    /// Compile bytes without executing the module's start function or init export.
+    ///
+    /// # Errors
+    /// Returns an error if engine creation or compilation fails.
+    pub fn new(bytes: &[u8]) -> Result<Self, PecosError> {
+        let mut config = Config::new();
+        config.epoch_interruption(true);
+        let engine = Engine::new(&config).map_err(|e| {
+            PecosError::Processing(format!("Failed to create WebAssembly engine: {e}"))
+        })?;
+        let module = Module::new(&engine, bytes).map_err(|e| {
+            PecosError::Processing(format!("Failed to compile WebAssembly module: {e}"))
+        })?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = stop.clone();
+        let thread_engine = engine.clone();
+        // Capture neither the artifact nor its clock: either would form a cycle.
+        thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                thread_engine.increment_epoch();
+                thread::sleep(Duration::from_millis(WASM_EXECUTION_TICK_LENGTH_MS));
+            }
+        });
+        Ok(Self {
+            bytes: Arc::from(bytes),
+            engine,
+            module,
+            clock: Arc::new(EpochClock { stop }),
+        })
+    }
+
+    /// Original input bytes, used for exact cache identity.
+    #[must_use]
+    pub fn wasm_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Create fresh mutable state with the default execution limits.
+    ///
+    /// # Errors
+    /// Returns an error if instantiation or the start function fails.
+    pub fn instantiate(&self) -> Result<WasmForeignObject, PecosError> {
+        self.instantiate_with_limits(DEFAULT_TIMEOUT_SECONDS, None)
+    }
+
+    /// Create a fresh store and instance with independent resource limits.
+    ///
+    /// # Errors
+    /// Returns an error if instantiation or the start function fails.
+    pub fn instantiate_with_limits(
+        &self,
+        timeout_seconds: f64,
+        memory_size: Option<usize>,
+    ) -> Result<WasmForeignObject, PecosError> {
+        let mut store = Store::new(&self.engine, StoreContext::new(memory_size));
+        store.limiter(|ctx| &mut ctx.limits);
+        let mut object = WasmForeignObject {
+            wasm_bytes: self.bytes.clone(),
+            module: self.module.clone(),
+            store: RwLock::new(store),
+            instance: RwLock::new(None),
+            func_names: OnceLock::new(),
+            clock: Some(self.clock.clone()),
+            last_results: Vec::new(),
+            timeout_seconds,
+            memory_size,
+        };
+        object.new_instance()?;
+        Ok(object)
+    }
+}
+
 /// WebAssembly foreign object implementation using Wasmtime
 ///
 /// This implementation provides:
@@ -93,10 +189,7 @@ impl StoreContext {
 #[derive(Debug)]
 pub struct WasmForeignObject {
     /// WebAssembly binary
-    wasm_bytes: Vec<u8>,
-    /// Wasmtime engine (must be kept alive for module/store to remain valid)
-    #[allow(dead_code)]
-    engine: Engine,
+    wasm_bytes: Arc<[u8]>,
     /// Wasmtime module
     module: Module,
     /// Wasmtime store (thread-safe)
@@ -105,8 +198,8 @@ pub struct WasmForeignObject {
     instance: RwLock<Option<Instance>>,
     /// Cached function names (initialized once, lock-free reads)
     func_names: OnceLock<Arc<[String]>>,
-    /// Stop flag for epoch increment thread
-    stop_flag: Arc<AtomicBool>,
+    /// A live instance retains its shared epoch clock until teardown or drop.
+    clock: Option<Arc<EpochClock>>,
     /// Last function call results
     last_results: Vec<Val>,
     /// Timeout in seconds for WASM execution (default: 1.0 second)
@@ -253,55 +346,7 @@ impl WasmForeignObject {
         timeout_seconds: f64,
         memory_size: Option<usize>,
     ) -> Result<Self, PecosError> {
-        // Create a new WebAssembly engine with epoch interruption enabled
-        let mut config = Config::new();
-        config.epoch_interruption(true);
-        let engine = Engine::new(&config).map_err(|e| {
-            PecosError::Processing(format!("Failed to create WebAssembly engine: {e}"))
-        })?;
-
-        // Create a new store with resource limits
-        let store_context = StoreContext::new(memory_size);
-        let mut store = Store::new(&engine, store_context);
-
-        // Set the resource limiter
-        store.limiter(|ctx| &mut ctx.limits);
-
-        // Compile the WebAssembly module
-        let module = Module::new(&engine, wasm_bytes).map_err(|e| {
-            PecosError::Processing(format!("Failed to compile WebAssembly module: {e}"))
-        })?;
-
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let engine_clone = engine.clone();
-        let stop_flag_clone = stop_flag.clone();
-
-        // Start the epoch increment thread for timeout handling
-        thread::spawn(move || {
-            while !stop_flag_clone.load(Ordering::Relaxed) {
-                // Increment the epoch every tick length
-                engine_clone.increment_epoch();
-                thread::sleep(Duration::from_millis(WASM_EXECUTION_TICK_LENGTH_MS));
-            }
-        });
-
-        let mut foreign_object = Self {
-            wasm_bytes: wasm_bytes.to_vec(),
-            engine,
-            module,
-            store: RwLock::new(store),
-            instance: RwLock::new(None),
-            func_names: OnceLock::new(),
-            stop_flag,
-            last_results: Vec::new(),
-            timeout_seconds,
-            memory_size,
-        };
-
-        // Create the instance
-        foreign_object.new_instance()?;
-
-        Ok(foreign_object)
+        CompiledWasmModule::new(wasm_bytes)?.instantiate_with_limits(timeout_seconds, memory_size)
     }
 
     /// Get a function from the WebAssembly instance
@@ -726,8 +771,8 @@ impl ForeignObject for WasmForeignObject {
     }
 
     fn teardown(&mut self) {
-        // Set the stop flag to stop the epoch increment thread
-        self.stop_flag.store(true, Ordering::Relaxed);
+        // Other objects and cached compiled code may still need this clock.
+        self.clock.take();
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -736,12 +781,5 @@ impl ForeignObject for WasmForeignObject {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
-    }
-}
-
-impl Drop for WasmForeignObject {
-    fn drop(&mut self) {
-        // Set the stop flag to stop the epoch increment thread
-        self.stop_flag.store(true, Ordering::Relaxed);
     }
 }

@@ -34,6 +34,9 @@ pub enum WasmScalarType {
     I64,
     /// IEEE 754 double precision, transported without changing its bits.
     F64,
+    /// Signed 32-bit integer in a Guppy 64-bit transport slot. Arguments wrap to their
+    /// low 32 bits and results are sign-extended into the 64-bit transport slot.
+    I32,
 }
 
 /// Length of each tick in milliseconds (10ms per tick)
@@ -380,6 +383,7 @@ impl WasmForeignObject {
             matches!(
                 (expected, actual),
                 (WasmScalarType::I64, wasmtime::ValType::I64)
+                    | (WasmScalarType::I32, wasmtime::ValType::I32)
                     | (WasmScalarType::F64, wasmtime::ValType::F64)
             )
         };
@@ -404,6 +408,11 @@ impl WasmForeignObject {
             .zip(arguments)
             .map(|(ty, bits)| match ty {
                 WasmScalarType::I64 => Val::I64(*bits),
+                WasmScalarType::I32 => {
+                    // WebAssembly integer narrowing preserves the low bits.
+                    let [a, b, c, d, ..] = bits.to_le_bytes();
+                    Val::I32(i32::from_le_bytes([a, b, c, d]))
+                }
                 WasmScalarType::F64 => Val::F64(u64::from_ne_bytes(bits.to_ne_bytes())),
             })
             .collect();
@@ -414,6 +423,7 @@ impl WasmForeignObject {
         results
             .into_iter()
             .map(|value| match value {
+                Val::I32(bits) => Ok(i64::from(bits)),
                 Val::I64(bits) => Ok(bits),
                 Val::F64(bits) => Ok(i64::from_ne_bytes(bits.to_ne_bytes())),
                 _ => Err(PecosError::Input(

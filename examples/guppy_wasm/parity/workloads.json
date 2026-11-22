@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "suite_id": "guppy-wasm-scalar-v1",
+  "suite_id": "guppy-wasm-scalar-v2",
   "description": "Initial scalar workload coverage; passing this suite does not establish complete stack parity.",
   "cases": [
     {
@@ -189,6 +189,33 @@
       "module": "counter.wat",
       "expected": {
         "value": 1000
+      }
+    },
+    {
+      "id": "i32-boundaries",
+      "source": "integer32.py",
+      "module": "integer32.wat",
+      "function": "boundaries",
+      "wasm_int_width": 32,
+      "expected": {
+        "sum": 5,
+        "overflow": -2147483648,
+        "underflow": 2147483647,
+        "wide": 5,
+        "negative_wide": 2147483647,
+        "indexed": -5
+      }
+    },
+    {
+      "id": "i32-state-feedback",
+      "source": "integer32.py",
+      "module": "integer32.wat",
+      "function": "state_and_feedback",
+      "wasm_int_width": 32,
+      "expected": {
+        "initial": 0,
+        "retained": -7,
+        "measured": true
       }
     }
   ]

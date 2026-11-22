@@ -224,7 +224,7 @@ with other compiler/runtime implementations.
 
 ## Supported scope
 
-- Exports selected by name or export-list position, with mixed scalar `i64`/`f64` arguments and zero or one scalar result.
+- Exports selected by name or export-list position, with mixed scalar `i64`/`f64` arguments and zero or one scalar result; explicit 32-bit mode supports `i32` integer exports.
 - `get_context`, `dispose_context`, `lookup_by_name`, `lookup_by_id`, `call`, and `read_result`.
 - One HUGR module per program, with any explicitly supplied WASM modules.
 - Synchronous WASM calls on 64-bit hosts, including branches and loops.
@@ -266,10 +266,47 @@ The implementation follows the public
 and Selene's public
 [Utility interface](https://github.com/Quantinuum/selene/blob/main/selene-core/python/selene_core/utility.py).
 
+## 32-bit WASM integer exports
+
+Run `python examples/guppy_wasm/integer32.py --backend selene` or use
+`--backend pecos` for the PECOS stack.
+
+Guppy's `WasmPlatform.H2` declaration mode accepts `i32` exports. Select
+`wasm_int_width=32` when executing these declarations through either public
+backend. This selects the WASM integer width; it does not change the quantum
+platform or the 64-bit host requirement.
+
+```python
+from pecos import Guppy, sim, state_vector
+from pecos_selene_wasm import build
+
+# `boundaries` and `WASM_PATH` are from examples/guppy_wasm/integer32.py.
+modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
+runner = build(boundaries, modules, wasm_int_width=32)
+results = sim(Guppy(boundaries, wasm_modules=modules, wasm_int_width=32)).qubits(1).quantum(state_vector()).run(4)
+```
+
+The [32-bit example](https://github.com/PECOS-packages/PECOS/blob/dev/examples/guppy_wasm/integer32.py)
+covers named/indexed calls, signed overflow, state and quantum feedback. Declare
+its module with `@wasm_module(path, wasm_platform=WasmPlatform.H2)`, importing
+`WasmPlatform` from `guppylang_internals.std._internal.wasm`.
+
+Arguments are truncated to their low 32 bits, and results are sign-extended to
+Guppy's integer type. Thus `2147483647 + 1` returns `-2147483648`, and passing
+`4294967301` to an identity function returns `5`. This differs from the legacy
+foreign-object API's clamping behavior.
+
+The width applies to every integer WASM signature in the program, including
+precompiled programs supplied through `Hugr(..., wasm_int_width=32)` or
+`compile_wasm(..., wasm_int_width=32)`. Mixed 32/64-bit integer modules in one
+program are not supported by this option. The default remains 64: supplying an
+`i32` export to a default-width program, or an `i64` export in 32-bit mode, fails
+signature validation. Float signatures retain their existing `f64` behavior.
+
 ## Compare against another Guppy/WASM stack
 
 The [public comparison bundle](https://github.com/PECOS-packages/PECOS/tree/dev/examples/guppy_wasm/parity)
-provides 19 workloads with independent expected answers, public PECOS and Selene
+provides 21 workloads with independent expected answers, public PECOS and Selene
 runners, and an adapter contract for a separately installed reference stack.
 It checks scalar calls, state, loops, quantum feedback and traps, and separates
 preparation, first-run and repeat timings. The handoff archive contains only

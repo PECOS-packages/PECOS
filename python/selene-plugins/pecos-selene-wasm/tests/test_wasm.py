@@ -14,7 +14,7 @@ EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports"):
+    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports", "integer32"):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -412,3 +412,60 @@ def test_index_must_fit_unsigned_64_bits(examples, index):
     envelope = package.to_bytes(EnvelopeConfig(format=EnvelopeFormat.JSON))
     with pytest.raises(ValueError, match="unsigned 64-bit"):
         compile_wasm(envelope, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()})
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "boundaries",
+            {
+                "sum": 5,
+                "overflow": -2147483648,
+                "underflow": 2147483647,
+                "wide": 5,
+                "negative_wide": 2147483647,
+                "indexed": -5,
+            },
+        ),
+        ("state_and_feedback", {"initial": 0, "retained": -7, "measured": 1}),
+    ],
+)
+def test_i32_guppy_exports(examples, tmp_path, name, expected):
+    example = examples["integer32"]
+    runner = build(
+        getattr(example, name),
+        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        build_dir=tmp_path,
+        wasm_int_width=32,
+    )
+    for _ in range(2):
+        assert [
+            dict(shot)
+            for shot in runner.run_shots(
+                simulator=Quest(),
+                n_qubits=1,
+                n_shots=4,
+                n_processes=2,
+                random_seed=42,
+            )
+        ] == [expected] * 4
+
+
+def test_i32_mode_rejects_i64_module(examples, tmp_path):
+    example = examples["arithmetic"]
+    runner = build(
+        example.addition,
+        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        build_dir=tmp_path,
+        wasm_int_width=32,
+    )
+    with pytest.raises(SelenePanicError, match="signature mismatch"):
+        [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
+
+
+@pytest.mark.parametrize("width", [16, 32.0, True, "32"])
+def test_invalid_integer_width_is_rejected(examples, width):
+    example = examples["integer32"]
+    with pytest.raises(ValueError, match="wasm_int_width must be 32 or 64"):
+        compile_wasm(example.boundaries, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, wasm_int_width=width)

@@ -324,7 +324,8 @@ def test_selene_parity_cli_executes_all_public_workloads(harness, tmp_path):
     )
     assert completed.returncode == 0, completed.stderr + completed.stdout
     report = harness.read_json(output)
-    assert len(report["cases"]) >= 19
+    assert {"i32-boundaries", "i32-state-feedback"} <= {case["id"] for case in report["cases"]}
+    assert len(report["cases"]) == 21
     assert harness.compare(report, report)["all_workloads_conform"]
 
 

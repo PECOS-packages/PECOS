@@ -52,6 +52,7 @@ def build(
     platform: str = "helios",
     opt_level: int = 2,
     emit_debug: bool = False,
+    wasm_int_width: int = 64,
     **kwargs: object,
 ) -> SeleneInstance:
     """Build Selene with explicit WASM bytes and safe compilation of Guppy source.
@@ -63,7 +64,14 @@ def build(
     from selene_sim import build as selene_build  # noqa: PLC0415
 
     utilities = [*kwargs.pop("utilities", []), WasmPlugin()]
-    llvm = compile_wasm(program, modules, platform=platform, opt_level=opt_level, emit_debug=emit_debug)
+    llvm = compile_wasm(
+        program,
+        modules,
+        platform=platform,
+        opt_level=opt_level,
+        emit_debug=emit_debug,
+        wasm_int_width=wasm_int_width,
+    )
     return selene_build(
         llvm,
         platform=platform,

@@ -25,12 +25,20 @@ def examples():
     return loaded
 
 
-def prepare(backend, program, modules, directory, **options):
+def prepare(backend, program, modules, directory, *, execution_workers=1, **options):
     if backend == "selene":
         runner = build(program, modules, build_dir=directory, **options)
 
         def run(shots):
-            return [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=shots)]
+            return [
+                dict(shot)
+                for shot in runner.run_shots(
+                    simulator=Quest(),
+                    n_qubits=1,
+                    n_shots=shots,
+                    n_processes=execution_workers,
+                )
+            ]
 
     else:
         pc = pytest.importorskip("pecos")
@@ -42,7 +50,7 @@ def prepare(backend, program, modules, directory, **options):
             pc.sim(constructor(program, wasm_modules=modules, **options))
             .qubits(1)
             .quantum(pc.state_vector())
-            .workers(1)
+            .workers(execution_workers)
             .build()
         )
 
@@ -55,7 +63,8 @@ def prepare(backend, program, modules, directory, **options):
 
 @pytest.mark.parametrize("backend", ["selene", "pecos"])
 @pytest.mark.parametrize("workers", [1, 2])
-def test_deferred_calls_and_precompiled_bytes(examples, tmp_path, backend, workers):
+@pytest.mark.parametrize("execution_workers", [1, 3])
+def test_deferred_calls_and_precompiled_bytes(examples, tmp_path, backend, workers, execution_workers):
     example = examples["async_calls"]
     program = example.deferred_program().to_bytes()
     run = prepare(
@@ -63,28 +72,40 @@ def test_deferred_calls_and_precompiled_bytes(examples, tmp_path, backend, worke
         program,
         {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
         tmp_path,
+        execution_workers=execution_workers,
         wasm_async_workers=workers,
     )
     expected = {"first": example.expected_value(1000000), "second": example.expected_value(2000000)}
     for _ in range(2):
-        assert run(3) == [expected] * 3
+        assert run(5) == [expected] * 5
 
 
 @pytest.mark.parametrize("backend", ["selene", "pecos"])
 @pytest.mark.parametrize("scope", ["shot", "worker"])
-def test_async_worker_state_and_fresh_batches(examples, tmp_path, backend, scope):
+@pytest.mark.parametrize("execution_workers", [1, 3])
+@pytest.mark.parametrize("shots", [1, 5])
+def test_async_worker_state_and_fresh_batches(examples, tmp_path, backend, scope, execution_workers, shots):
     example = examples["worker_state"]
     run = prepare(
         backend,
         example.counter,
         {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
         tmp_path,
+        execution_workers=execution_workers,
         wasm_async_workers=2,
         wasm_state_scope=scope,
     )
-    expected = [{"count": n} for n in ([1, 2, 3, 4] if scope == "worker" else [1] * 4)]
+    expected = (
+        [1] * shots
+        if scope == "shot"
+        else sorted(
+            value
+            for worker in range(execution_workers)
+            for value in range(1, shots // execution_workers + (worker < shots % execution_workers) + 1)
+        )
+    )
     for _ in range(2):
-        assert run(4) == expected
+        assert sorted(shot["count"] for shot in run(shots)) == expected
 
 
 @pytest.mark.parametrize("backend", ["selene", "pecos"])

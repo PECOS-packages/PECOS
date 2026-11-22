@@ -277,13 +277,36 @@ backend. This selects the WASM integer width; it does not change the quantum
 platform or the 64-bit host requirement.
 
 ```python
+from pathlib import Path
+from guppylang import guppy
+from guppylang.std.builtins import nat, result
+from guppylang_internals.decorator import wasm, wasm_module
+from guppylang_internals.std._internal.wasm import WasmPlatform
 from pecos import Guppy, sim, state_vector
 from pecos_selene_wasm import build
+from selene_sim import Quest
 
-# `boundaries` and `WASM_PATH` are from examples/guppy_wasm/integer32.py.
+# Run from the PECOS checkout root, using the example's public WASM module.
+WASM_PATH = Path("examples/guppy_wasm/integer32.wat").resolve()
+
+@wasm_module(str(WASM_PATH), wasm_platform=WasmPlatform.H2)
+class Arithmetic32:
+    @wasm
+    def add(self, left: int, right: int) -> int: ...
+
+@guppy
+def addition32() -> None:
+    arithmetic = Arithmetic32(nat(0))
+    value = arithmetic.add(2, 3)
+    arithmetic.discard()
+    result("sum", value)
+
 modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
-runner = build(boundaries, modules, wasm_int_width=32)
-results = sim(Guppy(boundaries, wasm_modules=modules, wasm_int_width=32)).qubits(1).quantum(state_vector()).run(4)
+runner = build(addition32, modules, wasm_int_width=32)
+shots = [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=1)]
+assert shots == [{"sum": 5}] * 4
+results = sim(Guppy(addition32, wasm_modules=modules, wasm_int_width=32)).qubits(1).quantum(state_vector()).run(4)
+assert results.to_dict()["sum"] == [5] * 4
 ```
 
 The [32-bit example](https://github.com/PECOS-packages/PECOS/blob/dev/examples/guppy_wasm/integer32.py)

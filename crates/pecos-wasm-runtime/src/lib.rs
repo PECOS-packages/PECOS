@@ -194,7 +194,7 @@ fn lookup_typed(
     let scalar_types = inputs
         .iter()
         .chain(outputs)
-        .any(|ty| *ty == WasmScalarType::F64)
+        .any(|ty| *ty != WasmScalarType::I64)
         .then(|| (inputs.to_vec(), outputs.to_vec()));
     lookup_function(Function {
         module,
@@ -233,6 +233,7 @@ pub fn scalar_types(tags: &[u8]) -> Result<Vec<WasmScalarType>> {
         .map(|tag| match tag {
             0 => Ok(WasmScalarType::I64),
             1 => Ok(WasmScalarType::F64),
+            2 => Ok(WasmScalarType::I32),
             _ => Err(format!("Unknown WASM scalar type tag: {tag}")),
         })
         .collect()
@@ -392,7 +393,7 @@ macro_rules! export_wasm_runtime {
                 $crate::lookup(module, name, inputs, outputs)
             })
         }
-        /// Typed extension to v1 lookup. Tags: 0 = i64, 1 = f64.
+        /// Typed extension to v1 lookup. Tags: 0 = i64, 1 = f64, 2 = i32 in a 64-bit slot.
         /// The returned handle uses v1 call/read's 64-bit slots; float slots
         /// carry IEEE 754 bits. Existing integer lookup/call clients are unchanged.
         ///
@@ -674,7 +675,70 @@ mod tests {
         let wrong = lookup(0, "echo", 1, 1).unwrap();
         assert_ne!(wrong, echo);
         assert!(call(context, wrong, &[bits]).is_err());
-        assert!(scalar_types(&[2]).is_err());
+        assert!(scalar_types(&[3]).is_err());
+    }
+
+    #[test]
+    fn i32_slots_wrap_arguments_sign_extend_results_and_keep_widths_strict() {
+        reset().unwrap();
+        register(
+            0,
+            br#"(module
+            (memory (export "memory") 1)
+            (global $value (mut i32) (i32.const 0))
+            (func (export "add") (param i32 i32) (result i32)
+                local.get 0 local.get 1 i32.add)
+            (func (export "set") (param i32) local.get 0 global.set $value)
+            (func (export "get") (result i32) global.get $value)
+            (func (export "wide") (param i64) (result i64) local.get 0)
+            (func (export "float") (param f64) (result f64) local.get 0))"#,
+        )
+        .unwrap();
+        let context = acquire(0).unwrap();
+        let int32 = scalar_types(&[2]).unwrap();
+        assert_eq!(int32, [WasmScalarType::I32]);
+        let add = lookup_scalar(0, "add", &[WasmScalarType::I32; 2], &int32).unwrap();
+        let indexed = lookup_by_id(0, 1, &[WasmScalarType::I32; 2], &int32).unwrap();
+        for function in [add, indexed] {
+            for (arguments, expected) in [
+                ([2, 3], 5),
+                ([2_147_483_647, 1], -2_147_483_648),
+                ([-2_147_483_648, -1], 2_147_483_647),
+                ([4_294_967_301, 0], 5),
+                ([-2_147_483_649, 0], 2_147_483_647),
+                ([i64::MAX, 0], -1),
+                ([i64::MIN, 0], 0),
+            ] {
+                call(context, function, &arguments).unwrap();
+                assert_eq!(read(context, 1).unwrap(), [expected]);
+            }
+        }
+        let set = lookup_scalar(0, "set", &int32, &[]).unwrap();
+        let get = lookup_scalar(0, "get", &[], &int32).unwrap();
+        call(context, set, &[-7]).unwrap();
+        assert_eq!(read(context, 0).unwrap(), [] as [i64; 0]);
+        release(context).unwrap();
+        assert_eq!(acquire(0).unwrap(), context);
+        call(context, get, &[]).unwrap();
+        assert_eq!(read(context, 1).unwrap(), [-7]);
+        // Older entry points retain their exact native-width contract.
+        let strict = lookup(0, "add", 2, 1).unwrap();
+        assert_ne!(strict, add);
+        assert!(
+            call(context, strict, &[2, 3])
+                .unwrap_err()
+                .contains("signature mismatch")
+        );
+        for name in ["wide", "float"] {
+            let wrong = lookup_scalar(0, name, &int32, &int32).unwrap();
+            assert!(
+                call(context, wrong, &[2])
+                    .unwrap_err()
+                    .contains("signature mismatch")
+            );
+        }
+        let wrong_return = lookup_scalar(0, "get", &[], &[WasmScalarType::I64]).unwrap();
+        assert!(call(context, wrong_return, &[]).is_err());
     }
 
     #[test]

@@ -9,7 +9,8 @@ def prepare(program, modules, settings, build_dir):  # noqa: ARG001 - Adapter co
 
     program: the Guppy definition; use the local stack's normal source frontend.
     modules: exact identifiers mapped to explicit WAT bytes; do not substitute files.
-    settings: shots, repeats, workers, seed, qubits, platform, simulator_family.
+    settings: shots, repeats, workers, seed, qubits, platform, simulator_family,
+    wasm_int_width (case-specific native integer width, 32 or 64).
     build_dir: temporary scratch space, removed after this case.
 
     Each run must execute settings['shots'] fresh shots of the same compiled

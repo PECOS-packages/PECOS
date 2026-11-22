@@ -144,3 +144,9 @@ If a capability exists only in the reference, provide a small publicly shareable
 input/output specification or reproduction. Extend this suite and fix the
 public stack against that evidence. Passing the current scalar cases does not
 resolve these inventory items or establish full functional/performance parity.
+
+Suite `guppy-wasm-scalar-v2` adds i32 boundaries, state and feedback cases.
+The manifest records each case's `wasm_int_width` (default 64); the adapter
+receives this value in its settings. The public adapters select strict native
+width explicitly. Reports from v1 and v2 cannot be compared: rerun both stacks
+from the same v2 archive.

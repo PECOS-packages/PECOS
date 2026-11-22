@@ -22,7 +22,7 @@ EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports"):
+    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports", "integer32"):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -389,5 +389,56 @@ def test_pecos_parity_cli_executes_public_workloads(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr + completed.stdout
     report = json.loads(output.read_text())
-    assert len(report["cases"]) >= 19
+    assert {"i32-boundaries", "i32-state-feedback"} <= {case["id"] for case in report["cases"]}
+    assert len(report["cases"]) == 21
     assert all(case["status"] == "completed" for case in report["cases"])
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "boundaries",
+            {
+                "sum": 5,
+                "overflow": -2147483648,
+                "underflow": 2147483647,
+                "wide": 5,
+                "negative_wide": 2147483647,
+                "indexed": -5,
+            },
+        ),
+        ("state_and_feedback", {"initial": 0, "retained": -7, "measured": 1}),
+    ],
+)
+def test_pecos_i32_guppy_exports(examples, name, expected):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["integer32"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    runner = (
+        pc.sim(pc.Guppy(getattr(example, name), wasm_modules=modules, wasm_int_width=32))
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .workers(2)
+        .build()
+    )
+    for _ in range(2):
+        assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
+
+
+def test_pecos_i32_precompiled_hugr(examples, tmp_path):
+    plugin = pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    compile_guppy = plugin.compile_guppy
+
+    example = examples["integer32"]
+    path = tmp_path / "integer32.hugr"
+    data = compile_guppy(example.boundaries).to_bytes()
+    path.write_bytes(data)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    for program in (
+        pc.Hugr.from_file(path, wasm_modules=modules, wasm_int_width=32),
+        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_int_width=32),
+    ):
+        output = pc.sim(program).qubits(1).quantum(pc.state_vector()).run(1).to_dict()
+        assert output["overflow"] == [-2147483648]
+        assert output["wide"] == [5]

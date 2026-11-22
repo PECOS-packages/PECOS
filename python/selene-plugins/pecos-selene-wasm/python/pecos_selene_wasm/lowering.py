@@ -371,7 +371,7 @@ def _check(status: str, bits: int = 32, *, nonzero: bool = False) -> str:
     return f"  %{status}_ok = icmp {predicate} i{bits} %{status}, 0\n  call void @pecos_wasm_check(i1 %{status}_ok)\n"
 
 
-def _adapter(symbol: str, operation: dict, unique: str) -> str:
+def _adapter(symbol: str, operation: dict, unique: str, wasm_int_width: int = 64) -> str:
     name, args = operation["name"], operation["args"]
     inputs, outputs = _validate(operation)
     if name == "get_context":
@@ -391,9 +391,15 @@ entry:
             data = args[0]["arg"].encode("utf-8")
             constants = _constant(unique, data)
             lookup = f"@pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})"
-        if name == "lookup_by_id" or "double" in in_types + out_types:
-            constants += _constant(unique + "_inputs", bytes(ty == "double" for ty in in_types))
-            constants += _constant(unique + "_outputs", bytes(ty == "double" for ty in out_types))
+        if name == "lookup_by_id" or "double" in in_types + out_types or wasm_int_width == 32:
+            constants += _constant(
+                unique + "_inputs",
+                bytes(1 if ty == "double" else (2 if wasm_int_width == 32 else 0) for ty in in_types),
+            )
+            constants += _constant(
+                unique + "_outputs",
+                bytes(1 if ty == "double" else (2 if wasm_int_width == 32 else 0) for ty in out_types),
+            )
             target = (
                 f"@pecos_wasm_v2_lookup_by_id(i64 %module, i64 {args[0]['n']}, "
                 if name == "lookup_by_id"
@@ -461,6 +467,7 @@ def compile_wasm(
     platform: str = "helios",
     opt_level: int = 2,
     emit_debug: bool = False,
+    wasm_int_width: int = 64,
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
@@ -469,8 +476,14 @@ def compile_wasm(
     additional optimization.
 
     ``modules`` maps exact module identifiers to caller-supplied WAT or WASM
-    bytes. The result requires the Selene WASM utility or WASM-enabled QIS FFI.
+    bytes. ``wasm_int_width`` selects exact native integer signatures (64 by
+    default; use 32 for Guppy H2 declarations). i32 arguments wrap to their low
+    32 bits and results are sign-extended; the setting applies to all modules.
+    The result requires the Selene WASM utility or WASM-enabled QIS FFI.
     """
+    if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
+        msg = "wasm_int_width must be 32 or 64"
+        raise ValueError(msg)
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
         raise ValueError(msg)
@@ -547,7 +560,7 @@ def compile_wasm(
         for name, operation in adapters.items():
             if re.fullmatch(r'@"?__hugr__\.' + re.escape(name) + r'(?:\.\d+)?"?', symbol):
                 remaining.discard(name)
-                return _adapter(symbol, operation, name + "_name")
+                return _adapter(symbol, operation, name + "_name", wasm_int_width)
         return match[0]
 
     llvm = declarations.sub(replace, llvm)

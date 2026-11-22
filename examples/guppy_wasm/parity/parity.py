@@ -26,6 +26,8 @@ PAYLOAD = (
     "floating_point.wat",
     "indexed_exports.py",
     "indexed_exports.wat",
+    "integer32.py",
+    "integer32.wat",
     "parity/throughput.py",
     "parity/workloads.json",
     "parity/parity.py",
@@ -79,7 +81,12 @@ def manifest() -> dict:
     for case in cases:
         require(isinstance(case, dict), "Invalid workload")
         required = {"id", "source", "module", "function"}
-        require(set(case) in (required | {"expected"}, required | {"expected_error"}), "Invalid workload fields")
+        require(
+            set(case) - {"wasm_int_width"} in (required | {"expected"}, required | {"expected_error"}),
+            "Invalid workload fields",
+        )
+        width = case.get("wasm_int_width", 64)
+        require(type(width) is int and width in (32, 64), "Invalid workload WASM integer width")
         require(isinstance(case["id"], str) and re.fullmatch(r"[a-z0-9-]+", case["id"]), "Invalid workload ID")
         require(case["id"] not in seen, "Duplicate workload ID")
         seen.add(case["id"])
@@ -241,7 +248,8 @@ def run_suite(prepare, configuration: dict, *, stack_tag: str, host_tag: str, ad
                 source = load_module(public_path(case["source"]), "parity_" + case["id"].replace("-", "_"))
                 program = getattr(source, case["function"])
                 modules = {str(source.WASM_PATH): public_path(case["module"]).read_bytes()}
-                with prepare(program, modules, dict(configuration), Path(build_dir)) as run:
+                case_settings = dict(configuration, wasm_int_width=case.get("wasm_int_width", 64))
+                with prepare(program, modules, case_settings, Path(build_dir)) as run:
                     record["prepare_seconds"] = time.perf_counter() - start
                     entered = True
                     for _ in range(configuration["repeats"] + 1):

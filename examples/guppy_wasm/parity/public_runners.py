@@ -39,7 +39,13 @@ def selene(program, modules, settings, build_dir):
     from pecos_selene_wasm import build
     from selene_sim.exceptions import SelenePanicError
 
-    runner = build(program, modules, platform=settings["platform"], build_dir=build_dir)
+    runner = build(
+        program,
+        modules,
+        platform=settings["platform"],
+        build_dir=build_dir,
+        wasm_int_width=settings.get("wasm_int_width", 64),
+    )
 
     def run():
         try:
@@ -66,7 +72,7 @@ def pecos(program, modules, settings, _build_dir):
     import pecos as pc
 
     runner = (
-        pc.sim(pc.Guppy(program, wasm_modules=modules))
+        pc.sim(pc.Guppy(program, wasm_modules=modules, wasm_int_width=settings.get("wasm_int_width", 64)))
         .qubits(settings["qubits"])
         .quantum(pc.state_vector())
         .seed(settings["seed"])

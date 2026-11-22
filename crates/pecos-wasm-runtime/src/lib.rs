@@ -14,6 +14,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 
 mod async_pool;
+mod tls;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -114,9 +115,9 @@ impl CompilationCache {
 }
 
 thread_local! {
-    static STATE: RefCell<State> = RefCell::default();
+    static STATE: tls::Value<RefCell<State>> = tls::Value::new(RefCell::default());
     // Immutable code survives shot reset; stores and instances never do.
-    static COMPILED: RefCell<CompilationCache> = RefCell::default();
+    static COMPILED: tls::Value<RefCell<CompilationCache>> = tls::Value::new(RefCell::default());
     // QIS panic uses a length-prefixed byte string (at most 255 bytes).
     static ERROR: RefCell<Vec<u8>> = RefCell::new(vec![0]);
 }

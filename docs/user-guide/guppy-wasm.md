@@ -499,6 +499,10 @@ The execution timeout starts when work executes, excluding time spent waiting
 in the queue. Reset discards queued work and joins running jobs before returning;
 it does not detach them. Cleanup can therefore wait for running calls to finish
 or reach their execution timeout. The option bounds threads, not queue memory.
+During Windows process termination, the OS may already have killed the pool
+threads. The runtime leaves their state for the terminating process to reclaim,
+instead of attempting to join them from DLL teardown. This exception does not
+apply to ordinary resets or execution-thread exits.
 With multiple simulation workers, each has its own pool: account for their
 combined thread count when choosing both settings.
 

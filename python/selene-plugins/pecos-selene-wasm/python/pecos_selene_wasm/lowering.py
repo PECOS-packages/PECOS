@@ -373,7 +373,13 @@ def _check(status: str, bits: int = 32, *, nonzero: bool = False) -> str:
     return f"  %{status}_ok = icmp {predicate} i{bits} %{status}, 0\n  call void @pecos_wasm_check(i1 %{status}_ok)\n"
 
 
-def _adapter(symbol: str, operation: dict, unique: str, wasm_int_width: int | str = 64) -> str:
+def _adapter(
+    symbol: str,
+    operation: dict,
+    unique: str,
+    wasm_int_width: int | str = 64,
+    wasm_async_workers: int = 0,
+) -> str:
     name, args = operation["name"], operation["args"]
     inputs, outputs = _validate(operation)
     if name == "get_context":
@@ -436,9 +442,14 @@ entry:
                 f"  %ptr{i} = getelementptr [{inputs} x i64], ptr %args, i64 0, i64 {i}\n"
                 f"  store i64 {value}, ptr %ptr{i}\n"
             )
+        target = (
+            f"@pecos_wasm_v2_call(i64 %context, i64 %function, ptr %args, i64 {inputs}, i64 {wasm_async_workers})"
+            if wasm_async_workers
+            else f"@pecos_wasm_v1_call(i64 %context, i64 %function, ptr %args, i64 {inputs})"
+        )
         return f"""define i64 {symbol}(i64 %context, i64 %function{parameters}) {{
 entry:
-{packing}  %status = call i32 @pecos_wasm_v1_call(i64 %context, i64 %function, ptr %args, i64 {inputs})
+{packing}  %status = call i32 {target}
 {_check('status')}  ret i64 %context
 }}
 """
@@ -488,6 +499,7 @@ def compile_wasm(
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
     wasm_state_scope: str = "shot",
+    wasm_async_workers: int = 0,
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
@@ -535,6 +547,9 @@ def compile_wasm(
         raise ValueError(msg)
     if type(wasm_state_scope) is not str or wasm_state_scope not in ("shot", "worker"):
         msg = f"wasm_state_scope must be 'shot' or 'worker'; got {_describe_value(wasm_state_scope)}"
+        raise ValueError(msg)
+    if type(wasm_async_workers) is not int or not 0 <= wasm_async_workers <= 64:
+        msg = f"wasm_async_workers must be an integer between 0 and 64; got {_describe_value(wasm_async_workers)}"
         raise ValueError(msg)
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
@@ -612,7 +627,7 @@ def compile_wasm(
         for name, operation in adapters.items():
             if re.fullmatch(r'@"?__hugr__\.' + re.escape(name) + r'(?:\.\d+)?"?', symbol):
                 remaining.discard(name)
-                return _adapter(symbol, operation, name + "_name", wasm_int_width)
+                return _adapter(symbol, operation, name + "_name", wasm_int_width, wasm_async_workers)
         return match[0]
 
     llvm = declarations.sub(replace, llvm)
@@ -625,6 +640,8 @@ def compile_wasm(
     if not re.search(r"^declare void @panic\(i32, ptr\)", llvm, re.MULTILINE):
         llvm += "\ndeclare void @panic(i32, ptr)\n"
     llvm += _ABI
+    if wasm_async_workers:
+        llvm += "\ndeclare i32 @pecos_wasm_v2_call(i64, i64, ptr, i64, i64)\n"
     if wasm_int_width == "auto":
         llvm += "\ndeclare i64 @pecos_wasm_v3_lookup(i64, ptr, i64, ptr, i64, ptr, i64)\n"
         llvm += "declare i64 @pecos_wasm_v3_lookup_by_id(i64, i64, ptr, i64, ptr, i64)\n"
@@ -638,7 +655,17 @@ def compile_wasm(
         key = hashlib.sha256()
         fields = [
             program.to_bytes(),
-            repr((platform, opt_level, emit_debug, wasm_int_width, wasm_timeout_seconds, wasm_auto_init)).encode(),
+            repr(
+                (
+                    platform,
+                    opt_level,
+                    emit_debug,
+                    wasm_int_width,
+                    wasm_timeout_seconds,
+                    wasm_auto_init,
+                    wasm_async_workers,
+                ),
+            ).encode(),
         ]
         for identifier in module_ids:
             fields.extend((identifier.encode(), modules[identifier]))

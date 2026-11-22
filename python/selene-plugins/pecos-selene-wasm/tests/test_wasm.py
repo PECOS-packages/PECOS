@@ -582,6 +582,7 @@ UNPRINTABLE_CASES = [
         ("wasm_timeout_seconds", "wasm_timeout_seconds must be a positive finite number of seconds; got "),
         ("wasm_int_width", "wasm_int_width must be 32 or 64, or 'auto'; got "),
         ("wasm_state_scope", "wasm_state_scope must be 'shot' or 'worker'; got "),
+        ("wasm_async_workers", "wasm_async_workers must be an integer between 0 and 64; got "),
     ],
 )
 def test_rejected_option_errors_survive_unprintable_values(value, described, option, prefix):
@@ -864,6 +865,8 @@ def test_worker_state_key_covers_payload_and_options(examples):
         key(wasm_auto_init=False),
         key(wasm_timeout_seconds=2.0),
         key(wasm_int_width="auto"),
+        key(wasm_async_workers=1),
+        key(wasm_async_workers=2),
     ]
     assert len(set(keys)) == len(keys)
     assert key() == keys[0]

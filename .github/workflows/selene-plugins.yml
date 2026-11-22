@@ -251,6 +251,9 @@ jobs:
         run: |
           cargo test --locked --release -p pecos-selene-general-noise-adapter --test library
 
+      - name: Test WASM runtime lifecycle
+        run: cargo test --locked --release -p pecos-wasm-runtime
+
       - name: Run tests
         if: runner.os == 'Linux'
         run: |

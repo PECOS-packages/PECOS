@@ -91,3 +91,11 @@ one execution worker. The default `"shot"` creates fresh instances. Each worker
 has independent state, so results can depend on worker count and scheduling.
 New `run_shots` batches start fresh. Custom native callers control their worker
 lifetime and can explicitly reset it. See the user guide for lifecycle details.
+
+Use `wasm_async_workers=2` to overlap calls on independent WASM contexts when
+the input program launches them before reading their results. The default `0`
+executes inline; `1` through `64` enables a thread pool per execution worker.
+Ordinary Guppy calls generally read results immediately. The public
+`examples/guppy_wasm/async_calls.py` example adds explicit HUGR ordering and
+checks both results against an arithmetic oracle. Execution timeouts exclude
+queue waiting, and reset joins running jobs. See the user guide for details.

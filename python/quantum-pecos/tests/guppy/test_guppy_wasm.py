@@ -618,9 +618,10 @@ def test_pecos_auto_integer_width_requires_modules():
             constructor(source, wasm_int_width="auto")
 
 
-@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("workers", [1, 2, 3])
+@pytest.mark.parametrize("shots", [1, 4, 5])
 @pytest.mark.parametrize("scope", ["shot", "worker"])
-def test_pecos_worker_state_scope_and_fresh_batches(examples, workers, scope):
+def test_pecos_worker_state_scope_and_fresh_batches(examples, workers, shots, scope):
     pytest.importorskip("pecos_selene_wasm")
     example = examples["worker_state"]
     runner = (
@@ -636,9 +637,15 @@ def test_pecos_worker_state_scope_and_fresh_batches(examples, workers, scope):
         .workers(workers)
         .build()
     )
-    expected = [1] * 4 if scope == "shot" else sorted(list(range(1, 4 // workers + 1)) * workers)
+    expected = (
+        [1] * shots
+        if scope == "shot"
+        else sorted(
+            value for worker in range(workers) for value in range(1, shots // workers + (worker < shots % workers) + 1)
+        )
+    )
     for _ in range(2):
-        assert sorted(runner.run(4).to_dict()["count"]) == expected
+        assert sorted(runner.run(shots).to_dict()["count"]) == expected
 
 
 @pytest.mark.parametrize("auto_init", [True, False])

@@ -765,9 +765,10 @@ def test_automatic_width_preserves_float_lanes(examples, tmp_path):
     ] * 2
 
 
-@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("workers", [1, 2, 3])
+@pytest.mark.parametrize("shots", [1, 4, 5])
 @pytest.mark.parametrize("scope", ["shot", "worker"])
-def test_worker_state_scope_and_fresh_batches(examples, tmp_path, workers, scope):
+def test_worker_state_scope_and_fresh_batches(examples, tmp_path, workers, shots, scope):
     example = examples["worker_state"]
     runner = build(
         example.counter,
@@ -775,11 +776,17 @@ def test_worker_state_scope_and_fresh_batches(examples, tmp_path, workers, scope
         build_dir=tmp_path,
         wasm_state_scope=scope,
     )
-    expected = [1] * 4 if scope == "shot" else sorted(list(range(1, 4 // workers + 1)) * workers)
+    expected = (
+        [1] * shots
+        if scope == "shot"
+        else sorted(
+            value for worker in range(workers) for value in range(1, shots // workers + (worker < shots % workers) + 1)
+        )
+    )
     for _ in range(2):
         observed = [
             dict(shot)["count"]
-            for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=workers)
+            for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=shots, n_processes=workers)
         ]
         assert sorted(observed) == expected
 

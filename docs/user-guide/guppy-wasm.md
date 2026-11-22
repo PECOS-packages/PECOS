@@ -494,6 +494,10 @@ HUGR ordering to launch two independent calls before reading either result.
 Use `--backend pecos` for the PECOS stack, `--heavy` for a longer computation,
 and `--async-workers 0` for an inline comparison. It checks both outputs
 against an independently computed arithmetic oracle.
+Use `--feedback` instead of `--heavy` to allocate and measure a qubit after
+launching the first call. The measurement changes the second call's argument;
+both results are read afterwards. This exercises quantum feedback while the
+first WASM result remains unread.
 
 The execution timeout starts when work executes, excluding time spent waiting
 in the queue. Reset discards queued work and joins running jobs before returning;

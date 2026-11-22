@@ -64,9 +64,10 @@ def prepare(backend, program, modules, directory, *, execution_workers=1, **opti
 @pytest.mark.parametrize("backend", ["selene", "pecos"])
 @pytest.mark.parametrize("workers", [1, 2])
 @pytest.mark.parametrize("execution_workers", [1, 3])
-def test_deferred_calls_and_precompiled_bytes(examples, tmp_path, backend, workers, execution_workers):
+@pytest.mark.parametrize("feedback", [False, True])
+def test_deferred_calls_and_precompiled_bytes(examples, tmp_path, backend, workers, execution_workers, feedback):
     example = examples["async_calls"]
-    program = example.deferred_program().to_bytes()
+    program = example.deferred_program(example.quantum_feedback if feedback else example.independent_calls).to_bytes()
     run = prepare(
         backend,
         program,
@@ -76,6 +77,8 @@ def test_deferred_calls_and_precompiled_bytes(examples, tmp_path, backend, worke
         wasm_async_workers=workers,
     )
     expected = {"first": example.expected_value(1000000), "second": example.expected_value(2000000)}
+    if feedback:
+        expected.update(second=example.expected_value(2000001), measured=True)
     for _ in range(2):
         assert run(5) == [expected] * 5
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from guppylang import guppy
 from guppylang.std.builtins import nat, result
+from guppylang.std.quantum import measure, qubit, x
 from guppylang_internals.decorator import wasm, wasm_module
 from hugr.hugr import Hugr
 from hugr.package import Package
@@ -46,6 +47,22 @@ def heavy_calls() -> None:
     result("second", b)
 
 
+@guppy
+def quantum_feedback() -> None:
+    first = Work(nat(0))
+    second = Work(nat(1))
+    a = first.work(1000000)
+    q = qubit()
+    x(q)
+    measured = measure(q).read()
+    b = second.work(2000000 + int(measured))
+    first.discard()
+    second.discard()
+    result("first", a)
+    result("second", b)
+    result("measured", measured)
+
+
 def deferred_program(function=independent_calls) -> Package:
     """Order two independent public WASM calls before either result read."""
     package = Package.from_bytes(function.with_minimal_opt().compile().to_bytes())
@@ -73,6 +90,17 @@ def deferred_program(function=independent_calls) -> Package:
             [[reads[0], None], [reads[1], None]],
         ],
     )
+    allocations = [
+        i
+        for i, node in enumerate(document["nodes"])
+        if node.get("extension") == "tket.quantum" and node.get("name") == "QAlloc"
+    ]
+    if allocations:
+        if len(allocations) != 1 or len({document["nodes"][i]["parent"] for i in calls + reads + allocations}) != 1:
+            msg = "Expected one quantum allocation in the same dataflow region as the WASM calls"
+            raise ValueError(msg)
+        # Start the first call before the measurement that feeds the second.
+        document["edges"].append([[calls[0], None], [allocations[0], None]])
     graph = Hugr._from_serial(type(serial).model_validate(document))  # noqa: SLF001
     return Package(modules=[graph], extensions=package.extensions)
 
@@ -96,11 +124,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", choices=("selene", "pecos"), default="selene")
     parser.add_argument("--async-workers", type=int, default=2)
-    parser.add_argument("--heavy", action="store_true")
+    workload = parser.add_mutually_exclusive_group()
+    workload.add_argument("--heavy", action="store_true")
+    workload.add_argument("--feedback", action="store_true", help="Measure a qubit before the second WASM call")
     args = parser.parse_args()
-    program = deferred_program(heavy_calls if args.heavy else independent_calls)
+    function = heavy_calls if args.heavy else quantum_feedback if args.feedback else independent_calls
+    program = deferred_program(function)
     iterations = 1000000000 if args.heavy else 1000000
     expected = {"first": expected_value(iterations), "second": expected_value(2 * iterations)}
+    if args.feedback:
+        expected.update(second=expected_value(2 * iterations + 1), measured=True)
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
     if args.backend == "selene":
         from pecos_selene_wasm import build

@@ -873,3 +873,88 @@ def test_worker_state_key_covers_payload_and_options(examples):
     llvm = compile_wasm(example.counter, {identifier: payload})
     assert "pecos_wasm_v2_begin_worker_shot" not in llvm
     assert "pecos_wasm_v2_finish_worker_shot" not in llvm
+
+
+@pytest.mark.parametrize("input_form", ["source", "package", "bytes"])
+@pytest.mark.parametrize("state_scope", ["shot", "worker"])
+def test_lowering_preserves_input_package(examples, monkeypatch, input_form, state_scope):
+    from pecos_selene_wasm import lowering
+
+    example = examples["stateful"]
+    package = compile_guppy(example.loop_helpers)
+    package.modules[0][package.modules[0].module_root].metadata["caller"] = {"nested": [1, 2]}
+    before = package.to_bytes()
+    # Model a frontend that returns the same cached object on each invocation.
+    monkeypatch.setattr(lowering, "_compile_guppy_package", lambda _: package)
+    program = {"source": example.loop_helpers, "package": package, "bytes": before}[input_form]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    first = compile_wasm(program, modules, wasm_state_scope=state_scope)
+    assert package.to_bytes() == before
+    second = compile_wasm(program, modules, wasm_state_scope=state_scope)
+    assert first == second
+    assert package.to_bytes() == before
+
+
+def test_compile_guppy_returns_independent_package(examples, monkeypatch):
+    from pecos_selene_wasm import lowering
+
+    function = examples["stateful"].loop_helpers
+    cached = function.with_minimal_opt().compile()
+    before = cached.to_bytes()
+    monkeypatch.setattr(lowering, "_compile_guppy_package", lambda _: cached)
+    exported = compile_guppy(function)
+    exported.modules[0][exported.modules[0].module_root].metadata["caller"] = {"nested": [1]}
+    assert cached.to_bytes() == before
+    assert exported.to_bytes() != before
+
+
+@pytest.mark.parametrize("shape", ["sparse", "reused", "versionless"])
+@pytest.mark.parametrize("input_form", ["source", "package"])
+def test_lowering_normalizes_custom_graphs(examples, monkeypatch, shape, input_form):
+    from hugr import ops, tys
+    from hugr.build.function import Module
+    from hugr.package import Package
+    from pecos_selene_wasm import lowering
+
+    example = examples["arithmetic"]
+    package = compile_guppy(example.addition)
+    if shape in {"sparse", "reused"}:
+        source = package.modules[0]
+        graph = Module().hugr
+        dummy = graph.add_node(ops.FuncDecl("dummy", tys.PolyFuncType.empty()), graph.module_root)
+        graph.entrypoint = graph.insert_hugr(source, graph.module_root)[source.entrypoint]
+        graph.delete_node(dummy)
+        if shape == "reused":
+            from hugr import val
+
+            graph.add_const(val.TRUE, graph.entrypoint)
+        package = Package([graph], package.extensions)
+    else:
+        graph = package.modules[0]
+        for node in graph:
+            operation = graph[node].op
+            if isinstance(operation, ops.ExtOp):
+                custom = operation.to_custom_op()
+                if custom.extension == "tket.wasm" and custom.op_name == "get_context":
+                    graph[node].op = ops.Custom(custom.op_name, custom.signature, custom.extension, custom.args)
+                    break
+        else:
+            pytest.fail("Missing WASM context acquisition")
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    before = package.to_bytes()
+    expected = compile_wasm(before, modules)
+    original_order = lowering._order_calls  # noqa: SLF001
+
+    def checked_order(document, acquisitions):
+        # Fail promptly if sparse IDs survive; otherwise ordering can self-loop.
+        for index, node in enumerate(document["nodes"]):
+            if node["op"] == "Call":
+                assert node["parent"] != index
+        assert all(port[0] < len(document["nodes"]) for edge in document["edges"] for port in edge)
+        original_order(document, acquisitions)
+
+    monkeypatch.setattr(lowering, "_order_calls", checked_order)
+    monkeypatch.setattr(lowering, "_compile_guppy_package", lambda _: package)
+    program = example.addition if input_form == "source" else package
+    assert compile_wasm(program, modules) == expected
+    assert package.to_bytes() == before

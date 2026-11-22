@@ -189,13 +189,16 @@ impl Writer {
 pub fn encode_event_batches(batches: &[ScheduledEventBatch]) -> Result<ByteMessage, PecosError> {
     validate_batches(batches)?;
     let mut w = Writer(Vec::new());
+    // Scratch belongs to this encoding call, never to a runtime or shot owner.
+    let mut nested = Vec::new();
     w.bytes(&[0; 16])?;
     for b in batches {
         let gates = b.operations.iter().filter_map(|op| match op {
             ScheduledEventOp::Gate(gate) => Some(gate.as_ref()),
             ScheduledEventOp::Custom { .. } => None,
         });
-        let nested = scheduled_frame::encode_borrowed_batch(
+        scheduled_frame::encode_borrowed_batch_into(
+            &mut nested,
             [
                 b.runtime_shot_id,
                 b.batch_index,
@@ -227,6 +230,8 @@ pub fn encode_event_batches(batches: &[ScheduledEventBatch]) -> Result<ByteMessa
             w.word(m.program_result)?;
         }
     }
+    // Do not keep the largest nested frame alive during the final aligned copy.
+    drop(nested);
     w.0[..4].copy_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
     w.0[4] = crate::byte_message::protocol::SCHEDULED_EVENT_VERSION;
     w.0[8..12].copy_from_slice(

@@ -289,10 +289,12 @@ from selene_sim import Quest
 # Run from the PECOS checkout root, using the example's public WASM module.
 WASM_PATH = Path("examples/guppy_wasm/integer32.wat").resolve()
 
+
 @wasm_module(str(WASM_PATH), wasm_platform=WasmPlatform.H2)
 class Arithmetic32:
     @wasm
     def add(self, left: int, right: int) -> int: ...
+
 
 @guppy
 def addition32() -> None:
@@ -300,6 +302,7 @@ def addition32() -> None:
     value = arithmetic.add(2, 3)
     arithmetic.discard()
     result("sum", value)
+
 
 modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
 runner = build(addition32, modules, wasm_int_width=32)

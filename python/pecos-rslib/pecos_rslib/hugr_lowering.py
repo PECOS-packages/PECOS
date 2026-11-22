@@ -369,6 +369,21 @@ def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_wid
         raise ValueError(msg)
 
 
+def validate_wasm_state_scope(value: object, modules: Mapping[str, bytes] | None) -> None:
+    """Require 'shot' or 'worker', and explicit modules for worker-scoped state.
+
+    Raises:
+        ValueError: If ``value`` is not 'shot' or 'worker', or is 'worker' while
+            ``modules`` is None.
+    """
+    if type(value) is not str or value not in ("shot", "worker"):
+        msg = f"wasm_state_scope must be 'shot' or 'worker'; got {_describe_value(value)}"
+        raise ValueError(msg)
+    if modules is None and value != "shot":
+        msg = "wasm_state_scope='worker' requires explicit wasm_modules; pass wasm_modules={module_name: wasm_bytes}"
+        raise ValueError(msg)
+
+
 def validate_wasm_auto_init(value: object, modules: Mapping[str, bytes] | None) -> None:
     """Require a bool, and explicit modules when opting out of automatic init.
 
@@ -417,6 +432,7 @@ def compile_hugr_to_qis(
     wasm_int_width: int | str = 64,
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
+    wasm_state_scope: str = "shot",
 ) -> str:
     """Lower a HUGR envelope with Selene and normalize PECOS runtime helpers.
 
@@ -430,6 +446,7 @@ def compile_hugr_to_qis(
             to select each integer lane from the actual export signature.
         wasm_timeout_seconds: Positive finite per-execution WASM limit (default 1).
         wasm_auto_init: Automatically invoke optional init exports (default True).
+        wasm_state_scope: Fresh state per "shot" (default), or retained per "worker".
 
     Returns:
         LLVM IR with PECOS's public helper symbols.
@@ -454,6 +471,7 @@ def compile_hugr_to_qis(
         raise ImportError(msg) from error
 
     validate_wasm_auto_init(wasm_auto_init, wasm_modules)
+    validate_wasm_state_scope(wasm_state_scope, wasm_modules)
     wasm_timeout_seconds = validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
     if wasm_modules is not None:
         try:
@@ -471,6 +489,7 @@ def compile_hugr_to_qis(
                 wasm_int_width=wasm_int_width,
                 wasm_timeout_seconds=wasm_timeout_seconds,
                 wasm_auto_init=wasm_auto_init,
+                wasm_state_scope=wasm_state_scope,
             ),
         )
 

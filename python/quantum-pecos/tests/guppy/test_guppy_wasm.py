@@ -33,6 +33,7 @@ def examples():
         "indexed_exports",
         "integer32",
         "mixed_integers",
+        "worker_state",
         "memory_lifecycle",
         "managed_objects",
     ):
@@ -615,3 +616,81 @@ def test_pecos_auto_integer_width_requires_modules():
     for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
         with pytest.raises(ValueError, match=message):
             constructor(source, wasm_int_width="auto")
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("scope", ["shot", "worker"])
+def test_pecos_worker_state_scope_and_fresh_batches(examples, workers, scope):
+    pytest.importorskip("pecos_selene_wasm")
+    example = examples["worker_state"]
+    runner = (
+        pc.sim(
+            pc.Guppy(
+                example.counter,
+                wasm_modules={str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+                wasm_state_scope=scope,
+            ),
+        )
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .workers(workers)
+        .build()
+    )
+    expected = [1] * 4 if scope == "shot" else sorted(list(range(1, 4 // workers + 1)) * workers)
+    for _ in range(2):
+        assert sorted(runner.run(4).to_dict()["count"]) == expected
+
+
+@pytest.mark.parametrize("auto_init", [True, False])
+def test_pecos_worker_state_initialization_runs_once(examples, auto_init):
+    pytest.importorskip("pecos_selene_wasm")
+    example = examples["worker_state"]
+    payload = examples["memory_lifecycle"].WASM_PATH.read_bytes()
+    runner = (
+        pc.sim(
+            pc.Guppy(
+                example.counter,
+                wasm_modules={str(example.WASM_PATH): payload},
+                wasm_state_scope="worker",
+                wasm_auto_init=auto_init,
+            ),
+        )
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .workers(1)
+        .build()
+    )
+    initial = 43 if auto_init else 12
+    for _ in range(2):
+        assert runner.run(4).to_dict()["count"] == list(range(initial, initial + 4))
+
+
+def test_pecos_worker_state_precompiled_hugr(examples, tmp_path):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    example = examples["worker_state"]
+    data = plugin.compile_guppy(example.counter).to_bytes()
+    path = tmp_path / "counter.hugr"
+    path.write_bytes(data)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    for program in (
+        pc.Hugr.from_file(path, wasm_modules=modules, wasm_state_scope="worker"),
+        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_state_scope="worker"),
+    ):
+        runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(1).build()
+        for _ in range(2):
+            assert runner.run(4).to_dict()["count"] == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("scope", [None, 1, True, "batch", "WORKER"])
+def test_pecos_invalid_wasm_state_scope(scope):
+    message = f"wasm_state_scope must be 'shot' or 'worker'; got {reprlib.repr(scope)}"
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+            constructor(source, wasm_modules={}, wasm_state_scope=scope)
+
+
+def test_pecos_worker_state_requires_modules():
+    message = rf"^wasm_state_scope='worker' requires explicit wasm_modules; {PASS_MODULES}$"
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match=message):
+            constructor(source, wasm_state_scope="worker")

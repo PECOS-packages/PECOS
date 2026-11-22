@@ -107,6 +107,7 @@ def test_rejected_option_errors_survive_unprintable_values(
     checks = [
         ("wasm_int_width must be 32 or 64, or 'auto'; got ", lambda: hugr_lowering.validate_wasm_options({}, value)),
         ("wasm_auto_init must be True or False; got ", lambda: hugr_lowering.validate_wasm_auto_init(value, {})),
+        ("wasm_state_scope must be 'shot' or 'worker'; got ", lambda: hugr_lowering.validate_wasm_state_scope(value, {})),
         (
             "wasm_timeout_seconds must be a positive finite number of seconds; got ",
             lambda: hugr_lowering.validate_wasm_timeout_seconds(value, {}),

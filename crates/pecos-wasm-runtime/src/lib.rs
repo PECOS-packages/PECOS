@@ -1,6 +1,7 @@
 //! Public WASM ABI v1. Implemented from the public tket.wasm operations.
 //!
-//! Mutable state is local to the calling worker thread and reset at shot boundaries.
+//! Mutable state is local to the calling worker thread. Shot boundaries reset it
+//! by default; explicit worker scope retains clean instances across shots.
 //! A bounded per-thread cache retains immutable compiled code between shots.
 //! C entry points return a status; they never unwind or transfer control while
 //! Rust frames own resources. The generated caller handles errors afterwards.
@@ -46,6 +47,8 @@ struct State {
     modules: BTreeMap<u64, ModuleConfiguration>,
     functions: Vec<Function>,
     contexts: BTreeMap<u64, Context>,
+    worker_key: Option<[u8; 32]>,
+    shot_active: bool,
 }
 
 // These bounds limit cache retention, not total process memory or compiled code
@@ -141,6 +144,49 @@ pub fn boundary<T: Copy>(failure: T, operation: impl FnOnce() -> Result<T>) -> T
 pub fn reset() -> Result<i32> {
     STATE.with(|state| *state.borrow_mut() = State::default());
     Ok(0)
+}
+
+/// Begin a worker-scoped shot, retaining instances only after a clean prior shot
+/// with identical program and module configuration. The key is not a batch ID;
+/// callers control the worker lifetime and may explicitly reset it.
+///
+/// # Errors
+/// This operation always succeeds for a fixed-size key.
+pub fn begin_worker_shot(key: [u8; 32]) -> Result<i32> {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if state.worker_key != Some(key) || state.shot_active {
+            *state = State::default();
+        }
+        state.worker_key = Some(key);
+        state.shot_active = true;
+        state.modules.clear();
+        state.functions.clear();
+    });
+    Ok(0)
+}
+
+/// Finish a worker-scoped shot while retaining its mutable WASM instances.
+///
+/// # Errors
+/// Rejects inactive shots, leased contexts, and unread results. ABI callers reset
+/// all state on failure; an unfinished shot is also discarded by the next begin.
+pub fn finish_worker_shot() -> Result<i32> {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if state.worker_key.is_none() || !state.shot_active {
+            return Err("No active WASM worker shot".into());
+        }
+        if state
+            .contexts
+            .values()
+            .any(|context| context.leased || context.pending.is_some())
+        {
+            return Err("WASM worker shot has leased contexts or unread results".into());
+        }
+        state.shot_active = false;
+        Ok(0)
+    })
 }
 
 /// Register caller-supplied module bytes for this shot.
@@ -365,6 +411,7 @@ pub fn call(context: u64, function: u64, arguments: &[i64]) -> Result<i32> {
             modules,
             functions,
             contexts,
+            ..
         } = &mut *state;
         let index = usize::try_from(function.checked_sub(1).ok_or("Invalid WASM function")?)
             .map_err(|e| e.to_string())?;
@@ -463,6 +510,23 @@ macro_rules! export_wasm_runtime {
         #[unsafe(no_mangle)]
         pub extern "C" fn pecos_wasm_v1_reset() -> i32 {
             $crate::boundary(-1, $crate::reset)
+        }
+        /// # Safety
+        /// key must point to 32 readable bytes identifying the complete program/configuration.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn pecos_wasm_v2_begin_worker_shot(key: *const u8) -> i32 {
+            $crate::boundary(-1, || {
+                if key.is_null() {
+                    return Err("Null WASM worker state key".into());
+                }
+                let mut bytes = [0_u8; 32];
+                bytes.copy_from_slice(unsafe { std::slice::from_raw_parts(key, 32) });
+                $crate::begin_worker_shot(bytes)
+            })
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn pecos_wasm_v2_finish_worker_shot() -> i32 {
+            $crate::boundary(-1, $crate::finish_worker_shot)
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn pecos_wasm_v1_error() -> *const u8 {
@@ -1239,6 +1303,74 @@ mod tests {
         assert_eq!(invoke(context, 0, "calls", &[], 1), [2]);
         let fresh = acquire(1).unwrap();
         assert_eq!(invoke(fresh, 0, "calls", &[], 1), [0]);
+    }
+
+    #[test]
+    fn worker_shots_retain_instances_and_reset_on_incomplete_or_changed_sessions() {
+        reset().unwrap();
+        for expected in [11, 12, 13] {
+            begin_worker_shot([1; 32]).unwrap();
+            register(0, MODULE).unwrap();
+            let context = acquire(0).unwrap();
+            assert_eq!(invoke(context, 0, "increment", &[], 1), [expected]);
+            release(context).unwrap();
+            finish_worker_shot().unwrap();
+        }
+        // A non-WASM abort can bypass the normal finish, even after releasing
+        // every context. The active marker prevents retaining that mutation.
+        assert!(
+            std::panic::catch_unwind(|| {
+                begin_worker_shot([1; 32]).unwrap();
+                register(0, MODULE).unwrap();
+                let context = acquire(0).unwrap();
+                assert_eq!(invoke(context, 0, "increment", &[], 1), [14]);
+                release(context).unwrap();
+                panic!("External quantum/runtime error after WASM mutation");
+            })
+            .is_err()
+        );
+        begin_worker_shot([1; 32]).unwrap();
+        register(0, MODULE).unwrap();
+        let context = acquire(0).unwrap();
+        assert_eq!(invoke(context, 0, "increment", &[], 1), [11]);
+        release(context).unwrap();
+        finish_worker_shot().unwrap();
+        begin_worker_shot([2; 32]).unwrap();
+        register(0, MODULE).unwrap();
+        let context = acquire(0).unwrap();
+        assert_eq!(invoke(context, 0, "increment", &[], 1), [11]);
+        release(context).unwrap();
+        finish_worker_shot().unwrap();
+        reset().unwrap();
+        assert!(finish_worker_shot().is_err());
+    }
+
+    #[test]
+    fn worker_finish_errors_and_traps_clear_all_mutable_state() {
+        for pending in [false, true] {
+            reset().unwrap();
+            begin_worker_shot([1; 32]).unwrap();
+            register(0, MODULE).unwrap();
+            let context = acquire(0).unwrap();
+            if pending {
+                let function = lookup(0, "increment", 0, 1).unwrap();
+                call(context, function, &[]).unwrap();
+            }
+            assert_eq!(boundary(-1, finish_worker_shot), -1);
+            STATE.with(|state| {
+                let state = state.borrow();
+                assert!(state.worker_key.is_none());
+                assert!(!state.shot_active);
+                assert!(state.contexts.is_empty());
+            });
+            begin_worker_shot([1; 32]).unwrap();
+            register(0, MODULE).unwrap();
+            let context = acquire(0).unwrap();
+            assert_eq!(invoke(context, 0, "increment", &[], 1), [11]);
+            let trap = lookup(0, "trap", 0, 0).unwrap();
+            assert_eq!(boundary(-1, || call(context, trap, &[])), -1);
+            assert!(finish_worker_shot().is_err());
+        }
     }
 
     #[test]

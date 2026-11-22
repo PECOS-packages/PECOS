@@ -107,6 +107,7 @@ def _hugr_to_program(
     wasm_int_width: int | str = 64,
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
+    wasm_state_scope: str = "shot",
 ) -> "CompiledQis":
     """Lower a HUGR envelope to the shared executable program representation."""
     if wasm_modules is None:
@@ -118,6 +119,7 @@ def _hugr_to_program(
             wasm_int_width=wasm_int_width,
             wasm_timeout_seconds=wasm_timeout_seconds,
             wasm_auto_init=wasm_auto_init,
+            wasm_state_scope=wasm_state_scope,
         ),
     )
 
@@ -152,6 +154,7 @@ class Guppy:
         wasm_int_width: int | str = 64,
         wasm_timeout_seconds: float = 1.0,
         wasm_auto_init: bool = True,
+        wasm_state_scope: str = "shot",
     ) -> None:
         """Initialize with a Guppy function and optional explicit WASM module bytes.
 
@@ -163,14 +166,18 @@ class Guppy:
         ``wasm_timeout_seconds`` sets a positive finite per-call execution limit
         (default one second), also applied to module start and optional init.
         ``wasm_auto_init=False`` skips optional exported init, never WASM start.
+        ``wasm_state_scope="worker"`` retains mutable WASM state across shots on
+        each execution worker; the default "shot" creates fresh instances.
         """
         self._func = func
         self._wasm_hugr_bytes = None
         hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
         hugr_lowering.validate_wasm_auto_init(wasm_auto_init, wasm_modules)
+        hugr_lowering.validate_wasm_state_scope(wasm_state_scope, wasm_modules)
         wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
         self._wasm_timeout_seconds = wasm_timeout_seconds
         self._wasm_auto_init = wasm_auto_init
+        self._wasm_state_scope = wasm_state_scope
         self._wasm_int_width = wasm_int_width
         self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None
@@ -200,6 +207,7 @@ class Guppy:
                 wasm_int_width=self._wasm_int_width,
                 wasm_timeout_seconds=self._wasm_timeout_seconds,
                 wasm_auto_init=self._wasm_auto_init,
+                wasm_state_scope=self._wasm_state_scope,
             )
         return self._program
 
@@ -229,14 +237,17 @@ class Hugr:
         wasm_int_width: int | str = 64,
         wasm_timeout_seconds: float = 1.0,
         wasm_auto_init: bool = True,
+        wasm_state_scope: str = "shot",
     ) -> None:
         """Initialize with HUGR bytes and optional explicit WASM module bytes."""
         self._data = data
         hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
         hugr_lowering.validate_wasm_auto_init(wasm_auto_init, wasm_modules)
+        hugr_lowering.validate_wasm_state_scope(wasm_state_scope, wasm_modules)
         wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
         self._wasm_timeout_seconds = wasm_timeout_seconds
         self._wasm_auto_init = wasm_auto_init
+        self._wasm_state_scope = wasm_state_scope
         self._wasm_int_width = wasm_int_width
         self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None
@@ -255,6 +266,7 @@ class Hugr:
         wasm_int_width: int | str = 64,
         wasm_timeout_seconds: float = 1.0,
         wasm_auto_init: bool = True,
+        wasm_state_scope: str = "shot",
     ) -> "Hugr":
         """Create from a HUGR file."""
         with Path(path).open("rb") as f:
@@ -264,6 +276,7 @@ class Hugr:
                 wasm_int_width=wasm_int_width,
                 wasm_timeout_seconds=wasm_timeout_seconds,
                 wasm_auto_init=wasm_auto_init,
+                wasm_state_scope=wasm_state_scope,
             )
 
     @classmethod
@@ -275,6 +288,7 @@ class Hugr:
         wasm_int_width: int | str = 64,
         wasm_timeout_seconds: float = 1.0,
         wasm_auto_init: bool = True,
+        wasm_state_scope: str = "shot",
     ) -> "Hugr":
         """Create from HUGR bytes.
 
@@ -286,6 +300,7 @@ class Hugr:
             wasm_int_width=wasm_int_width,
             wasm_timeout_seconds=wasm_timeout_seconds,
             wasm_auto_init=wasm_auto_init,
+            wasm_state_scope=wasm_state_scope,
         )
 
     def _to_program(self) -> "CompiledQis":
@@ -297,6 +312,7 @@ class Hugr:
                 wasm_int_width=self._wasm_int_width,
                 wasm_timeout_seconds=self._wasm_timeout_seconds,
                 wasm_auto_init=self._wasm_auto_init,
+                wasm_state_scope=self._wasm_state_scope,
             )
         return self._program
 

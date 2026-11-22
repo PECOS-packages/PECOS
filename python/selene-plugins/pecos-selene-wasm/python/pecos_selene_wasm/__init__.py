@@ -56,6 +56,7 @@ def build(
     wasm_int_width: int | str = 64,
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
+    wasm_state_scope: str = "shot",
     **kwargs: object,
 ) -> SeleneInstance:
     """Build Selene with explicit WASM bytes and safe compilation of Guppy source.
@@ -76,7 +77,19 @@ def build(
         wasm_int_width=wasm_int_width,
         wasm_timeout_seconds=wasm_timeout_seconds,
         wasm_auto_init=wasm_auto_init,
+        wasm_state_scope=wasm_state_scope,
     )
+    if wasm_state_scope == "worker":
+        runtime = ctypes.CDLL(str(utilities[-1].library_file))
+        if not all(
+            hasattr(runtime, name)
+            for name in (
+                "pecos_wasm_v2_begin_worker_shot",
+                "pecos_wasm_v2_finish_worker_shot",
+            )
+        ):
+            msg = "Worker-scoped WASM state requires an updated native runtime; rebuild or upgrade pecos-selene-wasm"
+            raise RuntimeError(msg)
     if wasm_int_width == "auto":
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         for symbol in ("pecos_wasm_v3_lookup", "pecos_wasm_v3_lookup_by_id"):

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "suite_id": "guppy-wasm-scalar-v2",
-  "description": "Initial scalar workload coverage; passing this suite does not establish complete stack parity.",
+  "suite_id": "guppy-wasm-scalar-v3",
+  "description": "Scalar calls and repeated quantum correction; passing this suite does not establish complete stack parity.",
   "cases": [
     {
       "id": "integer-addition",
@@ -216,6 +216,22 @@
         "initial": 0,
         "retained": -7,
         "measured": true
+      }
+    },
+    {
+      "id": "repetition-correction",
+      "source": "repetition.py",
+      "module": "repetition.wat",
+      "function": "correct_each_position",
+      "qubits": 5,
+      "expected": {
+        "calls": 4,
+        "correction_sum": 7,
+        "q0": false,
+        "q1": false,
+        "q2": false,
+        "syndrome_trace": 120,
+        "correction_trace": 672
       }
     }
   ]

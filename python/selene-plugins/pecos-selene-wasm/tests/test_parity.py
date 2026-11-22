@@ -324,8 +324,8 @@ def test_selene_parity_cli_executes_all_public_workloads(harness, tmp_path):
     )
     assert completed.returncode == 0, completed.stderr + completed.stdout
     report = harness.read_json(output)
-    assert {"i32-boundaries", "i32-state-feedback"} <= {case["id"] for case in report["cases"]}
-    assert len(report["cases"]) == 21
+    assert {"i32-boundaries", "i32-state-feedback", "repetition-correction"} <= {case["id"] for case in report["cases"]}
+    assert len(report["cases"]) == 22
     assert harness.compare(report, report)["all_workloads_conform"]
 
 
@@ -432,3 +432,12 @@ def test_overflowed_median_does_not_produce_zero_ratio(harness, report):
     for run in candidate["cases"][0]["runs"]:
         run["seconds"] = 1e307
     assert harness.compare(report, candidate)["cases"][0]["candidate_over_reference_median"] is None
+
+
+@pytest.mark.parametrize("qubits", [True, False, 0, -1, 1.5, "5", None])
+def test_manifest_rejects_invalid_qubit_count(harness, monkeypatch, qubits):
+    suite = harness.manifest()
+    suite["cases"][-1]["qubits"] = qubits
+    monkeypatch.setattr(harness, "read_json", lambda _path: suite)
+    with pytest.raises(ValueError, match="Invalid workload qubit count"):
+        harness.manifest()

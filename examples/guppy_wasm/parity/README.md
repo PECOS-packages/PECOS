@@ -150,3 +150,12 @@ The manifest records each case's `wasm_int_width` (default 64); the adapter
 receives this value in its settings. The public adapters select strict native
 width explicitly. Reports from v1 and v2 cannot be compared: rerun both stacks
 from the same v2 archive.
+
+Suite `guppy-wasm-scalar-v3` adds the independently written repetition-code
+correction workload. Its manifest entry specifies `qubits: 5`; cases without
+this field use the report's default one-qubit setting. Adapters receive each
+case's effective qubit count in `settings["qubits"]`. The manifest is included
+in the hashed payload, so all per-case resource settings are reproducible.
+Rerun both stacks from the same v3 archive; older reports are not comparable.
+The new case checks repeated measurement, WASM state, and quantum corrections,
+with a known mathematical answer rather than a private decoder dependency.

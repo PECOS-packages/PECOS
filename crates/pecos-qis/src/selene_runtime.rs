@@ -3176,6 +3176,48 @@ impl SeleneRuntime {
             || Self::same_pair(left_a, left_b, right_b, right_a)
     }
 
+    // Only source IDs checked by scheduled preflight belong here. Native handles
+    // and IDs inside other runtime requests retain their existing admission path.
+    fn scheduled_source_id_overflows(op: &Operation) -> bool {
+        match op {
+            Operation::AllocateQubit { id }
+            | Operation::AllocateResult { id }
+            | Operation::ReleaseQubit { id } => *id == usize::MAX,
+            Operation::Quantum(qop) => match qop {
+                QuantumOp::H(q)
+                | QuantumOp::X(q)
+                | QuantumOp::Y(q)
+                | QuantumOp::Z(q)
+                | QuantumOp::S(q)
+                | QuantumOp::Sdg(q)
+                | QuantumOp::T(q)
+                | QuantumOp::Tdg(q)
+                | QuantumOp::RX(_, q)
+                | QuantumOp::RY(_, q)
+                | QuantumOp::RZ(_, q)
+                | QuantumOp::RXY(_, _, q)
+                | QuantumOp::Idle(_, q)
+                | QuantumOp::Reset(q) => *q == usize::MAX,
+                QuantumOp::CX(a, b)
+                | QuantumOp::CY(a, b)
+                | QuantumOp::CZ(a, b)
+                | QuantumOp::CH(a, b)
+                | QuantumOp::CRZ(_, a, b)
+                | QuantumOp::ZZ(a, b)
+                | QuantumOp::RZZ(_, a, b)
+                | QuantumOp::RXYXY2Q(_, _, a, b)
+                | QuantumOp::Measure(a, b)
+                | QuantumOp::MeasureLeaked(a, b) => *a == usize::MAX || *b == usize::MAX,
+                QuantumOp::CCX(a, b, c) => *a == usize::MAX || *b == usize::MAX || *c == usize::MAX,
+            },
+            Operation::RuntimeRequest { request, result_id } => {
+                matches!(request, RuntimeRequest::LocalBarrier { qubits, .. } if qubits.contains(&usize::MAX))
+                    || *result_id == Some(usize::MAX)
+            }
+            _ => false,
+        }
+    }
+
     fn quantum_op_qubits(qop: &QuantumOp) -> BTreeSet<usize> {
         let mut qubits = BTreeSet::new();
         match qop {
@@ -4110,29 +4152,7 @@ impl QisRuntime for SeleneRuntime {
             if let Operation::Quantum(QuantumOp::Idle(duration, _)) = op {
                 seconds_to_nanoseconds(*duration)?;
             }
-            let ids = match op {
-                Operation::AllocateQubit { id }
-                | Operation::AllocateResult { id }
-                | Operation::ReleaseQubit { id } => vec![*id],
-                Operation::Quantum(qop) => {
-                    let mut ids: Vec<_> = Self::quantum_op_qubits(qop).into_iter().collect();
-                    if let QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result) = qop
-                    {
-                        ids.push(*result);
-                    }
-                    ids
-                }
-                Operation::RuntimeRequest { request, result_id } => {
-                    let mut ids = match request {
-                        RuntimeRequest::LocalBarrier { qubits, .. } => qubits.clone(),
-                        _ => Vec::new(),
-                    };
-                    ids.extend(result_id);
-                    ids
-                }
-                _ => Vec::new(),
-            };
-            if ids.iter().any(|id| id.checked_add(1).is_none()) {
+            if Self::scheduled_source_id_overflows(op) {
                 return Err(RuntimeError::ExecutionError(format!(
                     "scheduled source identifier overflow for {op:?} in runtime {}",
                     self.plugin_path
@@ -4489,6 +4509,152 @@ impl Drop for SeleneRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheduled_source_id_scan_matches_previous_quantum_id_coverage() {
+        for [a, b, c] in [
+            [0, 1, 2],
+            [usize::MAX - 1; 3],
+            [usize::MAX, 1, 2],
+            [0, usize::MAX, 2],
+            [0, 1, usize::MAX],
+            [usize::MAX; 3],
+        ] {
+            let ops = [
+                QuantumOp::H(a),
+                QuantumOp::X(a),
+                QuantumOp::Y(a),
+                QuantumOp::Z(a),
+                QuantumOp::S(a),
+                QuantumOp::Sdg(a),
+                QuantumOp::T(a),
+                QuantumOp::Tdg(a),
+                QuantumOp::RX(0.0, a),
+                QuantumOp::RY(0.0, a),
+                QuantumOp::RZ(0.0, a),
+                QuantumOp::RXY(0.0, 0.0, a),
+                QuantumOp::Idle(0.0, a),
+                QuantumOp::Reset(a),
+                QuantumOp::CX(a, b),
+                QuantumOp::CY(a, b),
+                QuantumOp::CZ(a, b),
+                QuantumOp::CH(a, b),
+                QuantumOp::CRZ(0.0, a, b),
+                QuantumOp::ZZ(a, b),
+                QuantumOp::RZZ(0.0, a, b),
+                QuantumOp::RXYXY2Q(0.0, 0.0, a, b),
+                QuantumOp::CCX(a, b, c),
+                QuantumOp::Measure(a, b),
+                QuantumOp::MeasureLeaked(a, b),
+            ];
+            for op in ops {
+                // Compatibility oracle: the previous set-based qubit scan plus
+                // the separate measurement result ID. Duplicates do not matter.
+                let mut ids = SeleneRuntime::quantum_op_qubits(&op);
+                if let QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result) = &op {
+                    ids.insert(*result);
+                }
+                let expected = ids.iter().any(|id| id.checked_add(1).is_none());
+                assert_eq!(
+                    SeleneRuntime::scheduled_source_id_overflows(&Operation::Quantum(op.clone())),
+                    expected,
+                    "{op:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scheduled_source_id_scan_preserves_source_and_request_boundaries() {
+        for id in [0, usize::MAX - 1, usize::MAX] {
+            for op in [
+                Operation::AllocateQubit { id },
+                Operation::AllocateResult { id },
+                Operation::ReleaseQubit { id },
+            ] {
+                assert_eq!(
+                    SeleneRuntime::scheduled_source_id_overflows(&op),
+                    id == usize::MAX
+                );
+            }
+        }
+        for qubits in [vec![], vec![0, usize::MAX - 1, 0], vec![0, usize::MAX, 0]] {
+            for result_id in [None, Some(usize::MAX - 1), Some(usize::MAX)] {
+                let expected = qubits.contains(&usize::MAX) || result_id == Some(usize::MAX);
+                let op = Operation::RuntimeRequest {
+                    request: RuntimeRequest::LocalBarrier {
+                        qubits: qubits.clone(),
+                        sleep_ns: 0,
+                    },
+                    result_id,
+                };
+                assert_eq!(SeleneRuntime::scheduled_source_id_overflows(&op), expected);
+            }
+        }
+        for request in [
+            RuntimeRequest::GlobalBarrier { sleep_ns: 0 },
+            RuntimeRequest::IncrementFutureRefcount {
+                result_id: usize::MAX,
+            },
+            RuntimeRequest::DecrementFutureRefcount {
+                result_id: usize::MAX,
+            },
+            RuntimeRequest::Native(SeleneRequest::Qfree(u64::MAX)),
+        ] {
+            // Request-internal/native IDs are intentionally not source IDs.
+            for result_id in [None, Some(usize::MAX - 1), Some(usize::MAX)] {
+                assert_eq!(
+                    SeleneRuntime::scheduled_source_id_overflows(&Operation::RuntimeRequest {
+                        request: request.clone(),
+                        result_id
+                    }),
+                    result_id == Some(usize::MAX)
+                );
+            }
+        }
+        assert!(!SeleneRuntime::scheduled_source_id_overflows(
+            &Operation::Barrier
+        ));
+    }
+
+    #[test]
+    fn scheduled_source_id_preflight_preserves_error_order_before_submission() {
+        let mut runtime = SeleneRuntime::new("unused-synthetic-runtime.so");
+        let idle = runtime
+            .lower_scheduled_operations(&[Operation::Quantum(QuantumOp::Idle(
+                f64::NAN,
+                usize::MAX,
+            ))])
+            .unwrap_err()
+            .to_string();
+        assert!(!idle.contains("identifier overflow"));
+        assert!(!idle.contains("Failed to load"));
+        let ops = [
+            Operation::Quantum(QuantumOp::H(0)),
+            Operation::Quantum(QuantumOp::RZ(f64::NAN, usize::MAX)),
+        ];
+        let error = runtime
+            .lower_scheduled_operations(&ops)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("scheduled source identifier overflow"),
+            "{error}"
+        );
+        let error = runtime
+            .lower_scheduled_operations(&[
+                Operation::Quantum(QuantumOp::RZ(f64::NAN, 0)),
+                Operation::Quantum(QuantumOp::H(usize::MAX)),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("non-finite scheduled source angle"),
+            "{error}"
+        );
+        assert!(runtime.instance.is_none());
+        assert!(runtime.batch_failure.is_none());
+    }
 
     #[test]
     fn feedback_readiness_preserves_fifo_history_clone_and_clear() {

@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import heapq
+import math
 import re
 import struct
 from typing import TYPE_CHECKING
@@ -468,6 +469,7 @@ def compile_wasm(
     opt_level: int = 2,
     emit_debug: bool = False,
     wasm_int_width: int = 64,
+    wasm_timeout_seconds: float = 1.0,
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
@@ -479,8 +481,23 @@ def compile_wasm(
     bytes. ``wasm_int_width`` selects exact native integer signatures (64 by
     default; use 32 for Guppy H2 declarations). i32 arguments wrap to their low
     32 bits and results are sign-extended; the setting applies to all modules.
-    The result requires the Selene WASM utility or WASM-enabled QIS FFI.
+    ``wasm_timeout_seconds`` is a positive finite per-start/init/call limit,
+    defaulting to one second, with approximately 10 ms clock resolution.
+    The result requires the Selene WASM utility or WASM-enabled QIS FFI;
+    nondefault timeouts require native ``pecos_wasm_v2_register`` support.
     """
+    try:
+        valid_timeout = (
+            type(wasm_timeout_seconds) in (int, float)
+            and math.isfinite(wasm_timeout_seconds)
+            and wasm_timeout_seconds > 0
+        )
+    except OverflowError:
+        valid_timeout = False
+    if not valid_timeout:
+        msg = "wasm_timeout_seconds must be a positive finite number"
+        raise ValueError(msg)
+    wasm_timeout_seconds = float(wasm_timeout_seconds)
     if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
         msg = f"wasm_int_width must be 32 or 64; got {wasm_int_width!r}"
         raise ValueError(msg)
@@ -573,15 +590,25 @@ def compile_wasm(
     if not re.search(r"^declare void @panic\(i32, ptr\)", llvm, re.MULTILINE):
         llvm += "\ndeclare void @panic(i32, ptr)\n"
     llvm += _ABI
+    if wasm_timeout_seconds != 1.0:
+        llvm += "\ndeclare i32 @pecos_wasm_v2_register(i64, ptr, i64, double)\n"
     setup = "  %wasm_reset = call i32 @pecos_wasm_v1_reset()\n" + _check("wasm_reset")
     for identifier, module_id in module_ids.items():
         data = modules[identifier]
         global_name = f"pecos_wasm_module_{digest}_{module_id}"
         llvm += _constant(global_name, data)
         status = f"wasm_module_{module_id}"
-        setup += (
-            f"  %{status} = call i32 @pecos_wasm_v1_register(i64 {module_id}, ptr @{global_name}, i64 {len(data)})\n"
-        )
+        if wasm_timeout_seconds == 1.0:
+            setup += (
+                f"  %{status} = call i32 @pecos_wasm_v1_register(i64 {module_id}, "
+                f"ptr @{global_name}, i64 {len(data)})\n"
+            )
+        else:
+            timeout_literal = "0x" + struct.pack(">d", wasm_timeout_seconds).hex().upper()
+            setup += (
+                f"  %{status} = call i32 @pecos_wasm_v2_register(i64 {module_id}, "
+                f"ptr @{global_name}, i64 {len(data)}, double {timeout_literal})\n"
+            )
         setup += _check(status)
     entry = re.compile(r"(define [^\n]* @qmain\([^\n]*\{\n[^\n]*:\n)")
     llvm, count = entry.subn(lambda m: m[0] + setup, llvm)

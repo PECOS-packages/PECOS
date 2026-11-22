@@ -35,9 +35,14 @@ struct Function {
     scalar_types: Option<(Vec<WasmScalarType>, Vec<WasmScalarType>)>,
 }
 
+struct ModuleConfiguration {
+    bytes: Vec<u8>,
+    timeout_seconds: f64,
+}
+
 #[derive(Default)]
 struct State {
-    modules: BTreeMap<u64, Vec<u8>>,
+    modules: BTreeMap<u64, ModuleConfiguration>,
     functions: Vec<Function>,
     contexts: BTreeMap<u64, Context>,
 }
@@ -142,12 +147,30 @@ pub fn reset() -> Result<i32> {
 /// # Errors
 /// Returns an error if the module identifier is already registered.
 pub fn register(module: u64, bytes: &[u8]) -> Result<i32> {
+    register_with_timeout(module, bytes, 1.0)
+}
+
+/// Register module bytes with a per-start/init/call execution timeout in seconds.
+/// Compilation time is excluded. The epoch clock has approximately 10 ms resolution.
+///
+/// # Errors
+/// Rejects nonpositive/nonfinite timeouts and duplicate module identifiers.
+pub fn register_with_timeout(module: u64, bytes: &[u8], timeout_seconds: f64) -> Result<i32> {
+    if !timeout_seconds.is_finite() || timeout_seconds <= 0.0 {
+        return Err("WASM timeout must be a positive finite number of seconds".into());
+    }
     STATE.with(|state| {
         let mut state = state.borrow_mut();
         if state.modules.contains_key(&module) {
             return Err(format!("Duplicate WASM module {module}"));
         }
-        state.modules.insert(module, bytes.to_vec());
+        state.modules.insert(
+            module,
+            ModuleConfiguration {
+                bytes: bytes.to_vec(),
+                timeout_seconds,
+            },
+        );
         Ok(0)
     })
 }
@@ -318,9 +341,11 @@ pub fn call(context: u64, function: u64, arguments: &[i64]) -> Result<i32> {
         if let std::collections::btree_map::Entry::Vacant(entry) =
             context.modules.entry(function.module)
         {
-            let bytes = modules.get(&function.module).ok_or("Unknown WASM module")?;
-            let compiled = COMPILED.with(|cache| cache.borrow_mut().get(bytes))?;
-            let mut object = compiled.instantiate().map_err(|e| e.to_string())?;
+            let configuration = modules.get(&function.module).ok_or("Unknown WASM module")?;
+            let compiled = COMPILED.with(|cache| cache.borrow_mut().get(&configuration.bytes))?;
+            let mut object = compiled
+                .instantiate_with_limits(configuration.timeout_seconds, None)
+                .map_err(|e| e.to_string())?;
             // init is optional for Guppy modules (unlike the legacy QASM contract).
             if object.has_func("init") {
                 object
@@ -426,6 +451,28 @@ macro_rules! export_wasm_runtime {
                     return Err("Null WASM module".into());
                 }
                 $crate::register(module, unsafe { std::slice::from_raw_parts(bytes, length) })
+            })
+        }
+        /// Register bytes with a positive finite per-execution timeout in seconds.
+        ///
+        /// # Safety
+        /// bytes must point to length readable bytes.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn pecos_wasm_v2_register(
+            module: u64,
+            bytes: *const u8,
+            length: usize,
+            timeout_seconds: f64,
+        ) -> i32 {
+            $crate::boundary(-1, || {
+                if bytes.is_null() {
+                    return Err("Null WASM module".into());
+                }
+                $crate::register_with_timeout(
+                    module,
+                    unsafe { std::slice::from_raw_parts(bytes, length) },
+                    timeout_seconds,
+                )
             })
         }
         /// # Safety
@@ -644,6 +691,43 @@ mod tests {
         call(context, function, &[]).unwrap();
         assert_eq!(read(context, 1).unwrap(), [9]);
         COMPILED.with(|cache| assert_eq!(cache.borrow().compilations, 2));
+    }
+
+    #[test]
+    fn timeout_configuration_is_per_instance_not_per_compilation() {
+        reset().unwrap();
+        COMPILED.with(|cache| *cache.borrow_mut() = CompilationCache::default());
+        register_with_timeout(0, MODULE, 0.05).unwrap();
+        register_with_timeout(1, MODULE, 7.5).unwrap();
+        let context = acquire(0).unwrap();
+        assert_eq!(invoke(context, 0, "add", &[2, 3], 1), [5]);
+        assert_eq!(invoke(context, 1, "add", &[4, 5], 1), [9]);
+        STATE.with(|state| {
+            let state = state.borrow();
+            let modules = &state.contexts[&context].modules;
+            assert!((modules[&0].timeout_seconds() - 0.05).abs() < f64::EPSILON);
+            assert!((modules[&1].timeout_seconds() - 7.5).abs() < f64::EPSILON);
+        });
+        COMPILED.with(|cache| assert_eq!(cache.borrow().compilations, 1));
+        let context = start();
+        invoke(context, 0, "add", &[1, 2], 1);
+        STATE.with(|state| {
+            assert!(
+                (state.borrow().contexts[&context].modules[&0].timeout_seconds() - 1.0).abs()
+                    < f64::EPSILON
+            );
+        });
+        COMPILED.with(|cache| assert_eq!(cache.borrow().compilations, 1));
+    }
+
+    #[test]
+    fn invalid_timeout_registration_does_not_mutate_state() {
+        reset().unwrap();
+        for timeout in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(register_with_timeout(0, MODULE, timeout).is_err());
+            assert!(STATE.with(|state| state.borrow().modules.is_empty()));
+        }
+        register(0, MODULE).unwrap();
     }
 
     const MODULE: &[u8] = br#"(module

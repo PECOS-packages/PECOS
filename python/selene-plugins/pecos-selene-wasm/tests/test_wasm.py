@@ -470,3 +470,51 @@ def test_invalid_integer_width_is_rejected(examples, width):
     example = examples["integer32"]
     with pytest.raises(ValueError, match=re.escape(f"wasm_int_width must be 32 or 64; got {width!r}")):
         compile_wasm(example.boundaries, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, wasm_int_width=width)
+
+
+@pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
+def test_invalid_timeout_is_rejected(timeout):
+    with pytest.raises(ValueError, match="wasm_timeout_seconds"):
+        compile_wasm(b"", {}, wasm_timeout_seconds=timeout)
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    [2.5, float.fromhex("0x0.0000000000001p-1022"), float.fromhex("0x1.fffffffffffffp1023")],
+)
+def test_custom_timeout_ir_and_execution(examples, tmp_path, timeout):
+    import struct
+
+    example = examples["arithmetic"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    llvm = compile_wasm(example.addition, modules, wasm_timeout_seconds=timeout)
+    assert "call i32 @pecos_wasm_v2_register" in llvm
+    assert "double 0x" + struct.pack(">d", timeout).hex().upper() in llvm
+    # The smallest positive limit is useful for checking encoding/tick conversion,
+    # but wall-clock scheduling can exhaust its single tick before execution.
+    if timeout > 1:
+        runner = build(example.addition, modules, build_dir=tmp_path, wasm_timeout_seconds=timeout)
+        assert [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=2)] == [{"sum": 5}] * 2
+
+
+def test_default_timeout_preserves_v1_registration(examples):
+    example = examples["arithmetic"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    for options in ({}, {"wasm_timeout_seconds": 1.0}):
+        llvm = compile_wasm(example.addition, modules, **options)
+        assert "call i32 @pecos_wasm_v1_register" in llvm
+        assert "pecos_wasm_v2_register" not in llvm
+
+
+def test_custom_timeout_requires_new_native_runtime(examples, tmp_path, monkeypatch):
+    import pecos_selene_wasm
+
+    monkeypatch.setattr(pecos_selene_wasm.ctypes, "CDLL", lambda _path: object())
+    example = examples["arithmetic"]
+    with pytest.raises(RuntimeError, match="rebuild or upgrade"):
+        build(
+            example.addition,
+            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            build_dir=tmp_path,
+            wasm_timeout_seconds=2.0,
+        )

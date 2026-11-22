@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
 from pathlib import Path
@@ -53,6 +54,7 @@ def build(
     opt_level: int = 2,
     emit_debug: bool = False,
     wasm_int_width: int = 64,
+    wasm_timeout_seconds: float = 1.0,
     **kwargs: object,
 ) -> SeleneInstance:
     """Build Selene with explicit WASM bytes and safe compilation of Guppy source.
@@ -71,7 +73,13 @@ def build(
         opt_level=opt_level,
         emit_debug=emit_debug,
         wasm_int_width=wasm_int_width,
+        wasm_timeout_seconds=wasm_timeout_seconds,
     )
+    if wasm_timeout_seconds != 1.0:
+        runtime = ctypes.CDLL(str(utilities[-1].library_file))
+        if not hasattr(runtime, "pecos_wasm_v2_register"):
+            msg = "Custom WASM timeouts require an updated native WASM runtime; rebuild or upgrade pecos-selene-wasm"
+            raise RuntimeError(msg)
     return selene_build(
         llvm,
         platform=platform,

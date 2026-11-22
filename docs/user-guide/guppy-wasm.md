@@ -229,7 +229,7 @@ with other compiler/runtime implementations.
 - One HUGR module per program, with any explicitly supplied WASM modules.
 - Synchronous WASM calls on 64-bit hosts, including branches and loops.
 
-`i32`, `f32`, aggregate and multiple results,
+`f32`, aggregate and multiple results,
 WASI and host imports are not supported by this adapter. Unsupported
 signatures and operations fail explicitly. Traps and runtime signature errors
 propagate as simulation errors. Calls use PECOS Wasmtime's default one-second

@@ -396,8 +396,8 @@ def test_pecos_parity_cli_executes_public_workloads(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr + completed.stdout
     report = json.loads(output.read_text())
-    assert {"i32-boundaries", "i32-state-feedback"} <= {case["id"] for case in report["cases"]}
-    assert len(report["cases"]) == 21
+    assert {"i32-boundaries", "i32-state-feedback", "repetition-correction"} <= {case["id"] for case in report["cases"]}
+    assert len(report["cases"]) == 22
     assert all(case["status"] == "completed" for case in report["cases"])
 
 

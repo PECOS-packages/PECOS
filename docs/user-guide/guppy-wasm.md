@@ -125,6 +125,27 @@ pass that LLVM to `selene_sim.build(..., utilities=[WasmPlugin()])`.
 The utility supplies classical WASM calls and works alongside Selene's normal
 quantum runtime and simulator plugins.
 
+## Repeated quantum correction
+
+The independently written `examples/guppy_wasm/repetition.py` demonstrates a
+three-bit repetition code with a WASM syndrome lookup. Each round injects one
+bit flip, measures `q0 XOR q1` and `q1 XOR q2` using two ancillas, calls the WASM
+decoder, and applies the returned correction to the surviving data qubits.
+It covers all three error positions and a final round without an error.
+
+```bash
+python examples/guppy_wasm/repetition.py --backend selene --shots 8 --workers 2
+python examples/guppy_wasm/repetition.py --backend pecos --shots 8 --workers 2
+```
+
+Every shot should report `calls=4`, `correction_sum=7`, and `q0=q1=q2=0`.
+The ordered syndromes `[1, 3, 2, 0]` are encoded in base 4 as
+`syndrome_trace=120`; the corrections `[1, 2, 4, 0]` are encoded in base 8 as
+`correction_trace=672`. These traces check every round, including its order.
+The call counter also checks that WASM state starts fresh on each shot. This is
+a small bit-flip correction example with perfect syndrome measurements, not a
+general decoder or a fault-tolerant noise benchmark. It requires five qubits.
+
 ## Examples and state
 
 From the repository root:
@@ -332,7 +353,7 @@ signature validation. Float signatures retain their existing `f64` behavior.
 ## Compare against another Guppy/WASM stack
 
 The [public comparison bundle](https://github.com/PECOS-packages/PECOS/tree/dev/examples/guppy_wasm/parity)
-provides 21 workloads with independent expected answers, public PECOS and Selene
+provides 22 workloads with independent expected answers, public PECOS and Selene
 runners, and an adapter contract for a separately installed reference stack.
 It checks scalar calls, state, loops, quantum feedback and traps, and separates
 preparation, first-run and repeat timings. The handoff archive contains only

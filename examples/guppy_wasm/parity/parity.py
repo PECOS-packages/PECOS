@@ -28,6 +28,8 @@ PAYLOAD = (
     "indexed_exports.wat",
     "integer32.py",
     "integer32.wat",
+    "repetition.py",
+    "repetition.wat",
     "parity/throughput.py",
     "parity/workloads.json",
     "parity/parity.py",
@@ -82,9 +84,11 @@ def manifest() -> dict:
         require(isinstance(case, dict), "Invalid workload")
         required = {"id", "source", "module", "function"}
         require(
-            set(case) - {"wasm_int_width"} in (required | {"expected"}, required | {"expected_error"}),
+            set(case) - {"wasm_int_width", "qubits"} in (required | {"expected"}, required | {"expected_error"}),
             "Invalid workload fields",
         )
+        qubits = case.get("qubits", 1)
+        require(type(qubits) is int and qubits > 0, "Invalid workload qubit count")
         width = case.get("wasm_int_width", 64)
         require(type(width) is int and width in (32, 64), "Invalid workload WASM integer width")
         require(isinstance(case["id"], str) and re.fullmatch(r"[a-z0-9-]+", case["id"]), "Invalid workload ID")
@@ -248,7 +252,11 @@ def run_suite(prepare, configuration: dict, *, stack_tag: str, host_tag: str, ad
                 source = load_module(public_path(case["source"]), "parity_" + case["id"].replace("-", "_"))
                 program = getattr(source, case["function"])
                 modules = {str(source.WASM_PATH): public_path(case["module"]).read_bytes()}
-                case_settings = dict(configuration, wasm_int_width=case.get("wasm_int_width", 64))
+                case_settings = dict(
+                    configuration,
+                    wasm_int_width=case.get("wasm_int_width", 64),
+                    qubits=case.get("qubits", configuration["qubits"]),
+                )
                 with prepare(program, modules, case_settings, Path(build_dir)) as run:
                     record["prepare_seconds"] = time.perf_counter() - start
                     entered = True

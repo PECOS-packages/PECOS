@@ -97,9 +97,9 @@ jobs:
     # Linux also builds the PECOS packages for the cross-runtime parity tests
     # (about 14 min cold), and non-PR Linux runs add the extended semantic suite
     # (about 6 min); a cold non-PR run measured about 24 min.
-    # The Rust cache is often evicted (the repository cache exceeds its 10 GB
-    # limit), so other runners also build cold: macos-15-intel measured 22-29 min,
-    # and a slower run was cancelled at the former 30 min limit (2026-11-23).
+    # Other runners also build cold whenever no Rust cache is available:
+    # macos-15-intel measured 22-29 min cold, and a slower run was cancelled at
+    # the former 30 min limit (2026-11-23).
     timeout-minutes: ${{ matrix.os != 'ubuntu-latest' && 45 || github.event_name != 'pull_request' && 75 || 60 }}
     strategy:
       fail-fast: false

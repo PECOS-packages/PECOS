@@ -87,6 +87,13 @@ def test_guppy_wasm_hugr_roundtrip(examples, name, exports) -> None:
     assert [op.args[0].value for op in wasm_ops if op.op_def().name == "lookup_by_name"] == exports
 
 
+def test_program_wasm_options_are_validated_on_construction() -> None:
+    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64; got 16$"):
+        pc.Hugr(b"unused", wasm_modules={"m": b""}, wasm_int_width=16)
+    with pytest.raises(ValueError, match=r"^wasm_int_width=32 requires explicit wasm_modules"):
+        pc.Hugr.from_bytes(b"unused", wasm_int_width=32)
+
+
 def test_missing_export_is_rejected(examples) -> None:
     with pytest.raises(GuppyError, match="isn't exported"):
 

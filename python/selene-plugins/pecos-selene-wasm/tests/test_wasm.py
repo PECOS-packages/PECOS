@@ -1,6 +1,7 @@
 """Real public compiler + native utility tests; no proprietary dependencies."""
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -467,5 +468,5 @@ def test_i32_mode_rejects_i64_module(examples, tmp_path):
 @pytest.mark.parametrize("width", [16, 32.0, True, "32"])
 def test_invalid_integer_width_is_rejected(examples, width):
     example = examples["integer32"]
-    with pytest.raises(ValueError, match="wasm_int_width must be 32 or 64"):
+    with pytest.raises(ValueError, match=re.escape(f"wasm_int_width must be 32 or 64; got {width!r}")):
         compile_wasm(example.boundaries, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, wasm_int_width=width)

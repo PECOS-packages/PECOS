@@ -482,7 +482,7 @@ def compile_wasm(
     The result requires the Selene WASM utility or WASM-enabled QIS FFI.
     """
     if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-        msg = "wasm_int_width must be 32 or 64"
+        msg = f"wasm_int_width must be 32 or 64; got {wasm_int_width!r}"
         raise ValueError(msg)
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"

@@ -43,3 +43,16 @@ def test_valid_compiler_options_are_forwarded(monkeypatch: pytest.MonkeyPatch, o
     monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", SimpleNamespace(compile_to_llvm_ir=compile_recorded))
     assert hugr_lowering.compile_hugr_to_qis(b"package", opt_level=opt_level, platform=platform) == "; compiled"
     assert calls == [(b"package", {"opt_level": opt_level, "platform": platform, "emit_debug": False})]
+
+
+@pytest.mark.parametrize("width", [16, 32.0, True, "32", None])
+def test_invalid_wasm_int_width_names_the_value(width: object) -> None:
+    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64; got ") as error:
+        hugr_lowering.validate_wasm_options({"m": b""}, width)
+    assert str(error.value).endswith(repr(width))
+
+
+def test_nondefault_wasm_int_width_requires_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", None)
+    with pytest.raises(ValueError, match=r"^wasm_int_width=32 requires explicit wasm_modules; pass wasm_modules="):
+        hugr_lowering.compile_hugr_to_qis(b"unused", wasm_int_width=32)

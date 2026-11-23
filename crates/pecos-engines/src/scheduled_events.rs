@@ -608,15 +608,11 @@ impl ScheduledEventModel {
             if let Some(message) = output.failure {
                 return Err(error(&message));
             }
-            let original: Vec<_> = batch
-                .operations
-                .iter()
-                .filter_map(|op| match op {
-                    ScheduledEventOp::Gate(g) if measured(g) => Some((g.gate_type, &g.qubits)),
-                    _ => None,
-                })
-                .collect();
-            if !original.into_iter().eq(output
+            let original = batch.operations.iter().filter_map(|op| match op {
+                ScheduledEventOp::Gate(g) if measured(g) => Some((g.gate_type, &g.qubits)),
+                _ => None,
+            });
+            if !original.eq(output
                 .gates
                 .iter()
                 .filter(|g| measured(g))

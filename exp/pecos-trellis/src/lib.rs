@@ -2308,8 +2308,10 @@ impl TrellisDecoder {
         {
             or_assign(&mut open_detectors, &detector_toggle);
             let mut close_mask = vec![0; detector_words];
-            for (detector, &last) in last_touch.iter().enumerate() {
-                if last == Some(column_index) {
+            // A detector can close here only when this column touches it.
+            // Normalized set bits enumerate the same ascending detector indices.
+            for detector in set_bits(&detector_toggle) {
+                if last_touch[detector] == Some(column_index) {
                     set_bit(&mut close_mask, detector);
                 }
             }
@@ -2516,8 +2518,9 @@ impl TrellisDecoder {
         {
             or_assign(&mut open_detectors, support);
             let mut close_mask = vec![0; detector_words];
-            for (detector, &last) in last_touch.iter().enumerate() {
-                if last == Some(column_index) {
+            // The union support includes every detector whose last touch is here.
+            for detector in set_bits(support) {
+                if last_touch[detector] == Some(column_index) {
                     set_bit(&mut close_mask, detector);
                 }
             }
@@ -7135,3 +7138,6 @@ fn compact_records_preserve_full_keys_arrival_and_mass_bits_at_boundaries() {
     }
     assert!(packed_cases > 20 && fallback_cases > 20);
 }
+
+#[cfg(test)]
+mod closing_masks_tests;

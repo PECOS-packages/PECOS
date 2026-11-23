@@ -252,9 +252,11 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
-          # The cache saved here is what pr-core-rust (pr-core-gate.yml)
-          # restores on every PR.
+          # The Linux cache saved here is what pr-core-rust (pr-core-gate.yml)
+          # restores on every PR. The macOS and Windows caches (about 2 and
+          # 3 GB) served only these post-merge runs, and at the repository's
+          # 10 GB cache limit saving them evicted the caches pull requests use.
+          save-if: ${{ runner.os == 'Linux' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
           shared-key: rust-test
 
       - name: Identify the runner image for the LLVM cache key

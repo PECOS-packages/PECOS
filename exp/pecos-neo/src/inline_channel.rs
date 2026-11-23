@@ -28,6 +28,9 @@ const PROBABILITY_SUM_TOLERANCE: f64 = 1e-9;
 /// Error returned while executing a circuit with inline channel gates.
 #[derive(Debug, Error)]
 pub enum InlineChannelError {
+    /// Detection outcomes cannot be represented by neo.
+    #[error("neo has no detect gate; remove {gate_type}")]
+    UnsupportedDetection { gate_type: GateType },
     /// A `Channel` gate had no channel payload.
     #[error("Channel gate missing channel payload")]
     MissingChannelPayload,
@@ -198,6 +201,9 @@ fn apply_gate_to_density_matrix(
 ) -> Result<Vec<u8>, InlineChannelError> {
     let qubits = gate.qubits.as_slice();
     match gate.gate_type {
+        gate_type if gate_type.is_detection() => {
+            Err(InlineChannelError::UnsupportedDetection { gate_type })
+        }
         GateType::Channel => {
             let channel = gate
                 .channel_expr()
@@ -433,6 +439,9 @@ fn apply_gate_to_stabilizer_with_pauli_channels(
 ) -> Result<Vec<u8>, InlineChannelError> {
     let qubits = gate.qubits.as_slice();
     match gate.gate_type {
+        gate_type if gate_type.is_detection() => {
+            Err(InlineChannelError::UnsupportedDetection { gate_type })
+        }
         GateType::Channel => {
             let channel = gate
                 .channel_expr()
@@ -551,6 +560,31 @@ fn apply_gate_to_stabilizer_with_pauli_channels(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_backends_reject_detection() {
+        for kind in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let gate = Gate::simple(kind, vec![0.into()]);
+            let mut density = DensityMatrix::with_seed(1, 42);
+            let mut stabilizer = SparseStab::with_seed(1, 42);
+            let mut rng = PecosRng::seed_from_u64(42);
+            for error in [
+                apply_gate_to_density_matrix(&mut density, &gate).unwrap_err(),
+                apply_gate_to_stabilizer_with_pauli_channels(&mut stabilizer, &gate, &mut rng)
+                    .unwrap_err(),
+            ] {
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("neo has no detect gate; remove {kind}"))
+                );
+            }
+        }
+    }
 
     #[test]
     fn inline_backends_measure_new_heralds() {

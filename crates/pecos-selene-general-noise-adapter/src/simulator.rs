@@ -173,6 +173,11 @@ impl SeleneSimulator {
                 GateType::Idle
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::MeasCrosstalkLocalPayload => {}
+                gate if gate.is_detection() => {
+                    return Err(PecosError::Input(
+                        pecos_engines::scheduled_frame::unsupported_detection_message(gate),
+                    ));
+                }
                 unsupported => {
                     return Err(PecosError::Generic(format!(
                         "PECOS general-noise bridge produced unsupported gate {unsupported}"

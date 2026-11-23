@@ -81,6 +81,11 @@ fn expansion_bound(count: usize, qubits: usize, hooks: usize) -> Result<usize, P
 
 fn opcode(g: &Gate) -> Result<u32, PecosError> {
     g.validate().map_err(|e| error(&e))?;
+    if g.gate_type.is_detection() {
+        return Err(error(
+            &crate::scheduled_frame::unsupported_detection_message(g.gate_type),
+        ));
+    }
     if g.qubits.len() != 1
         || !g.angles.is_empty()
         || !g.meas_ids.is_empty()
@@ -549,6 +554,21 @@ pub(crate) fn next_run() -> Result<u64, PecosError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_rejected_by_runtime_wire() {
+        for kind in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let error = opcode(&Gate::simple(kind, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&format!("{kind} is a non-collapsing detect gate")));
+            assert!(error.contains("run the circuit on a non-scheduled engine"));
+        }
+    }
 
     #[test]
     fn expansion_bound_checks_each_arithmetic_step() {

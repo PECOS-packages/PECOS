@@ -861,7 +861,7 @@ impl GeneralNoiseModel {
         while let Some(gate) = gates.next() {
             let measurements_before = self.measured_qubits.len();
             // Capture physical state before measurement loss or preparation.
-            if is_tracked_measurement(gate.gate_type) {
+            if is_tracked_measurement(gate.gate_type) || gate.gate_type.is_detection() {
                 let recorded = gate
                     .qubits
                     .iter()
@@ -907,6 +907,9 @@ impl GeneralNoiseModel {
             // For non-noiseless gates with qubits, we'll let the specific handlers
             // decide whether to add the original gate based on error models
             match gate.gate_type {
+                kind if kind.is_detection() => {
+                    builder.add_gate_command(&gate);
+                }
                 GateType::Idle => {
                     self.apply_idle_faults(&gate, self.p_idle_linear_rate, builder)?;
                 }
@@ -1147,6 +1150,26 @@ impl GeneralNoiseModel {
                 } else {
                     QubitTransitionState::One
                 });
+                continue;
+            }
+            if gate_type.is_detection() {
+                let nominal = match (gate_type, state) {
+                    (GateType::DetectLost | GateType::DetectLeakedLost, MeasurementState::Lost) => {
+                        3
+                    }
+                    (
+                        GateType::DetectLeaked | GateType::DetectLeakedLost,
+                        MeasurementState::Leaked,
+                    ) => 2,
+                    _ => 0,
+                };
+                let value = if self.noiseless_gates.contains(&gate_type) {
+                    nominal
+                } else {
+                    self.configured_readout(gate_type, outcome, state)
+                        .unwrap_or(nominal)
+                };
+                outcomes.push(value);
                 continue;
             }
             if state == MeasurementState::Lost && is_tracked_measurement(gate_type) {

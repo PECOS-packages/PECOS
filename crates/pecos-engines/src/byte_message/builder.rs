@@ -658,6 +658,39 @@ impl ByteMessageBuilder {
         self
     }
 
+    /// Add non-collapsing `DetectLeaked` operations, one command per qubit.
+    ///
+    /// # Panics
+    /// Panics if any qubit ID is too large to fit in a u32.
+    pub fn detect_leaked(&mut self, qubit_ids: &[usize]) -> &mut Self {
+        for &qubit in qubit_ids {
+            self.add_single_qubit_gate_parts(GateType::DetectLeaked, qubit, &[], &[]);
+        }
+        self
+    }
+
+    /// Add non-collapsing `DetectLost` operations, one command per qubit.
+    ///
+    /// # Panics
+    /// Panics if any qubit ID is too large to fit in a u32.
+    pub fn detect_lost(&mut self, qubit_ids: &[usize]) -> &mut Self {
+        for &qubit in qubit_ids {
+            self.add_single_qubit_gate_parts(GateType::DetectLost, qubit, &[], &[]);
+        }
+        self
+    }
+
+    /// Add non-collapsing `DetectLeakedLost` operations, one command per qubit.
+    ///
+    /// # Panics
+    /// Panics if any qubit ID is too large to fit in a u32.
+    pub fn detect_leaked_lost(&mut self, qubit_ids: &[usize]) -> &mut Self {
+        for &qubit in qubit_ids {
+            self.add_single_qubit_gate_parts(GateType::DetectLeakedLost, qubit, &[], &[]);
+        }
+        self
+    }
+
     /// Deprecated spelling of [`ByteMessageBuilder::measure_z_leaked`].
     ///
     /// # Panics

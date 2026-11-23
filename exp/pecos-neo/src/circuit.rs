@@ -100,6 +100,7 @@ impl GateType {
 
 impl From<CoreGateType> for GateType {
     fn from(gt: CoreGateType) -> Self {
+        assert!(!gt.is_detection(), "neo has no detect gate; remove {gt}");
         Self::try_from_core(gt).unwrap_or_else(|| {
             panic!("unsupported pecos-core gate type for pecos-neo conversion: {gt:?}")
         })
@@ -186,6 +187,9 @@ pub enum CircuitConversionError {
 impl fmt::Display for CircuitConversionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedGateType { gate_type } if gate_type.is_detection() => {
+                write!(f, "neo has no detect gate; remove {gate_type}")
+            }
             Self::UnsupportedGateType { gate_type } => {
                 write!(f, "pecos-neo does not support core gate type {gate_type:?}")
             }
@@ -400,6 +404,26 @@ mod tests {
     use super::*;
     use crate::command::GateCommandError;
     use pecos_core::Angle64;
+
+    #[test]
+    fn detection_is_rejected_by_name() {
+        for kind in [
+            CoreGateType::DetectLeaked,
+            CoreGateType::DetectLost,
+            CoreGateType::DetectLeakedLost,
+        ] {
+            let gate = Gate::simple(kind, vec![0.into()]);
+            let error = GateCommand::try_from(&gate).unwrap_err().to_string();
+            assert!(error.contains(&format!("neo has no detect gate; remove {kind}")));
+            let panic = std::panic::catch_unwind(|| GateType::from(kind)).unwrap_err();
+            assert!(
+                panic
+                    .downcast_ref::<String>()
+                    .unwrap()
+                    .contains(&format!("neo has no detect gate; remove {kind}"))
+            );
+        }
+    }
 
     #[test]
     fn new_heralds_are_rejected_by_core_conversion() {

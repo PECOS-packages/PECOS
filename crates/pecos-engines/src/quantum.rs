@@ -144,6 +144,9 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
         validate_dispatch_gate(cmd)?;
         check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
+            gate if gate.is_detection() => {
+                measurements.extend(std::iter::repeat_n(0, cmd.qubits.len()));
+            }
             // Single-qubit Clifford gates
             GateType::X => {
                 sim.x(&cmd.qubits);
@@ -402,6 +405,9 @@ fn process_general_message<
         validate_dispatch_gate(cmd)?;
         check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
+            GateType::DetectLeaked | GateType::DetectLost | GateType::DetectLeakedLost => {
+                measurements.extend(std::iter::repeat_n(0, cmd.qubits.len()));
+            }
             // Single-qubit Clifford gates
             GateType::X => {
                 sim.x(&cmd.qubits);
@@ -729,7 +735,8 @@ impl ScheduledBackend {
             if matches!(
                 gate.gate_type,
                 GateType::MeasureZLost | GateType::MeasureZLeakedLost
-            ) {
+            ) || gate.gate_type.is_detection()
+            {
                 return Err(crate::scheduled_frame::unsupported_scheduled_gate(
                     gate.gate_type,
                 ));
@@ -927,6 +934,9 @@ where
             validate_dispatch_gate(cmd)?;
             check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
+                GateType::DetectLeaked | GateType::DetectLost | GateType::DetectLeakedLost => {
+                    measurements.extend(std::iter::repeat_n(0, cmd.qubits.len()));
+                }
                 GateType::X => {
                     debug!("Processing X gate on qubits {:?}", cmd.qubits);
                     self.simulator.x(&cmd.qubits);
@@ -1800,6 +1810,9 @@ impl Engine for CoinTossEngine {
         for cmd in &batch {
             check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
+                gate if gate.is_detection() => {
+                    measurements.extend(std::iter::repeat_n(0, cmd.qubits.len()));
+                }
                 // All gates are no-ops for CoinToss - only measurements matter
                 GateType::MZ
                 | GateType::MeasureZLeaked
@@ -1932,6 +1945,32 @@ mod tests {
     use super::*;
     use crate::byte_message::ByteMessageBuilder;
     use std::f64::consts::FRAC_1_SQRT_2;
+
+    #[test]
+    fn scheduled_backend_rejects_detection_after_validation() {
+        for clifford in [false, true] {
+            for kind in [
+                GateType::DetectLeaked,
+                GateType::DetectLost,
+                GateType::DetectLeakedLost,
+            ] {
+                let backend = ScheduledBackend {
+                    capacity: 1,
+                    clifford,
+                };
+                let error = backend
+                    .validate(&[Gate::simple(kind, vec![0.into()])], false)
+                    .unwrap_err()
+                    .to_string();
+                assert!(error.contains(&format!("{kind} is a non-collapsing detect gate")));
+                let error = backend
+                    .validate(&[Gate::simple(kind, vec![1.into()])], false)
+                    .unwrap_err()
+                    .to_string();
+                assert!(!error.contains("is a non-collapsing detect gate"));
+            }
+        }
+    }
 
     #[test]
     fn scheduled_backend_rejects_unencoded_heralds() {

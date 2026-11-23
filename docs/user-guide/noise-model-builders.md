@@ -402,6 +402,52 @@ the Python PHIR interpreter masks indexed writes with `& 1`. QIS retains the ful
 The Selene adapter accepts leakage outcomes only up to 2. None provides source syntax for
 the herald gates; use core gates or byte-message builders for those gates.
 
+### Non-collapsing detection
+
+`DetectLeaked`, `DetectLost`, and `DetectLeakedLost` report tracked location without
+collapsing the quantum state. Each operand produces one outcome, in operand order.
+They consume no Boolean measurement record; optional explicit result IDs are supported.
+
+| Gate | Alphabet | Present | Leaked | Lost |
+| --- | --- | --- | --- | --- |
+| `DetectLeaked` | {0, 2} | 0 | 2 | 0 |
+| `DetectLost` | {0, 3} | 0 | 0 | 3 |
+| `DetectLeakedLost` | {0, 2, 3} | 0 | 2 | 3 |
+
+Ideal engines return zero for every operand and leave the state unchanged.
+`GeneralNoiseModel` uses the location captured at the detect gate. With loss disabled,
+no atom is lost, so `DetectLost` returns zero. Detection takes no physical time and
+receives no gate, idle, leakage, emission, crosstalk, loss, or transition-hook noise.
+Measurement loss and `p_meas_0`/`p_meas_1` flips do not apply.
+
+Configure each flavor under `measurement.readout` with rows `present`, `leaked`,
+and `lost`, and columns from that flavor's alphabet. Rows describe the true location:
+`DetectLost` permits a `leaked` row and `DetectLeaked` permits a `lost` row. Each
+configured row takes exactly one categorical draw, even when deterministic.
+Missing rows return the nominal value above without an RNG draw. A noiseless flavor
+ignores its matrix and returns nominal values without a draw. A `lost` row requires
+configured qubit loss. Rows `0` and `1` are invalid for detection; conversely,
+`present` is invalid for Z measurement flavors.
+
+Use core `Gate::detect_*` constructors, byte-message builder methods, or the Python
+TickHandle `detect_leaked_with_ids`, `detect_lost_with_ids`, and
+`detect_leaked_lost_with_ids` methods. Runtime/scheduled wires, scheduled engines,
+the Selene general-noise adapter, neo, QASM, EEG expansion, and Stim export reject
+detect gates by name. Unitary conversions also reject them. QEC analysis treats
+them as identity, without a record or any noise; nonzero per-gate DEM noise
+rates keyed on detect gates are rejected.
+
+Idle filling works with detect gates only in their own ticks that have not been
+compacted or rebuilt from a DagCircuit. A tick mixing detection with physical gates
+is rejected by `fill_idle_gates`; schedulers do not isolate detection automatically.
+
+Result width still matters for the detect alphabets {0, 2}, {0, 3}, and {0, 2, 3}:
+QASM and PHIR-JSON store nonzero outcomes as bit 1, while the Python PHIR interpreter
+masks indexed writes with `& 1`. QIS retains `u32` results but has no detect operation;
+the Selene adapter only accepts leakage outcomes up to 2 and rejects detect gates.
+These interfaces do not provide detect source syntax. Use an engine result stream
+that preserves integer outcomes when reading detection values.
+
 ### Qubit loss
 
 `GeneralNoiseModel` models a missing atom separately from leakage out of the computational

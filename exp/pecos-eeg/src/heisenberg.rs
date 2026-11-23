@@ -572,7 +572,7 @@ fn conjugate_operands(
         | GateType::I
         | GateType::Idle => None,
         // Meta gates (`GateType::is_meta`) do not affect the state.
-        meta if meta.is_meta() => None,
+        meta if meta.is_meta() || meta.is_detection() => None,
         other => panic!("EEG Heisenberg: unsupported gate type {other:?}"),
     }
 }

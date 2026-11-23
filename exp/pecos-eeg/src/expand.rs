@@ -16,6 +16,11 @@ use pecos_core::{Gate, QubitId};
 /// Why an EEG DEM could not be built from the circuit.
 #[derive(Debug, Clone)]
 pub enum EegBuildError {
+    /// Detection outcomes cannot be represented by EEG expansion.
+    UnsupportedDetection {
+        /// The offending gate type.
+        gate_type: GateType,
+    },
     /// An S injection cannot be represented by a finite real forward generator.
     InvalidStochasticProbability {
         /// Position of the injection gate in the expanded circuit.
@@ -84,6 +89,9 @@ pub enum EegBuildError {
 impl std::fmt::Display for EegBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedDetection { gate_type } => {
+                write!(f, "{gate_type} has no EEG form; remove it")
+            }
             Self::InvalidStochasticProbability {
                 gate_index,
                 probability,
@@ -193,11 +201,17 @@ pub struct ExpandedCircuit {
 /// a measurement type this MZ-only expansion cannot represent -- passing it
 /// through would silently delete its measurement record. This is THE checked
 /// entrance: every consumer (builder, simulator, bindings) routes through it,
-/// so the check cannot drift across copies.
+/// so the check cannot drift across copies. Returns
+/// [`EegBuildError::UnsupportedDetection`] for non-collapsing detection gates.
 pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> {
     for (index, gate) in gates.iter().enumerate() {
         gate.validate()
             .map_err(|reason| EegBuildError::InvalidGate { index, reason })?;
+        if gate.gate_type.is_detection() {
+            return Err(EegBuildError::UnsupportedDetection {
+                gate_type: gate.gate_type,
+            });
+        }
         // `MeasureFree` is record-bearing and lowers to `MZ` below -- the
         // "free" is resource bookkeeping with no stabilizer effect, and a
         // reused qubit reappears behind an explicit prep the expansion keeps.
@@ -495,6 +509,24 @@ impl ExpandedCircuit {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn detection_is_rejected_by_name() {
+        use super::*;
+        for kind in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let error = expand_circuit(&[Gate::simple(kind, vec![0.into()])])
+                .err()
+                .unwrap();
+            assert!(matches!(error, EegBuildError::UnsupportedDetection { .. }));
+            assert!(error.to_string().contains(&kind.to_string()));
+        }
+    }
+
     #[test]
     fn record_consuming_gates_are_recorded_or_refused() {
         // GateType is repr(u8); use its checked conversion and the core
@@ -594,8 +626,6 @@ mod tests {
         );
         assert_eq!(expanded.meas_id_rank.len(), 2);
     }
-
-    use super::*;
 
     #[test]
     fn recordless_heralds_are_refused_by_name() {

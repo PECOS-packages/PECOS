@@ -141,15 +141,16 @@ pub fn is_supported_prep_gate(gate_type: GateType) -> bool {
 #[inline]
 #[must_use]
 pub fn is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::QFree
-            | GateType::I
-            | GateType::Idle
-            | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload
-            | GateType::TrackedPauliMeta
-    )
+    gate_type.is_detection()
+        || matches!(
+            gate_type,
+            GateType::QFree
+                | GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::TrackedPauliMeta
+        )
 }
 
 /// Gate classification for compiling gate-triggered quantum noise.

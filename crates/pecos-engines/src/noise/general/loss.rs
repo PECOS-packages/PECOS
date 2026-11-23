@@ -878,6 +878,7 @@ impl GeneralNoiseModel {
         if self.loss.is_none()
             || gate.gate_type.consumes_measurement_record()
             || gate.gate_type.is_recordless_z_measurement()
+            || gate.gate_type.is_detection()
         {
             return Some(std::borrow::Cow::Borrowed(gate));
         }

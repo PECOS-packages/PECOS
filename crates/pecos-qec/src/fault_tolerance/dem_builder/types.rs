@@ -2364,6 +2364,8 @@ pub(crate) enum GateRateKeyError {
         "{table} key Idle has no effect: Idle gates take noise only from the idle model. Set p_idle (set_idle) or per-gate Idle rates instead."
     )]
     IdleKey { table: &'static str },
+    #[error("{gate} has no noise; remove the per-gate rate ({table})")]
+    DetectionKey { table: &'static str, gate: GateType },
 }
 
 /// The rate representation shared by the one- and two-qubit tables.
@@ -2452,8 +2454,11 @@ fn validate_active_gate_rate_keys(
     table: &'static str,
     keys: impl IntoIterator<Item = (GateType, GateRateQubits, GateRateTableFamily)>,
     locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
-) -> Result<(), GateRateKeyMismatch> {
+) -> Result<(), GateRateKeyError> {
     for (key, qubits, family) in keys {
+        if key.is_detection() {
+            return Err(GateRateKeyError::DetectionKey { table, gate: key });
+        }
         if let Some(location) = locations.iter().find(|location| {
             location.gate_type != key
                 && matches!(location.clifford,
@@ -2469,7 +2474,8 @@ fn validate_active_gate_rate_keys(
                 matches_scheduled: locations
                     .iter()
                     .any(|other| other.gate_type == key && qubits.matches(other, locations)),
-            });
+            }
+            .into());
         }
     }
     Ok(())
@@ -4978,6 +4984,14 @@ fn core_gate_to_neo(
         GateType::QAlloc => pecos_neo::GateType::QAlloc,
         GateType::QFree => pecos_neo::GateType::QFree,
         GateType::Idle => pecos_neo::GateType::Idle,
+        gate if gate.is_detection() => {
+            return Err(pecos_neo::noise::validation::ValidationError::new(
+                format!("per-gate rate for {gate}"),
+                format!("neo has no detect gate; remove the per-gate rate for {gate}"),
+            )
+            .with_value(&gate.to_string())
+            .with_suggestion("remove the per-gate rate"));
+        }
         unsupported => {
             let reason = if unsupported.is_recordless_z_measurement() {
                 "neo has no matching herald gate"
@@ -8077,6 +8091,30 @@ fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
 
 #[cfg(test)]
 mod tests {
+    use super::is_two_qubit_noise_gate;
+    use pecos_core::CliffordLowering;
+    use pecos_core::gate_type::GateType;
+
+    #[cfg(feature = "neo")]
+    #[test]
+    fn neo_detect_gate_rates_are_rejected_by_name() {
+        use super::*;
+        for gate in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let noise = PerGateTypeNoise::from_base_noise(NoiseConfig::default())
+                .with_1q_rates(gate, [0.01; 3]);
+            let error = noise.to_neo_channel().unwrap_err().to_string();
+            assert!(
+                error.contains(&format!(
+                    "neo has no detect gate; remove the per-gate rate for {gate}"
+                )),
+                "{error}"
+            );
+        }
+    }
     #[cfg(feature = "neo")]
     #[test]
     fn neo_unmapped_gate_rates_return_actionable_errors() {
@@ -8096,10 +8134,6 @@ mod tests {
             assert!(error.contains("remove the per-gate rate"), "{error}");
         }
     }
-
-    use super::is_two_qubit_noise_gate;
-    use pecos_core::CliffordLowering;
-    use pecos_core::gate_type::GateType;
 
     #[test]
     fn two_qubit_noise_gate_membership_is_pinned() {

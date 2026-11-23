@@ -943,6 +943,7 @@ fn backward_conjugate_bm(prop: &mut Bm, gate: &Gate) {
             }
             return;
         }
+        gate if gate.is_detection() => return,
         GateType::QFree | GateType::I | GateType::Idle => return,
         _ => {}
     }

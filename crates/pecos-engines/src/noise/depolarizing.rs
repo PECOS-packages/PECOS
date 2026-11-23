@@ -204,6 +204,9 @@ impl DepolarizingNoiseModel {
         gate: &Gate,
     ) {
         match gate.gate_type {
+            GateType::DetectLeaked | GateType::DetectLost | GateType::DetectLeakedLost => {
+                builder.add_gate_command(gate);
+            }
             GateType::X
             | GateType::Z
             | GateType::Y

@@ -150,6 +150,9 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::MeasureZLeaked => "MZ_L",
         GateType::MeasureZLost => "MLo",
         GateType::MeasureZLeakedLost => "MLL",
+        GateType::DetectLeaked => "DL",
+        GateType::DetectLost => "DLo",
+        GateType::DetectLeakedLost => "DLL",
         GateType::MeasureFree => "MF",
         GateType::MPZ => "MPZ",
         GateType::PX => "PX",
@@ -314,6 +317,9 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::MeasureZLeaked
         | GateType::MeasureZLost
         | GateType::MeasureZLeakedLost
+        | GateType::DetectLeaked
+        | GateType::DetectLost
+        | GateType::DetectLeakedLost
         | GateType::MeasureFree
         | GateType::MPZ
         | GateType::QAlloc
@@ -344,6 +350,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
 /// gates keep their asymmetric brackets (`|MZ)` and `(PZ|`).
 fn gate_family(gate_type: GateType) -> GateFamily {
     match gate_type {
+        gate if gate.is_detection() => GateFamily::Measurement,
         GateType::MZ
         | GateType::MeasureZLeaked
         | GateType::MeasureZLost
@@ -509,7 +516,8 @@ fn decompose_gate(
         // IDs even though the Boolean circuit record allocator excludes them.
         let show_id = style.show_measurement_ids
             && (gate.gate_type.consumes_measurement_record()
-                || gate.gate_type.is_recordless_z_measurement());
+                || gate.gate_type.is_recordless_z_measurement()
+                || gate.gate_type.is_detection());
         for (position, &q) in qubits.iter().enumerate() {
             if let Some(&row) = qubit_to_row.get(&q) {
                 let label = if show_id {
@@ -816,6 +824,19 @@ pub(crate) fn build_diagram_or_empty(
 mod tests {
     use super::*;
     use pecos_core::Angle64;
+
+    #[test]
+    fn detection_symbols_colors_and_families() {
+        for (kind, symbol) in [
+            (GateType::DetectLeaked, "DL"),
+            (GateType::DetectLost, "DLo"),
+            (GateType::DetectLeakedLost, "DLL"),
+        ] {
+            assert_eq!(gate_symbol(kind), symbol);
+            assert_eq!(gate_color(kind), gate_color(GateType::MeasureZLeaked));
+            assert_eq!(gate_family(kind), gate_family(GateType::MeasureZLeaked));
+        }
+    }
 
     #[test]
     fn measurement_labels_follow_operand_ids_across_ranges_and_dag_conversion() {

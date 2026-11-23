@@ -352,24 +352,40 @@ def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_wid
         raise ValueError(msg)
 
 
-def validate_wasm_auto_init(value: bool, modules: Mapping[str, bytes] | None) -> None:
-    """Require an explicit boolean and module mapping for initialization opt-out."""
+def validate_wasm_auto_init(value: object, modules: Mapping[str, bytes] | None) -> None:
+    """Require a bool, and explicit modules when opting out of automatic init.
+
+    Raises:
+        ValueError: If ``value`` is not a bool, or is False while ``modules`` is None.
+    """
     if type(value) is not bool:
-        msg = "wasm_auto_init must be a bool"
+        msg = f"wasm_auto_init must be True or False; got {value!r}"
         raise ValueError(msg)
     if not value and modules is None:
-        msg = "wasm_auto_init=False requires explicit wasm_modules"
+        msg = "wasm_auto_init=False requires explicit wasm_modules; pass wasm_modules={module_name: wasm_bytes}"
         raise ValueError(msg)
 
 
-def validate_wasm_timeout_seconds(value: float) -> float:
-    """Normalize a positive finite timeout without accepting booleans or overflow."""
+def validate_wasm_timeout_seconds(value: object, modules: Mapping[str, bytes] | None) -> float:
+    """Normalize a positive finite timeout; a non-default timeout needs explicit modules.
+
+    Raises:
+        ValueError: If ``value`` is not a positive finite int or float (bools and
+            ints too large for a float are rejected), or is not 1 while ``modules``
+            is None.
+    """
     try:
         valid = type(value) in (int, float) and math.isfinite(value) and value > 0
     except OverflowError:
         valid = False
     if not valid:
-        msg = "wasm_timeout_seconds must be a positive finite number"
+        msg = f"wasm_timeout_seconds must be a positive finite number of seconds; got {value!r}"
+        raise ValueError(msg)
+    if modules is None and value != 1:
+        msg = (
+            f"wasm_timeout_seconds={value!r} requires explicit wasm_modules; "
+            "pass wasm_modules={module_name: wasm_bytes}"
+        )
         raise ValueError(msg)
     return float(value)
 
@@ -420,10 +436,7 @@ def compile_hugr_to_qis(
         raise ImportError(msg) from error
 
     validate_wasm_auto_init(wasm_auto_init, wasm_modules)
-    wasm_timeout_seconds = validate_wasm_timeout_seconds(wasm_timeout_seconds)
-    if wasm_modules is None and wasm_timeout_seconds != 1.0:
-        msg = "Nondefault wasm_timeout_seconds requires explicit wasm_modules"
-        raise ValueError(msg)
+    wasm_timeout_seconds = validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
     if wasm_modules is not None:
         try:
             from pecos_selene_wasm import compile_wasm

@@ -163,8 +163,9 @@ independent contexts using `counter.wat`.
 A context slot can be leased once at a time. Release it with `.discard()`.
 Reacquiring the same slot within a shot preserves its module state. Different
 slots and different modules have independent instances. Every shot starts with
-fresh instances; workers do not share state. A module's optional `init` export
-by default must have signature `() -> ()` and runs once when that instance is first used.
+fresh instances; workers do not share state. By default, a module's optional
+`init` export must have signature `() -> ()` and runs once when that instance is
+first used; the next section describes how to turn this off.
 
 ## Choosing initialization behavior
 

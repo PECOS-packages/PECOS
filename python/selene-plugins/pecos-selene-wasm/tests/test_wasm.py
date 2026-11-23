@@ -473,7 +473,10 @@ def test_invalid_integer_width_is_rejected(examples, width):
 
 @pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
 def test_invalid_timeout_is_rejected(timeout):
-    with pytest.raises(ValueError, match="wasm_timeout_seconds"):
+    with pytest.raises(
+        ValueError,
+        match=rf"^wasm_timeout_seconds must be a positive finite number of seconds; got {re.escape(repr(timeout))}$",
+    ):
         compile_wasm(b"", {}, wasm_timeout_seconds=timeout)
 
 
@@ -522,7 +525,7 @@ def test_custom_timeout_requires_new_native_runtime(examples, tmp_path, monkeypa
 
 @pytest.mark.parametrize("value", [0, 1, None, "false"])
 def test_invalid_auto_init_is_rejected(value):
-    with pytest.raises(ValueError, match="wasm_auto_init"):
+    with pytest.raises(ValueError, match=rf"^wasm_auto_init must be True or False; got {re.escape(repr(value))}$"):
         compile_wasm(b"", {}, wasm_auto_init=value)
 
 

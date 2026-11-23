@@ -167,10 +167,7 @@ class Guppy:
         self._wasm_hugr_bytes = None
         hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
         hugr_lowering.validate_wasm_auto_init(wasm_auto_init, wasm_modules)
-        wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds)
-        if wasm_modules is None and wasm_timeout_seconds != 1.0:
-            msg = "Nondefault wasm_timeout_seconds requires explicit wasm_modules"
-            raise ValueError(msg)
+        wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
         self._wasm_timeout_seconds = wasm_timeout_seconds
         self._wasm_auto_init = wasm_auto_init
         self._wasm_int_width = wasm_int_width
@@ -236,10 +233,7 @@ class Hugr:
         self._data = data
         hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
         hugr_lowering.validate_wasm_auto_init(wasm_auto_init, wasm_modules)
-        wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds)
-        if wasm_modules is None and wasm_timeout_seconds != 1.0:
-            msg = "Nondefault wasm_timeout_seconds requires explicit wasm_modules"
-            raise ValueError(msg)
+        wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
         self._wasm_timeout_seconds = wasm_timeout_seconds
         self._wasm_auto_init = wasm_auto_init
         self._wasm_int_width = wasm_int_width

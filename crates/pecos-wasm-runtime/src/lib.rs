@@ -174,10 +174,16 @@ pub fn register_with_options(
     flags: u32,
 ) -> Result<i32> {
     if flags & !SKIP_AUTO_INIT != 0 {
-        return Err("Unknown WASM registration flags".into());
+        return Err(format!(
+            "Unknown WASM registration flags {flags:#x}; this runtime supports only \
+             SKIP_AUTO_INIT ({SKIP_AUTO_INIT:#x}): upgrade the native WASM runtime to \
+             match the compiler that generated the program"
+        ));
     }
     if !timeout_seconds.is_finite() || timeout_seconds <= 0.0 {
-        return Err("WASM timeout must be a positive finite number of seconds".into());
+        return Err(format!(
+            "WASM timeout must be a positive finite number of seconds; got {timeout_seconds}"
+        ));
     }
     STATE.with(|state| {
         let mut state = state.borrow_mut();
@@ -770,7 +776,8 @@ mod tests {
     fn invalid_timeout_registration_does_not_mutate_state() {
         reset().unwrap();
         for timeout in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert!(register_with_timeout(0, MODULE, timeout).is_err());
+            let error = register_with_timeout(0, MODULE, timeout).unwrap_err();
+            assert!(error.ends_with(&format!("; got {timeout}")), "{error}");
             assert!(STATE.with(|state| state.borrow().modules.is_empty()));
         }
         register(0, MODULE).unwrap();
@@ -795,7 +802,7 @@ mod tests {
                 let context = acquire(index).unwrap();
                 assert_eq!(invoke(context, 0, "get", &[], 1), [42]);
                 assert_eq!(invoke(context, 1, "get", &[], 1), [11]);
-                assert_eq!(invoke(context, 1, "init", &[], 0), []);
+                assert_eq!(invoke(context, 1, "init", &[], 0), Vec::<i64>::new());
                 assert_eq!(invoke(context, 1, "get", &[], 1), [42]);
                 invoke(context, 0, "increment", &[], 1);
                 release(context).unwrap();
@@ -848,7 +855,11 @@ mod tests {
     fn unknown_registration_flags_do_not_mutate_state() {
         reset().unwrap();
         for flags in [2, 3, u32::MAX] {
-            assert!(register_with_options(0, MODULE, 1.0, flags).is_err());
+            let error = register_with_options(0, MODULE, 1.0, flags).unwrap_err();
+            assert!(
+                error.starts_with(&format!("Unknown WASM registration flags {flags:#x};")),
+                "{error}"
+            );
             assert!(STATE.with(|state| state.borrow().modules.is_empty()));
         }
         register_with_options(0, MODULE, 1.0, SKIP_AUTO_INIT).unwrap();

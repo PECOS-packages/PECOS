@@ -490,7 +490,7 @@ def compile_wasm(
     requiring ``pecos_wasm_v3_register``. The default preserves automatic init.
     """
     if type(wasm_auto_init) is not bool:
-        msg = "wasm_auto_init must be a bool"
+        msg = f"wasm_auto_init must be True or False; got {wasm_auto_init!r}"
         raise ValueError(msg)
     try:
         valid_timeout = (
@@ -501,7 +501,7 @@ def compile_wasm(
     except OverflowError:
         valid_timeout = False
     if not valid_timeout:
-        msg = "wasm_timeout_seconds must be a positive finite number"
+        msg = f"wasm_timeout_seconds must be a positive finite number of seconds; got {wasm_timeout_seconds!r}"
         raise ValueError(msg)
     wasm_timeout_seconds = float(wasm_timeout_seconds)
     if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):

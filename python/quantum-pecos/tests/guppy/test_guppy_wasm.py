@@ -1,6 +1,7 @@
 """Guppy WASM compilation and real execution through the PECOS sim() stack."""
 
 import importlib.util
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -454,13 +455,17 @@ def test_pecos_i32_precompiled_hugr(examples, tmp_path):
 @pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
 def test_pecos_rejects_invalid_wasm_timeout(timeout):
     for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match="wasm_timeout_seconds"):
+        message = f"wasm_timeout_seconds must be a positive finite number of seconds; got {timeout!r}"
+        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
             constructor(source, wasm_modules={}, wasm_timeout_seconds=timeout)
 
 
 def test_nondefault_wasm_timeout_requires_modules():
     for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match="requires explicit wasm_modules"):
+        with pytest.raises(
+            ValueError,
+            match=r"^wasm_timeout_seconds=2\.0 requires explicit wasm_modules; pass wasm_modules=",
+        ):
             constructor(source, wasm_timeout_seconds=2.0)
 
 
@@ -498,13 +503,16 @@ def test_pecos_timeout_propagates_through_guppy_and_hugr(examples, tmp_path, mon
 @pytest.mark.parametrize("value", [0, 1, None, "false"])
 def test_pecos_rejects_invalid_auto_init(value):
     for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match="wasm_auto_init"):
+        with pytest.raises(ValueError, match=rf"^wasm_auto_init must be True or False; got {re.escape(repr(value))}$"):
             constructor(source, wasm_modules={}, wasm_auto_init=value)
 
 
 def test_auto_init_opt_out_requires_modules():
     for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match="requires explicit wasm_modules"):
+        with pytest.raises(
+            ValueError,
+            match=r"^wasm_auto_init=False requires explicit wasm_modules; pass wasm_modules=",
+        ):
             constructor(source, wasm_auto_init=False)
 
 

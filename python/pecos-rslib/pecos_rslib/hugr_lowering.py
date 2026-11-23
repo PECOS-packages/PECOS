@@ -333,6 +333,24 @@ def normalize_pecos_helper_symbols(ir: str) -> str:
     return _remove_declarations(renamed, duplicates)
 
 
+def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_width: object) -> None:
+    """Reject a WASM integer width outside 32/64, or a non-default width without modules.
+
+    Raises:
+        ValueError: If ``wasm_int_width`` is not the int 32 or 64, or is 32 while
+            ``wasm_modules`` is None.
+    """
+    if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
+        msg = f"wasm_int_width must be 32 or 64; got {wasm_int_width!r}"
+        raise ValueError(msg)
+    if wasm_modules is None and wasm_int_width != 64:
+        msg = (
+            f"wasm_int_width={wasm_int_width} requires explicit wasm_modules; "
+            "pass wasm_modules={module_name: wasm_bytes}"
+        )
+        raise ValueError(msg)
+
+
 def compile_hugr_to_qis(
     hugr_bytes: bytes,
     *,
@@ -367,18 +385,13 @@ def compile_hugr_to_qis(
     if platform not in ("helios", "sol"):
         msg = f"platform must be 'helios' or 'sol'; got {platform!r}"
         raise ValueError(msg)
+    validate_wasm_options(wasm_modules, wasm_int_width)
     try:
         from selene_hugr_qis_compiler import compile_to_llvm_ir
     except ImportError as error:
         msg = "HUGR -> QIS lowering requires the selene-hugr-qis-compiler package"
         raise ImportError(msg) from error
 
-    if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-        msg = "wasm_int_width must be 32 or 64"
-        raise ValueError(msg)
-    if wasm_modules is None and wasm_int_width != 64:
-        msg = "wasm_int_width=32 requires explicit wasm_modules"
-        raise ValueError(msg)
     if wasm_modules is not None:
         try:
             from pecos_selene_wasm import compile_wasm

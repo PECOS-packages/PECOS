@@ -152,12 +152,7 @@ class Guppy:
         """
         self._func = func
         self._wasm_hugr_bytes = None
-        if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-            msg = "wasm_int_width must be 32 or 64"
-            raise ValueError(msg)
-        if wasm_modules is None and wasm_int_width != 64:
-            msg = "wasm_int_width=32 requires explicit wasm_modules"
-            raise ValueError(msg)
+        hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
         self._wasm_int_width = wasm_int_width
         self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None
@@ -215,12 +210,7 @@ class Hugr:
     ) -> None:
         """Initialize with HUGR bytes and optional explicit WASM module bytes."""
         self._data = data
-        if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-            msg = "wasm_int_width must be 32 or 64"
-            raise ValueError(msg)
-        if wasm_modules is None and wasm_int_width != 64:
-            msg = "wasm_int_width=32 requires explicit wasm_modules"
-            raise ValueError(msg)
+        hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
         self._wasm_int_width = wasm_int_width
         self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None

@@ -20,6 +20,7 @@ use pecos_random::PecosRng;
 use pecos_random::rng_ext::RngProbabilityExt;
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// The kinds of faults supported in cataloging
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,8 +67,8 @@ pub struct DepolarizingFaultSite {
     pub gate_type: GateType,
     // Specify the error location
     pub qubits: Vec<usize>,
-    // Specify possible states and their probabilities
-    pub outcomes: Vec<DepolarizingFaultOutcome>,
+    /// Possible states and probabilities, shared by sites with identical outcomes.
+    pub outcomes: Arc<[DepolarizingFaultOutcome]>,
 }
 
 /// A single fault-site sampled fault (not a history of faults)
@@ -100,15 +101,17 @@ pub type DepolarizingFaultHistory = Vec<DepolarizingSampledFault>;
 // A fault catalog
 #[derive(Debug, Clone, PartialEq)]
 pub struct DepolarizingFaultCatalog {
-    /// Ordered fault sites.
-    pub sites: Vec<DepolarizingFaultSite>,
+    /// Ordered fault sites, shared when a catalog is cloned.
+    /// Use `Arc::make_mut` for independent edits to a cloned catalog.
+    pub sites: Arc<[DepolarizingFaultSite]>,
+    // Each clone keeps its own RNG so sampling streams remain independent.
     pub(crate) rng: Option<PecosRng>,
 }
 
 impl Default for DepolarizingFaultCatalog {
     fn default() -> Self {
         Self {
-            sites: Vec::new(),
+            sites: Arc::from([]),
             rng: None,
         }
     }
@@ -380,6 +383,8 @@ impl DepolarizingNoiseModel {
     pub fn build_fault_catalog_from_gates(&self, gates: &[Gate]) -> DepolarizingFaultCatalog {
         // Create a vector to store the fault sites
         let mut fault_sites = Vec::new();
+        // A circuit has only a few distinct outcome lists. Store each once per catalog.
+        let mut outcome_lists: Vec<Arc<[DepolarizingFaultOutcome]>> = Vec::new();
 
         // Track unique identifier for fault sites
         let mut next_fault_site_id = 0_usize;
@@ -469,6 +474,18 @@ impl DepolarizingNoiseModel {
                     _ => {}
                 }
 
+                // Compare after adjusting the basis label; X and Z faults must stay distinct.
+                let shared_outcomes = outcome_lists
+                    .iter()
+                    .find(|existing| existing.as_ref() == outcomes.as_slice());
+                let outcomes = if let Some(existing) = shared_outcomes {
+                    Arc::clone(existing)
+                } else {
+                    let outcomes: Arc<[DepolarizingFaultOutcome]> = outcomes.into();
+                    outcome_lists.push(Arc::clone(&outcomes));
+                    outcomes
+                };
+
                 fault_sites.push(DepolarizingFaultSite {
                     uid: next_fault_site_id,
                     gate_index,
@@ -484,7 +501,7 @@ impl DepolarizingNoiseModel {
         }
 
         DepolarizingFaultCatalog {
-            sites: fault_sites,
+            sites: fault_sites.into(),
             rng: None, // By default, the catalog does not have a random number generator; it can be set later
         }
     }
@@ -1527,7 +1544,7 @@ mod tests {
             .build_fault_catalog_from_message(&msg)
             .expect("catalog generation should succeed");
 
-        for site in &catalog.sites {
+        for site in catalog.sites.iter() {
             let sum: f64 = site.outcomes.iter().map(|o| o.probability()).sum();
             assert!((sum - 1.0).abs() < 1e-12, "outcomes must sum to one");
             // Check that the first outcome is always NoFault
@@ -1820,10 +1837,10 @@ mod tests {
             .expect("catalog generation should succeed");
 
         let mut prob = 0.0;
-        for outcome1 in &catalog.sites[0].outcomes {
-            for outcome2 in &catalog.sites[1].outcomes {
-                for outcome3 in &catalog.sites[2].outcomes {
-                    for outcome4 in &catalog.sites[3].outcomes {
+        for outcome1 in catalog.sites[0].outcomes.iter() {
+            for outcome2 in catalog.sites[1].outcomes.iter() {
+                for outcome3 in catalog.sites[2].outcomes.iter() {
+                    for outcome4 in catalog.sites[3].outcomes.iter() {
                         let mut history = Vec::new();
                         if outcome1.label != "NoFault" {
                             let index = catalog.sites[0]

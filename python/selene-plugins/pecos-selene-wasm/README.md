@@ -33,3 +33,31 @@ for changes, then packages the library reported by Cargo. Existing staged
 libraries do not bypass this check. Cargo's incremental cache is reused, and
 custom target directories configured through `CARGO_TARGET_DIR` or Cargo's
 `build.target-dir` are supported.
+
+## Repeated-shot execution
+
+The shared public runtime retains up to eight compiled WASM modules per worker
+thread, with an aggregate input-byte budget of 32 MiB. Cache identity uses the
+complete module bytes, so reusing a module identifier with different bytes cannot
+reuse the wrong code. Oversized modules run without being retained in the cache.
+
+Only compiled code is reused. Each context in each shot receives a fresh store
+and instance, including fresh globals and linear memory, execution of the start
+function, and the optional `init` export. Trap recovery clears mutable state
+without discarding reusable compiled code. Resource limits and execution
+deadlines remain independent for each instance.
+
+These are cache retention bounds, not a process-wide memory cap: compiled code
+and engine metadata have additional costs, and live instances can retain code
+after cache eviction. Worker threads maintain separate caches.
+
+A standalone public benchmark separates preparation from call execution:
+
+```bash
+cargo run --release -p pecos-wasm --example compilation_reuse
+```
+
+It compares 20 fresh instances of a generated 1,000-function module with and
+without compilation reuse, including the first compilation in both totals.
+Every shot checks fresh global state. This is a compilation microbenchmark,
+not an end-to-end Guppy throughput or full-stack parity claim.

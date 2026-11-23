@@ -1,13 +1,14 @@
 //! Public WASM ABI v1. Implemented from the public tket.wasm operations.
 //!
-//! All state is local to the calling worker thread and reset at shot boundaries.
+//! Mutable state is local to the calling worker thread and reset at shot boundaries.
+//! A bounded per-thread cache retains immutable compiled code between shots.
 //! C entry points return a status; they never unwind or transfer control while
 //! Rust frames own resources. The generated caller handles errors afterwards.
 
-use pecos_wasm::{ForeignObject, WasmForeignObject, WasmScalarType};
+use pecos_wasm::{CompiledWasmModule, ForeignObject, WasmForeignObject, WasmScalarType};
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 type Result<T> = std::result::Result<T, String>;
@@ -41,8 +42,60 @@ struct State {
     contexts: BTreeMap<u64, Context>,
 }
 
+// These bounds limit cache retention, not total process memory or compiled code
+// size. Active instances can outlive eviction. Large inputs still run uncached.
+const CACHE_ENTRIES: usize = 8;
+const CACHE_SOURCE_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Default)]
+struct CompilationCache {
+    entries: VecDeque<CompiledWasmModule>,
+    source_bytes: usize,
+    #[cfg(test)]
+    compilations: usize,
+}
+
+impl CompilationCache {
+    fn get(&mut self, bytes: &[u8]) -> Result<CompiledWasmModule> {
+        self.get_with_limits(bytes, CACHE_ENTRIES, CACHE_SOURCE_BYTES)
+    }
+
+    fn get_with_limits(
+        &mut self,
+        bytes: &[u8],
+        max_entries: usize,
+        max_bytes: usize,
+    ) -> Result<CompiledWasmModule> {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.wasm_bytes() == bytes)
+        {
+            let entry = self.entries.remove(index).expect("existing cache index");
+            self.entries.push_back(entry.clone());
+            return Ok(entry);
+        }
+        let compiled = CompiledWasmModule::new(bytes).map_err(|e| e.to_string())?;
+        #[cfg(test)]
+        {
+            self.compilations += 1;
+        }
+        if max_entries > 0 && bytes.len() <= max_bytes {
+            while self.entries.len() >= max_entries || self.source_bytes + bytes.len() > max_bytes {
+                let entry = self.entries.pop_front().expect("cache over capacity");
+                self.source_bytes -= entry.wasm_bytes().len();
+            }
+            self.source_bytes += bytes.len();
+            self.entries.push_back(compiled.clone());
+        }
+        Ok(compiled)
+    }
+}
+
 thread_local! {
     static STATE: RefCell<State> = RefCell::default();
+    // Immutable code survives shot reset; stores and instances never do.
+    static COMPILED: RefCell<CompilationCache> = RefCell::default();
     // QIS panic uses a length-prefixed byte string (at most 255 bytes).
     static ERROR: RefCell<Vec<u8>> = RefCell::new(vec![0]);
 }
@@ -266,7 +319,8 @@ pub fn call(context: u64, function: u64, arguments: &[i64]) -> Result<i32> {
             context.modules.entry(function.module)
         {
             let bytes = modules.get(&function.module).ok_or("Unknown WASM module")?;
-            let mut object = WasmForeignObject::from_bytes(bytes).map_err(|e| e.to_string())?;
+            let compiled = COMPILED.with(|cache| cache.borrow_mut().get(bytes))?;
+            let mut object = compiled.instantiate().map_err(|e| e.to_string())?;
             // init is optional for Guppy modules (unlike the legacy QASM contract).
             if object.has_func("init") {
                 object
@@ -515,6 +569,83 @@ macro_rules! export_wasm_runtime {
 mod tests {
     use super::*;
 
+    #[test]
+    fn compilation_cache_reuses_exact_bytes_and_evicts_lru() {
+        let mut cache = CompilationCache::default();
+        let a = b"(module)";
+        let b = b"(module (func))";
+        let c = b"(module (func) (func))";
+        for bytes in [a.as_slice(), b, a, c] {
+            cache.get_with_limits(bytes, 2, 1024).unwrap();
+        }
+        assert_eq!(cache.compilations, 3);
+        assert_eq!(cache.entries.len(), 2);
+        assert_eq!(cache.entries[0].wasm_bytes(), a);
+        assert_eq!(cache.entries[1].wasm_bytes(), c);
+        cache.get_with_limits(b, 2, 1024).unwrap();
+        assert_eq!(cache.compilations, 4);
+        assert_eq!(cache.source_bytes, b.len() + c.len());
+        let before = cache.source_bytes;
+        assert!(cache.get(b"not wasm").is_err());
+        assert_eq!(cache.source_bytes, before);
+        assert_eq!(cache.compilations, 4);
+    }
+
+    #[test]
+    fn compilation_cache_byte_budget_and_oversized_bypass() {
+        let mut cache = CompilationCache::default();
+        let a = b"(module)";
+        let b = b"(module (func))";
+        cache.get_with_limits(a, 8, b.len()).unwrap();
+        cache.get_with_limits(b, 8, b.len()).unwrap();
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.source_bytes, b.len());
+        let large = b"(module (func) (func))";
+        cache.get_with_limits(large, 8, b.len()).unwrap();
+        cache.get_with_limits(large, 8, b.len()).unwrap();
+        assert_eq!(cache.compilations, 4);
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.source_bytes, b.len());
+    }
+
+    #[test]
+    fn cached_code_survives_shots_but_memory_and_globals_do_not() {
+        let bytes = br#"(module
+            (memory 1)
+            (global $n (mut i64) (i64.const 0))
+            (func $start i32.const 0 i64.const 40 i64.store)
+            (start $start)
+            (func (export "init") global.get $n i64.const 1 i64.add global.set $n)
+            (func (export "next") (result i64)
+                i32.const 0 i32.const 0 i64.load i64.const 1 i64.add i64.store
+                i32.const 0 i64.load global.get $n i64.add))"#;
+        COMPILED.with(|cache| *cache.borrow_mut() = CompilationCache::default());
+        for module in [3, 7, 3] {
+            reset().unwrap();
+            register(module, bytes).unwrap();
+            let function = lookup(module, "next", 0, 1).unwrap();
+            for index in [0, 1] {
+                let context = acquire(index).unwrap();
+                call(context, function, &[]).unwrap();
+                assert_eq!(read(context, 1).unwrap(), [42]);
+                call(context, function, &[]).unwrap();
+                assert_eq!(read(context, 1).unwrap(), [43]);
+            }
+        }
+        COMPILED.with(|cache| assert_eq!(cache.borrow().compilations, 1));
+        reset().unwrap();
+        register(
+            3,
+            b"(module (func (export \"next\") (result i64) i64.const 9))",
+        )
+        .unwrap();
+        let context = acquire(0).unwrap();
+        let function = lookup(3, "next", 0, 1).unwrap();
+        call(context, function, &[]).unwrap();
+        assert_eq!(read(context, 1).unwrap(), [9]);
+        COMPILED.with(|cache| assert_eq!(cache.borrow().compilations, 2));
+    }
+
     const MODULE: &[u8] = br#"(module
         (global $counter (mut i64) (i64.const 0))
         (func (export "init") (global.set $counter (i64.const 10)))
@@ -599,6 +730,7 @@ mod tests {
 
     #[test]
     fn traps_cleanup_at_abi_boundary_and_allow_recovery() {
+        COMPILED.with(|cache| *cache.borrow_mut() = CompilationCache::default());
         let context = start();
         let trap = lookup(0, "trap", 0, 0).unwrap();
         assert_eq!(boundary(-1, || call(context, trap, &[])), -1);
@@ -606,6 +738,7 @@ mod tests {
         assert!(ERROR.with(|error| error.borrow()[0] > 0));
         let context = start();
         assert_eq!(invoke(context, 0, "add", &[2, 3], 1), [5]);
+        COMPILED.with(|cache| assert_eq!(cache.borrow().compilations, 1));
     }
 
     #[test]

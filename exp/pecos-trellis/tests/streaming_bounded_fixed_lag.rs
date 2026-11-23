@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use pecos_trellis::{
-    DecoderError, SparseDem, StreamingMode, TrellisConfig, TrellisResult, TrellisStreamingDecoder,
+    DecoderError, SparseDem, StreamingMode, TrellisConfig, TrellisLogicalMass, TrellisResult,
+    TrellisStreamingDecoder,
 };
 use std::collections::BTreeMap;
 
@@ -180,7 +181,7 @@ fn every_budget_matches_unbounded_fixed_lag_at_the_same_arrival_cadence() {
                                         assert_eq!(a.processed_columns - last_processed, pending);
                                         assert_eq!(full.committed(), bounded.committed());
                                         assert_eq!(b.dropped_log_mass.is_some(), dropped_mass);
-                                        assert!(!b.logical_masses.is_empty());
+                                        assert_ne!(b.logical_masses, [] as [TrellisLogicalMass; 0]);
                                         saw_pruning |= b.dropped_states > 0;
                                         assert_eq!(bounded.begin_bounded_advance().unwrap(), 0);
                                         drain(&mut bounded, budget);

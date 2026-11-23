@@ -6,6 +6,7 @@ Importing this module loads neither that compiler nor quantum-pecos; the
 compiler is imported lazily when compile_hugr_to_qis is called.
 """
 
+import math
 import re
 import sys
 from collections.abc import Mapping
@@ -351,6 +352,18 @@ def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_wid
         raise ValueError(msg)
 
 
+def validate_wasm_timeout_seconds(value: float) -> float:
+    """Normalize a positive finite timeout without accepting booleans or overflow."""
+    try:
+        valid = type(value) in (int, float) and math.isfinite(value) and value > 0
+    except OverflowError:
+        valid = False
+    if not valid:
+        msg = "wasm_timeout_seconds must be a positive finite number"
+        raise ValueError(msg)
+    return float(value)
+
+
 def compile_hugr_to_qis(
     hugr_bytes: bytes,
     *,
@@ -359,6 +372,7 @@ def compile_hugr_to_qis(
     emit_debug: bool = False,
     wasm_modules: Mapping[str, bytes] | None = None,
     wasm_int_width: int = 64,
+    wasm_timeout_seconds: float = 1.0,
 ) -> str:
     """Lower a HUGR envelope with Selene and normalize PECOS runtime helpers.
 
@@ -369,6 +383,7 @@ def compile_hugr_to_qis(
         emit_debug: Whether to emit debug information.
         wasm_modules: Explicit module identifier to WAT/WASM bytes mapping.
         wasm_int_width: Exact native WASM integer width, 32 or 64 (default).
+        wasm_timeout_seconds: Positive finite per-execution WASM limit (default 1).
 
     Returns:
         LLVM IR with PECOS's public helper symbols.
@@ -392,6 +407,10 @@ def compile_hugr_to_qis(
         msg = "HUGR -> QIS lowering requires the selene-hugr-qis-compiler package"
         raise ImportError(msg) from error
 
+    wasm_timeout_seconds = validate_wasm_timeout_seconds(wasm_timeout_seconds)
+    if wasm_modules is None and wasm_timeout_seconds != 1.0:
+        msg = "Nondefault wasm_timeout_seconds requires explicit wasm_modules"
+        raise ValueError(msg)
     if wasm_modules is not None:
         try:
             from pecos_selene_wasm import compile_wasm
@@ -406,6 +425,7 @@ def compile_hugr_to_qis(
                 opt_level=opt_level,
                 emit_debug=emit_debug,
                 wasm_int_width=wasm_int_width,
+                wasm_timeout_seconds=wasm_timeout_seconds,
             ),
         )
 

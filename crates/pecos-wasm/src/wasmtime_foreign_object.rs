@@ -220,10 +220,17 @@ impl WasmForeignObject {
     /// Number of ticks before timeout
     fn calculate_max_ticks(timeout_seconds: f64) -> u64 {
         // Ensure non-negative timeout (clamp to 0 for negative values)
-        // Casting is safe for reasonable timeout values (< 18 quadrillion seconds)
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let timeout_ms = (timeout_seconds.max(0.0) * 1000.0).round() as u64;
-        timeout_ms / WASM_EXECUTION_TICK_LENGTH_MS
+        // Round positive limits up so a sub-tick timeout never becomes an
+        // already-expired deadline. Leave headroom for Wasmtime's epoch + delta.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let ticks = (timeout_seconds.max(0.0) * 1000.0 / WASM_EXECUTION_TICK_LENGTH_MS as f64)
+            .ceil()
+            .min((u64::MAX / 10) as f64) as u64;
+        ticks
     }
 
     /// Create a new WebAssembly foreign object from a file with default timeout
@@ -781,5 +788,26 @@ impl ForeignObject for WasmForeignObject {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WasmForeignObject;
+
+    #[test]
+    fn positive_deadlines_round_up_and_leave_epoch_headroom() {
+        for (seconds, expected) in [
+            (f64::from_bits(1), 1),
+            (0.001, 1),
+            (0.01, 1),
+            (0.011, 2),
+            (1.0, 100),
+        ] {
+            assert_eq!(WasmForeignObject::calculate_max_ticks(seconds), expected);
+        }
+        let largest = WasmForeignObject::calculate_max_ticks(f64::MAX);
+        assert!(largest > 0 && largest < u64::MAX / 2);
+        assert_eq!(WasmForeignObject::calculate_max_ticks(0.0), 0);
     }
 }

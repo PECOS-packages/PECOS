@@ -449,3 +449,47 @@ def test_pecos_i32_precompiled_hugr(examples, tmp_path):
         output = pc.sim(program).qubits(1).quantum(pc.state_vector()).run(1).to_dict()
         assert output["overflow"] == [-2147483648]
         assert output["wide"] == [5]
+
+
+@pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
+def test_pecos_rejects_invalid_wasm_timeout(timeout):
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match="wasm_timeout_seconds"):
+            constructor(source, wasm_modules={}, wasm_timeout_seconds=timeout)
+
+
+def test_nondefault_wasm_timeout_requires_modules():
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match="requires explicit wasm_modules"):
+            constructor(source, wasm_timeout_seconds=2.0)
+
+
+def test_pecos_timeout_propagates_through_guppy_and_hugr(examples, tmp_path, monkeypatch):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    from pecos_rslib import hugr_lowering
+
+    original = hugr_lowering.compile_hugr_to_qis
+    emitted = []
+
+    def record(*args, **kwargs):
+        assert kwargs["wasm_timeout_seconds"] == 2.5
+        llvm = original(*args, **kwargs)
+        assert "call i32 @pecos_wasm_v2_register" in llvm
+        assert "double 0x4004000000000000" in llvm
+        emitted.append(llvm)
+        return llvm
+
+    monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", record)
+    example = examples["arithmetic"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    data = plugin.compile_guppy(example.addition).to_bytes()
+    path = tmp_path / "program.hugr"
+    path.write_bytes(data)
+    options = {"wasm_modules": modules, "wasm_timeout_seconds": 2.5}
+    for program in (
+        pc.Guppy(example.addition, **options),
+        pc.Hugr.from_bytes(data, **options),
+        pc.Hugr.from_file(path, **options),
+    ):
+        assert pc.sim(program).qubits(1).quantum(pc.state_vector()).run(2).to_dict() == {"sum": [5, 5]}
+    assert len(emitted) == 3

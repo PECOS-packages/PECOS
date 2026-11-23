@@ -253,8 +253,31 @@ with other compiler/runtime implementations.
 `f32`, aggregate and multiple results,
 WASI and host imports are not supported by this adapter. Unsupported
 signatures and operations fail explicitly. Traps and runtime signature errors
-propagate as simulation errors. Calls use PECOS Wasmtime's default one-second
-execution timeout; memory limits are currently the Wasmtime wrapper's default.
+propagate as simulation errors. Calls default to a one-second execution timeout;
+memory limits are currently the Wasmtime wrapper's default.
+
+For longer classical calculations, pass `wasm_timeout_seconds=10.0` to
+`pecos_selene_wasm.build(...)` or to `pc.Guppy(..., wasm_modules=modules)`.
+The same option is available on `compile_wasm`, `Hugr`, `Hugr.from_bytes`, and
+`Hugr.from_file`. Nondefault limits require explicit WASM module mappings.
+
+The timeout must be a positive finite number of seconds. It applies separately
+to the module start function, optional `init`, and each exported call, not to
+compilation or the complete shot. The epoch clock has approximately 10 ms
+resolution; positive fractional ticks round up, and very large values saturate
+with counter headroom. Selene's overall run timeout remains a separate limit.
+
+Default programs retain the existing registration ABI. Custom limits require
+the updated native runtime exporting `pecos_wasm_v2_register`: rebuild or upgrade
+both the Python lowering package and the native Selene utility or PECOS QIS FFI.
+Standalone `build` checks this capability before launching execution.
+
+For a public reproduction, run
+`python examples/guppy_wasm/long_call.py --backend selene --timeout 10` or select
+`--backend pecos`. It checks a bounded two-billion-step integer recurrence
+against an independent logarithmic-time oracle. Runtime depends on the machine;
+`--timeout 1` can reproduce the default limit. This deliberately slow example
+is excluded from the normal comparison suite and from CI timing assertions.
 
 Loops execute through the PECOS-owned lowering with released public compiler
 packages. No upstream patch or custom compiler build is required. Examples in

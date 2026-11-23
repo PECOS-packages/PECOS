@@ -105,12 +105,18 @@ def _hugr_to_program(
     *,
     wasm_modules: Mapping[str, bytes] | None = None,
     wasm_int_width: int = 64,
+    wasm_timeout_seconds: float = 1.0,
 ) -> "CompiledQis":
     """Lower a HUGR envelope to the shared executable program representation."""
     if wasm_modules is None:
         return pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(data))
     return pecos_rslib.Qis(
-        hugr_lowering.compile_hugr_to_qis(data, wasm_modules=wasm_modules, wasm_int_width=wasm_int_width),
+        hugr_lowering.compile_hugr_to_qis(
+            data,
+            wasm_modules=wasm_modules,
+            wasm_int_width=wasm_int_width,
+            wasm_timeout_seconds=wasm_timeout_seconds,
+        ),
     )
 
 
@@ -142,6 +148,7 @@ class Guppy:
         *,
         wasm_modules: Mapping[str, bytes] | None = None,
         wasm_int_width: int = 64,
+        wasm_timeout_seconds: float = 1.0,
     ) -> None:
         """Initialize with a Guppy function and optional explicit WASM module bytes.
 
@@ -149,10 +156,17 @@ class Guppy:
         ``@wasm_module`` declarations. Requires ``quantum-pecos[wasm]``.
         ``wasm_int_width=32`` selects exact i32 signatures for all WASM modules
         (Guppy H2 mode); the default requires i64.
+        ``wasm_timeout_seconds`` sets a positive finite per-call execution limit
+        (default one second), also applied to module start and optional init.
         """
         self._func = func
         self._wasm_hugr_bytes = None
         hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
+        wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds)
+        if wasm_modules is None and wasm_timeout_seconds != 1.0:
+            msg = "Nondefault wasm_timeout_seconds requires explicit wasm_modules"
+            raise ValueError(msg)
+        self._wasm_timeout_seconds = wasm_timeout_seconds
         self._wasm_int_width = wasm_int_width
         self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None
@@ -180,6 +194,7 @@ class Guppy:
                 self.hugr_bytes,
                 wasm_modules=self._wasm_modules,
                 wasm_int_width=self._wasm_int_width,
+                wasm_timeout_seconds=self._wasm_timeout_seconds,
             )
         return self._program
 
@@ -207,10 +222,16 @@ class Hugr:
         *,
         wasm_modules: Mapping[str, bytes] | None = None,
         wasm_int_width: int = 64,
+        wasm_timeout_seconds: float = 1.0,
     ) -> None:
         """Initialize with HUGR bytes and optional explicit WASM module bytes."""
         self._data = data
         hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
+        wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds)
+        if wasm_modules is None and wasm_timeout_seconds != 1.0:
+            msg = "Nondefault wasm_timeout_seconds requires explicit wasm_modules"
+            raise ValueError(msg)
+        self._wasm_timeout_seconds = wasm_timeout_seconds
         self._wasm_int_width = wasm_int_width
         self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
         self._program = None
@@ -227,10 +248,16 @@ class Hugr:
         *,
         wasm_modules: Mapping[str, bytes] | None = None,
         wasm_int_width: int = 64,
+        wasm_timeout_seconds: float = 1.0,
     ) -> "Hugr":
         """Create from a HUGR file."""
         with Path(path).open("rb") as f:
-            return cls(f.read(), wasm_modules=wasm_modules, wasm_int_width=wasm_int_width)
+            return cls(
+                f.read(),
+                wasm_modules=wasm_modules,
+                wasm_int_width=wasm_int_width,
+                wasm_timeout_seconds=wasm_timeout_seconds,
+            )
 
     @classmethod
     def from_bytes(
@@ -239,12 +266,18 @@ class Hugr:
         *,
         wasm_modules: Mapping[str, bytes] | None = None,
         wasm_int_width: int = 64,
+        wasm_timeout_seconds: float = 1.0,
     ) -> "Hugr":
         """Create from HUGR bytes.
 
         This is an alias for the constructor.
         """
-        return cls(data, wasm_modules=wasm_modules, wasm_int_width=wasm_int_width)
+        return cls(
+            data,
+            wasm_modules=wasm_modules,
+            wasm_int_width=wasm_int_width,
+            wasm_timeout_seconds=wasm_timeout_seconds,
+        )
 
     def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
@@ -253,6 +286,7 @@ class Hugr:
                 self._data,
                 wasm_modules=self._wasm_modules,
                 wasm_int_width=self._wasm_int_width,
+                wasm_timeout_seconds=self._wasm_timeout_seconds,
             )
         return self._program
 

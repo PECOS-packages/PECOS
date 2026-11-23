@@ -2,6 +2,7 @@
 
 import importlib.util
 import re
+import reprlib
 import subprocess
 import sys
 from collections import Counter
@@ -18,6 +19,8 @@ from hugr import ops
 from hugr.package import Package
 
 EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
+# Every "requires explicit wasm_modules" error ends with this fix.
+PASS_MODULES = re.escape("pass wasm_modules={module_name: wasm_bytes}")
 
 
 @pytest.fixture(scope="module")
@@ -91,7 +94,7 @@ def test_guppy_wasm_hugr_roundtrip(examples, name, exports) -> None:
 def test_program_wasm_options_are_validated_on_construction() -> None:
     with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64; got 16$"):
         pc.Hugr(b"unused", wasm_modules={"m": b""}, wasm_int_width=16)
-    with pytest.raises(ValueError, match=r"^wasm_int_width=32 requires explicit wasm_modules"):
+    with pytest.raises(ValueError, match=rf"^wasm_int_width=32 requires explicit wasm_modules; {PASS_MODULES}$"):
         pc.Hugr.from_bytes(b"unused", wasm_int_width=32)
 
 
@@ -455,7 +458,7 @@ def test_pecos_i32_precompiled_hugr(examples, tmp_path):
 @pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
 def test_pecos_rejects_invalid_wasm_timeout(timeout):
     for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        message = f"wasm_timeout_seconds must be a positive finite number of seconds; got {timeout!r}"
+        message = f"wasm_timeout_seconds must be a positive finite number of seconds; got {reprlib.repr(timeout)}"
         with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
             constructor(source, wasm_modules={}, wasm_timeout_seconds=timeout)
 
@@ -464,7 +467,7 @@ def test_nondefault_wasm_timeout_requires_modules():
     for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
         with pytest.raises(
             ValueError,
-            match=r"^wasm_timeout_seconds=2\.0 requires explicit wasm_modules; pass wasm_modules=",
+            match=rf"^wasm_timeout_seconds=2\.0 requires explicit wasm_modules; {PASS_MODULES}$",
         ):
             constructor(source, wasm_timeout_seconds=2.0)
 
@@ -509,10 +512,7 @@ def test_pecos_rejects_invalid_auto_init(value):
 
 def test_auto_init_opt_out_requires_modules():
     for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
-        with pytest.raises(
-            ValueError,
-            match=r"^wasm_auto_init=False requires explicit wasm_modules; pass wasm_modules=",
-        ):
+        with pytest.raises(ValueError, match=rf"^wasm_auto_init=False requires explicit wasm_modules; {PASS_MODULES}$"):
             constructor(source, wasm_auto_init=False)
 
 

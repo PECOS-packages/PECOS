@@ -11,6 +11,7 @@ import hashlib
 import heapq
 import math
 import re
+import reprlib
 import struct
 from typing import TYPE_CHECKING
 
@@ -461,6 +462,19 @@ entry:
 """
 
 
+def _describe_value(value: object) -> str:
+    """Return a short repr of a rejected option for an error message; never raise.
+
+    reprlib bounds the length. Formatting can still fail (an int longer than
+    ``sys.get_int_max_str_digits()`` before Python 3.14, or a hostile object), and that
+    must not replace the validation error, so any failure yields a fixed placeholder.
+    """
+    try:
+        return reprlib.repr(value)
+    except Exception:  # noqa: BLE001 - a diagnostic must never replace the error it reports
+        return "<unprintable value>"
+
+
 def compile_wasm(
     program: bytes | Package | GuppyFunctionDefinition,
     modules: Mapping[str, bytes],
@@ -490,7 +504,7 @@ def compile_wasm(
     requiring ``pecos_wasm_v3_register``. The default preserves automatic init.
     """
     if type(wasm_auto_init) is not bool:
-        msg = f"wasm_auto_init must be True or False; got {wasm_auto_init!r}"
+        msg = f"wasm_auto_init must be True or False; got {_describe_value(wasm_auto_init)}"
         raise ValueError(msg)
     try:
         valid_timeout = (
@@ -501,11 +515,14 @@ def compile_wasm(
     except OverflowError:
         valid_timeout = False
     if not valid_timeout:
-        msg = f"wasm_timeout_seconds must be a positive finite number of seconds; got {wasm_timeout_seconds!r}"
+        msg = (
+            "wasm_timeout_seconds must be a positive finite number of seconds; "
+            f"got {_describe_value(wasm_timeout_seconds)}"
+        )
         raise ValueError(msg)
     wasm_timeout_seconds = float(wasm_timeout_seconds)
     if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-        msg = f"wasm_int_width must be 32 or 64; got {wasm_int_width!r}"
+        msg = f"wasm_int_width must be 32 or 64; got {_describe_value(wasm_int_width)}"
         raise ValueError(msg)
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"

@@ -776,8 +776,10 @@ mod tests {
     fn invalid_timeout_registration_does_not_mutate_state() {
         reset().unwrap();
         for timeout in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let error = register_with_timeout(0, MODULE, timeout).unwrap_err();
-            assert!(error.ends_with(&format!("; got {timeout}")), "{error}");
+            assert_eq!(
+                register_with_timeout(0, MODULE, timeout).unwrap_err(),
+                format!("WASM timeout must be a positive finite number of seconds; got {timeout}")
+            );
             assert!(STATE.with(|state| state.borrow().modules.is_empty()));
         }
         register(0, MODULE).unwrap();
@@ -855,10 +857,13 @@ mod tests {
     fn unknown_registration_flags_do_not_mutate_state() {
         reset().unwrap();
         for flags in [2, 3, u32::MAX] {
-            let error = register_with_options(0, MODULE, 1.0, flags).unwrap_err();
-            assert!(
-                error.starts_with(&format!("Unknown WASM registration flags {flags:#x};")),
-                "{error}"
+            assert_eq!(
+                register_with_options(0, MODULE, 1.0, flags).unwrap_err(),
+                format!(
+                    "Unknown WASM registration flags {flags:#x}; this runtime supports only \
+                     SKIP_AUTO_INIT (0x1): upgrade the native WASM runtime to match the \
+                     compiler that generated the program"
+                )
             );
             assert!(STATE.with(|state| state.borrow().modules.is_empty()));
         }

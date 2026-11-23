@@ -2,6 +2,8 @@
 
 import importlib.util
 import re
+import reprlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -473,10 +475,8 @@ def test_invalid_integer_width_is_rejected(examples, width):
 
 @pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
 def test_invalid_timeout_is_rejected(timeout):
-    with pytest.raises(
-        ValueError,
-        match=rf"^wasm_timeout_seconds must be a positive finite number of seconds; got {re.escape(repr(timeout))}$",
-    ):
+    message = f"wasm_timeout_seconds must be a positive finite number of seconds; got {reprlib.repr(timeout)}"
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
         compile_wasm(b"", {}, wasm_timeout_seconds=timeout)
 
 
@@ -527,6 +527,55 @@ def test_custom_timeout_requires_new_native_runtime(examples, tmp_path, monkeypa
 def test_invalid_auto_init_is_rejected(value):
     with pytest.raises(ValueError, match=rf"^wasm_auto_init must be True or False; got {re.escape(repr(value))}$"):
         compile_wasm(b"", {}, wasm_auto_init=value)
+
+
+class _FailingRepr:
+    def __repr__(self) -> str:
+        msg = "repr must not be called unguarded"
+        raise RuntimeError(msg)
+
+
+class _HostileValue(_FailingRepr):
+    @property
+    def __class__(self) -> type:
+        msg = "class lookup must not be called unguarded"
+        raise RuntimeError(msg)
+
+
+@pytest.fixture
+def default_int_digit_limit():
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    yield
+    sys.set_int_max_str_digits(previous)
+
+
+# reprlib names a failing-repr object by class; anything it cannot format at all gets
+# the placeholder. Python 3.14+ reprlib describes an over-long int itself.
+UNPRINTABLE_CASES = [
+    pytest.param(_FailingRepr(), r"<_FailingRepr instance at 0x[0-9a-f]+>", id="failing-repr"),
+    pytest.param(_HostileValue(), re.escape("<unprintable value>"), id="hostile-object"),
+    pytest.param(
+        10**5000,
+        r"(?:<unprintable value>|<int instance with roughly 5001 digits \(limit at 4300\) at 0x[0-9a-f]+>)",
+        id="huge-int",
+    ),
+]
+
+
+@pytest.mark.usefixtures("default_int_digit_limit")
+@pytest.mark.parametrize(("value", "described"), UNPRINTABLE_CASES)
+@pytest.mark.parametrize(
+    ("option", "prefix"),
+    [
+        ("wasm_auto_init", "wasm_auto_init must be True or False; got "),
+        ("wasm_timeout_seconds", "wasm_timeout_seconds must be a positive finite number of seconds; got "),
+        ("wasm_int_width", "wasm_int_width must be 32 or 64; got "),
+    ],
+)
+def test_rejected_option_errors_survive_unprintable_values(value, described, option, prefix):
+    with pytest.raises(ValueError, match=f"^{re.escape(prefix)}{described}$"):
+        compile_wasm(b"", {}, **{option: value})
 
 
 @pytest.mark.parametrize("auto_init", [True, False])

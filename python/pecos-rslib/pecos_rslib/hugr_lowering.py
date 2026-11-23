@@ -8,6 +8,7 @@ compiler is imported lazily when compile_hugr_to_qis is called.
 
 import math
 import re
+import reprlib
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -334,6 +335,19 @@ def normalize_pecos_helper_symbols(ir: str) -> str:
     return _remove_declarations(renamed, duplicates)
 
 
+def _describe_value(value: object) -> str:
+    """Return a short repr of a rejected option for an error message; never raise.
+
+    reprlib bounds the length. Formatting can still fail (an int longer than
+    ``sys.get_int_max_str_digits()`` before Python 3.14, or a hostile object), and that
+    must not replace the validation error, so any failure yields a fixed placeholder.
+    """
+    try:
+        return reprlib.repr(value)
+    except Exception:  # noqa: BLE001 - a diagnostic must never replace the error it reports
+        return "<unprintable value>"
+
+
 def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_width: object) -> None:
     """Reject a WASM integer width outside 32/64, or a non-default width without modules.
 
@@ -342,7 +356,7 @@ def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_wid
             ``wasm_modules`` is None.
     """
     if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-        msg = f"wasm_int_width must be 32 or 64; got {wasm_int_width!r}"
+        msg = f"wasm_int_width must be 32 or 64; got {_describe_value(wasm_int_width)}"
         raise ValueError(msg)
     if wasm_modules is None and wasm_int_width != 64:
         msg = (
@@ -359,7 +373,7 @@ def validate_wasm_auto_init(value: object, modules: Mapping[str, bytes] | None) 
         ValueError: If ``value`` is not a bool, or is False while ``modules`` is None.
     """
     if type(value) is not bool:
-        msg = f"wasm_auto_init must be True or False; got {value!r}"
+        msg = f"wasm_auto_init must be True or False; got {_describe_value(value)}"
         raise ValueError(msg)
     if not value and modules is None:
         msg = "wasm_auto_init=False requires explicit wasm_modules; pass wasm_modules={module_name: wasm_bytes}"
@@ -379,7 +393,7 @@ def validate_wasm_timeout_seconds(value: object, modules: Mapping[str, bytes] | 
     except OverflowError:
         valid = False
     if not valid:
-        msg = f"wasm_timeout_seconds must be a positive finite number of seconds; got {value!r}"
+        msg = f"wasm_timeout_seconds must be a positive finite number of seconds; got {_describe_value(value)}"
         raise ValueError(msg)
     if modules is None and value != 1:
         msg = (
@@ -423,10 +437,10 @@ def compile_hugr_to_qis(
     Compiler exceptions, including HugrReadError and TypeError, propagate unchanged.
     """
     if type(opt_level) is not int or opt_level not in (0, 1, 2, 3):
-        msg = f"opt_level must be one of 0, 1, 2, 3; got {opt_level!r}"
+        msg = f"opt_level must be one of 0, 1, 2, 3; got {_describe_value(opt_level)}"
         raise ValueError(msg)
     if platform not in ("helios", "sol"):
-        msg = f"platform must be 'helios' or 'sol'; got {platform!r}"
+        msg = f"platform must be 'helios' or 'sol'; got {_describe_value(platform)}"
         raise ValueError(msg)
     validate_wasm_options(wasm_modules, wasm_int_width)
     try:

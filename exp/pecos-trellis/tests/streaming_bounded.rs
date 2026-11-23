@@ -270,7 +270,7 @@ fn pending_guards_freeze_inputs_modes_and_commitment_cadence_until_finish() {
 }
 
 #[test]
-fn unsupported_schedule_and_empty_and_incomplete_models_preserve_configured_diagnostics() {
+fn empty_and_incomplete_models_and_fixed_lag_preserve_configured_diagnostics() {
     for flag_off in [false, true] {
         for text in ["", "error(1) L130", "error(0.3) L130"] {
             let mut flag_on = TrellisStreamingDecoder::from_dem_str(
@@ -311,10 +311,14 @@ fn unsupported_schedule_and_empty_and_incomplete_models_preserve_configured_diag
         window_size: 2,
     })
     .unwrap();
-    config_error(&s.begin_bounded_advance().unwrap_err());
-    assert_eq!(s.bounded_columns_remaining(), None);
+    assert_eq!(s.begin_bounded_advance().unwrap(), 0);
+    assert_eq!(s.bounded_columns_remaining(), Some(0));
+    drain(&mut s, 1);
+    s.finish_bounded_advance().unwrap();
     s.feed_dense(&[1, 0]).unwrap();
-    assert!(s.flush().unwrap().dropped_log_mass.is_some());
+    s.begin_bounded_advance().unwrap();
+    drain(&mut s, 1);
+    assert!(s.finish_bounded_flush().unwrap().dropped_log_mass.is_some());
 }
 
 #[test]

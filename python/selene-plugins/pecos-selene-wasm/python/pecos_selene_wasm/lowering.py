@@ -11,6 +11,7 @@ import hashlib
 import heapq
 import math
 import re
+import reprlib
 import struct
 from typing import TYPE_CHECKING
 
@@ -461,6 +462,19 @@ entry:
 """
 
 
+def _describe_value(value: object) -> str:
+    """Return a short repr of a rejected option for an error message; never raise.
+
+    reprlib bounds the length. Formatting can still fail (an int longer than
+    ``sys.get_int_max_str_digits()`` before Python 3.14, or a hostile object), and that
+    must not replace the validation error, so any failure yields a fixed placeholder.
+    """
+    try:
+        return reprlib.repr(value)
+    except Exception:  # noqa: BLE001 - a diagnostic must never replace the error it reports
+        return "<unprintable value>"
+
+
 def compile_wasm(
     program: bytes | Package | GuppyFunctionDefinition,
     modules: Mapping[str, bytes],
@@ -470,6 +484,7 @@ def compile_wasm(
     emit_debug: bool = False,
     wasm_int_width: int = 64,
     wasm_timeout_seconds: float = 1.0,
+    wasm_auto_init: bool = True,
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
@@ -485,7 +500,12 @@ def compile_wasm(
     defaulting to one second, with approximately 10 ms clock resolution.
     The result requires the Selene WASM utility or WASM-enabled QIS FFI;
     nondefault timeouts require native ``pecos_wasm_v2_register`` support.
+    ``wasm_auto_init=False`` skips optional exported init (not WASM start),
+    requiring ``pecos_wasm_v3_register``. The default preserves automatic init.
     """
+    if type(wasm_auto_init) is not bool:
+        msg = f"wasm_auto_init must be True or False; got {_describe_value(wasm_auto_init)}"
+        raise ValueError(msg)
     try:
         valid_timeout = (
             type(wasm_timeout_seconds) in (int, float)
@@ -495,11 +515,14 @@ def compile_wasm(
     except OverflowError:
         valid_timeout = False
     if not valid_timeout:
-        msg = "wasm_timeout_seconds must be a positive finite number"
+        msg = (
+            "wasm_timeout_seconds must be a positive finite number of seconds; "
+            f"got {_describe_value(wasm_timeout_seconds)}"
+        )
         raise ValueError(msg)
     wasm_timeout_seconds = float(wasm_timeout_seconds)
     if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-        msg = f"wasm_int_width must be 32 or 64; got {wasm_int_width!r}"
+        msg = f"wasm_int_width must be 32 or 64; got {_describe_value(wasm_int_width)}"
         raise ValueError(msg)
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
@@ -590,7 +613,9 @@ def compile_wasm(
     if not re.search(r"^declare void @panic\(i32, ptr\)", llvm, re.MULTILINE):
         llvm += "\ndeclare void @panic(i32, ptr)\n"
     llvm += _ABI
-    if wasm_timeout_seconds != 1.0:
+    if not wasm_auto_init:
+        llvm += "\ndeclare i32 @pecos_wasm_v3_register(i64, ptr, i64, double, i32)\n"
+    elif wasm_timeout_seconds != 1.0:
         llvm += "\ndeclare i32 @pecos_wasm_v2_register(i64, ptr, i64, double)\n"
     setup = "  %wasm_reset = call i32 @pecos_wasm_v1_reset()\n" + _check("wasm_reset")
     for identifier, module_id in module_ids.items():
@@ -598,7 +623,13 @@ def compile_wasm(
         global_name = f"pecos_wasm_module_{digest}_{module_id}"
         llvm += _constant(global_name, data)
         status = f"wasm_module_{module_id}"
-        if wasm_timeout_seconds == 1.0:
+        if not wasm_auto_init:
+            timeout_literal = "0x" + struct.pack(">d", wasm_timeout_seconds).hex().upper()
+            setup += (
+                f"  %{status} = call i32 @pecos_wasm_v3_register(i64 {module_id}, "
+                f"ptr @{global_name}, i64 {len(data)}, double {timeout_literal}, i32 1)\n"
+            )
+        elif wasm_timeout_seconds == 1.0:
             setup += (
                 f"  %{status} = call i32 @pecos_wasm_v1_register(i64 {module_id}, "
                 f"ptr @{global_name}, i64 {len(data)})\n"

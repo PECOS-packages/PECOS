@@ -43,9 +43,9 @@ reuse the wrong code. Oversized modules run without being retained in the cache.
 
 Only compiled code is reused. Each context in each shot receives a fresh store
 and instance, including fresh globals and linear memory, execution of the start
-function, and the optional `init` export. Trap recovery clears mutable state
-without discarding reusable compiled code. Resource limits and execution
-deadlines remain independent for each instance.
+function, and (by default) the optional `init` export. Trap recovery clears
+mutable state without discarding reusable compiled code. Resource limits and
+execution deadlines remain independent for each instance.
 
 These are cache retention bounds, not a process-wide memory cap: compiled code
 and engine metadata have additional costs, and live instances can retain code
@@ -61,3 +61,13 @@ It compares 20 fresh instances of a generated 1,000-function module with and
 without compilation reuse, including the first compilation in both totals.
 Every shot checks fresh global state. This is a compilation microbenchmark,
 not an end-to-end Guppy throughput or full-stack parity claim.
+
+## Initialization policy
+
+`build(..., wasm_auto_init=False)` and `compile_wasm(..., wasm_auto_init=False)`
+skip automatic validation and invocation of the optional exported `init` function.
+The default remains `True`. WASM start functions always run, and explicit Guppy
+calls to `init` work with either policy. The setting applies independently to each
+instance; compiled code can still be shared across initialization policies.
+Opting out requires the updated native `pecos_wasm_v3_register` ABI. See
+`docs/user-guide/guppy-wasm.md` and `examples/guppy_wasm/memory_lifecycle.py`.

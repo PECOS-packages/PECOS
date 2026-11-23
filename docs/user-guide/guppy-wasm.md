@@ -163,8 +163,40 @@ independent contexts using `counter.wat`.
 A context slot can be leased once at a time. Release it with `.discard()`.
 Reacquiring the same slot within a shot preserves its module state. Different
 slots and different modules have independent instances. Every shot starts with
-fresh instances; workers do not share state. A module's optional `init` export
-must have signature `() -> ()` and runs once when that instance is first used.
+fresh instances; workers do not share state. By default, a module's optional
+`init` export must have signature `() -> ()` and runs once when that instance is
+first used; the next section describes how to turn this off.
+
+## Choosing initialization behavior
+
+Pass `wasm_auto_init=False` to `pc.Guppy`, `pc.Hugr` (including its file/bytes
+constructors), `pecos_selene_wasm.build`, or `compile_wasm` when your program
+controls initialization explicitly. `compile_hugr_to_qis` accepts the same option.
+The default is `True`, preserving automatic execution of an optional `init` export.
+The option must be a boolean and applies to every supplied module. PECOS requires
+an explicit `wasm_modules` mapping when opting out.
+
+With automatic initialization disabled, the runtime neither validates nor calls
+an export named `init` merely because the instance was created. Guppy can still
+declare and call that export normally. A WebAssembly **start function always
+runs** during instantiation, under either policy. Releasing and reacquiring a
+context preserves its instance without repeating startup or initialization.
+
+The memory example uses a start function to store `11`, and an optional `init`
+export to add `31`. It also checks memory growth, zero-filled new pages, signed
+loads/stores, indirect calls, and rejection of growth beyond the module maximum:
+
+```bash
+python examples/guppy_wasm/memory_lifecycle.py --backend selene
+python examples/guppy_wasm/memory_lifecycle.py --backend pecos --no-auto-init
+python examples/guppy_wasm/memory_lifecycle.py --backend selene --no-auto-init --explicit-init
+```
+
+The initial value is `42` by default and `11` with `--no-auto-init`. The last
+command calls `init` explicitly, recording `before=11` and `after=42`.
+Opting out requires the native `pecos_wasm_v3_register` symbol: rebuild or upgrade
+the Selene utility or PECOS QIS FFI together with the Python package. Default
+programs retain v1 registration; custom-timeout-only programs retain v2.
 
 ## Lookup by export position
 

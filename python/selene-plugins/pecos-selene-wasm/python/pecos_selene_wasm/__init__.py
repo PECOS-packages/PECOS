@@ -55,6 +55,7 @@ def build(
     emit_debug: bool = False,
     wasm_int_width: int = 64,
     wasm_timeout_seconds: float = 1.0,
+    wasm_auto_init: bool = True,
     **kwargs: object,
 ) -> SeleneInstance:
     """Build Selene with explicit WASM bytes and safe compilation of Guppy source.
@@ -74,8 +75,16 @@ def build(
         emit_debug=emit_debug,
         wasm_int_width=wasm_int_width,
         wasm_timeout_seconds=wasm_timeout_seconds,
+        wasm_auto_init=wasm_auto_init,
     )
-    if wasm_timeout_seconds != 1.0:
+    if not wasm_auto_init:
+        runtime = ctypes.CDLL(str(utilities[-1].library_file))
+        if not hasattr(runtime, "pecos_wasm_v3_register"):
+            msg = (
+                "Disabling WASM auto-init requires an updated native WASM runtime; rebuild or upgrade pecos-selene-wasm"
+            )
+            raise RuntimeError(msg)
+    elif wasm_timeout_seconds != 1.0:
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         if not hasattr(runtime, "pecos_wasm_v2_register"):
             msg = "Custom WASM timeouts require an updated native WASM runtime; rebuild or upgrade pecos-selene-wasm"

@@ -38,6 +38,7 @@ struct Function {
 struct ModuleConfiguration {
     bytes: Vec<u8>,
     timeout_seconds: f64,
+    auto_init: bool,
 }
 
 #[derive(Default)]
@@ -156,8 +157,33 @@ pub fn register(module: u64, bytes: &[u8]) -> Result<i32> {
 /// # Errors
 /// Rejects nonpositive/nonfinite timeouts and duplicate module identifiers.
 pub fn register_with_timeout(module: u64, bytes: &[u8], timeout_seconds: f64) -> Result<i32> {
+    register_with_options(module, bytes, timeout_seconds, 0)
+}
+
+/// Suppress the optional exported `init` call; WASM start still runs.
+pub const SKIP_AUTO_INIT: u32 = 1;
+
+/// Register module bytes with execution limits and initialization flags.
+///
+/// # Errors
+/// Rejects unknown flags, invalid timeouts and duplicate module identifiers.
+pub fn register_with_options(
+    module: u64,
+    bytes: &[u8],
+    timeout_seconds: f64,
+    flags: u32,
+) -> Result<i32> {
+    if flags & !SKIP_AUTO_INIT != 0 {
+        return Err(format!(
+            "Unknown WASM registration flags {flags:#x}; this runtime supports only \
+             SKIP_AUTO_INIT ({SKIP_AUTO_INIT:#x}): upgrade the native WASM runtime to \
+             match the compiler that generated the program"
+        ));
+    }
     if !timeout_seconds.is_finite() || timeout_seconds <= 0.0 {
-        return Err("WASM timeout must be a positive finite number of seconds".into());
+        return Err(format!(
+            "WASM timeout must be a positive finite number of seconds; got {timeout_seconds}"
+        ));
     }
     STATE.with(|state| {
         let mut state = state.borrow_mut();
@@ -169,6 +195,7 @@ pub fn register_with_timeout(module: u64, bytes: &[u8], timeout_seconds: f64) ->
             ModuleConfiguration {
                 bytes: bytes.to_vec(),
                 timeout_seconds,
+                auto_init: flags & SKIP_AUTO_INIT == 0,
             },
         );
         Ok(0)
@@ -347,7 +374,7 @@ pub fn call(context: u64, function: u64, arguments: &[i64]) -> Result<i32> {
                 .instantiate_with_limits(configuration.timeout_seconds, None)
                 .map_err(|e| e.to_string())?;
             // init is optional for Guppy modules (unlike the legacy QASM contract).
-            if object.has_func("init") {
+            if configuration.auto_init && object.has_func("init") {
                 object
                     .validate_i64_signature("init", 0, 0)
                     .map_err(|e| e.to_string())?;
@@ -472,6 +499,31 @@ macro_rules! export_wasm_runtime {
                     module,
                     unsafe { std::slice::from_raw_parts(bytes, length) },
                     timeout_seconds,
+                )
+            })
+        }
+        /// Register with execution timeout and flags (bit 0 skips optional init).
+        /// Unknown flag bits are rejected; WASM start is never skipped.
+        ///
+        /// # Safety
+        /// bytes must point to length readable bytes.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn pecos_wasm_v3_register(
+            module: u64,
+            bytes: *const u8,
+            length: usize,
+            timeout_seconds: f64,
+            flags: u32,
+        ) -> i32 {
+            $crate::boundary(-1, || {
+                if bytes.is_null() {
+                    return Err("Null WASM module".into());
+                }
+                $crate::register_with_options(
+                    module,
+                    unsafe { std::slice::from_raw_parts(bytes, length) },
+                    timeout_seconds,
+                    flags,
                 )
             })
         }
@@ -724,10 +776,98 @@ mod tests {
     fn invalid_timeout_registration_does_not_mutate_state() {
         reset().unwrap();
         for timeout in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert!(register_with_timeout(0, MODULE, timeout).is_err());
+            assert_eq!(
+                register_with_timeout(0, MODULE, timeout).unwrap_err(),
+                format!("WASM timeout must be a positive finite number of seconds; got {timeout}")
+            );
             assert!(STATE.with(|state| state.borrow().modules.is_empty()));
         }
         register(0, MODULE).unwrap();
+    }
+
+    #[test]
+    fn initialization_policy_is_per_instance_and_preserves_start() {
+        let bytes = br#"(module
+            (global $n (mut i64) (i64.const 0))
+            (func $start i64.const 11 global.set $n)
+            (start $start)
+            (func (export "init") global.get $n i64.const 31 i64.add global.set $n)
+            (func (export "get") (result i64) global.get $n)
+            (func (export "increment") (result i64)
+                global.get $n i64.const 1 i64.add global.set $n global.get $n))"#;
+        COMPILED.with(|cache| *cache.borrow_mut() = CompilationCache::default());
+        for _ in 0..2 {
+            reset().unwrap();
+            register(0, bytes).unwrap();
+            register_with_options(1, bytes, 2.5, SKIP_AUTO_INIT).unwrap();
+            for index in [0, 1] {
+                let context = acquire(index).unwrap();
+                assert_eq!(invoke(context, 0, "get", &[], 1), [42]);
+                assert_eq!(invoke(context, 1, "get", &[], 1), [11]);
+                assert_eq!(invoke(context, 1, "init", &[], 0), Vec::<i64>::new());
+                assert_eq!(invoke(context, 1, "get", &[], 1), [42]);
+                invoke(context, 0, "increment", &[], 1);
+                release(context).unwrap();
+                let context = acquire(index).unwrap();
+                assert_eq!(invoke(context, 0, "get", &[], 1), [43]);
+                assert_eq!(invoke(context, 1, "get", &[], 1), [42]);
+                release(context).unwrap();
+            }
+        }
+        COMPILED.with(|cache| assert_eq!(cache.borrow().compilations, 1));
+    }
+
+    #[test]
+    fn skip_init_does_not_validate_or_execute_optional_export() {
+        for init in [
+            "(func (export \"init\") unreachable)",
+            "(func (export \"init\") (param i64))",
+        ] {
+            let bytes = format!("(module {init} (func (export \"get\") (result i64) i64.const 7))");
+            for flags in [0, SKIP_AUTO_INIT] {
+                reset().unwrap();
+                register_with_options(0, bytes.as_bytes(), 1.0, flags).unwrap();
+                let context = acquire(0).unwrap();
+                let function = lookup(0, "get", 0, 1).unwrap();
+                let outcome = call(context, function, &[]);
+                if flags == 0 {
+                    assert!(outcome.is_err());
+                } else {
+                    outcome.unwrap();
+                    assert_eq!(read(context, 1).unwrap(), [7]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn initialization_opt_out_never_skips_wasm_start() {
+        let bytes = b"(module (func $start unreachable) (start $start)
+            (func (export \"get\") (result i64) i64.const 7))";
+        for flags in [0, SKIP_AUTO_INIT] {
+            reset().unwrap();
+            register_with_options(0, bytes, 1.0, flags).unwrap();
+            let context = acquire(0).unwrap();
+            let function = lookup(0, "get", 0, 1).unwrap();
+            assert!(call(context, function, &[]).is_err());
+        }
+    }
+
+    #[test]
+    fn unknown_registration_flags_do_not_mutate_state() {
+        reset().unwrap();
+        for flags in [2, 3, u32::MAX] {
+            assert_eq!(
+                register_with_options(0, MODULE, 1.0, flags).unwrap_err(),
+                format!(
+                    "Unknown WASM registration flags {flags:#x}; this runtime supports only \
+                     SKIP_AUTO_INIT (0x1): upgrade the native WASM runtime to match the \
+                     compiler that generated the program"
+                )
+            );
+            assert!(STATE.with(|state| state.borrow().modules.is_empty()));
+        }
+        register_with_options(0, MODULE, 1.0, SKIP_AUTO_INIT).unwrap();
     }
 
     const MODULE: &[u8] = br#"(module

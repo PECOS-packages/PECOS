@@ -2,6 +2,8 @@
 
 import importlib.util
 import re
+import reprlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,7 +17,7 @@ EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports", "integer32"):
+    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports", "integer32", "memory_lifecycle"):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -384,8 +386,7 @@ def test_index_uses_export_order_from_supplied_bytes(examples, tmp_path, binary)
         (b'(module (func (export "only")))', "out of range"),
         (b'(module (func (export "only")) (memory (export "memory") 1))', "not a function"),
         (
-            b'(module (memory (export "memory") 1) '
-            b'(func (export "wrong") (param f64 f64) (result f64) local.get 0))',
+            b'(module (memory (export "memory") 1) (func (export "wrong") (param f64 f64) (result f64) local.get 0))',
             "signature mismatch",
         ),
     ],
@@ -474,7 +475,8 @@ def test_invalid_integer_width_is_rejected(examples, width):
 
 @pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
 def test_invalid_timeout_is_rejected(timeout):
-    with pytest.raises(ValueError, match="wasm_timeout_seconds"):
+    message = f"wasm_timeout_seconds must be a positive finite number of seconds; got {reprlib.repr(timeout)}"
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
         compile_wasm(b"", {}, wasm_timeout_seconds=timeout)
 
 
@@ -504,6 +506,7 @@ def test_default_timeout_preserves_v1_registration(examples):
         llvm = compile_wasm(example.addition, modules, **options)
         assert "call i32 @pecos_wasm_v1_register" in llvm
         assert "pecos_wasm_v2_register" not in llvm
+        assert "pecos_wasm_v3_register" not in llvm
 
 
 def test_custom_timeout_requires_new_native_runtime(examples, tmp_path, monkeypatch):
@@ -518,3 +521,111 @@ def test_custom_timeout_requires_new_native_runtime(examples, tmp_path, monkeypa
             build_dir=tmp_path,
             wasm_timeout_seconds=2.0,
         )
+
+
+@pytest.mark.parametrize("value", [0, 1, None, "false"])
+def test_invalid_auto_init_is_rejected(value):
+    with pytest.raises(ValueError, match=rf"^wasm_auto_init must be True or False; got {re.escape(repr(value))}$"):
+        compile_wasm(b"", {}, wasm_auto_init=value)
+
+
+class _FailingRepr:
+    def __repr__(self) -> str:
+        msg = "repr must not be called unguarded"
+        raise RuntimeError(msg)
+
+
+class _HostileValue(_FailingRepr):
+    @property
+    def __class__(self) -> type:
+        msg = "class lookup must not be called unguarded"
+        raise RuntimeError(msg)
+
+
+@pytest.fixture
+def default_int_digit_limit():
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    yield
+    sys.set_int_max_str_digits(previous)
+
+
+# reprlib names a failing-repr object by class; anything it cannot format at all gets
+# the placeholder. Python 3.14+ reprlib describes an over-long int itself.
+UNPRINTABLE_CASES = [
+    pytest.param(_FailingRepr(), r"<_FailingRepr instance at 0x[0-9a-f]+>", id="failing-repr"),
+    pytest.param(_HostileValue(), re.escape("<unprintable value>"), id="hostile-object"),
+    pytest.param(
+        10**5000,
+        r"(?:<unprintable value>|<int instance with roughly 5001 digits \(limit at 4300\) at 0x[0-9a-f]+>)",
+        id="huge-int",
+    ),
+]
+
+
+@pytest.mark.usefixtures("default_int_digit_limit")
+@pytest.mark.parametrize(("value", "described"), UNPRINTABLE_CASES)
+@pytest.mark.parametrize(
+    ("option", "prefix"),
+    [
+        ("wasm_auto_init", "wasm_auto_init must be True or False; got "),
+        ("wasm_timeout_seconds", "wasm_timeout_seconds must be a positive finite number of seconds; got "),
+        ("wasm_int_width", "wasm_int_width must be 32 or 64; got "),
+    ],
+)
+def test_rejected_option_errors_survive_unprintable_values(value, described, option, prefix):
+    with pytest.raises(ValueError, match=f"^{re.escape(prefix)}{described}$"):
+        compile_wasm(b"", {}, **{option: value})
+
+
+@pytest.mark.parametrize("auto_init", [True, False])
+@pytest.mark.parametrize("explicit", [True, False])
+def test_memory_lifecycle_and_initialization_policy(examples, tmp_path, auto_init, explicit):
+    example = examples["memory_lifecycle"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    program = example.explicit_initialization if explicit else example.memory_operations
+    initial = 42 if auto_init else 11
+    expected = (
+        {"before": initial, "after": initial + 31}
+        if explicit
+        else {
+            "initialized": initial,
+            "incremented": initial + 1,
+            "old_pages": 1,
+            "pages": 2,
+            "zero": 0,
+            "stored": -7,
+            "indirect": 12,
+            "growth_refused": -1,
+        }
+    )
+    llvm = compile_wasm(program, modules, wasm_auto_init=auto_init, wasm_timeout_seconds=2.5)
+    assert ("call i32 @pecos_wasm_v3_register" in llvm) is (not auto_init)
+    runner = build(program, modules, build_dir=tmp_path, wasm_auto_init=auto_init, wasm_timeout_seconds=2.5)
+    for _ in range(2):
+        assert [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=2)] == [
+            expected,
+        ] * 4
+
+
+def test_auto_init_requires_new_native_runtime(examples, tmp_path, monkeypatch):
+    import pecos_selene_wasm
+
+    monkeypatch.setattr(pecos_selene_wasm.ctypes, "CDLL", lambda _path: object())
+    example = examples["arithmetic"]
+    with pytest.raises(RuntimeError, match="rebuild or upgrade"):
+        build(
+            example.addition,
+            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            build_dir=tmp_path,
+            wasm_auto_init=False,
+        )
+
+
+def test_initialization_policy_changes_in_reused_build_directory(examples, tmp_path):
+    example = examples["memory_lifecycle"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    for auto_init, expected in ((True, 42), (False, 11), (True, 42)):
+        runner = build(example.memory_operations, modules, build_dir=tmp_path, wasm_auto_init=auto_init)
+        shots = [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
+        assert shots[0]["initialized"] == expected

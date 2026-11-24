@@ -7,8 +7,8 @@ import pytest
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Exercises Windows ExitProcess and DLL detach")
-@pytest.mark.parametrize("pending", [False, True])
-def test_exit_process_with_async_pool(pending):
+@pytest.mark.parametrize(("pending", "reset_idle"), [(False, False), (False, True), (True, False)])
+def test_exit_process_with_async_pool(pending, reset_idle):
     script = r"""
 import ctypes as c
 import sys
@@ -42,6 +42,9 @@ for index in range(4):
         output = c.c_int64()
         assert read(context, c.byref(output), 1) == 0
         assert output.value == 7
+if sys.argv[2] == "True":
+    reset = function("pecos_wasm_v1_reset", [], c.c_int)
+    assert reset() == 0
 time.sleep(0.05)
 exit_process = c.WinDLL("kernel32").ExitProcess
 exit_process.argtypes, exit_process.restype = [c.c_uint], None
@@ -49,7 +52,7 @@ exit_process(37)
 raise AssertionError("ExitProcess returned")
 """
     child = subprocess.run(
-        [sys.executable, "-c", script, str(pending)],
+        [sys.executable, "-c", script, str(pending), str(reset_idle)],
         capture_output=True,
         text=True,
         timeout=15,

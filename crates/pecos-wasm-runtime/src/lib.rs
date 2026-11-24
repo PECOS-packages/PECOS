@@ -14,6 +14,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 
 mod async_pool;
+#[cfg(test)]
+mod test_support;
 mod tls;
 
 type Result<T> = std::result::Result<T, String>;
@@ -61,7 +63,7 @@ struct State {
     contexts: BTreeMap<u64, Context>,
     worker_key: Option<[u8; 32]>,
     shot_active: bool,
-    pool: Option<async_pool::Pool>,
+    async_workers: Option<usize>,
 }
 
 // These bounds limit cache retention, not total process memory or compiled code
@@ -118,8 +120,16 @@ thread_local! {
     static STATE: tls::Value<RefCell<State>> = tls::Value::new(RefCell::default());
     // Immutable code survives shot reset; stores and instances never do.
     static COMPILED: tls::Value<RefCell<CompilationCache>> = tls::Value::new(RefCell::default());
+    // Idle workers intentionally survive shot resets until this execution thread
+    // exits. The Windows process-exit guard also covers their synchronization.
+    static POOL: tls::Value<RefCell<Option<async_pool::Pool>>> = const { tls::Value::new(RefCell::new(None)) };
     // QIS panic uses a length-prefixed byte string (at most 255 bytes).
     static ERROR: RefCell<Vec<u8>> = RefCell::new(vec![0]);
+}
+
+// Access only the calling thread's executor; workers and destructors never use TLS.
+fn with_pool<T>(operation: impl FnOnce(Option<&async_pool::Pool>) -> T) -> T {
+    POOL.with(|pool| operation(pool.borrow().as_ref()))
 }
 
 fn set_error(message: &str) {
@@ -156,6 +166,11 @@ pub fn boundary<T: Copy>(failure: T, operation: impl FnOnce() -> Result<T>) -> T
 /// This operation always succeeds; the result matches the status-returning ABI.
 pub fn reset() -> Result<i32> {
     STATE.with(|state| *state.borrow_mut() = State::default());
+    with_pool(|pool| {
+        if let Some(pool) = pool {
+            pool.cancel();
+        }
+    });
     Ok(0)
 }
 
@@ -166,16 +181,25 @@ pub fn reset() -> Result<i32> {
 /// # Errors
 /// This operation always succeeds for a fixed-size key.
 pub fn begin_worker_shot(key: [u8; 32]) -> Result<i32> {
-    STATE.with(|state| {
+    let replaced = STATE.with(|state| {
         let mut state = state.borrow_mut();
-        if state.worker_key != Some(key) || state.shot_active {
+        let replaced = state.worker_key != Some(key) || state.shot_active;
+        if replaced {
             *state = State::default();
         }
         state.worker_key = Some(key);
         state.shot_active = true;
         state.modules.clear();
         state.functions.clear();
+        replaced
     });
+    if replaced {
+        with_pool(|pool| {
+            if let Some(pool) = pool {
+                pool.cancel();
+            }
+        });
+    }
     Ok(0)
 }
 
@@ -514,7 +538,7 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
             modules,
             functions,
             contexts,
-            pool,
+            async_workers,
             ..
         } = &mut *state;
         let index = usize::try_from(function.checked_sub(1).ok_or("Invalid WASM function")?)
@@ -527,7 +551,7 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
         if !context.leased || context.pending.is_some() {
             return Err("WASM context is not leased or has an unread result".into());
         }
-        if pool.as_ref().is_some_and(|pool| pool.size() != workers) {
+        if async_workers.is_some_and(|count| count != workers) {
             return Err("WASM async worker count changed without reset".into());
         }
         let prepared = if context.modules.contains_key(&function.module) {
@@ -541,9 +565,18 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
                 configuration.auto_init,
             ))
         };
-        if pool.is_none() {
-            *pool = Some(async_pool::Pool::new(workers)?);
-        }
+        POOL.with(|pool| {
+            let mut pool = pool.borrow_mut();
+            if pool.as_ref().is_some_and(|pool| pool.size() != workers) {
+                // State replacement already cancelled the old pool's work.
+                drop(pool.take());
+            }
+            if pool.is_none() {
+                *pool = Some(async_pool::Pool::new(workers)?);
+            }
+            Ok::<_, String>(())
+        })?;
+        *async_workers = Some(workers);
         let arguments = arguments.to_vec();
         let mut instances = std::mem::take(&mut context.modules);
         let (sender, receiver) = mpsc::channel();
@@ -569,9 +602,7 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
             // An abandoned receiver must never block executor shutdown.
             let _ = sender.send((instances, result));
         });
-        pool.as_ref()
-            .ok_or("WASM async executor unavailable")?
-            .submit(job)?;
+        with_pool(|pool| pool.ok_or("WASM async executor unavailable")?.submit(job))?;
         context.pending = Some(Pending::Async(receiver));
         Ok(0)
     })
@@ -952,6 +983,7 @@ macro_rules! export_wasm_runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod async_tests;
 
     #[test]
     fn compilation_cache_reuses_exact_bytes_and_evicts_lru() {
@@ -1512,6 +1544,11 @@ mod tests {
 
     #[test]
     fn asynchronous_results_are_routed_by_context_and_preserve_state() {
+        if !crate::test_support::watchdog(
+            "tests::asynchronous_results_are_routed_by_context_and_preserve_state",
+        ) {
+            return;
+        }
         reset().unwrap();
         for expected in [11, 13] {
             begin_worker_shot([7; 32]).unwrap();
@@ -1540,6 +1577,9 @@ mod tests {
 
     #[test]
     fn single_async_worker_queues_many_contexts() {
+        if !crate::test_support::watchdog("tests::single_async_worker_queues_many_contexts") {
+            return;
+        }
         let _ = start();
         let add = lookup(0, "add", 2, 1).unwrap();
         let mut contexts = Vec::new();
@@ -1558,6 +1598,11 @@ mod tests {
 
     #[test]
     fn asynchronous_initialization_and_signature_failures_surface_at_read() {
+        if !crate::test_support::watchdog(
+            "tests::asynchronous_initialization_and_signature_failures_surface_at_read",
+        ) {
+            return;
+        }
         for module in [
             br#"(module (func (export "init") unreachable) (func (export "get") (result i64) i64.const 1))"#.as_slice(),
             br#"(module (func (export "get") (result f64) f64.const 1))"#.as_slice(),

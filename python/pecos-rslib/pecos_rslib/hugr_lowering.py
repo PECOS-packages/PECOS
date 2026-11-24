@@ -380,7 +380,9 @@ def validate_wasm_async_workers(value: object, modules: Mapping[str, bytes] | No
         msg = f"wasm_async_workers must be an integer between 0 and 64; got {_describe_value(value)}"
         raise ValueError(msg)
     if modules is None and value != 0:
-        msg = f"wasm_async_workers={value} requires explicit wasm_modules; pass wasm_modules={{module_name: wasm_bytes}}"
+        msg = (
+            f"wasm_async_workers={value} requires explicit wasm_modules; pass wasm_modules={{module_name: wasm_bytes}}"
+        )
         raise ValueError(msg)
 
 

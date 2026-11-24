@@ -220,3 +220,40 @@ with TemporaryDirectory() as directory:
     path.write_text(script)
     completed = subprocess.run([sys.executable, str(path)], capture_output=True, text=True, timeout=60, check=False)
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def assert_deferred_adapter_order(llvm):
+    # Parse individual definitions: the launch/read ABI calls are in separate
+    # adapters, while their ordering is visible in the function calling them.
+    bodies = dict(re.findall(r'^define [^\n]*?(@(?:"[^"\n]+"|[^\s(]+))\([^\n]*\{\n(.*?)^}', llvm, re.M | re.S))
+    assert bodies
+    calls = {name: re.findall(r'\bcall\b[^\n]*?(@(?:"[^"\n]+"|[^\s(]+))\(', body) for name, body in bodies.items()}
+    adapters = {}
+    for name, targets in calls.items():
+        operations = [target for target in targets if target in ("@pecos_wasm_v2_call", "@pecos_wasm_v1_read")]
+        if operations:
+            assert len(operations) == 1
+            adapters[name] = operations[0]
+    assert list(adapters.values()).count("@pecos_wasm_v2_call") == 2
+    assert list(adapters.values()).count("@pecos_wasm_v1_read") == 2
+    callers = [
+        [adapters[target] for target in targets if target in adapters]
+        for targets in calls.values()
+        if any(target in adapters for target in targets)
+    ]
+    assert callers == [["@pecos_wasm_v2_call", "@pecos_wasm_v2_call", "@pecos_wasm_v1_read", "@pecos_wasm_v1_read"]]
+
+
+def test_deferred_adapter_order_in_lowered_and_written_ir(examples, tmp_path):
+    example = examples["async_calls"]
+    program = example.deferred_program()
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    # Keep the public default opt_level=2.
+    llvm = compile_wasm(program, modules, wasm_async_workers=2)
+    assert_deferred_adapter_order(llvm)
+    build(program, modules, build_dir=tmp_path, wasm_async_workers=2)
+    # This is the real IR consumed by Selene's zig cc -c step. The installed
+    # build writes the supplied IR verbatim; it emits no later optimized IR.
+    written = (tmp_path / "artifacts" / "program.helios.ll").read_text()
+    assert written == llvm
+    assert_deferred_adapter_order(written)

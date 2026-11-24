@@ -1,17 +1,68 @@
 //! A per-execution-thread pool. Jobs own all WASM state they access.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 
 pub(crate) const MAX_WORKERS: usize = 64;
 pub(crate) type Job = Box<dyn FnOnce() + Send + 'static>;
 
+#[derive(Default)]
+struct Progress {
+    // Includes queued, dequeued, running, and not-yet-dropped jobs.
+    outstanding: usize,
+    cancelling: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct Control {
+    progress: Mutex<Progress>,
+    changed: Condvar,
+    #[cfg(test)]
+    before_claim: Mutex<Option<Job>>,
+}
+
+impl Control {
+    fn done(&self) {
+        let mut progress = self
+            .progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        progress.outstanding = progress
+            .outstanding
+            .checked_sub(1)
+            .expect("WASM async job accounting: every finished job was submitted");
+        self.changed.notify_all();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_for_cancel(&self) {
+        let progress = self.progress.lock().unwrap();
+        drop(
+            self.changed
+                .wait_while(progress, |p| !p.cancelling)
+                .unwrap(),
+        );
+    }
+}
+
+// A recoverable panic in a job or in its captures must not kill a worker. Even
+// the panic payload can have a panicking destructor. Attempt its drop under
+// protection; forget a secondary payload to prevent an unbounded chain of
+// destructor panics. A destructor that panics while a panic is already unwinding
+// still aborts the process; catch_unwind cannot recover from that.
+fn protected(operation: impl FnOnce()) {
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(operation))
+        && let Err(secondary) = catch_unwind(AssertUnwindSafe(|| drop(payload)))
+    {
+        std::mem::forget(secondary);
+    }
+}
+
 pub(crate) struct Pool {
     sender: Option<mpsc::Sender<Job>>,
     workers: Vec<JoinHandle<()>>,
-    stopping: Arc<AtomicBool>,
+    control: Arc<Control>,
 }
 
 impl Pool {
@@ -37,14 +88,14 @@ impl Pool {
         let mut pool = Self {
             sender: Some(sender),
             workers: Vec::new(),
-            stopping: Arc::new(AtomicBool::new(false)),
+            control: Arc::default(),
         };
         for _ in 0..count {
             let receiver = Arc::clone(&receiver);
-            let stopping = Arc::clone(&pool.stopping);
+            let control = Arc::clone(&pool.control);
             let worker = spawn(Box::new(move || {
                 loop {
-                    // Never hold the queue lock while running a job.
+                    // Never hold the queue lock while running or discarding a job.
                     let job = {
                         let receiver = receiver
                             .lock()
@@ -52,14 +103,29 @@ impl Pool {
                         receiver.recv()
                     };
                     let Ok(job) = job else { break };
-                    if stopping.load(Ordering::Acquire) {
-                        // Dropping queued captures also disconnects their reply channels.
-                        drop(job);
-                        continue;
+                    #[cfg(test)]
+                    {
+                        let hook = control.before_claim.lock().unwrap().take();
+                        if let Some(hook) = hook {
+                            hook();
+                        }
                     }
-                    // A failed job drops its owned state/reply sender. The caller
-                    // observes disconnection; this worker remains usable.
-                    let _ = catch_unwind(AssertUnwindSafe(job));
+                    // Claim and cancel use the same lock. A dequeued job is still
+                    // unclaimed until this decision, and remains counted until
+                    // execution/discard and panic-payload cleanup have finished.
+                    let claimed = !control
+                        .progress
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .cancelling;
+                    protected(|| {
+                        if claimed {
+                            job();
+                        } else {
+                            drop(job);
+                        }
+                    });
+                    control.done();
                 }
             }))
             .map_err(|error| format!("Cannot start WASM async worker: {error}"))?;
@@ -73,17 +139,57 @@ impl Pool {
     }
 
     pub(crate) fn submit(&self, job: Job) -> Result<(), String> {
-        self.sender
+        let sender = self
+            .sender
             .as_ref()
-            .ok_or("WASM async executor is closed")?
-            .send(job)
-            .map_err(|_| "WASM async executor disconnected".into())
+            .ok_or("WASM async executor is closed")?;
+        {
+            let mut progress = self
+                .control
+                .progress
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            progress.outstanding += 1;
+        }
+        if let Err(error) = sender.send(job) {
+            protected(|| drop(error.0));
+            self.control.done();
+            return Err("WASM async executor disconnected".into());
+        }
+        Ok(())
+    }
+
+    /// Discard every unclaimed job and wait for all prior jobs' captures to be
+    /// released. Claimed jobs finish normally. Only the owner submits/cancels.
+    /// WASM execution has per-phase deadlines; arbitrary Rust blocking is unbounded.
+    /// Completed replies belong to the caller, not to this pool.
+    pub(crate) fn cancel(&self) {
+        let mut progress = self
+            .control
+            .progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        progress.cancelling = true;
+        // Only the test hook Control::wait_for_cancel waits for this transition.
+        #[cfg(test)]
+        self.control.changed.notify_all();
+        progress = self
+            .control
+            .changed
+            .wait_while(progress, |p| p.outstanding != 0)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        progress.cancelling = false;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn control(&self) -> Arc<Control> {
+        Arc::clone(&self.control)
     }
 }
 
 impl Drop for Pool {
     fn drop(&mut self) {
-        self.stopping.store(true, Ordering::Release);
+        self.cancel();
         // Close before joining: idle workers must be able to leave recv().
         drop(self.sender.take());
         for worker in self.workers.drain(..) {
@@ -95,67 +201,9 @@ impl Drop for Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
-
-    // Lifecycle bugs must fail rather than hang the full test process.
-    fn watchdog(name: &str) -> bool {
-        if std::env::var("PECOS_WASM_POOL_TEST").as_deref() == Ok(name) {
-            return true;
-        }
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([name, "--exact"])
-            .env("PECOS_WASM_POOL_TEST", name)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                assert!(status.success(), "lifecycle child failed: {name}");
-                return false;
-            }
-            if Instant::now() >= deadline {
-                child.kill().unwrap();
-                child.wait().unwrap();
-                panic!("lifecycle child timed out: {name}");
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    #[test]
-    fn owner_thread_exit_joins_pool() {
-        if !watchdog("async_pool::tests::owner_thread_exit_joins_pool") {
-            return;
-        }
-        // Exercise the actual runtime TLS destructor, including an abandoned
-        // running job and a queued job, not just an explicit Pool::drop.
-        for active in [false, true] {
-            let finished = Arc::new(AtomicBool::new(false));
-            let observed = Arc::clone(&finished);
-            let (started, starts) = mpsc::channel();
-            let owner = thread::spawn(move || {
-                let pool = Pool::new(1).unwrap();
-                if active {
-                    pool.submit(Box::new(move || {
-                        started.send(()).unwrap();
-                        thread::sleep(Duration::from_millis(20));
-                        finished.store(true, Ordering::Release);
-                    }))
-                    .unwrap();
-                    starts.recv_timeout(Duration::from_secs(5)).unwrap();
-                    pool.submit(Box::new(|| {})).unwrap();
-                }
-                crate::STATE.with(|state| state.borrow_mut().pool = Some(pool));
-                // No explicit reset: leaving the owner must join its pool.
-            });
-            owner.join().unwrap();
-            if active {
-                assert!(observed.load(Ordering::Acquire));
-            }
-        }
-    }
+    use crate::test_support::watchdog;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
     #[test]
     fn overlapping_jobs_release_queue_lock() {
@@ -189,7 +237,7 @@ mod tests {
             return;
         }
         let pool = Pool::new(1).unwrap();
-        let stopping = Arc::clone(&pool.stopping);
+        let control = pool.control();
         let (started, start) = mpsc::channel();
         let (release, wait) = mpsc::channel();
         let (reply, abandoned) = mpsc::channel();
@@ -210,9 +258,7 @@ mod tests {
         }))
         .unwrap();
         let cleanup = thread::spawn(move || drop(pool));
-        while !stopping.load(Ordering::Acquire) {
-            thread::yield_now();
-        }
+        control.wait_for_cancel();
         release.send(()).unwrap();
         cleanup.join().unwrap();
         assert!(!executed.load(Ordering::Acquire));
@@ -262,5 +308,182 @@ mod tests {
         assert!(exited.load(Ordering::Acquire));
         assert!(Pool::new(0).is_err());
         assert!(Pool::new(MAX_WORKERS + 1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use crate::test_support::watchdog;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct Capture(Arc<AtomicBool>);
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    struct PanicOnDrop;
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("injected capture/payload drop panic");
+        }
+    }
+
+    fn identity(pool: &Pool) -> thread::ThreadId {
+        let (reply, receive) = mpsc::channel();
+        pool.submit(Box::new(move || {
+            reply.send(thread::current().id()).unwrap();
+        }))
+        .unwrap();
+        receive.recv().unwrap()
+    }
+
+    #[test]
+    fn idle_and_repeated_cancel() {
+        if !watchdog("async_pool::cancellation_tests::idle_and_repeated_cancel") {
+            return;
+        }
+        let pool = Pool::new(1).unwrap();
+        pool.cancel(); // No job has been submitted: this pool is deterministically idle.
+        let original = identity(&pool);
+        for _ in 0..5 {
+            pool.cancel();
+            assert_eq!(identity(&pool), original);
+        }
+    }
+
+    #[test]
+    fn dequeued_unclaimed_job_is_discarded() {
+        if !watchdog("async_pool::cancellation_tests::dequeued_unclaimed_job_is_discarded") {
+            return;
+        }
+        let pool = Pool::new(1).unwrap();
+        let original = identity(&pool);
+        let (dequeued, reached) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        *pool.control.before_claim.lock().unwrap() = Some(Box::new(move || {
+            dequeued.send(()).unwrap();
+            wait.recv().unwrap();
+        }));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let capture = Capture(Arc::clone(&dropped));
+        let ran = Arc::new(AtomicBool::new(false));
+        let executed = Arc::clone(&ran);
+        pool.submit(Box::new(move || {
+            executed.store(true, Ordering::Release);
+            drop(capture);
+        }))
+        .unwrap();
+        reached.recv().unwrap();
+        let control = pool.control();
+        let controller = thread::spawn(move || {
+            control.wait_for_cancel();
+            release.send(()).unwrap();
+        });
+        pool.cancel();
+        assert!(!ran.load(Ordering::Acquire));
+        assert!(dropped.load(Ordering::Acquire));
+        controller.join().unwrap();
+        assert_eq!(identity(&pool), original);
+    }
+
+    #[test]
+    fn discarded_capture_panic_preserves_worker() {
+        if !watchdog("async_pool::cancellation_tests::discarded_capture_panic_preserves_worker") {
+            return;
+        }
+        let pool = Pool::new(1).unwrap();
+        let original = identity(&pool);
+        let (started, starts) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        pool.submit(Box::new(move || {
+            started.send(()).unwrap();
+            wait.recv().unwrap();
+        }))
+        .unwrap();
+        starts.recv().unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let captures = (PanicOnDrop, Capture(Arc::clone(&dropped)));
+        let ran = Arc::new(AtomicBool::new(false));
+        let executed = Arc::clone(&ran);
+        pool.submit(Box::new(move || {
+            executed.store(true, Ordering::Release);
+            drop(captures);
+        }))
+        .unwrap();
+        let control = pool.control();
+        let controller = thread::spawn(move || {
+            control.wait_for_cancel();
+            release.send(()).unwrap();
+        });
+        pool.cancel();
+        assert!(!ran.load(Ordering::Acquire));
+        assert!(dropped.load(Ordering::Acquire));
+        controller.join().unwrap();
+        assert_eq!(identity(&pool), original);
+    }
+
+    #[test]
+    fn running_panic_during_cancel_preserves_worker() {
+        if !watchdog("async_pool::cancellation_tests::running_panic_during_cancel_preserves_worker")
+        {
+            return;
+        }
+        let pool = Pool::new(1).unwrap();
+        let original = identity(&pool);
+        let (started, starts) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let (reply, receive) = mpsc::channel::<()>();
+        pool.submit(Box::new(move || {
+            let _reply = reply;
+            started.send(()).unwrap();
+            wait.recv().unwrap();
+            std::panic::panic_any(PanicOnDrop);
+        }))
+        .unwrap();
+        starts.recv().unwrap();
+        let control = pool.control();
+        let controller = thread::spawn(move || {
+            control.wait_for_cancel();
+            release.send(()).unwrap();
+        });
+        pool.cancel();
+        assert!(receive.recv().is_err());
+        controller.join().unwrap();
+        assert_eq!(identity(&pool), original);
+    }
+
+    #[test]
+    fn queued_jobs_survive_running_panic() {
+        if !watchdog("async_pool::cancellation_tests::queued_jobs_survive_running_panic") {
+            return;
+        }
+        let pool = Pool::new(1).unwrap();
+        let original = identity(&pool);
+        let (started, starts) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let (reply, receive) = mpsc::channel::<()>();
+        pool.submit(Box::new(move || {
+            let _reply = reply;
+            started.send(()).unwrap();
+            wait.recv().unwrap();
+            panic!("injected non-WASM panic");
+        }))
+        .unwrap();
+        starts.recv().unwrap();
+        let mut replies = Vec::new();
+        for value in 0..4 {
+            let (reply, receive) = mpsc::channel();
+            replies.push(receive);
+            pool.submit(Box::new(move || reply.send(value).unwrap()))
+                .unwrap();
+        }
+        release.send(()).unwrap();
+        assert!(receive.recv().is_err());
+        for (value, reply) in replies.into_iter().enumerate() {
+            assert_eq!(reply.recv().unwrap(), value);
+        }
+        assert_eq!(identity(&pool), original);
     }
 }

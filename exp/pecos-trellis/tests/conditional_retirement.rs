@@ -283,7 +283,7 @@ fn marginal_map_beats_best_state_and_stable_filter_preserves_mass_bits() {
         repeated.log_evidence_before.to_bits(),
         repeated.log_evidence_after.to_bits()
     );
-    assert!(repeated.progress.newly_committed.is_empty());
+    assert_eq!(repeated.progress.newly_committed, [] as [(usize, bool); 0]);
 }
 
 #[test]

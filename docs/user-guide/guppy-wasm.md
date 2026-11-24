@@ -198,6 +198,32 @@ Opting out requires the native `pecos_wasm_v3_register` symbol: rebuild or upgra
 the Selene utility or PECOS QIS FFI together with the Python package. Default
 programs retain v1 registration; custom-timeout-only programs retain v2.
 
+## WASM-managed structs and arrays
+
+The public runtime supports WASM GC structs and arrays inside a module while
+Guppy calls continue to use scalar arguments and results. Each instance owns its
+managed heap; compiled-code reuse does not share managed objects between contexts
+or shots. The runtime enables Wasmtime's copying collector. Linear-memory limits
+on the Wasmtime wrapper do not impose a quota on this separate managed heap.
+
+```bash
+python examples/guppy_wasm/managed_objects.py --backend selene
+python examples/guppy_wasm/managed_objects.py --backend pecos
+```
+
+This example returns `initial=7`, `next=8`, `sum=5`, `retained=8`, and
+`independent=7`. It stores state in a managed struct and adds two values using a
+managed array. The reference-valued objects stay inside WASM; this does not add
+reference-valued arguments or results to the Guppy ABI.
+
+The pinned older Guppy frontend cannot inspect GC types. The example therefore
+declares exports using `managed_objects.interface.wat`, a scalar-only interface,
+and explicitly supplies `managed_objects.wat` as its runtime payload under that
+interface identifier. Every interface body traps to catch accidental execution
+of the interface. The payload must expose matching names and scalar signatures;
+Wasmtime compiles the supplied implementation and the runtime validates each
+called export. The older frontend does not validate the payload's GC internals.
+
 ## Lookup by export position
 
 Guppy's `@wasm(index)` selects an export by its zero-based position in the

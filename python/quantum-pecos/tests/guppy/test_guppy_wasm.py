@@ -26,7 +26,15 @@ PASS_MODULES = re.escape("pass wasm_modules={module_name: wasm_bytes}")
 @pytest.fixture(scope="module")
 def examples():
     modules = {}
-    for name in ("arithmetic", "stateful", "floating_point", "indexed_exports", "integer32", "memory_lifecycle"):
+    for name in (
+        "arithmetic",
+        "stateful",
+        "floating_point",
+        "indexed_exports",
+        "integer32",
+        "memory_lifecycle",
+        "managed_objects",
+    ):
         spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -553,3 +561,22 @@ def test_pecos_memory_lifecycle_initialization(examples, tmp_path, auto_init, ex
         runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).build()
         for _ in range(2):
             assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
+
+
+def test_pecos_managed_objects_use_fresh_stores(examples):
+    example = examples["managed_objects"]
+    expected = {"initial": 7, "next": 8, "sum": 5, "retained": 8, "independent": 7}
+    runner = (
+        pc.sim(
+            pc.Guppy(
+                example.managed_state,
+                wasm_modules={str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()},
+            ),
+        )
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .workers(2)
+        .build()
+    )
+    for _ in range(2):
+        assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}

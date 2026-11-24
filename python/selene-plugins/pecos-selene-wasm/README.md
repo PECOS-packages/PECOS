@@ -71,3 +71,13 @@ calls to `init` work with either policy. The setting applies independently to ea
 instance; compiled code can still be shared across initialization policies.
 Opting out requires the updated native `pecos_wasm_v3_register` ABI. See
 `docs/user-guide/guppy-wasm.md` and `examples/guppy_wasm/memory_lifecycle.py`.
+
+
+## Managed objects inside WASM
+
+The native runtime enables Wasmtime GC with its copying collector. Modules may
+use managed structs and arrays internally while exporting the supported scalar
+signatures. Managed state belongs to each store, independently of cached code.
+See `examples/guppy_wasm/managed_objects.py` for a scalar interface and explicit
+GC payload that also work with older Guppy frontends. Linear-memory limits do
+not cover the managed heap.

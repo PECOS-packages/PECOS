@@ -5,6 +5,10 @@
 //! A bounded per-thread cache retains immutable compiled code between shots.
 //! C entry points return a status; they never unwind or transfer control while
 //! Rust frames own resources. The generated caller handles errors afterwards.
+//!
+//! Fork is not supported: a forked child must not call the runtime from a thread
+//! that already made WASM calls. Its async workers and the timeout clocks of its
+//! cached modules are threads, and fork does not copy them.
 
 use pecos_wasm::{CompiledWasmModule, ForeignObject, WasmForeignObject, WasmScalarType};
 use std::borrow::Cow;
@@ -161,6 +165,7 @@ pub fn boundary<T: Copy>(failure: T, operation: impl FnOnce() -> Result<T>) -> T
 }
 
 /// Start or finish a shot, releasing all module instances and pending results.
+/// Waits for async calls already running; WASM phase deadlines bound that wait.
 ///
 /// # Errors
 /// This operation always succeeds; the result matches the status-returning ABI.
@@ -568,7 +573,12 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
         POOL.with(|pool| {
             let mut pool = pool.borrow_mut();
             if pool.as_ref().is_some_and(|pool| pool.size() != workers) {
-                // State replacement already cancelled the old pool's work.
+                // State replacement already cancelled the old pool's work, and
+                // nothing was submitted since: this State has not set a count.
+                debug_assert!(
+                    async_workers.is_none(),
+                    "WASM async pool size differs from this State's worker count"
+                );
                 drop(pool.take());
             }
             if pool.is_none() {

@@ -215,6 +215,20 @@ fn worker_shot_recovers_after_async_trap() {
     }
 }
 
+// Worker-thread state whose destructor finishes only after a delay: a join
+// returns after it, so the flag is set; a missing join returns first.
+struct SlowExit(Arc<AtomicBool>);
+impl Drop for SlowExit {
+    fn drop(&mut self) {
+        thread::sleep(Duration::from_millis(100));
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+thread_local! {
+    static SLOW_EXIT: std::cell::RefCell<Option<SlowExit>> = const { std::cell::RefCell::new(None) };
+}
+
 #[test]
 fn owner_thread_exit_joins_pool() {
     if !watchdog("tests::async_tests::owner_thread_exit_joins_pool") {
@@ -225,11 +239,19 @@ fn owner_thread_exit_joins_pool() {
         let observed = Arc::clone(&finished);
         let discarded = Arc::new(AtomicBool::new(false));
         let capture = Dropped(Arc::clone(&discarded));
+        let worker_exited = Arc::new(AtomicBool::new(false));
+        let exit_flag = Arc::clone(&worker_exited);
         thread::spawn(move || {
             initialize(1); // Initialize STATE, COMPILED, and POOL through runtime calls.
             let original = identities(1);
             reset().unwrap();
             assert_eq!(identities(1), original);
+            let (installed, install) = mpsc::channel();
+            submit(move || {
+                SLOW_EXIT.with(|slot| *slot.borrow_mut() = Some(SlowExit(exit_flag)));
+                installed.send(()).unwrap();
+            });
+            install.recv().unwrap();
             if active {
                 let (started, starts) = mpsc::channel();
                 let (release, wait) = mpsc::channel();
@@ -250,6 +272,10 @@ fn owner_thread_exit_joins_pool() {
         })
         .join()
         .unwrap();
+        assert!(
+            worker_exited.load(Ordering::Acquire),
+            "owner exit returned before its worker thread ended"
+        );
         if active {
             assert!(discarded.load(Ordering::Acquire));
             assert!(observed.load(Ordering::Acquire));

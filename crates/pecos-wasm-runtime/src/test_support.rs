@@ -15,13 +15,19 @@ pub(crate) fn watchdog(name: &str) -> bool {
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        if child.try_wait().unwrap().is_some() {
+        let exited = child.try_wait().unwrap().is_some();
+        let timed_out = !exited && Instant::now() >= deadline;
+        if timed_out {
+            child.kill().unwrap();
+        }
+        if exited || timed_out {
             let output = child.wait_with_output().unwrap();
             let report = format!(
                 "{}{}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
+            assert!(!timed_out, "lifecycle child timed out: {name}\n{report}");
             assert!(
                 output.status.success(),
                 "lifecycle child failed: {name}\n{report}"
@@ -33,11 +39,6 @@ pub(crate) fn watchdog(name: &str) -> bool {
                 "lifecycle child did not run exactly one test: {name}\n{report}"
             );
             return false;
-        }
-        if Instant::now() >= deadline {
-            child.kill().unwrap();
-            child.wait().unwrap();
-            panic!("lifecycle child timed out: {name}");
         }
         thread::sleep(Duration::from_millis(10));
     }

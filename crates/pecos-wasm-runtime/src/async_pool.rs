@@ -1,5 +1,7 @@
 //! A per-execution-thread pool. Jobs own all WASM state they access.
 
+use std::cell::Cell;
+use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
@@ -63,6 +65,9 @@ pub(crate) struct Pool {
     sender: Option<mpsc::Sender<Job>>,
     workers: Vec<JoinHandle<()>>,
     control: Arc<Control>,
+    // Cancel's guarantees hold only if the owner alone submits and cancels:
+    // !Sync keeps a pool from being shared, while Send still lets it be dropped elsewhere.
+    _owner: PhantomData<Cell<()>>,
 }
 
 impl Pool {
@@ -89,6 +94,7 @@ impl Pool {
             sender: Some(sender),
             workers: Vec::new(),
             control: Arc::default(),
+            _owner: PhantomData,
         };
         for _ in 0..count {
             let receiver = Arc::clone(&receiver);
@@ -170,8 +176,7 @@ impl Pool {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         progress.cancelling = true;
-        // Only the test hook Control::wait_for_cancel waits for this transition.
-        #[cfg(test)]
+        // No production code waits for this transition; tests observe it.
         self.control.changed.notify_all();
         progress = self
             .control

@@ -53,7 +53,7 @@ def build(
     platform: str = "helios",
     opt_level: int = 2,
     emit_debug: bool = False,
-    wasm_int_width: int = 64,
+    wasm_int_width: int | str = 64,
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
     **kwargs: object,
@@ -77,6 +77,15 @@ def build(
         wasm_timeout_seconds=wasm_timeout_seconds,
         wasm_auto_init=wasm_auto_init,
     )
+    if wasm_int_width == "auto":
+        runtime = ctypes.CDLL(str(utilities[-1].library_file))
+        for symbol in ("pecos_wasm_v3_lookup", "pecos_wasm_v3_lookup_by_id"):
+            if f"call i64 @{symbol}(" in llvm and not hasattr(runtime, symbol):
+                msg = (
+                    "Automatic WASM integer widths require an updated native runtime; "
+                    "rebuild or upgrade pecos-selene-wasm"
+                )
+                raise RuntimeError(msg)
     if not wasm_auto_init:
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         if not hasattr(runtime, "pecos_wasm_v3_register"):

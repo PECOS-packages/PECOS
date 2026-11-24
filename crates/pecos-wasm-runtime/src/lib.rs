@@ -332,14 +332,25 @@ fn lookup_function(function: Function) -> Result<u64> {
 /// # Errors
 /// Rejects unknown type tags rather than interpreting them as integers.
 pub fn scalar_types(tags: &[u8]) -> Result<Vec<WasmScalarType>> {
-    tags.iter()
-        .map(|tag| match tag {
-            0 => Ok(WasmScalarType::I64),
-            1 => Ok(WasmScalarType::F64),
-            2 => Ok(WasmScalarType::I32),
-            _ => Err(format!("Unknown WASM scalar type tag: {tag}")),
-        })
-        .collect()
+    tags.iter().map(|tag| scalar_type(*tag, false)).collect()
+}
+
+/// Decode v3 tags, including tag 3 for per-lane native integer width selection.
+///
+/// # Errors
+/// Rejects unknown type tags. Existing v2 decoding still rejects tag 3.
+pub fn scalar_types_auto(tags: &[u8]) -> Result<Vec<WasmScalarType>> {
+    tags.iter().map(|tag| scalar_type(*tag, true)).collect()
+}
+
+fn scalar_type(tag: u8, allow_auto: bool) -> Result<WasmScalarType> {
+    match tag {
+        0 => Ok(WasmScalarType::I64),
+        1 => Ok(WasmScalarType::F64),
+        2 => Ok(WasmScalarType::I32),
+        3 if allow_auto => Ok(WasmScalarType::IntegerAuto),
+        _ => Err(format!("Unknown WASM scalar type tag: {tag}")),
+    }
 }
 
 /// Execute synchronously and retain the result until `read_result` consumes it.
@@ -610,6 +621,79 @@ macro_rules! export_wasm_runtime {
                         return Err("Null WASM scalar types".into());
                     }
                     $crate::scalar_types(unsafe { std::slice::from_raw_parts(pointer, count) })
+                };
+                $crate::lookup_by_id(
+                    module,
+                    index,
+                    &types(input_types, inputs)?,
+                    &types(output_types, outputs)?,
+                )
+            })
+        }
+        /// Typed v3 lookup: v2 tags plus tag 3 for native i32/i64 selection per integer lane.
+        /// The returned handle uses v1 call/read's 64-bit slots; float slots
+        /// carry IEEE 754 bits. Existing integer lookup/call clients are unchanged.
+        ///
+        /// # Safety
+        /// name points to length UTF-8 bytes. Type arrays point to their counts
+        /// of readable bytes, or may be null when the corresponding count is zero.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn pecos_wasm_v3_lookup(
+            module: u64,
+            name: *const u8,
+            length: usize,
+            input_types: *const u8,
+            inputs: usize,
+            output_types: *const u8,
+            outputs: usize,
+        ) -> u64 {
+            $crate::boundary(0, || {
+                if name.is_null() {
+                    return Err("Null WASM export name".into());
+                }
+                let bytes = unsafe { std::slice::from_raw_parts(name, length) };
+                let name = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
+                let types = |pointer: *const u8, count: usize| {
+                    if count == 0 {
+                        return $crate::scalar_types_auto(&[]);
+                    }
+                    if pointer.is_null() {
+                        return Err("Null WASM scalar types".into());
+                    }
+                    $crate::scalar_types_auto(unsafe { std::slice::from_raw_parts(pointer, count) })
+                };
+                $crate::lookup_scalar(
+                    module,
+                    name,
+                    &types(input_types, inputs)?,
+                    &types(output_types, outputs)?,
+                )
+            })
+        }
+        /// Lookup by zero-based export-list position, with the same scalar tags
+        /// as v3 named lookup. Non-function exports occupy positions as well.
+        ///
+        /// # Safety
+        /// Type arrays point to their counts of readable bytes, or may be null
+        /// when the corresponding count is zero.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn pecos_wasm_v3_lookup_by_id(
+            module: u64,
+            index: u64,
+            input_types: *const u8,
+            inputs: usize,
+            output_types: *const u8,
+            outputs: usize,
+        ) -> u64 {
+            $crate::boundary(0, || {
+                let types = |pointer: *const u8, count: usize| {
+                    if count == 0 {
+                        return $crate::scalar_types_auto(&[]);
+                    }
+                    if pointer.is_null() {
+                        return Err("Null WASM scalar types".into());
+                    }
+                    $crate::scalar_types_auto(unsafe { std::slice::from_raw_parts(pointer, count) })
                 };
                 $crate::lookup_by_id(
                     module,
@@ -1096,6 +1180,65 @@ mod tests {
         }
         let wrong_return = lookup_scalar(0, "get", &[], &[WasmScalarType::I64]).unwrap();
         assert!(call(context, wrong_return, &[]).is_err());
+    }
+
+    #[test]
+    fn automatic_integer_lanes_preserve_widths_and_validate_before_execution() {
+        use WasmScalarType::{F64, I32, I64, IntegerAuto};
+        assert!(scalar_types(&[3]).is_err());
+        assert_eq!(
+            scalar_types_auto(&[0, 1, 2, 3]).unwrap(),
+            [I64, F64, I32, IntegerAuto]
+        );
+        assert!(scalar_types_auto(&[4]).is_err());
+        reset().unwrap();
+        register(
+            0,
+            br#"(module
+            (global $calls (mut i64) (i64.const 0))
+            (func (export "mixed") (param i32 i64 f64) (result i64)
+                global.get $calls i64.const 1 i64.add global.set $calls
+                local.get 0 i64.extend_i32_s local.get 1 i64.add
+                local.get 2 i64.trunc_f64_s i64.add)
+            (func (export "narrow") (param i64) (result i32)
+                local.get 0 i32.wrap_i64)
+            (func (export "calls") (result i64) global.get $calls))"#,
+        )
+        .unwrap();
+        let context = acquire(0).unwrap();
+        let inputs = [IntegerAuto, IntegerAuto, F64];
+        let outputs = [IntegerAuto];
+        let named = lookup_scalar(0, "mixed", &inputs, &outputs).unwrap();
+        let indexed = lookup_by_id(0, 0, &inputs, &outputs).unwrap();
+        let float_bits = i64::from_ne_bytes(2.5_f64.to_bits().to_ne_bytes());
+        for function in [named, indexed] {
+            call(
+                context,
+                function,
+                &[4_294_967_301, 4_294_967_301, float_bits],
+            )
+            .unwrap();
+            assert_eq!(read(context, 1).unwrap(), [4_294_967_308]);
+        }
+        let narrow = lookup_scalar(0, "narrow", &outputs, &outputs).unwrap();
+        call(context, narrow, &[2_147_483_648]).unwrap();
+        assert_eq!(read(context, 1).unwrap(), [-2_147_483_648]);
+        for (ins, outs) in [
+            ([I64, I64, F64], [I64]),
+            ([I32, I32, F64], [I32]),
+            ([IntegerAuto; 3], [IntegerAuto]),
+            (inputs, [F64]),
+        ] {
+            let wrong = lookup_scalar(0, "mixed", &ins, &outs).unwrap();
+            assert_ne!(wrong, named);
+            assert!(call(context, wrong, &[1, 2, float_bits]).is_err());
+        }
+        assert_eq!(invoke(context, 0, "calls", &[], 1), [2]);
+        release(context).unwrap();
+        assert_eq!(acquire(0).unwrap(), context);
+        assert_eq!(invoke(context, 0, "calls", &[], 1), [2]);
+        let fresh = acquire(1).unwrap();
+        assert_eq!(invoke(fresh, 0, "calls", &[], 1), [0]);
     }
 
     #[test]

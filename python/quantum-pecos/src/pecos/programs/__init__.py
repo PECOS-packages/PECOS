@@ -104,7 +104,7 @@ def _hugr_to_program(
     data: bytes,
     *,
     wasm_modules: Mapping[str, bytes] | None = None,
-    wasm_int_width: int = 64,
+    wasm_int_width: int | str = 64,
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
 ) -> "CompiledQis":
@@ -149,7 +149,7 @@ class Guppy:
         func: GuppyFunction,
         *,
         wasm_modules: Mapping[str, bytes] | None = None,
-        wasm_int_width: int = 64,
+        wasm_int_width: int | str = 64,
         wasm_timeout_seconds: float = 1.0,
         wasm_auto_init: bool = True,
     ) -> None:
@@ -157,6 +157,7 @@ class Guppy:
 
         Keys in ``wasm_modules`` are the module identifiers used by Guppy's
         ``@wasm_module`` declarations. Requires ``quantum-pecos[wasm]``.
+        ``wasm_int_width="auto"`` selects each integer lane from its native export.
         ``wasm_int_width=32`` selects exact i32 signatures for all WASM modules
         (Guppy H2 mode); the default requires i64.
         ``wasm_timeout_seconds`` sets a positive finite per-call execution limit
@@ -225,7 +226,7 @@ class Hugr:
         data: bytes,
         *,
         wasm_modules: Mapping[str, bytes] | None = None,
-        wasm_int_width: int = 64,
+        wasm_int_width: int | str = 64,
         wasm_timeout_seconds: float = 1.0,
         wasm_auto_init: bool = True,
     ) -> None:
@@ -251,7 +252,7 @@ class Hugr:
         path: str | Path,
         *,
         wasm_modules: Mapping[str, bytes] | None = None,
-        wasm_int_width: int = 64,
+        wasm_int_width: int | str = 64,
         wasm_timeout_seconds: float = 1.0,
         wasm_auto_init: bool = True,
     ) -> "Hugr":
@@ -271,7 +272,7 @@ class Hugr:
         data: bytes,
         *,
         wasm_modules: Mapping[str, bytes] | None = None,
-        wasm_int_width: int = 64,
+        wasm_int_width: int | str = 64,
         wasm_timeout_seconds: float = 1.0,
         wasm_auto_init: bool = True,
     ) -> "Hugr":

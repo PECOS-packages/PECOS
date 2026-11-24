@@ -1,10 +1,13 @@
 # Public WASM support for Selene
 
 This package lowers Guppy's public `tket.wasm` operations and supplies a Selene
-Utility plugin backed by Wasmtime. It supports mixed signed 64-bit integer and double-precision float arguments,
+Utility plugin backed by Wasmtime. It supports signed integer and double-precision float arguments,
 with zero or one scalar result and explicit module bytes. Exports can be selected
 by name or zero-based position in the complete export list (`@wasm(index)`). Branches and loops run
 with the released public compiler; no upstream source changes are required.
+Integer signatures default to strict i64. Select `wasm_int_width=32` for strict
+i32, or `wasm_int_width="auto"` to resolve each integer lane from the actual
+export signature, including programs that call both i32 and i64 exports.
 
 ```python
 from pecos_selene_wasm import build

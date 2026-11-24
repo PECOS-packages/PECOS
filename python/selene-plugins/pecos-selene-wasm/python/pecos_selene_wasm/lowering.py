@@ -373,7 +373,7 @@ def _check(status: str, bits: int = 32, *, nonzero: bool = False) -> str:
     return f"  %{status}_ok = icmp {predicate} i{bits} %{status}, 0\n  call void @pecos_wasm_check(i1 %{status}_ok)\n"
 
 
-def _adapter(symbol: str, operation: dict, unique: str, wasm_int_width: int = 64) -> str:
+def _adapter(symbol: str, operation: dict, unique: str, wasm_int_width: int | str = 64) -> str:
     name, args = operation["name"], operation["args"]
     inputs, outputs = _validate(operation)
     if name == "get_context":
@@ -393,19 +393,21 @@ entry:
             data = args[0]["arg"].encode("utf-8")
             constants = _constant(unique, data)
             lookup = f"@pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})"
-        if name == "lookup_by_id" or "double" in in_types + out_types or wasm_int_width == 32:
+        if name == "lookup_by_id" or "double" in in_types + out_types or wasm_int_width != 64:
+            integer_tag = {64: 0, 32: 2, "auto": 3}[wasm_int_width]
+            version = 3 if wasm_int_width == "auto" else 2
             constants += _constant(
                 unique + "_inputs",
-                bytes(1 if ty == "double" else (2 if wasm_int_width == 32 else 0) for ty in in_types),
+                bytes(1 if ty == "double" else integer_tag for ty in in_types),
             )
             constants += _constant(
                 unique + "_outputs",
-                bytes(1 if ty == "double" else (2 if wasm_int_width == 32 else 0) for ty in out_types),
+                bytes(1 if ty == "double" else integer_tag for ty in out_types),
             )
             target = (
-                f"@pecos_wasm_v2_lookup_by_id(i64 %module, i64 {args[0]['n']}, "
+                f"@pecos_wasm_v{version}_lookup_by_id(i64 %module, i64 {args[0]['n']}, "
                 if name == "lookup_by_id"
-                else f"@pecos_wasm_v2_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, "
+                else f"@pecos_wasm_v{version}_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, "
             )
             lookup = target + f"ptr @{unique}_inputs, i64 {inputs}, ptr @{unique}_outputs, i64 {outputs})"
         return constants + f"""define i64 {symbol}(i64 %module) {{
@@ -482,7 +484,7 @@ def compile_wasm(
     platform: str = "helios",
     opt_level: int = 2,
     emit_debug: bool = False,
-    wasm_int_width: int = 64,
+    wasm_int_width: int | str = 64,
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
 ) -> str:
@@ -495,7 +497,8 @@ def compile_wasm(
     ``modules`` maps exact module identifiers to caller-supplied WAT or WASM
     bytes. ``wasm_int_width`` selects exact native integer signatures (64 by
     default; use 32 for Guppy H2 declarations). i32 arguments wrap to their low
-    32 bits and results are sign-extended; the setting applies to all modules.
+    32 bits and results are sign-extended. Use "auto" to infer each integer lane
+    from its actual WASM export signature, allowing mixed i32/i64 exports.
     ``wasm_timeout_seconds`` is a positive finite per-start/init/call limit,
     defaulting to one second, with approximately 10 ms clock resolution.
     The result requires the Selene WASM utility or WASM-enabled QIS FFI;
@@ -521,8 +524,11 @@ def compile_wasm(
         )
         raise ValueError(msg)
     wasm_timeout_seconds = float(wasm_timeout_seconds)
-    if type(wasm_int_width) is not int or wasm_int_width not in (32, 64):
-        msg = f"wasm_int_width must be 32 or 64; got {_describe_value(wasm_int_width)}"
+    if not (
+        (type(wasm_int_width) is int and wasm_int_width in (32, 64))
+        or (type(wasm_int_width) is str and wasm_int_width == "auto")
+    ):
+        msg = f"wasm_int_width must be 32 or 64, or 'auto'; got {_describe_value(wasm_int_width)}"
         raise ValueError(msg)
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
@@ -613,6 +619,9 @@ def compile_wasm(
     if not re.search(r"^declare void @panic\(i32, ptr\)", llvm, re.MULTILINE):
         llvm += "\ndeclare void @panic(i32, ptr)\n"
     llvm += _ABI
+    if wasm_int_width == "auto":
+        llvm += "\ndeclare i64 @pecos_wasm_v3_lookup(i64, ptr, i64, ptr, i64, ptr, i64)\n"
+        llvm += "declare i64 @pecos_wasm_v3_lookup_by_id(i64, i64, ptr, i64, ptr, i64)\n"
     if not wasm_auto_init:
         llvm += "\ndeclare i32 @pecos_wasm_v3_register(i64, ptr, i64, double, i32)\n"
     elif wasm_timeout_seconds != 1.0:

@@ -57,6 +57,7 @@ def build(
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
     wasm_state_scope: str = "shot",
+    wasm_async_workers: int = 0,
     **kwargs: object,
 ) -> SeleneInstance:
     """Build Selene with explicit WASM bytes and safe compilation of Guppy source.
@@ -78,7 +79,13 @@ def build(
         wasm_timeout_seconds=wasm_timeout_seconds,
         wasm_auto_init=wasm_auto_init,
         wasm_state_scope=wasm_state_scope,
+        wasm_async_workers=wasm_async_workers,
     )
+    if wasm_async_workers:
+        runtime = ctypes.CDLL(str(utilities[-1].library_file))
+        if not hasattr(runtime, "pecos_wasm_v2_call"):
+            msg = "Asynchronous WASM calls require an updated native runtime; rebuild or upgrade pecos-selene-wasm"
+            raise RuntimeError(msg)
     if wasm_state_scope == "worker":
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         if not all(

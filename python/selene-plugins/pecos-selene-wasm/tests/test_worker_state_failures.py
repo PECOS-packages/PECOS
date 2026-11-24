@@ -27,21 +27,35 @@ def abort_after_mutation() -> None:
 
 
 @pytest.mark.parametrize("backend", ["selene", "pecos"])
-def test_runtime_panic_after_wasm_mutation_leaves_fresh_batches(backend, tmp_path):
+@pytest.mark.parametrize("async_workers", [0, 2])
+def test_runtime_panic_after_wasm_mutation_leaves_fresh_batches(backend, tmp_path, async_workers):
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
     if backend == "selene":
         from pecos_selene_wasm import build
         from selene_sim import Quest
         from selene_sim.exceptions import SelenePanicError
 
-        runner = build(abort_after_mutation, modules, build_dir=tmp_path, wasm_state_scope="worker")
+        runner = build(
+            abort_after_mutation,
+            modules,
+            build_dir=tmp_path,
+            wasm_state_scope="worker",
+            wasm_async_workers=async_workers,
+        )
         for _ in range(2):
             with pytest.raises(SelenePanicError, match="worker-state abort"):
                 [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=2)]
     else:
         pc = pytest.importorskip("pecos")
         runner = (
-            pc.sim(pc.Guppy(abort_after_mutation, wasm_modules=modules, wasm_state_scope="worker"))
+            pc.sim(
+                pc.Guppy(
+                    abort_after_mutation,
+                    wasm_modules=modules,
+                    wasm_state_scope="worker",
+                    wasm_async_workers=async_workers,
+                ),
+            )
             .qubits(1)
             .quantum(pc.state_vector())
             .workers(1)

@@ -5,29 +5,47 @@
 //! A bounded per-thread cache retains immutable compiled code between shots.
 //! C entry points return a status; they never unwind or transfer control while
 //! Rust frames own resources. The generated caller handles errors afterwards.
+//!
+//! Fork is not supported: a forked child must not call the runtime from a thread
+//! that already made WASM calls. Its async workers and the timeout clocks of its
+//! cached modules are threads, and fork does not copy them.
 
 use pecos_wasm::{CompiledWasmModule, ForeignObject, WasmForeignObject, WasmScalarType};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::mpsc;
+
+mod async_pool;
+#[cfg(test)]
+mod test_support;
+mod tls;
 
 type Result<T> = std::result::Result<T, String>;
+
+type ModuleInstances = BTreeMap<u64, WasmForeignObject>;
+type AsyncReply = (ModuleInstances, Result<Vec<i64>>);
+
+enum Pending {
+    Ready(Vec<i64>),
+    Async(mpsc::Receiver<AsyncReply>),
+}
 
 #[derive(Default)]
 struct Context {
     leased: bool,
-    modules: BTreeMap<u64, WasmForeignObject>,
-    pending: Option<Vec<i64>>,
+    modules: ModuleInstances,
+    pending: Option<Pending>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum FunctionTarget {
     Name(String),
     ExportIndex(u64),
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct Function {
     module: u64,
     target: FunctionTarget,
@@ -49,6 +67,7 @@ struct State {
     contexts: BTreeMap<u64, Context>,
     worker_key: Option<[u8; 32]>,
     shot_active: bool,
+    async_workers: Option<usize>,
 }
 
 // These bounds limit cache retention, not total process memory or compiled code
@@ -102,11 +121,19 @@ impl CompilationCache {
 }
 
 thread_local! {
-    static STATE: RefCell<State> = RefCell::default();
+    static STATE: tls::Value<RefCell<State>> = tls::Value::new(RefCell::default());
     // Immutable code survives shot reset; stores and instances never do.
-    static COMPILED: RefCell<CompilationCache> = RefCell::default();
+    static COMPILED: tls::Value<RefCell<CompilationCache>> = tls::Value::new(RefCell::default());
+    // Idle workers intentionally survive shot resets until this execution thread
+    // exits. The Windows process-exit guard also covers their synchronization.
+    static POOL: tls::Value<RefCell<Option<async_pool::Pool>>> = const { tls::Value::new(RefCell::new(None)) };
     // QIS panic uses a length-prefixed byte string (at most 255 bytes).
     static ERROR: RefCell<Vec<u8>> = RefCell::new(vec![0]);
+}
+
+// Access only the calling thread's executor; workers and destructors never use TLS.
+fn with_pool<T>(operation: impl FnOnce(Option<&async_pool::Pool>) -> T) -> T {
+    POOL.with(|pool| operation(pool.borrow().as_ref()))
 }
 
 fn set_error(message: &str) {
@@ -138,11 +165,17 @@ pub fn boundary<T: Copy>(failure: T, operation: impl FnOnce() -> Result<T>) -> T
 }
 
 /// Start or finish a shot, releasing all module instances and pending results.
+/// Waits for async calls already running; WASM phase deadlines bound that wait.
 ///
 /// # Errors
 /// This operation always succeeds; the result matches the status-returning ABI.
 pub fn reset() -> Result<i32> {
     STATE.with(|state| *state.borrow_mut() = State::default());
+    with_pool(|pool| {
+        if let Some(pool) = pool {
+            pool.cancel();
+        }
+    });
     Ok(0)
 }
 
@@ -153,16 +186,25 @@ pub fn reset() -> Result<i32> {
 /// # Errors
 /// This operation always succeeds for a fixed-size key.
 pub fn begin_worker_shot(key: [u8; 32]) -> Result<i32> {
-    STATE.with(|state| {
+    let replaced = STATE.with(|state| {
         let mut state = state.borrow_mut();
-        if state.worker_key != Some(key) || state.shot_active {
+        let replaced = state.worker_key != Some(key) || state.shot_active;
+        if replaced {
             *state = State::default();
         }
         state.worker_key = Some(key);
         state.shot_active = true;
         state.modules.clear();
         state.functions.clear();
+        replaced
     });
+    if replaced {
+        with_pool(|pool| {
+            if let Some(pool) = pool {
+                pool.cancel();
+            }
+        });
+    }
     Ok(0)
 }
 
@@ -444,30 +486,134 @@ pub fn call(context: u64, function: u64, arguments: &[i64]) -> Result<i32> {
             .modules
             .get_mut(&function.module)
             .ok_or("Unknown WASM instance")?;
-        let name = match &function.target {
-            FunctionTarget::Name(name) => Cow::Borrowed(name.as_str()),
-            FunctionTarget::ExportIndex(index) => Cow::Owned(
-                object
-                    .exported_function_name(*index)
-                    .map_err(|e| e.to_string())?,
-            ),
-        };
-        let values = if let Some((inputs, outputs)) = &function.scalar_types {
+        let values = execute(object, function, arguments)?;
+        context.pending = Some(Pending::Ready(values));
+        Ok(0)
+    })
+}
+
+fn execute(
+    object: &mut WasmForeignObject,
+    function: &Function,
+    arguments: &[i64],
+) -> Result<Vec<i64>> {
+    let name = match &function.target {
+        FunctionTarget::Name(name) => Cow::Borrowed(name.as_str()),
+        FunctionTarget::ExportIndex(index) => Cow::Owned(
             object
-                .exec_scalar_bits(&name, inputs, outputs, arguments)
-                .map_err(|e| e.to_string())?
+                .exported_function_name(*index)
+                .map_err(|e| e.to_string())?,
+        ),
+    };
+    let values = if let Some((inputs, outputs)) = &function.scalar_types {
+        object
+            .exec_scalar_bits(&name, inputs, outputs, arguments)
+            .map_err(|e| e.to_string())?
+    } else {
+        object
+            .validate_i64_signature(&name, function.inputs, function.outputs)
+            .map_err(|e| e.to_string())?;
+        let mut values = object.exec(&name, arguments).map_err(|e| e.to_string())?;
+        // The legacy API returns a sentinel zero for void exports.
+        if function.outputs == 0 {
+            values.clear();
+        }
+        values
+    };
+    Ok(values)
+}
+
+/// Launch a call on a shared executor without waiting for its result.
+/// Compilation happens on the caller thread. Instantiation, initialization and
+/// execution errors are delivered by `read`. Queue time is not execution time.
+///
+/// # Errors
+/// Rejects invalid handles, leases, argument counts, worker counts, module
+/// compilation failures and executor startup/submission failures.
+pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize) -> Result<i32> {
+    if !(1..=async_pool::MAX_WORKERS).contains(&workers) {
+        return Err(format!(
+            "WASM async worker count must be between 1 and {}",
+            async_pool::MAX_WORKERS
+        ));
+    }
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let State {
+            modules,
+            functions,
+            contexts,
+            async_workers,
+            ..
+        } = &mut *state;
+        let index = usize::try_from(function.checked_sub(1).ok_or("Invalid WASM function")?)
+            .map_err(|e| e.to_string())?;
+        let function = functions.get(index).ok_or("Unknown WASM function")?.clone();
+        if arguments.len() != function.inputs {
+            return Err("WASM argument count mismatch".into());
+        }
+        let context = contexts.get_mut(&context).ok_or("Unknown WASM context")?;
+        if !context.leased || context.pending.is_some() {
+            return Err("WASM context is not leased or has an unread result".into());
+        }
+        if async_workers.is_some_and(|count| count != workers) {
+            return Err("WASM async worker count changed without reset".into());
+        }
+        let prepared = if context.modules.contains_key(&function.module) {
+            None
         } else {
-            object
-                .validate_i64_signature(&name, function.inputs, function.outputs)
-                .map_err(|e| e.to_string())?;
-            let mut values = object.exec(&name, arguments).map_err(|e| e.to_string())?;
-            // The legacy API returns a sentinel zero for void exports.
-            if function.outputs == 0 {
-                values.clear();
-            }
-            values
+            let configuration = modules.get(&function.module).ok_or("Unknown WASM module")?;
+            let compiled = COMPILED.with(|cache| cache.borrow_mut().get(&configuration.bytes))?;
+            Some((
+                compiled,
+                configuration.timeout_seconds,
+                configuration.auto_init,
+            ))
         };
-        context.pending = Some(values);
+        POOL.with(|pool| {
+            let mut pool = pool.borrow_mut();
+            if pool.as_ref().is_some_and(|pool| pool.size() != workers) {
+                // State replacement already cancelled the old pool's work, and
+                // nothing was submitted since: this State has not set a count.
+                debug_assert!(
+                    async_workers.is_none(),
+                    "WASM async pool size differs from this State's worker count"
+                );
+                drop(pool.take());
+            }
+            if pool.is_none() {
+                *pool = Some(async_pool::Pool::new(workers)?);
+            }
+            Ok::<_, String>(())
+        })?;
+        *async_workers = Some(workers);
+        let arguments = arguments.to_vec();
+        let mut instances = std::mem::take(&mut context.modules);
+        let (sender, receiver) = mpsc::channel();
+        let job = Box::new(move || {
+            let result = (|| {
+                if let Some((compiled, timeout, auto_init)) = prepared {
+                    let mut object = compiled
+                        .instantiate_with_limits(timeout, None)
+                        .map_err(|e| e.to_string())?;
+                    if auto_init && object.has_func("init") {
+                        object
+                            .validate_i64_signature("init", 0, 0)
+                            .map_err(|e| e.to_string())?;
+                        object.exec("init", &[]).map_err(|e| e.to_string())?;
+                    }
+                    instances.insert(function.module, object);
+                }
+                let object = instances
+                    .get_mut(&function.module)
+                    .ok_or("Unknown WASM instance")?;
+                execute(object, &function, &arguments)
+            })();
+            // An abandoned receiver must never block executor shutdown.
+            let _ = sender.send((instances, result));
+        });
+        with_pool(|pool| pool.ok_or("WASM async executor unavailable")?.submit(job))?;
+        context.pending = Some(Pending::Async(receiver));
         Ok(0)
     })
 }
@@ -486,7 +632,15 @@ pub fn read(context: u64, count: usize) -> Result<Vec<i64>> {
         if !context.leased {
             return Err("WASM context is not leased".into());
         }
-        let values = context.pending.take().ok_or("No pending WASM result")?;
+        let values = match context.pending.take().ok_or("No pending WASM result")? {
+            Pending::Ready(values) => values,
+            Pending::Async(receiver) => {
+                let (instances, result) =
+                    receiver.recv().map_err(|_| "WASM async job disconnected")?;
+                context.modules = instances;
+                result?
+            }
+        };
         if values.len() != count {
             return Err("WASM result count mismatch".into());
         }
@@ -767,6 +921,30 @@ macro_rules! export_wasm_runtime {
                 )
             })
         }
+        /// Launch an asynchronous call; execution errors surface at read.
+        ///
+        /// # Safety
+        /// arguments must point to count readable i64 values, or be null for count=0.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn pecos_wasm_v2_call(
+            context: u64,
+            function: u64,
+            arguments: *const i64,
+            count: usize,
+            workers: usize,
+        ) -> i32 {
+            $crate::boundary(-1, || {
+                let arguments = if count == 0 {
+                    &[]
+                } else {
+                    if arguments.is_null() {
+                        return Err("Null WASM arguments".into());
+                    }
+                    unsafe { std::slice::from_raw_parts(arguments, count) }
+                };
+                $crate::call_async(context, function, arguments, workers)
+            })
+        }
         /// # Safety
         /// arguments must point to count readable i64 values, or be null for count=0.
         #[unsafe(no_mangle)]
@@ -815,6 +993,7 @@ macro_rules! export_wasm_runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod async_tests;
 
     #[test]
     fn compilation_cache_reuses_exact_bytes_and_evicts_lru() {
@@ -1370,6 +1549,82 @@ mod tests {
             let trap = lookup(0, "trap", 0, 0).unwrap();
             assert_eq!(boundary(-1, || call(context, trap, &[])), -1);
             assert!(finish_worker_shot().is_err());
+        }
+    }
+
+    #[test]
+    fn asynchronous_results_are_routed_by_context_and_preserve_state() {
+        if !crate::test_support::watchdog(
+            "tests::asynchronous_results_are_routed_by_context_and_preserve_state",
+        ) {
+            return;
+        }
+        reset().unwrap();
+        for expected in [11, 13] {
+            begin_worker_shot([7; 32]).unwrap();
+            register(0, MODULE).unwrap();
+            let first = acquire(0).unwrap();
+            let second = acquire(1).unwrap();
+            let increment = lookup(0, "increment", 0, 1).unwrap();
+            let add = lookup(0, "add", 2, 1).unwrap();
+            call_async(first, increment, &[], 2).unwrap();
+            call_async(second, add, &[4, 5], 2).unwrap();
+            assert!(release(first).is_err());
+            assert!(call_async(first, increment, &[], 2).is_err());
+            assert!(finish_worker_shot().is_err());
+            assert_eq!(read(second, 1).unwrap(), [9]);
+            assert_eq!(read(first, 1).unwrap(), [expected]);
+            // Return ownership to inline calls without recreating the store.
+            call(first, increment, &[]).unwrap();
+            assert_eq!(read(first, 1).unwrap(), [expected + 1]);
+            assert!(call_async(first, increment, &[], 1).is_err());
+            release(first).unwrap();
+            release(second).unwrap();
+            finish_worker_shot().unwrap();
+        }
+        reset().unwrap();
+    }
+
+    #[test]
+    fn single_async_worker_queues_many_contexts() {
+        if !crate::test_support::watchdog("tests::single_async_worker_queues_many_contexts") {
+            return;
+        }
+        let _ = start();
+        let add = lookup(0, "add", 2, 1).unwrap();
+        let mut contexts = Vec::new();
+        for index in 1..9 {
+            let context = acquire(index).unwrap();
+            call_async(context, add, &[i64::try_from(index).unwrap(), 10], 1).unwrap();
+            contexts.push((context, i64::try_from(index).unwrap() + 10));
+        }
+        for (context, expected) in contexts.into_iter().rev() {
+            assert_eq!(read(context, 1).unwrap(), [expected]);
+        }
+        assert!(call_async(0, add, &[], 0).is_err());
+        assert!(call_async(0, add, &[], 65).is_err());
+        reset().unwrap();
+    }
+
+    #[test]
+    fn asynchronous_initialization_and_signature_failures_surface_at_read() {
+        if !crate::test_support::watchdog(
+            "tests::asynchronous_initialization_and_signature_failures_surface_at_read",
+        ) {
+            return;
+        }
+        for module in [
+            br#"(module (func (export "init") unreachable) (func (export "get") (result i64) i64.const 1))"#.as_slice(),
+            br#"(module (func (export "get") (result f64) f64.const 1))"#.as_slice(),
+        ] {
+            reset().unwrap();
+            register(0, module).unwrap();
+            let context = acquire(0).unwrap();
+            let function = lookup(0, "get", 0, 1).unwrap();
+            assert_eq!(call_async(context, function, &[], 1).unwrap(), 0);
+            assert_eq!(boundary(-1, || read(context, 1).map(|_| 0)), -1);
+            let context = start();
+            assert_eq!(invoke(context, 0, "add", &[2, 3], 1), [5]);
         }
     }
 

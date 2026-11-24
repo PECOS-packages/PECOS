@@ -112,6 +112,10 @@ def test_rejected_option_errors_survive_unprintable_values(
             lambda: hugr_lowering.validate_wasm_state_scope(value, {}),
         ),
         (
+            "wasm_async_workers must be an integer between 0 and 64; got ",
+            lambda: hugr_lowering.validate_wasm_async_workers(value, {}),
+        ),
+        (
             "wasm_timeout_seconds must be a positive finite number of seconds; got ",
             lambda: hugr_lowering.validate_wasm_timeout_seconds(value, {}),
         ),

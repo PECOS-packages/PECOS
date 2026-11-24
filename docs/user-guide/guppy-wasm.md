@@ -459,7 +459,7 @@ worker. Run `python examples/guppy_wasm/worker_state.py --backend selene` (or
 Instances remain separate for each module/context. WASM start and optional
 `init` execute only when creating an instance; they do not run again at each
 shot in worker scope. Changing the program, payload, integer-width mode,
-initialization policy or timeout starts fresh state. Failed or unfinished WASM
+initialization policy, timeout or async worker count starts fresh state. Failed or unfinished WASM
 shots discard retained state before reuse.
 
 Worker scope couples shots: results can depend on worker count and scheduling.
@@ -469,6 +469,46 @@ repeated runs of the same runner. Custom native hosts that invoke `qmain`
 directly own the execution thread's lifetime; call `pecos_wasm_v1_reset` on that
 thread to begin a fresh session. The program/configuration key is not a batch ID.
 Rebuild the native utility and QIS FFI for the worker-lifecycle ABI.
+
+## Overlap independent WASM calls
+
+Pass `wasm_async_workers=2` to `build`, `compile_wasm`, `Guppy`, or `Hugr` to
+execute independent contexts on a pool of two threads per execution worker.
+The default `0` executes inline; integer values from `1` through `64` enable
+the pool. PECOS constructors require explicit `wasm_modules` when enabling it.
+Rebuild both the native utility and PECOS QIS FFI for the async call ABI.
+Building this runtime requires Rust 1.98 or newer, including its Windows
+thread-local cleanup fix. Custom native hosts must reset live worker state
+before unloading the runtime library.
+
+Calls enqueue work and their result reads wait for completion. Results remain
+associated with their contexts, including when read in a different order.
+Each context supports one outstanding call; different contexts can overlap.
+State and scalar conversion rules remain the same as for inline execution.
+Errors from executing queued work surface when reading its result.
+
+Ordinary Guppy calls usually read their results immediately, so enabling the
+pool alone does not make those calls overlap. The public example
+`python examples/guppy_wasm/async_calls.py --backend selene` adds explicit
+HUGR ordering to launch two independent calls before reading either result.
+Use `--backend pecos` for the PECOS stack, `--heavy` for a longer computation,
+and `--async-workers 0` for an inline comparison. It checks both outputs
+against an independently computed arithmetic oracle.
+Use `--feedback` instead of `--heavy` to allocate and measure a qubit after
+launching the first call. The measurement changes the second call's argument;
+both results are read afterwards. This exercises quantum feedback while the
+first WASM result remains unread.
+
+The execution timeout starts when work executes, excluding time spent waiting
+in the queue. Reset discards queued work and joins running jobs before returning;
+it does not detach them. Cleanup can therefore wait for running calls to finish
+or reach their execution timeout. The option bounds threads, not queue memory.
+During Windows process termination, the OS may already have killed the pool
+threads. The runtime leaves their state for the terminating process to reclaim,
+instead of attempting to join them from DLL teardown. This exception does not
+apply to ordinary resets or execution-thread exits.
+With multiple simulation workers, each has its own pool: account for their
+combined thread count when choosing both settings.
 
 ## Compare against another Guppy/WASM stack
 

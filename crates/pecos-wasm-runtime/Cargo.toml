@@ -2,6 +2,8 @@
 name = "pecos-wasm-runtime"
 version.workspace = true
 edition.workspace = true
+# Windows TLS cleanup must run outside the loader lock before joining pool threads.
+rust-version = "1.98"
 license.workspace = true
 repository.workspace = true
 keywords.workspace = true

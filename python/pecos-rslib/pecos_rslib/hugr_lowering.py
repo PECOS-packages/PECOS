@@ -369,6 +369,23 @@ def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_wid
         raise ValueError(msg)
 
 
+def validate_wasm_async_workers(value: object, modules: Mapping[str, bytes] | None) -> None:
+    """Require an int from 0 to 64, and explicit modules for a nonzero count.
+
+    Raises:
+        ValueError: If ``value`` is not an int from 0 to 64, or is nonzero while
+            ``modules`` is None.
+    """
+    if type(value) is not int or not 0 <= value <= 64:
+        msg = f"wasm_async_workers must be an integer between 0 and 64; got {_describe_value(value)}"
+        raise ValueError(msg)
+    if modules is None and value != 0:
+        msg = (
+            f"wasm_async_workers={value} requires explicit wasm_modules; pass wasm_modules={{module_name: wasm_bytes}}"
+        )
+        raise ValueError(msg)
+
+
 def validate_wasm_state_scope(value: object, modules: Mapping[str, bytes] | None) -> None:
     """Require 'shot' or 'worker', and explicit modules for worker-scoped state.
 
@@ -433,6 +450,7 @@ def compile_hugr_to_qis(
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
     wasm_state_scope: str = "shot",
+    wasm_async_workers: int = 0,
 ) -> str:
     """Lower a HUGR envelope with Selene and normalize PECOS runtime helpers.
 
@@ -472,6 +490,7 @@ def compile_hugr_to_qis(
 
     validate_wasm_auto_init(wasm_auto_init, wasm_modules)
     validate_wasm_state_scope(wasm_state_scope, wasm_modules)
+    validate_wasm_async_workers(wasm_async_workers, wasm_modules)
     wasm_timeout_seconds = validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
     if wasm_modules is not None:
         try:
@@ -490,6 +509,7 @@ def compile_hugr_to_qis(
                 wasm_timeout_seconds=wasm_timeout_seconds,
                 wasm_auto_init=wasm_auto_init,
                 wasm_state_scope=wasm_state_scope,
+                wasm_async_workers=wasm_async_workers,
             ),
         )
 

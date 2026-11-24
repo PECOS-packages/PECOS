@@ -1,0 +1,45 @@
+name: Prune superseded caches
+
+# Deletes Rust caches on the main branches that a newer save of the same key
+# has superseded (scripts/ci/prune_superseded_caches.py). Each Cargo.lock or
+# manifest change saves new rust-cache entries and leaves the old ones, and at
+# the repository's 10 GB cache limit those dead entries evict the caches pull
+# requests restore. It polls on a schedule instead of reacting to other
+# workflows' completion events, a privileged trigger that the dependency
+# integrity check rejects; caches are saved when each job ends, well after the
+# push that triggered it.
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Delete superseded Rust caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/ci/prune_superseded_caches.py

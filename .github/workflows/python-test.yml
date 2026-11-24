@@ -763,16 +763,10 @@ jobs:
         tool: just@1.59.0
         fallback: none
 
-    - name: Cache Rust
-      uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
-      with:
-        cache-bin: false
-        prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-        # zluppy is built by uv sync through PEP 517, which is a release build,
-        # so it cannot share the debug python-core cache. Own key; the crate is
-        # a root-workspace member and builds into the top-level target/, so the
-        # default (root) workspace is the right one.
+    # No Rust cache. zluppy is built by uv sync through PEP 517, a release
+    # build, so it cannot share the debug python-core cache, and its own cache
+    # (about 1.2 GB) served only this post-merge job while, at the repository's
+    # 10 GB cache limit, it evicted caches that pull requests restore.
 
     - name: Identify the runner image for the LLVM cache key
       # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24

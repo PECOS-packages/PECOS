@@ -24,6 +24,7 @@ def examples():
         "indexed_exports",
         "integer32",
         "mixed_integers",
+        "worker_state",
         "memory_lifecycle",
         "managed_objects",
     ):
@@ -580,6 +581,7 @@ UNPRINTABLE_CASES = [
         ("wasm_auto_init", "wasm_auto_init must be True or False; got "),
         ("wasm_timeout_seconds", "wasm_timeout_seconds must be a positive finite number of seconds; got "),
         ("wasm_int_width", "wasm_int_width must be 32 or 64, or 'auto'; got "),
+        ("wasm_state_scope", "wasm_state_scope must be 'shot' or 'worker'; got "),
     ],
 )
 def test_rejected_option_errors_survive_unprintable_values(value, described, option, prefix):
@@ -761,3 +763,110 @@ def test_automatic_width_preserves_float_lanes(examples, tmp_path):
     assert [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=2)] == [
         {"value": -4.25, "integer": -4},
     ] * 2
+
+
+@pytest.mark.parametrize("workers", [1, 2, 3])
+@pytest.mark.parametrize("shots", [1, 4, 5])
+@pytest.mark.parametrize("scope", ["shot", "worker"])
+def test_worker_state_scope_and_fresh_batches(examples, tmp_path, workers, shots, scope):
+    example = examples["worker_state"]
+    runner = build(
+        example.counter,
+        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        build_dir=tmp_path,
+        wasm_state_scope=scope,
+    )
+    expected = (
+        [1] * shots
+        if scope == "shot"
+        else sorted(
+            value for worker in range(workers) for value in range(1, shots // workers + (worker < shots % workers) + 1)
+        )
+    )
+    for _ in range(2):
+        observed = [
+            dict(shot)["count"]
+            for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=shots, n_processes=workers)
+        ]
+        assert sorted(observed) == expected
+
+
+@pytest.mark.parametrize("scope", [None, 1, True, "batch", "WORKER"])
+def test_invalid_wasm_state_scope(scope):
+    message = f"wasm_state_scope must be 'shot' or 'worker'; got {reprlib.repr(scope)}"
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+        compile_wasm(b"", {}, wasm_state_scope=scope)
+
+
+@pytest.mark.parametrize("auto_init", [True, False])
+def test_worker_state_initialization_runs_once(examples, tmp_path, auto_init):
+    example = examples["worker_state"]
+    payload = examples["memory_lifecycle"].WASM_PATH.read_bytes()
+    runner = build(
+        example.counter,
+        {str(example.WASM_PATH): payload},
+        build_dir=tmp_path,
+        wasm_state_scope="worker",
+        wasm_auto_init=auto_init,
+    )
+    initial = 43 if auto_init else 12
+    for _ in range(2):
+        assert [dict(shot)["count"] for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4)] == list(
+            range(initial, initial + 4),
+        )
+
+
+def test_worker_state_managed_objects_and_contexts(examples, tmp_path):
+    example = examples["managed_objects"]
+    runner = build(
+        example.managed_state,
+        {str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()},
+        build_dir=tmp_path,
+        wasm_state_scope="worker",
+    )
+    for _ in range(2):
+        assert [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=3)] == [
+            {"initial": 7 + n, "next": 8 + n, "sum": 5, "retained": 8 + n, "independent": 7} for n in range(3)
+        ]
+
+
+def test_worker_state_requires_new_native_runtime(examples, tmp_path, monkeypatch):
+    import pecos_selene_wasm
+
+    monkeypatch.setattr(pecos_selene_wasm.ctypes, "CDLL", lambda _path: object())
+    example = examples["worker_state"]
+    with pytest.raises(RuntimeError, match="Worker-scoped WASM state requires"):
+        build(
+            example.counter,
+            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            build_dir=tmp_path,
+            wasm_state_scope="worker",
+        )
+
+
+def test_worker_state_key_covers_payload_and_options(examples):
+    import re
+
+    example = examples["worker_state"]
+    identifier = str(example.WASM_PATH)
+    payload = example.WASM_PATH.read_bytes()
+
+    def key(data=payload, **options):
+        llvm = compile_wasm(example.counter, {identifier: data}, wasm_state_scope="worker", **options)
+        assert "call i32 @pecos_wasm_v1_reset()" not in llvm
+        assert "call i32 @pecos_wasm_v2_finish_worker_shot()" in llvm
+        assert "call void @pecos_wasm_check(i1 %wasm_finish_0_ok)" in llvm
+        return re.search(r'@pecos_wasm_worker_key_\w+ = private constant \[32 x i8\] c"([^"]+)"', llvm)[1]
+
+    keys = [
+        key(),
+        key(payload.replace(b"i64.const 0", b"i64.const 7")),
+        key(wasm_auto_init=False),
+        key(wasm_timeout_seconds=2.0),
+        key(wasm_int_width="auto"),
+    ]
+    assert len(set(keys)) == len(keys)
+    assert key() == keys[0]
+    llvm = compile_wasm(example.counter, {identifier: payload})
+    assert "pecos_wasm_v2_begin_worker_shot" not in llvm
+    assert "pecos_wasm_v2_finish_worker_shot" not in llvm

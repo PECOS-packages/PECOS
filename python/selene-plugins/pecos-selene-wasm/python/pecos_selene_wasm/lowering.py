@@ -487,6 +487,7 @@ def compile_wasm(
     wasm_int_width: int | str = 64,
     wasm_timeout_seconds: float = 1.0,
     wasm_auto_init: bool = True,
+    wasm_state_scope: str = "shot",
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
@@ -503,6 +504,8 @@ def compile_wasm(
     defaulting to one second, with approximately 10 ms clock resolution.
     The result requires the Selene WASM utility or WASM-enabled QIS FFI;
     nondefault timeouts require native ``pecos_wasm_v2_register`` support.
+    ``wasm_state_scope="worker"`` retains mutable instances across clean shots
+    on one execution thread. Custom hosts own that thread/session lifetime.
     ``wasm_auto_init=False`` skips optional exported init (not WASM start),
     requiring ``pecos_wasm_v3_register``. The default preserves automatic init.
     """
@@ -529,6 +532,9 @@ def compile_wasm(
         or (type(wasm_int_width) is str and wasm_int_width == "auto")
     ):
         msg = f"wasm_int_width must be 32 or 64, or 'auto'; got {_describe_value(wasm_int_width)}"
+        raise ValueError(msg)
+    if type(wasm_state_scope) is not str or wasm_state_scope not in ("shot", "worker"):
+        msg = f"wasm_state_scope must be 'shot' or 'worker'; got {_describe_value(wasm_state_scope)}"
         raise ValueError(msg)
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
@@ -626,7 +632,27 @@ def compile_wasm(
         llvm += "\ndeclare i32 @pecos_wasm_v3_register(i64, ptr, i64, double, i32)\n"
     elif wasm_timeout_seconds != 1.0:
         llvm += "\ndeclare i32 @pecos_wasm_v2_register(i64, ptr, i64, double)\n"
-    setup = "  %wasm_reset = call i32 @pecos_wasm_v1_reset()\n" + _check("wasm_reset")
+    if wasm_state_scope == "worker":
+        # Length-prefix every field. Include module order because numeric module
+        # identifiers address retained instances; a program hash is not a batch ID.
+        key = hashlib.sha256()
+        fields = [
+            program.to_bytes(),
+            repr((platform, opt_level, emit_debug, wasm_int_width, wasm_timeout_seconds, wasm_auto_init)).encode(),
+        ]
+        for identifier in module_ids:
+            fields.extend((identifier.encode(), modules[identifier]))
+        for field in fields:
+            key.update(struct.pack(">Q", len(field)))
+            key.update(field)
+        key_name = f"pecos_wasm_worker_key_{digest}"
+        llvm += _constant(key_name, key.digest())
+        llvm += "\ndeclare i32 @pecos_wasm_v2_begin_worker_shot(ptr)\n"
+        llvm += "declare i32 @pecos_wasm_v2_finish_worker_shot()\n"
+        setup = f"  %wasm_reset = call i32 @pecos_wasm_v2_begin_worker_shot(ptr @{key_name})\n"
+        setup += _check("wasm_reset")
+    else:
+        setup = "  %wasm_reset = call i32 @pecos_wasm_v1_reset()\n" + _check("wasm_reset")
     for identifier, module_id in module_ids.items():
         data = modules[identifier]
         global_name = f"pecos_wasm_module_{digest}_{module_id}"
@@ -656,7 +682,18 @@ def compile_wasm(
         msg = "Expected one public QIS qmain entry point"
         raise ValueError(msg)
     qmain = re.compile(r"(define [^\n]* @qmain\([^\n]*\{\n)(.*?)(^})", re.MULTILINE | re.DOTALL)
-    return qmain.sub(
-        lambda m: m[1] + re.sub(r"(?m)^(\s*ret )", "  call i32 @pecos_wasm_v1_reset()\n\\1", m[2]) + m[3],
-        llvm,
-    )
+
+    def finish_body(match: re.Match) -> str:
+        return_number = 0
+
+        def finish_return(ret: re.Match) -> str:
+            nonlocal return_number
+            if wasm_state_scope == "shot":
+                return "  call i32 @pecos_wasm_v1_reset()\n" + ret[0]
+            status = f"wasm_finish_{return_number}"
+            return_number += 1
+            return f"  %{status} = call i32 @pecos_wasm_v2_finish_worker_shot()\n" + _check(status) + ret[0]
+
+        return match[1] + re.sub(r"(?m)^(\s*ret )", finish_return, match[2]) + match[3]
+
+    return qmain.sub(finish_body, llvm)

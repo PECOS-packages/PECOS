@@ -84,3 +84,10 @@ signatures. Managed state belongs to each store, independently of cached code.
 See `examples/guppy_wasm/managed_objects.py` for a scalar interface and explicit
 GC payload that also work with older Guppy frontends. Linear-memory limits do
 not cover the managed heap.
+
+
+Use `wasm_state_scope="worker"` to retain WASM state across successful shots on
+one execution worker. The default `"shot"` creates fresh instances. Each worker
+has independent state, so results can depend on worker count and scheduling.
+New `run_shots` batches start fresh. Custom native callers control their worker
+lifetime and can explicitly reset it. See the user guide for lifecycle details.

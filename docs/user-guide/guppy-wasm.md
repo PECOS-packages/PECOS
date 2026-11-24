@@ -447,6 +447,29 @@ references, and aggregate results are not enabled by this option. Rebuild both
 the native utility and PECOS QIS FFI to use the version-3 lookup entry points.
 The default remains strict 64-bit mode.
 
+## Retain WASM state across shots
+
+By default, each shot creates fresh WASM instances. Opt into
+`wasm_state_scope="worker"` through `build`, `compile_wasm`, `Guppy`, or `Hugr`
+to retain globals, linear memories, tables and managed objects on each execution
+worker. Run `python examples/guppy_wasm/worker_state.py --backend selene` (or
+`--backend pecos`): one worker returns counter values `1, 2, 3, 4`. With
+`--scope shot`, each result is `1`.
+
+Instances remain separate for each module/context. WASM start and optional
+`init` execute only when creating an instance; they do not run again at each
+shot in worker scope. Changing the program, payload, integer-width mode,
+initialization policy or timeout starts fresh state. Failed or unfinished WASM
+shots discard retained state before reuse.
+
+Worker scope couples shots: results can depend on worker count and scheduling.
+Workers do not share one sequential counter. Both `run_shots` and PECOS
+`sim(...).build().run(...)` create fresh workers for a new batch, including
+repeated runs of the same runner. Custom native hosts that invoke `qmain`
+directly own the execution thread's lifetime; call `pecos_wasm_v1_reset` on that
+thread to begin a fresh session. The program/configuration key is not a batch ID.
+Rebuild the native utility and QIS FFI for the worker-lifecycle ABI.
+
 ## Compare against another Guppy/WASM stack
 
 The [public comparison bundle](https://github.com/PECOS-packages/PECOS/tree/dev/examples/guppy_wasm/parity)

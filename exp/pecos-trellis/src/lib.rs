@@ -39,6 +39,11 @@ mod incremental_score_tests;
 mod prune_wide_delta_tests;
 
 pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
+#[cfg(feature = "experimental-conditional-retirement")]
+pub use streaming::{
+    ConditionalLinearClassPreview, ConditionalLinearRetirement, ConditionalLogicalClassPreview,
+    ConditionalLogicalRetirement, ConditionalLogicalRetirementDecision,
+};
 pub use streaming::{StreamingMode, StreamingProgress, TrellisStreamingDecoder};
 
 use factor::{FactorModel, NormalizedFactor, Outcome};

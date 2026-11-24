@@ -15,6 +15,9 @@ publish = false
 [features]
 # Expensive scalar oracles for integration validation; disabled in production.
 runtime-checks = []
+# Irreversible logical-class conditioning for isolated streaming experiments.
+# No behavior changes unless the caller explicitly invokes the gated API.
+experimental-conditional-retirement = []
 
 [dependencies]
 rayon.workspace = true

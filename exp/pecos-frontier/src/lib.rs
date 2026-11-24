@@ -26,6 +26,11 @@ pub mod windowed;
 
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
+#[cfg(feature = "experimental-conditional-retirement")]
+pub use pecos_trellis::{
+    ConditionalLinearClassPreview, ConditionalLinearRetirement, ConditionalLogicalClassPreview,
+    ConditionalLogicalRetirement, ConditionalLogicalRetirementDecision,
+};
 pub use pecos_trellis::{
     DecoderError, MetricMode, ObsMask, SparseDem, StreamingMode, TrellisBoundedProgress,
     TrellisOrdering, TrellisResumableDecoder, TrellisStreamingDecoder,

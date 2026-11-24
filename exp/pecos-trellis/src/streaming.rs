@@ -18,6 +18,11 @@ use crate::{
     set_bit, set_bits,
 };
 use std::sync::Arc;
+#[cfg(feature = "experimental-conditional-retirement")]
+use {
+    crate::{Candidate, StateKey, TrellisLogicalMass, logaddexp, sort_candidates},
+    std::collections::BTreeMap,
+};
 
 /// Scheduling policy. Dependency-driven is the backward-compatible default.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -44,6 +49,120 @@ pub struct StreamingProgress {
     pub committed: ObsMask,
     /// Bit j is set exactly when logical j has been committed.
     pub committed_mask: ObsMask,
+}
+
+/// Opt-in irreversible conditioning of an already completed logical class.
+///
+/// Masses describe the current retained frontier, without normalization. This
+/// operation changes inference: later results and commitments are conditional
+/// on its selected class, not the original unconditioned batch posterior.
+#[cfg(feature = "experimental-conditional-retirement")]
+#[derive(Clone, Debug)]
+pub struct ConditionalLogicalRetirement {
+    /// Selected values at the requested original logical indices; other bits are zero.
+    pub selected_class: ObsMask,
+    /// Masked classes in descending mass, with unsigned numeric mask tie order.
+    pub class_log_masses: Vec<TrellisLogicalMass>,
+    /// Stable current-key-order sum of all retained masses before conditioning.
+    pub log_evidence_before: f64,
+    /// Stable sum of the selected class; surviving individual masses are unchanged.
+    pub log_evidence_after: f64,
+    /// Selected class mass minus runner-up class mass, or `None` for one class.
+    pub runner_up_gap: Option<f64>,
+    /// Retained states before conditioning.
+    pub states_before: usize,
+    /// Retained states after conditioning.
+    pub states_after: usize,
+    /// Removed states; separate from ordinary K/Delta pruning telemetry.
+    pub removed_states: usize,
+    /// Existing commitment snapshot, evaluated once after the stable filter.
+    pub progress: StreamingProgress,
+}
+
+/// Read-only analysis of the completed masked class in the retained frontier.
+///
+/// These are base masses conditional on prior retirements and any K/Delta
+/// truncation. They are not a calibrated probability for the original model.
+#[cfg(feature = "experimental-conditional-retirement")]
+#[derive(Clone, Debug)]
+pub struct ConditionalLogicalClassPreview {
+    /// Winner at the requested original logical indices; other bits are zero.
+    pub selected_class: ObsMask,
+    /// Descending base masses, with unsigned numeric mask ties.
+    pub class_log_masses: Vec<TrellisLogicalMass>,
+    /// Existing retained-key-order evidence sum before any conditioning.
+    pub log_evidence_before: f64,
+    /// Base log mass of the selected masked class.
+    pub selected_log_mass: f64,
+    /// Winner minus runner-up mass, or `None` for a sole class.
+    pub runner_up_gap: Option<f64>,
+    /// Number of retained states before the proposed conditioning.
+    pub states_before: usize,
+    /// Retained states belonging to the selected masked class.
+    pub selected_state_count: usize,
+}
+
+/// Atomic confidence decision. A deferred operation does not consume progress
+/// or mutate the beam, pruning counters, commitments, or any decoder state.
+#[cfg(feature = "experimental-conditional-retirement")]
+#[derive(Clone, Debug)]
+pub enum ConditionalLogicalRetirementDecision {
+    Deferred(ConditionalLogicalClassPreview),
+    Retired(ConditionalLogicalRetirement),
+}
+
+/// Read-only retained-mass analysis of an XOR-linear logical projection.
+///
+/// Output bit `j` is the parity of the intersection between projection row `j`
+/// and the original full logical key. Returned masks use these compact row
+/// coordinates, not the model's original logical indices. Dependent and zero
+/// rows are valid; the caller need not supply an independent basis.
+#[cfg(feature = "experimental-conditional-retirement")]
+#[derive(Clone, Debug)]
+pub struct ConditionalLinearClassPreview {
+    /// Winning projected class, in compact row coordinates.
+    pub selected_class: ObsMask,
+    /// Projected classes in descending base mass, with unsigned numeric ties.
+    pub class_log_masses: Vec<TrellisLogicalMass>,
+    /// Stable current-key-order sum before any conditioning.
+    pub log_evidence_before: f64,
+    /// Base log mass of the winning projected class.
+    pub selected_log_mass: f64,
+    /// Winner minus runner-up mass, or `None` for a sole class.
+    pub runner_up_gap: Option<f64>,
+    /// Retained states before the proposed conditioning.
+    pub states_before: usize,
+    /// Retained states belonging to the winning projected class.
+    pub selected_state_count: usize,
+}
+
+/// Irreversible conditioning on a completed XOR-linear logical class.
+///
+/// Full original keys and surviving individual mass bits remain unchanged.
+/// This is conditional inference over the retained frontier, not a zero-regret
+/// claim, full untruncated posterior, or physical Pauli-frame interpretation.
+#[cfg(feature = "experimental-conditional-retirement")]
+#[derive(Clone, Debug)]
+pub struct ConditionalLinearRetirement {
+    /// Winning class in compact row coordinates, never original bit indices.
+    pub selected_class: ObsMask,
+    /// Projected class masses, preserving the preview's exact fold/tie order.
+    pub class_log_masses: Vec<TrellisLogicalMass>,
+    /// Stable sum of all retained masses before conditioning.
+    pub log_evidence_before: f64,
+    /// Winning class's stable sum; survivors are not renormalized.
+    pub log_evidence_after: f64,
+    /// Winner minus runner-up mass, or `None` for a sole class.
+    pub runner_up_gap: Option<f64>,
+    /// Retained states before conditioning.
+    pub states_before: usize,
+    /// Retained states after conditioning.
+    pub states_after: usize,
+    /// Removed states, separate from ordinary K/Delta pruning telemetry.
+    pub removed_states: usize,
+    /// Ordinary commitments of original logical bits after filtering. Projected
+    /// parity values are never reported as individual-bit commitments.
+    pub progress: StreamingProgress,
 }
 
 #[derive(Debug)]
@@ -80,6 +199,10 @@ impl ScoringPrefixPlan {
 /// Streaming v1 requires the binary float kernel and `bp_score_iterations == 0`:
 /// BP-guided scoring needs the whole syndrome before the column walk. Failures
 /// persist until [`Self::reset`]. Flushing does not reset the shot.
+/// With the optional `experimental-conditional-retirement` feature, explicitly
+/// conditioning a completed logical class changes these results and subsequent
+/// commitments to the selected conditional frontier; batch parity then does not
+/// apply. Merely enabling the feature changes no decoding behavior.
 #[derive(Debug)]
 pub struct TrellisStreamingDecoder {
     model: Arc<TrellisModel>,
@@ -668,6 +791,410 @@ impl TrellisStreamingDecoder {
                 )
             }
         }
+    }
+
+    /// Irreversibly retain the maximum-mass class of completed logical bits.
+    ///
+    /// The caller chooses only logical indices, never a desired class. Requested
+    /// indices must have no unprocessed stochastic toggle. Fixed model offsets
+    /// are already present in the frontier. This method does not enforce a time
+    /// horizon or mechanism ownership; an application must validate those rules.
+    ///
+    /// Classes aggregate **base log masses**, in existing retained-key order,
+    /// using the ordinary exact log-sum-exp routine. Selection uses the existing
+    /// descending `f64::total_cmp` ordering and unsigned numeric logical-mask tie
+    /// rule. Stable filtering preserves every surviving full key and mass bit.
+    /// There is no clearing, relabeling, merging, normalization, column work or
+    /// change to ordinary pruning counters. Repeating a completed conditioning
+    /// succeeds with the same sole class. Commitments are checked only after
+    /// filtering, and are relative to this now-conditional frontier.
+    ///
+    /// This is experimental, regretful conditioning, not a zero-regret promise,
+    /// an unconditioned global posterior, or physical Pauli-frame inference.
+    ///
+    /// # Errors
+    /// Returns a stored decoding failure first; otherwise `InvalidConfiguration`
+    /// for a pending bounded phase or empty/duplicate/out-of-range/unfinished
+    /// indices. Invalid requests leave the stream and pending progress unchanged.
+    /// Returns `InternalError` for an invalid empty/non-finite retained frontier.
+    #[cfg(feature = "experimental-conditional-retirement")]
+    pub fn retire_completed_logical_class(
+        &mut self,
+        logicals: &[usize],
+    ) -> Result<ConditionalLogicalRetirement, DecoderError> {
+        let mask = self.completed_retirement_mask(logicals)?;
+        let preview = self.analyze_completed_class(&mask)?;
+        Ok(self.apply_completed_class(&mask, preview))
+    }
+
+    /// Analyze a completed logical class without changing any decoder state.
+    /// Validation, aggregation order, and tie rules match unconditional retirement.
+    /// Pending commitments are not consumed by this read-only call.
+    ///
+    /// # Errors
+    /// Returns the same protocol/frontier errors as
+    /// [`Self::retire_completed_logical_class`], without mutation.
+    #[cfg(feature = "experimental-conditional-retirement")]
+    pub fn preview_completed_logical_class(
+        &self,
+        logicals: &[usize],
+    ) -> Result<ConditionalLogicalClassPreview, DecoderError> {
+        let mask = self.completed_retirement_mask(logicals)?;
+        self.analyze_completed_class(&mask)
+    }
+
+    /// Atomically analyze and, only above the requested retained-mass threshold,
+    /// condition a completed logical class. No caller-supplied winner is accepted.
+    ///
+    /// Zero reproduces unconditional retirement. One accepts only a sole class,
+    /// even if a tiny runner-up would round the winning probability to one.
+    /// Intermediate thresholds compare log masses using deterministic `libm::log`.
+    /// Deferred returns before any mutable operation or progress consumption.
+    ///
+    /// # Errors
+    /// Returns stored failures first, then the usual retirement validation errors
+    /// or `InvalidConfiguration` for a non-finite/out-of-range threshold.
+    #[cfg(feature = "experimental-conditional-retirement")]
+    pub fn try_retire_completed_logical_class(
+        &mut self,
+        logicals: &[usize],
+        minimum_retained_probability: f64,
+    ) -> Result<ConditionalLogicalRetirementDecision, DecoderError> {
+        let mask = self.completed_retirement_mask(logicals)?;
+        if !minimum_retained_probability.is_finite()
+            || !(0.0..=1.0).contains(&minimum_retained_probability)
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "retained class probability threshold must be finite and within [0, 1]".into(),
+            ));
+        }
+        let preview = self.analyze_completed_class(&mask)?;
+        let accepts = minimum_retained_probability == 0.0
+            || (minimum_retained_probability.to_bits() == 1.0_f64.to_bits()
+                && preview.class_log_masses.len() == 1)
+            || (minimum_retained_probability > 0.0
+                && minimum_retained_probability < 1.0
+                && preview.selected_log_mass - preview.log_evidence_before
+                    >= libm::log(minimum_retained_probability));
+        if !accepts {
+            return Ok(ConditionalLogicalRetirementDecision::Deferred(preview));
+        }
+        Ok(ConditionalLogicalRetirementDecision::Retired(
+            self.apply_completed_class(&mask, preview),
+        ))
+    }
+
+    /// Preview the class defined by XOR-linear rows over original logical bits.
+    ///
+    /// Row `j` contributes output bit `j`; each parity may reference any number
+    /// of original logical words. Classes use retained base masses and the same
+    /// exact log-sum-exp fold and unsigned numeric tie rule as ordinary logical
+    /// retirement. This method does not consume progress or mutate any state.
+    ///
+    /// # Errors
+    /// Returns a stored decoding failure first, then `InvalidConfiguration` for
+    /// an unfinished bounded phase, an empty row list, or any referenced source
+    /// bit that is out of range or still has an unprocessed normalized toggle.
+    /// Every referenced bit must be complete, even if unfinished contributions
+    /// would cancel across a row. Zero/dependent rows are valid. Returns
+    /// `InternalError` for an empty or non-finite retained frontier.
+    #[cfg(feature = "experimental-conditional-retirement")]
+    pub fn preview_completed_linear_class(
+        &self,
+        rows: &[ObsMask],
+    ) -> Result<ConditionalLinearClassPreview, DecoderError> {
+        self.validate_completed_linear_rows(rows)?;
+        self.analyze_completed_linear_class(rows)
+    }
+
+    /// Atomically choose and condition a completed XOR-linear logical class.
+    ///
+    /// Validation and analysis complete before the first mutation. Selection is
+    /// over projected class sums, not the most likely full logical tuple. The
+    /// stable filter preserves each survivor's entire original key and mass
+    /// bits, including correlations with all unselected logical/active-detector
+    /// components. It does not clear tags, merge states, renormalize, replay
+    /// columns, or change K/Delta pruning counters. Existing commitment logic
+    /// runs once afterward; projection bits are not synthetic commitments.
+    ///
+    /// # Errors
+    /// Returns the same protocol/frontier errors as the read-only preview.
+    /// All invalid requests leave the stream and pending progress unchanged.
+    #[cfg(feature = "experimental-conditional-retirement")]
+    pub fn retire_completed_linear_class(
+        &mut self,
+        rows: &[ObsMask],
+    ) -> Result<ConditionalLinearRetirement, DecoderError> {
+        self.validate_completed_linear_rows(rows)?;
+        let preview = self.analyze_completed_linear_class(rows)?;
+        let frontier = &mut self.progress.frontier;
+        frontier.retained.clear();
+        for index in 0..preview.states_before {
+            let key = frontier.parent.key(index, frontier.stride);
+            let keep = Self::linear_class_words(&key[frontier.detector_words..], rows).as_slice()
+                == preview.selected_class.words();
+            frontier.retained.push(keep);
+        }
+        frontier.retain_in_place();
+        let states_after = frontier.parent.masses.len();
+        debug_assert_eq!(states_after, preview.selected_state_count);
+        let progress = self.take_progress();
+        Ok(ConditionalLinearRetirement {
+            selected_class: preview.selected_class,
+            class_log_masses: preview.class_log_masses,
+            log_evidence_before: preview.log_evidence_before,
+            log_evidence_after: preview.selected_log_mass,
+            runner_up_gap: preview.runner_up_gap,
+            states_before: preview.states_before,
+            states_after,
+            removed_states: preview.states_before - states_after,
+            progress,
+        })
+    }
+
+    #[cfg(feature = "experimental-conditional-retirement")]
+    fn validate_completed_linear_rows(&self, rows: &[ObsMask]) -> Result<(), DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+        self.ensure_no_bounded_advance()?;
+        if rows.is_empty() {
+            return Err(DecoderError::InvalidConfiguration(
+                "project at least one logical row".into(),
+            ));
+        }
+        for row in rows {
+            for logical in row.iter_set_bits() {
+                let Some(last) = self.last_toggle_column.get(logical) else {
+                    return Err(DecoderError::InvalidConfiguration(
+                        "projection source logical index out of range".into(),
+                    ));
+                };
+                if last.is_some_and(|column| column >= self.next_column) {
+                    return Err(DecoderError::InvalidConfiguration(
+                        "projection source logical still has an unprocessed toggle".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "experimental-conditional-retirement")]
+    fn linear_class_words(logical: &[u64], rows: &[ObsMask]) -> Vec<u64> {
+        let mut projected = vec![0; rows.len().div_ceil(WORD_BITS)];
+        for (index, row) in rows.iter().enumerate() {
+            let parity = logical
+                .iter()
+                .zip(row.words())
+                .fold(0, |parity, (&word, &mask)| {
+                    parity ^ (word & mask).count_ones()
+                });
+            if parity & 1 != 0 {
+                set_bit(&mut projected, index);
+            }
+        }
+        projected
+    }
+
+    #[cfg(feature = "experimental-conditional-retirement")]
+    fn analyze_completed_linear_class(
+        &self,
+        rows: &[ObsMask],
+    ) -> Result<ConditionalLinearClassPreview, DecoderError> {
+        let frontier = &self.progress.frontier;
+        let states_before = frontier.parent.masses.len();
+        if states_before == 0 || frontier.parent.masses.iter().any(|mass| !mass.is_finite()) {
+            return Err(DecoderError::InternalError(
+                "conditional linear retirement requires a nonempty finite frontier".into(),
+            ));
+        }
+        let mut classes = BTreeMap::<StateKey, f64>::new();
+        let mut log_evidence_before = f64::NEG_INFINITY;
+        for (index, &mass) in frontier.parent.masses.iter().enumerate() {
+            let key = frontier.parent.key(index, frontier.stride);
+            let logical = Self::linear_class_words(&key[frontier.detector_words..], rows);
+            let class = classes
+                .entry(StateKey {
+                    active_syndrome: Vec::new(),
+                    logical,
+                })
+                .or_insert(f64::NEG_INFINITY);
+            *class = logaddexp(*class, mass);
+            log_evidence_before = logaddexp(log_evidence_before, mass);
+        }
+        let mut classes: Vec<_> = classes
+            .into_iter()
+            .map(|(key, log_mass)| Candidate { key, log_mass })
+            .collect();
+        sort_candidates(&mut classes);
+        let selected = &classes[0];
+        let selected_class = ObsMask::from_words(&selected.key.logical);
+        let selected_log_mass = selected.log_mass;
+        let runner_up_gap = classes
+            .get(1)
+            .map(|runner| selected.log_mass - runner.log_mass);
+        let selected_state_count = (0..states_before)
+            .filter(|&index| {
+                let key = frontier.parent.key(index, frontier.stride);
+                Self::linear_class_words(&key[frontier.detector_words..], rows)
+                    == selected.key.logical
+            })
+            .count();
+        let class_log_masses = classes
+            .into_iter()
+            .map(|candidate| TrellisLogicalMass {
+                logical: ObsMask::from_words(&candidate.key.logical),
+                log_mass: candidate.log_mass,
+            })
+            .collect();
+        Ok(ConditionalLinearClassPreview {
+            selected_class,
+            class_log_masses,
+            log_evidence_before,
+            selected_log_mass,
+            runner_up_gap,
+            states_before,
+            selected_state_count,
+        })
+    }
+
+    #[cfg(feature = "experimental-conditional-retirement")]
+    fn analyze_completed_class(
+        &self,
+        mask: &[u64],
+    ) -> Result<ConditionalLogicalClassPreview, DecoderError> {
+        let frontier = &self.progress.frontier;
+        let states_before = frontier.parent.masses.len();
+        if states_before == 0 || frontier.parent.masses.iter().any(|mass| !mass.is_finite()) {
+            return Err(DecoderError::InternalError(
+                "conditional retirement requires a nonempty finite frontier".into(),
+            ));
+        }
+        let mut classes = BTreeMap::<StateKey, f64>::new();
+        let mut log_evidence_before = f64::NEG_INFINITY;
+        for (index, &mass) in frontier.parent.masses.iter().enumerate() {
+            let key = frontier.parent.key(index, frontier.stride);
+            let logical = key[frontier.detector_words..]
+                .iter()
+                .zip(mask)
+                .map(|(&word, &selected)| word & selected)
+                .collect();
+            let class = classes
+                .entry(StateKey {
+                    active_syndrome: Vec::new(),
+                    logical,
+                })
+                .or_insert(f64::NEG_INFINITY);
+            *class = logaddexp(*class, mass);
+            log_evidence_before = logaddexp(log_evidence_before, mass);
+        }
+        let mut classes: Vec<_> = classes
+            .into_iter()
+            .map(|(key, log_mass)| Candidate { key, log_mass })
+            .collect();
+        sort_candidates(&mut classes);
+        let selected = &classes[0];
+        let selected_class = ObsMask::from_words(&selected.key.logical);
+        let selected_log_mass = selected.log_mass;
+        let runner_up_gap = classes
+            .get(1)
+            .map(|runner| selected.log_mass - runner.log_mass);
+        let selected_state_count = (0..states_before)
+            .filter(|&index| {
+                let key = frontier.parent.key(index, frontier.stride);
+                key[frontier.detector_words..]
+                    .iter()
+                    .zip(mask)
+                    .zip(&selected.key.logical)
+                    .all(|((&word, &selected_bits), &value)| word & selected_bits == value)
+            })
+            .count();
+        let class_log_masses = classes
+            .into_iter()
+            .map(|candidate| TrellisLogicalMass {
+                logical: ObsMask::from_words(&candidate.key.logical),
+                log_mass: candidate.log_mass,
+            })
+            .collect();
+        Ok(ConditionalLogicalClassPreview {
+            selected_class,
+            class_log_masses,
+            log_evidence_before,
+            selected_log_mass,
+            runner_up_gap,
+            states_before,
+            selected_state_count,
+        })
+    }
+
+    #[cfg(feature = "experimental-conditional-retirement")]
+    fn apply_completed_class(
+        &mut self,
+        mask: &[u64],
+        preview: ConditionalLogicalClassPreview,
+    ) -> ConditionalLogicalRetirement {
+        let frontier = &mut self.progress.frontier;
+        frontier.retained.clear();
+        for index in 0..preview.states_before {
+            let key = frontier.parent.key(index, frontier.stride);
+            let keep = key[frontier.detector_words..]
+                .iter()
+                .zip(mask)
+                .zip(preview.selected_class.words())
+                .all(|((&word, &selected_bits), &value)| word & selected_bits == value);
+            frontier.retained.push(keep);
+        }
+        frontier.retain_in_place();
+        let states_after = frontier.parent.masses.len();
+        debug_assert_eq!(states_after, preview.selected_state_count);
+        let progress = self.take_progress();
+        ConditionalLogicalRetirement {
+            selected_class: preview.selected_class,
+            class_log_masses: preview.class_log_masses,
+            log_evidence_before: preview.log_evidence_before,
+            log_evidence_after: preview.selected_log_mass,
+            runner_up_gap: preview.runner_up_gap,
+            states_before: preview.states_before,
+            states_after,
+            removed_states: preview.states_before - states_after,
+            progress,
+        }
+    }
+
+    #[cfg(feature = "experimental-conditional-retirement")]
+    fn completed_retirement_mask(&self, logicals: &[usize]) -> Result<Vec<u64>, DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+        self.ensure_no_bounded_advance()?;
+        if logicals.is_empty() {
+            return Err(DecoderError::InvalidConfiguration(
+                "retire at least one logical bit".into(),
+            ));
+        }
+        let mut mask = vec![0; self.model.logical_words];
+        for &logical in logicals {
+            let Some(last) = self.last_toggle_column.get(logical) else {
+                return Err(DecoderError::InvalidConfiguration(
+                    "retirement logical index out of range".into(),
+                ));
+            };
+            let word = logical / WORD_BITS;
+            let bit = 1_u64 << (logical % WORD_BITS);
+            if mask[word] & bit != 0 {
+                return Err(DecoderError::InvalidConfiguration(
+                    "duplicate retirement logical index".into(),
+                ));
+            }
+            if last.is_some_and(|column| column >= self.next_column) {
+                return Err(DecoderError::InvalidConfiguration(
+                    "retirement logical still has an unprocessed toggle".into(),
+                ));
+            }
+            mask[word] |= bit;
+        }
+        Ok(mask)
     }
 
     /// Current commitment values and mask, including commitments discovered by flush.

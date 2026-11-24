@@ -395,6 +395,7 @@ pub struct WeightedSubregionFaultFlipper {
     pub fault_catalog: FaultCatalog,
     pub region_probability: f64,
     site_flipper: WeightedSingleFaultFlipper,
+    max_fault_probability: f64,
 }
 
 impl WeightedSubregionFaultFlipper {
@@ -402,11 +403,28 @@ impl WeightedSubregionFaultFlipper {
     pub fn new(fault_catalog: FaultCatalog, region_probability: f64) -> Self {
         let site_flipper = WeightedSingleFaultFlipper::new(fault_catalog.clone());
         Self {
+            max_fault_probability: Self::max_fault_probability(&fault_catalog),
             rng: None,
             fault_catalog,
             region_probability,
             site_flipper,
         }
+    }
+
+    fn max_fault_probability(catalog: &FaultCatalog) -> f64 {
+        let FaultCatalog::Depolarizing(catalog) = catalog;
+        catalog.sites.iter().map(|site| {
+            let mut total = 0.0;
+            let mut fault_mass = 0.0;
+            for outcome in site.outcomes.iter() {
+                let weight = outcome.probability();
+                total += weight;
+                if outcome.label() != "NoFault" {
+                    fault_mass += weight;
+                }
+            }
+            fault_mass / total
+        }).fold(0.0, f64::max)
     }
 
     pub fn set_seed(&mut self, seed: u64) {
@@ -420,30 +438,64 @@ impl WeightedSubregionFaultFlipper {
     self.site_flipper.set_seed(outcome_seed);
     }
 
-    /// Flips a whole region according to `region_probability`
-    /// and returns the new history as well as the history
-    /// probability ratio
+    /// Independently refresh each site from its catalog distribution with probability r.
+    /// This preserves the product distribution, so the Metropolis-Hastings factor is one.
     pub fn random_flip_and_ratio(&mut self, history: &FaultHistory) -> (FaultHistory, f64) {
-        let mut new_history = history.clone();
-        let mut ratio: f64 = 1.0;
-
-        // Loop through all sites and randomly select sites to flip
-        for site_index in 0..self.fault_catalog.len(){
-            let mut ratio_contribution = 1.0;
-            let random_value = self.rng
-                .as_mut()
-                .expect("Set the fault flipper seed before requesting a flip")
-                .next_f64();
-
-            // Randomly choose whether to flip the site
-            if random_value < self.region_probability {
-                (new_history,ratio_contribution) = self
-                    .site_flipper
-                    .random_flip_and_ratio_at_index(site_index, &new_history);
-            }
-            ratio *= ratio_contribution;
+        let FaultCatalog::Depolarizing(catalog) = &self.fault_catalog;
+        let FaultCatalog::Depolarizing(previous) = &self.site_flipper.fault_catalog;
+        // A replacement or copy-on-write edit of the public catalog invalidates the bound.
+        if !std::sync::Arc::ptr_eq(&catalog.sites, &previous.sites) {
+            self.max_fault_probability = Self::max_fault_probability(&self.fault_catalog);
+            self.site_flipper.fault_catalog = self.fault_catalog.clone();
         }
-        (new_history, ratio)
+        let r = self.region_probability.clamp(0.0, 1.0);
+        let mut proposed = history.clone();
+        if catalog.sites.is_empty() || r == 0.0 || r.is_nan() {
+            return (proposed, 1.0);
+        }
+
+        let rng = self.rng.as_mut().expect("Set the flipper seed before requesting a flip");
+        let max_fault = self.max_fault_probability;
+        let mark = r * max_fault;
+
+        // Unmarked sites must keep their input with unconditional probability 1-r.
+        // Thin the existing faults first; a mark will overwrite its site below.
+        let FaultHistory::Depolarizing(faults) = &mut proposed;
+        if mark < 1.0 {
+            let clear = r * (1.0 - max_fault) / (1.0 - mark);
+            faults.retain(|_| rng.next_f64() >= clear);
+        }
+        if mark == 0.0 {
+            return (proposed, 1.0);
+        }
+
+        let outcome_rng = self.site_flipper.rng.as_mut().expect("Outcome RNG is seeded with the region RNG");
+        // Geometric gaps skip the unmarked sites without scanning the catalog.
+        let log_survival = (-mark).ln_1p();
+        let mut index = 0;
+        while index < catalog.sites.len() {
+            if mark < 1.0 {
+                let gap = ((-rng.next_f64()).ln_1p() / log_survival) as usize;
+                if gap >= catalog.sites.len() - index {
+                    break;
+                }
+                index += gap;
+            }
+            // Conditional on a mark, outcome a != NoFault has probability
+            // p_i(a)/max_fault. Any leftover probability clears this site.
+            let site = &catalog.sites[index];
+            let total: f64 = site.outcomes.iter().map(|o| o.probability()).sum();
+            let threshold = outcome_rng.next_f64() * (max_fault * total);
+            let mut sum = 0.0;
+            let outcome = site.outcomes.iter().filter(|o| o.label() != "NoFault").find(|o| {
+                sum += o.probability();
+                sum > threshold
+            });
+            let label = outcome.map_or("NoFault", |o| o.label());
+            proposed = proposed.with_outcome(&self.fault_catalog.site_at(index), label);
+            index += 1;
+        }
+        (proposed, 1.0)
     }
 
     pub fn random_flip(&mut self, history: &FaultHistory) -> FaultHistory {

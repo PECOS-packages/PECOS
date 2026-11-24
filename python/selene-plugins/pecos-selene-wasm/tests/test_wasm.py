@@ -946,11 +946,17 @@ def test_lowering_normalizes_custom_graphs(examples, monkeypatch, shape, input_f
     original_order = lowering._order_calls  # noqa: SLF001
 
     def checked_order(document, acquisitions):
-        # Fail promptly if sparse IDs survive; otherwise ordering can self-loop.
-        for index, node in enumerate(document["nodes"]):
-            if node["op"] == "Call":
-                assert node["parent"] != index
-        assert all(port[0] < len(document["nodes"]) for edge in document["edges"] for port in edge)
+        # Fail promptly if sparse IDs survive; otherwise the parent walk can loop.
+        nodes = document["nodes"]
+        for index, node in enumerate(nodes):
+            if node.get("op") not in {"Call", "CallIndirect"}:
+                continue
+            seen, current = set(), index
+            while nodes[current].get("op") not in {"FuncDefn", "Module"}:
+                assert current not in seen, f"parent cycle through node {current}"
+                seen.add(current)
+                current = nodes[current]["parent"]
+        assert all(port[0] < len(nodes) for edge in document["edges"] for port in edge)
         original_order(document, acquisitions)
 
     monkeypatch.setattr(lowering, "_order_calls", checked_order)

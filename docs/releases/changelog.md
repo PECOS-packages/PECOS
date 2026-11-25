@@ -6,6 +6,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Changed:** The PECOS Selene runtime (`pecos-selene-runtime`) now rejects every
+  call except `exit` after any call fails, with a message naming the first error,
+  and `shot_start` rejects a shot that was never ended with `shot_end`. Both were
+  documented caller obligations; reusing a failed instance, for example through
+  Selene's interactive `next_shot`, now fails instead of continuing.
+
 - `pecos-random` implements `RapidRng`, the generator behind `PecosRng` and
   `PecosScalarRng`, itself instead of wrapping the `rapidrand` crate, and exports
   it as `pecos_random::RapidRng`. Seeded `PecosRng` and `PecosScalarRng` streams

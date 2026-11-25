@@ -42,13 +42,18 @@ fn forcing_both_measurement_kinds_releases_only_the_needed_prefix() {
             r.get_u64_result(id).unwrap(),
             Some(if leaked { 2 } else { 1 })
         );
-        if leaked {
-            assert!(r.get_bool_result(id).is_err());
-        }
         r.global_barrier(0).unwrap();
         assert_eq!(drain(&mut r).len(), 1);
         r.shot_end().unwrap();
     }
+    // A leakage outcome cannot be read as a Boolean while the shot runs.
+    let mut r = runtime(RuntimeConfig::default());
+    let id = r.measure_leaked(0).unwrap();
+    r.force_result(id).unwrap();
+    drain(&mut r);
+    r.set_u64_result(id, 2).unwrap();
+    let message = r.get_bool_result(id).unwrap_err().to_string();
+    assert!(message.contains("leakage outcome"), "{message}");
 }
 #[test]
 fn virtual_z_changes_pulse_axis_without_emitting_an_rz() {
@@ -133,20 +138,27 @@ fn local_sleep_does_not_delay_an_unrelated_qubit() {
 }
 #[test]
 fn retirement_before_execution_still_accepts_feedback_but_not_reads() {
-    let mut r = runtime(RuntimeConfig {
-        max_live_results: Some(1),
-        ..Default::default()
-    });
-    let a = r.measure_leaked(0).unwrap();
-    r.decrement_future_refcount(a).unwrap();
+    let retired = || {
+        let mut r = runtime(RuntimeConfig {
+            max_live_results: Some(1),
+            ..Default::default()
+        });
+        let a = r.measure_leaked(0).unwrap();
+        r.decrement_future_refcount(a).unwrap();
+        (r, a)
+    };
+    let (mut r, a) = retired();
     assert!(r.force_result(a).is_err());
+    // The retired future still counts against the limit until its feedback arrives.
+    let (mut r, _) = retired();
     assert!(r.measure(1).is_err());
+    let (mut r, a) = retired();
     r.global_barrier(0).unwrap();
     drain(&mut r);
     r.set_u64_result(a, 2).unwrap();
-    assert!(r.get_u64_result(a).is_err());
     let b = r.measure(1).unwrap();
     assert_ne!(a, b);
+    assert!(r.get_u64_result(a).is_err());
 }
 #[test]
 fn queue_pressure_releases_work_and_rejects_undrained_growth() {
@@ -157,9 +169,17 @@ fn queue_pressure_releases_work_and_rejects_undrained_growth() {
     r.rxy_gate(0, 1.0, 0.0).unwrap();
     assert!(drain(&mut r).is_empty());
     r.rxy_gate(0, 1.0, 0.0).unwrap();
-    assert!(r.rxy_gate(0, 1.0, 0.0).is_err());
+    // Reaching the limit releases the queue, so draining makes room.
     assert_eq!(drain(&mut r).len(), 2);
     r.rxy_gate(0, 1.0, 0.0).unwrap();
+
+    let mut r = runtime(RuntimeConfig {
+        max_queued_batches: 2,
+        ..Default::default()
+    });
+    r.rxy_gate(0, 1.0, 0.0).unwrap();
+    r.rxy_gate(0, 1.0, 0.0).unwrap();
+    assert!(r.rxy_gate(0, 1.0, 0.0).is_err());
 }
 #[test]
 fn allocation_reuse_preserves_order_and_clears_virtual_phase() {
@@ -171,7 +191,6 @@ fn allocation_reuse_preserves_order_and_clears_virtual_phase() {
     r.rxy_gate(0, 1.0, 0.0).unwrap();
     let a = r.measure(0).unwrap();
     r.qfree(0).unwrap();
-    assert!(r.qfree(0).is_err());
     assert_eq!(r.qalloc().unwrap(), 0);
     r.reset(0).unwrap();
     r.rxy_gate(0, 1.0, 0.0).unwrap();
@@ -182,18 +201,41 @@ fn allocation_reuse_preserves_order_and_clears_virtual_phase() {
     assert!(matches!(ops[2], Operation::Reset { .. }));
     assert!(matches!(ops[3], Operation::RXYGate { phi: 0.0, .. }));
     r.set_bool_result(a, false).unwrap();
+
+    let mut r = runtime(RuntimeConfig::default());
+    r.qfree(0).unwrap();
+    assert!(r.qfree(0).is_err());
 }
 #[test]
 fn invalid_feedback_and_unfinished_shots_are_rejected() {
-    let mut r = runtime(RuntimeConfig::default());
-    let a = r.measure(0).unwrap();
-    assert!(r.set_bool_result(a, true).is_err());
-    assert!(r.shot_start(1, 1).is_err());
-    r.force_result(a).unwrap();
-    drain(&mut r);
-    assert!(r.set_u64_result(a, 2).is_err());
+    let measured = || {
+        let mut r = runtime(RuntimeConfig::default());
+        let a = r.measure(0).unwrap();
+        (r, a)
+    };
+    let emitted = || {
+        let (mut r, a) = measured();
+        r.force_result(a).unwrap();
+        drain(&mut r);
+        (r, a)
+    };
+    let (mut r, a) = measured();
+    assert!(
+        r.set_bool_result(a, true).is_err(),
+        "feedback before emission"
+    );
+    let (mut r, _) = measured();
+    assert!(r.shot_start(1, 1).is_err(), "unfinished shot");
+    let (mut r, a) = emitted();
+    assert!(
+        r.set_u64_result(a, 2).is_err(),
+        "leakage outcome for a plain measurement"
+    );
+    let (mut r, a) = emitted();
     r.set_bool_result(a, true).unwrap();
-    assert!(r.set_bool_result(a, false).is_err());
+    assert!(r.set_bool_result(a, false).is_err(), "second delivery");
+    let (mut r, a) = emitted();
+    r.set_bool_result(a, true).unwrap();
     r.shot_end().unwrap();
     r.exit().unwrap();
     assert!(r.qalloc().is_err());
@@ -201,14 +243,21 @@ fn invalid_feedback_and_unfinished_shots_are_rejected() {
 
 #[test]
 fn selene_shutdown_flushes_unread_measurements_before_next_shot() {
-    let mut r = runtime(RuntimeConfig::default());
-    let a = r.measure(0).unwrap();
-    r.rxy_gate(1, 1.0, 0.0).unwrap();
-    assert!(drain(&mut r).is_empty());
-    r.shot_end().unwrap();
-    assert!(r.shot_start(1, 0).is_err());
+    let ended = || {
+        let mut r = runtime(RuntimeConfig::default());
+        let a = r.measure(0).unwrap();
+        r.rxy_gate(1, 1.0, 0.0).unwrap();
+        assert!(drain(&mut r).is_empty());
+        r.shot_end().unwrap();
+        (r, a)
+    };
+    let (mut r, _) = ended();
+    assert!(r.shot_start(1, 0).is_err(), "shutdown work not drained");
+    let (mut r, _) = ended();
     assert_eq!(drain(&mut r).len(), 2);
-    assert!(r.shot_start(1, 0).is_err());
+    assert!(r.shot_start(1, 0).is_err(), "feedback not delivered");
+    let (mut r, a) = ended();
+    assert_eq!(drain(&mut r).len(), 2);
     r.set_bool_result(a, false).unwrap();
     r.shot_start(1, 0).unwrap();
     assert_eq!(r.qalloc().unwrap(), 0);
@@ -291,11 +340,20 @@ fn explicit_result_limit_preserves_live_handles_and_reclaims_retired_ones() {
     r.set_bool_result(id, true).unwrap();
     r.increment_future_refcount(id).unwrap();
     r.decrement_future_refcount(id).unwrap();
-    assert!(r.measure(1).is_err());
     assert_eq!(r.get_bool_result(id).unwrap(), Some(true));
     r.decrement_future_refcount(id).unwrap();
-    assert!(r.get_bool_result(id).is_err());
     assert!(r.measure(1).is_ok());
+    assert!(r.get_bool_result(id).is_err());
+
+    let mut r = runtime(RuntimeConfig {
+        max_live_results: Some(1),
+        ..Default::default()
+    });
+    let id = r.measure(0).unwrap();
+    r.force_result(id).unwrap();
+    drain(&mut r);
+    r.set_bool_result(id, true).unwrap();
+    assert!(r.measure(1).is_err(), "a live handle holds the only slot");
 }
 
 #[test]
@@ -409,17 +467,25 @@ fn finite_rotations_do_not_overflow_the_virtual_frame() {
         r.rz_gate(0, theta).unwrap();
     }
     r.rxy_gate(0, 1.0, f64::MAX).unwrap();
-    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert!(r.rz_gate(0, invalid).is_err());
-        assert!(r.rxy_gate(0, 1.0, invalid).is_err());
-    }
     r.rxy_gate(0, 1.0, 0.0).unwrap();
     r.global_barrier(0).unwrap();
     let ops: Vec<_> = drain(&mut r).into_iter().flatten().collect();
     let Operation::RXYGate { phi, .. } = ops[1] else {
         panic!("expected pulse")
     };
-    assert!(phi.abs() < 1e-12, "invalid calls changed the frame: {phi}");
+    assert!(phi.abs() < 1e-12, "the frame drifted: {phi}");
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(
+            runtime(RuntimeConfig::default())
+                .rz_gate(0, invalid)
+                .is_err()
+        );
+        assert!(
+            runtime(RuntimeConfig::default())
+                .rxy_gate(0, 1.0, invalid)
+                .is_err()
+        );
+    }
 }
 
 #[test]
@@ -434,12 +500,12 @@ fn unallocatable_qubit_capacity_is_an_error_not_an_abort() {
 
 #[test]
 fn caller_errors_name_the_offending_values() {
-    let mut r = runtime(RuntimeConfig::default());
+    let r = || runtime(RuntimeConfig::default());
     let message = |error: anyhow::Error| error.to_string();
-    assert!(message(r.rzz_gate(2, 2, 0.1).unwrap_err()).contains("got 2 twice"));
-    assert!(message(r.rzz_gate(0, 1, f64::NAN).unwrap_err()).contains("theta=NaN"));
-    assert!(message(r.rz_gate(1, f64::INFINITY).unwrap_err()).contains("qubit 1"));
-    assert!(message(r.rxy_gate(0, 1.0, f64::NAN).unwrap_err()).contains("phi=NaN"));
+    assert!(message(r().rzz_gate(2, 2, 0.1).unwrap_err()).contains("got 2 twice"));
+    assert!(message(r().rzz_gate(0, 1, f64::NAN).unwrap_err()).contains("theta=NaN"));
+    assert!(message(r().rz_gate(1, f64::INFINITY).unwrap_err()).contains("qubit 1"));
+    assert!(message(r().rxy_gate(0, 1.0, f64::NAN).unwrap_err()).contains("phi=NaN"));
     let limit = PecosRuntime::new(
         1,
         0.into(),
@@ -449,4 +515,91 @@ fn caller_errors_name_the_offending_values() {
         },
     );
     assert!(message(limit.err().unwrap()).contains("max_queued_batches"));
+}
+
+#[test]
+fn an_error_leaves_the_runtime_able_only_to_exit() {
+    let mut r = runtime(RuntimeConfig::default());
+    assert!(r.rz_gate(0, f64::NAN).is_err());
+    for later in [
+        r.rz_gate(0, 0.5),
+        r.global_barrier(0),
+        r.shot_end(),
+        r.shot_start(1, 0),
+    ] {
+        let message = later.unwrap_err().to_string();
+        assert!(message.contains("earlier error"), "{message}");
+        assert!(
+            message.contains("theta=NaN"),
+            "names the first error: {message}"
+        );
+    }
+    assert!(r.qalloc().is_err());
+    r.exit().unwrap();
+}
+
+#[test]
+fn a_failed_exit_is_the_first_error() {
+    let mut r = runtime(RuntimeConfig::default());
+    r.exit().unwrap();
+    assert!(r.exit().is_err());
+    let message = r.custom_call(1, &[]).unwrap_err().to_string();
+    assert!(message.contains("runtime has exited"), "{message}");
+}
+
+#[test]
+fn shot_start_requires_the_running_shot_to_end() {
+    let mut r = PecosRuntime::new(1, 0.into(), RuntimeConfig::default()).unwrap();
+    r.shot_start(0, 0).unwrap();
+    // Nothing is left over, but the shot was never ended.
+    let q = r.qalloc().unwrap();
+    r.qfree(q).unwrap();
+    let message = r.shot_start(1, 0).unwrap_err().to_string();
+    assert!(message.contains("shot_end"), "{message}");
+
+    let mut r = PecosRuntime::new(1, 0.into(), RuntimeConfig::default()).unwrap();
+    r.shot_start(0, 0).unwrap();
+    r.shot_end().unwrap();
+    r.shot_start(1, 0).unwrap();
+}
+
+#[test]
+fn shot_start_rejects_state_created_before_the_first_shot() {
+    let fresh = || PecosRuntime::new(1, 0.into(), RuntimeConfig::default()).unwrap();
+    let mut r = fresh();
+    r.qalloc().unwrap();
+    let message = r.shot_start(0, 0).unwrap_err().to_string();
+    assert!(message.contains("before the first shot"), "{message}");
+
+    // A delivered but still referenced future would otherwise be discarded.
+    let mut r = fresh();
+    let q = r.qalloc().unwrap();
+    let id = r.measure(q).unwrap();
+    r.force_result(id).unwrap();
+    drain(&mut r);
+    r.set_bool_result(id, true).unwrap();
+    r.qfree(q).unwrap();
+    drain(&mut r);
+    let message = r.shot_start(0, 0).unwrap_err().to_string();
+    assert!(message.contains("before the first shot"), "{message}");
+}
+
+#[test]
+fn unsupported_calls_also_retire_the_runtime() {
+    let calls: [fn(&mut PecosRuntime) -> bool; 2] = [
+        |r| r.custom_call(1, &[]).is_err(),
+        |r| r.rpp_gate(0, 1, 0.1, 0.2).is_err(),
+    ];
+    for unsupported in calls {
+        let mut r = runtime(RuntimeConfig::default());
+        assert!(unsupported(&mut r));
+        let message = r.qalloc().unwrap_err().to_string();
+        assert!(message.contains("earlier error"), "{message}");
+    }
+    // `simulate_delay` is supported, and its overflow error retires the runtime too.
+    let mut r = runtime(RuntimeConfig::default());
+    r.simulate_delay(10).unwrap();
+    assert!(r.simulate_delay(u64::MAX).is_err());
+    let message = r.qalloc().unwrap_err().to_string();
+    assert!(message.contains("earlier error"), "{message}");
 }

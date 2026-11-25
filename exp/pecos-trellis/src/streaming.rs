@@ -56,6 +56,7 @@ struct ScoringPrefixPlan {
 #[derive(Clone, Copy, Debug)]
 struct BoundedAdvance {
     end: usize,
+    known_count: Option<usize>,
 }
 
 impl ScoringPrefixPlan {
@@ -395,7 +396,7 @@ impl TrellisStreamingDecoder {
         Ok(self.take_progress())
     }
 
-    /// Begin a resumable dependency-driven advance at the current detector prefix.
+    /// Begin a resumable advance at the current detector prefix.
     ///
     /// This captures exactly the target of [`Self::advance`], without doing column
     /// work. Call [`Self::step_bounded_advance`] until
@@ -404,6 +405,9 @@ impl TrellisStreamingDecoder {
     /// [`Self::finish_bounded_flush`] for a fully fed shot's full terminal result.
     /// Commitments are checked only at finish, preserving the unbounded callback's
     /// check cadence and the order of `newly_committed`.
+    /// In fixed-lag mode, the current arrival round determines both the target
+    /// column and the detector prefix visible to scoring. These are captured
+    /// together, so yielding does not expose later arrivals or change pruning.
     ///
     /// Detectors, schedule, and scoring inputs cannot change
     /// during the drain. Feed and unbounded processing methods reject that state.
@@ -411,22 +415,15 @@ impl TrellisStreamingDecoder {
     /// actual columns of DP work, not wall-clock time or total decision latency.
     ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for `FixedLag` or reentry;
+    /// Returns `InvalidConfiguration` for reentry;
     /// returns a stored decoding failure unchanged.
     pub fn begin_bounded_advance(&mut self) -> Result<usize, DecoderError> {
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
         self.ensure_no_bounded_advance()?;
-        if self.mode != StreamingMode::DependencyDriven {
-            return Err(DecoderError::InvalidConfiguration(
-                "bounded advance supports only dependency-driven streaming".into(),
-            ));
-        }
-        let end = self.ready.partition_point(|required| {
-            required.is_none_or(|detector| detector < self.arrived_count)
-        });
-        self.bounded_advance = Some(BoundedAdvance { end });
+        let (end, known_count) = self.advance_target();
+        self.bounded_advance = Some(BoundedAdvance { end, known_count });
         Ok(end - self.next_column)
     }
 
@@ -441,8 +438,9 @@ impl TrellisStreamingDecoder {
     ///
     /// Returns cumulative columns processed and whether the captured target is
     /// drained. Each column uses the unmodified scoring, merge, prune, mass-fold,
-    /// and telemetry path. Dependency-driven scoring has `known_count == None`,
-    /// unchanged across every substep. No commitments are scanned or reported
+    /// and telemetry path. The captured detector visibility is unchanged across
+    /// every substep: unrestricted for dependency-driven scoring, or the arrived
+    /// prefix for fixed lag. No commitments are scanned or reported
     /// until finish. A drained step performs no column work and is idempotent.
     ///
     /// # Errors
@@ -467,6 +465,11 @@ impl TrellisStreamingDecoder {
             .next_column
             .saturating_add(max_columns)
             .min(advance.end);
+        let prefix_ends = advance.known_count.and_then(|known_count| {
+            self.scoring_prefix_plans
+                .get(self.arrived_round)
+                .and_then(|plan| plan.for_range(known_count, self.next_column..end))
+        });
         if let Err(failure) = self.model.process_binary_range_with_prefixes(
             &mut self.progress,
             &self.observed,
@@ -478,9 +481,9 @@ impl TrellisStreamingDecoder {
             },
             crate::BinaryRangeOptions {
                 mode: self.model.decode_mode(),
-                known_count: None,
+                known_count: advance.known_count,
             },
-            None,
+            prefix_ends,
         ) {
             self.failure = Some(failure);
             return Err(failure.error());
@@ -609,27 +612,7 @@ impl TrellisStreamingDecoder {
             return Err(failure.error());
         }
         self.ensure_no_bounded_advance()?;
-        let (end, known_count) = match &self.mode {
-            StreamingMode::DependencyDriven => (
-                self.ready
-                    .partition_point(|required| required.is_none_or(|d| d < self.arrived_count)),
-                None,
-            ),
-            StreamingMode::FixedLag {
-                detector_round_bounds,
-                window_size,
-            } => {
-                let target = if self.arrived_round == detector_round_bounds.len() - 1 {
-                    self.arrived_round
-                } else {
-                    self.arrived_round.saturating_sub(window_size - 1)
-                };
-                (
-                    self.column_rounds.partition_point(|&round| round <= target),
-                    Some(self.arrived_count),
-                )
-            }
-        };
+        let (end, known_count) = self.advance_target();
         // Delayed advances can include columns from earlier rounds. Use a plan
         // only when both the range and the known detector count match exactly.
         let prefix_ends = self
@@ -656,6 +639,31 @@ impl TrellisStreamingDecoder {
         }
         self.next_column = end;
         Ok(self.next_column)
+    }
+
+    /// Capture the unbounded callback's release target and scoring visibility.
+    fn advance_target(&self) -> (usize, Option<usize>) {
+        match &self.mode {
+            StreamingMode::DependencyDriven => (
+                self.ready
+                    .partition_point(|required| required.is_none_or(|d| d < self.arrived_count)),
+                None,
+            ),
+            StreamingMode::FixedLag {
+                detector_round_bounds,
+                window_size,
+            } => {
+                let target = if self.arrived_round == detector_round_bounds.len() - 1 {
+                    self.arrived_round
+                } else {
+                    self.arrived_round.saturating_sub(window_size - 1)
+                };
+                (
+                    self.column_rounds.partition_point(|&round| round <= target),
+                    Some(self.arrived_count),
+                )
+            }
+        }
     }
 
     /// Current commitment values and mask, including commitments discovered by flush.

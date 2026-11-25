@@ -95,8 +95,8 @@ pub use fault_sector::{
 pub use pecos_core::circuit_diagram::{AngleUnit, DiagramRenderer, DiagramStyle};
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
-    Tick, TickAnnotationRefError, TickCircuit, TickGateError, TickHandle, TickMeasRef,
-    TickMeasResolveError, TickMeasureHandle, TickPrepHandle,
+    Tick, TickAnnotationRefError, TickCircuit, TickDagNodeMap, TickGateError, TickHandle,
+    TickMeasRef, TickMeasResolveError, TickMeasureHandle, TickPrepHandle,
 };
 
 // Re-export commonly used types from dependencies

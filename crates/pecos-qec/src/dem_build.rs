@@ -170,6 +170,39 @@ pub struct DemBuild {
     raw_tag: Option<String>,
 }
 
+// Shared with DemBuild: one runtime parity implementation.
+pub(crate) fn evaluate_record(
+    definitions: &CircuitDefinitions,
+    num_detectors: usize,
+    values: &[u8],
+) -> Result<(Vec<u8>, ObsMask), crate::DemBuildError> {
+    use crate::DemBuildError;
+    if values.len() != definitions.num_measurements || values.iter().any(|&bit| bit > 1) {
+        return Err(DemBuildError::Configuration(
+            "measurement record must contain one bit per circuit measurement".into(),
+        ));
+    }
+    let parity = |positions: &[usize]| {
+        positions
+            .iter()
+            .fold(0, |value, &index| value ^ values[index])
+    };
+    let mut detectors = vec![0; num_detectors];
+    for detector in &definitions.detectors {
+        let event = detectors.get_mut(detector.id as usize).ok_or_else(|| {
+            DemBuildError::Configuration("detector IDs must fit the DEM detector vector".into())
+        })?;
+        *event = parity(&detector.measurements);
+    }
+    let mut observables = ObsMask::new();
+    for observable in &definitions.observables {
+        if parity(&observable.measurements) != 0 {
+            observables.set(observable.id as usize);
+        }
+    }
+    Ok((detectors, observables))
+}
+
 impl DemBuild {
     /// Evaluate a physical measurement record in circuit emission order.
     /// These are measurement parities; no unknown noiseless references are invented.
@@ -180,30 +213,7 @@ impl DemBuild {
         &self,
         values: &[u8],
     ) -> Result<(Vec<u8>, ObsMask), DemBuildError> {
-        if values.len() != self.measurement_ids.len() || values.iter().any(|&bit| bit > 1) {
-            return Err(DemBuildError::Configuration(
-                "measurement record must contain one bit per circuit measurement".into(),
-            ));
-        }
-        let parity = |positions: &[usize]| {
-            positions
-                .iter()
-                .fold(0, |value, &index| value ^ values[index])
-        };
-        let mut detectors = vec![0; self.dem.num_detectors()];
-        for detector in &self.definitions.detectors {
-            let event = detectors.get_mut(detector.id as usize).ok_or_else(|| {
-                DemBuildError::Configuration("detector IDs must fit the DEM detector vector".into())
-            })?;
-            *event = parity(&detector.measurements);
-        }
-        let mut observables = ObsMask::new();
-        for observable in &self.definitions.observables {
-            if parity(&observable.measurements) != 0 {
-                observables.set(observable.id as usize);
-            }
-        }
-        Ok((detectors, observables))
+        evaluate_record(&self.definitions, self.dem.num_detectors(), values)
     }
 
     /// Evaluate a record keyed by stable measurement ID.

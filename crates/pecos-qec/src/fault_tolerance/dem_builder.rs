@@ -79,9 +79,11 @@
 //! unified interface that validates detector definitions at build time.
 
 mod builder;
+pub(crate) use builder::circuit_influence_map;
 mod dem_sampler;
 mod equivalence;
 mod inline;
+pub(crate) use inline::{ExactPauliConversion, exact_pauli_terms};
 mod mem_builder;
 pub(crate) mod sampler;
 mod slice;
@@ -124,6 +126,7 @@ pub use types::{
     ReplacementBranchImpact, TerminalDecompositionError, TwoDetectorDirectRenderPolicy,
     combine_probabilities, omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
 };
+pub(crate) use types::{SourceMetadata, fit_exclusive_signatures};
 
 #[cfg(test)]
 mod map_only_tests;

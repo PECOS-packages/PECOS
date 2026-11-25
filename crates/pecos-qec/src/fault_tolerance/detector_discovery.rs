@@ -7,9 +7,10 @@
 
 use std::collections::BTreeMap;
 
+use super::fault_sampler::{affine_parity, random_vector};
 use pecos_core::{BitSet, Pauli, PauliString};
 use pecos_quantum::TickCircuit;
-use pecos_simulators::symbolic_sparse_stab::{MeasurementHistory, SymbolicMeasurementResult};
+use pecos_simulators::symbolic_sparse_stab::MeasurementHistory;
 use pecos_simulators::{BitmaskPauliProp, SymbolicSparseStab};
 
 use super::fault_sampler::{
@@ -170,14 +171,6 @@ pub fn discover_detectors(
     })
 }
 
-fn random_vector(result: &SymbolicMeasurementResult) -> BitSet {
-    if result.is_deterministic {
-        result.outcome.clone()
-    } else {
-        BitSet::single(result.index)
-    }
-}
-
 fn complete_observables(
     history: &MeasurementHistory,
     observables: &[Vec<usize>],
@@ -206,13 +199,10 @@ fn complete_observables(
                 }
                 declared.insert(record);
             }
-            let mut sources = BitSet::new();
-            let mut reference = false;
-            for r in &declared {
-                let result = &history.as_slice()[r];
-                sources ^= &random_vector(result);
-                reference ^= result.is_deterministic && result.flip;
-            }
+            let parity = affine_parity(history, &declared)
+                .expect("observable emission indices were validated against the history");
+            let sources = parity.variables;
+            let reference = parity.constant;
             if let Some(record) = sources.iter().find(|&r| declared.contains(r)) {
                 return Err(DetectorDiscoveryError::NonDeterministicObservable {
                     observable,

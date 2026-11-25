@@ -79,11 +79,15 @@ mod builder;
 mod config;
 pub use self::config::GeneralNoiseConfig;
 mod default;
+mod description;
+pub use description::{GeneralNoiseDescription, HookDescription, HookProbabilities};
 mod loss;
 mod readout;
 mod unique_json;
 use self::loss::MeasurementState;
-pub use self::loss::{LossSite, QubitLoss, QubitLossBuilder};
+pub use self::loss::{
+    LossChannelDescription, LossChannelKind, LossDescription, LossSite, QubitLoss, QubitLossBuilder,
+};
 pub use self::readout::ReadoutMatrix;
 
 pub use self::builder::{GeneralNoiseModelBuilder, PauliWithAngleScaling};
@@ -2473,8 +2477,7 @@ impl GeneralNoiseModel {
     /// inherit the RZ exemption in addition to explicit U exemptions.
     #[must_use]
     pub fn is_noiseless_operation(&self, gate: &Gate) -> bool {
-        self.is_noiseless_gate(&gate.gate_type)
-            || (gate.phase_angle().is_some() && self.is_noiseless_gate(&GateType::RZ))
+        description::is_noiseless_operation(&self.noiseless_gates, gate)
     }
 
     /// Accessor for the p1 Pauli distribution

@@ -33,11 +33,11 @@
 
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_string::PauliString;
-use pecos_core::{Pauli, QubitId};
+use pecos_core::{BitSet, Pauli, QubitId};
 use pecos_quantum::{AnnotationKind, TickCircuit};
 use pecos_random::{PecosRng, RngExt};
 use pecos_simulators::measurement_sampler::{MeasurementKind, SampleResult};
-use pecos_simulators::symbolic_sparse_stab::MeasurementHistory;
+use pecos_simulators::symbolic_sparse_stab::{MeasurementHistory, SymbolicMeasurementResult};
 use pecos_simulators::{BitmaskPauliProp, CliffordGateable};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -1553,6 +1553,56 @@ impl From<UnsupportedGateError> for MeasurementHistoryError {
 // ============================================================================
 // Shared symbolic simulation helper
 // ============================================================================
+
+/// An emission index outside a symbolic history.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("record {record} exceeds history width {width}; use emission indices within the history")]
+pub struct AffineParityError {
+    /// Invalid emission index.
+    pub record: usize,
+    /// Number of records in the history.
+    pub width: usize,
+}
+
+/// Affine parity in the history's record-index random-variable space.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AffineParity {
+    /// Constant term.
+    pub constant: bool,
+    /// Random source indices; dependencies can cancel between random records.
+    pub variables: BitSet,
+}
+
+pub(crate) fn random_vector(result: &SymbolicMeasurementResult) -> BitSet {
+    if result.is_deterministic {
+        result.outcome.clone()
+    } else {
+        BitSet::single(result.index)
+    }
+}
+
+/// XOR a set of emission-indexed symbolic records, including their random parts.
+///
+/// # Errors
+/// Rejects indices outside the history before indexing it.
+pub fn affine_parity(
+    history: &MeasurementHistory,
+    records: &BitSet,
+) -> Result<AffineParity, AffineParityError> {
+    let mut result = AffineParity {
+        constant: false,
+        variables: BitSet::new(),
+    };
+    for record in records {
+        let value = history.as_slice().get(record).ok_or(AffineParityError {
+            record,
+            width: history.len(),
+        })?;
+        result.variables ^= &random_vector(value);
+        result.constant ^= value.is_deterministic && value.flip;
+    }
+    Ok(result)
+}
 
 /// Run `SymbolicSparseStab` through a `TickCircuit` with proper PZ (reset)
 /// semantics, returning the `MeasurementHistory` with correct cross-reset

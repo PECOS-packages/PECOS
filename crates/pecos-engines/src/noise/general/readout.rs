@@ -30,6 +30,18 @@ pub struct ReadoutMatrix {
 }
 
 impl ReadoutMatrix {
+    pub(super) fn description(&self) -> BTreeMap<String, BTreeMap<u8, f64>> {
+        let Self { flavor: _, rows } = self;
+        ["0", "1", "leaked", "lost", "present"]
+            .into_iter()
+            .zip(rows)
+            .filter_map(|(name, row)| {
+                row.as_ref()
+                    .map(|r| (name.to_string(), r.get_weighted_map().clone()))
+            })
+            .collect()
+    }
+
     /// Resolve a readout gate name, including the core gate aliases.
     ///
     /// # Errors

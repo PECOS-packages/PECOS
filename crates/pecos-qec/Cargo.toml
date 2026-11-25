@@ -32,8 +32,9 @@ smallvec.workspace = true
 thiserror.workspace = true
 wide.workspace = true
 
-# Optional runtime boundary. Circuit-only DEM builds do not load Selene or LLVM.
-pecos-engines = { workspace = true, optional = true }
+# The loss DEM runner uses engines; circuit-only builds still do not load Selene or LLVM.
+pecos-engines.workspace = true
+# Optional Selene runtime boundary.
 pecos-programs = { workspace = true, optional = true }
 pecos-qis = { workspace = true, optional = true }
 pecos-qis-ffi-types = { workspace = true, optional = true }
@@ -43,7 +44,7 @@ selene-hugr-qis-compiler = { git = "https://github.com/Quantinuum/tket2", rev = 
 inkwell = { workspace = true, optional = true }
 
 [features]
-selene = ["dep:pecos-engines", "dep:pecos-programs", "dep:pecos-qis", "dep:pecos-qis-ffi-types"]
+selene = ["dep:pecos-programs", "dep:pecos-qis", "dep:pecos-qis-ffi-types"]
 hugr = ["selene", "dep:selene-hugr-qis-compiler", "dep:inkwell"]
 # Convert PerGateTypeNoise to the pecos-neo noise channel for
 # circuit-level Monte Carlo with the same noise that drives DEM export.
@@ -59,7 +60,6 @@ path = "../../examples/surface/d3_fault_catalog_lookup.rs"
 
 [dev-dependencies]
 pecos-phir.workspace = true
-pecos-engines.workspace = true
 
 [lints]
 workspace = true

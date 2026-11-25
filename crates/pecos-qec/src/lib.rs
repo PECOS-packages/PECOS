@@ -77,6 +77,7 @@ pub mod fault_tolerance;
 pub mod geometry;
 pub mod hypergraph_product;
 pub mod logical_discovery;
+pub mod loss_dem;
 pub mod mem_stab;
 mod memory_circuit;
 pub mod parity_check_matrix;

@@ -67,7 +67,6 @@ fn require_no_external_noise(noise: &NoiseConfig) -> Result<(), DemBuilderError>
 
 /// Convert a payload to independent (Pauli word index, probability) terms.
 /// Word digits are I,X,Y,Z, least-significant digit on gate.qubits[0].
-#[allow(clippy::float_cmp)] // Exact uniformity and the fully mixed endpoint must not be approximated.
 fn independent_terms(gate: &Gate) -> Result<Vec<(usize, f64)>, DemBuilderError> {
     if !(1..=2).contains(&gate.qubits.len()) {
         return Err(invalid(
@@ -113,6 +112,24 @@ fn independent_terms(gate: &Gate) -> Result<Vec<(usize, f64)>, DemBuilderError> 
         }
         probabilities[word] += p;
     }
+    match exact_pauli_terms(&probabilities)? {
+        ExactPauliConversion::Exact(terms) => Ok(terms),
+        ExactPauliConversion::Unavailable(message) => Err(invalid(message)),
+    }
+}
+
+/// Outcome of the supported exact conversion, distinct from invalid input.
+pub(crate) enum ExactPauliConversion {
+    Exact(Vec<(usize, f64)>),
+    Unavailable(&'static str),
+}
+
+/// Exact binary/uniform categorical conversion shared with located channels.
+#[allow(clippy::float_cmp)] // Exact uniformity and the fully mixed endpoint must not be approximated.
+pub(crate) fn exact_pauli_terms(
+    probabilities: &[f64],
+) -> Result<ExactPauliConversion, DemBuilderError> {
+    let size = probabilities.len();
     let total: f64 = probabilities.iter().sum();
     if !total.is_finite() || (total - 1.0).abs() > 1e-12 {
         return Err(invalid("inline channel probabilities must sum to 1"));
@@ -125,20 +142,20 @@ fn independent_terms(gate: &Gate) -> Result<Vec<(usize, f64)>, DemBuilderError> 
         .filter(|(_, p)| *p > 0.0)
         .collect();
     if nonidentity.len() <= 1 {
-        return Ok(nonidentity);
+        return Ok(ExactPauliConversion::Exact(nonidentity));
     }
     let weight = probabilities[1];
     if probabilities[1..].iter().any(|&p| p != weight) {
-        return Err(invalid(
+        return Ok(ExactPauliConversion::Unavailable(
             "inline DEM supports binary Pauli and uniform depolarizing channels; this categorical distribution has no supported exact conversion",
         ));
     }
     // (1-2q)^(N/2) = 1-N*w, N=4^n and each nonidentity branch has weight w.
-    // Above the fully mixed point the standard independent-Pauli factorization
-    // is unavailable. Reject instead of silently approximating its distribution.
+    // Above the fully mixed point the full-Pauli factorization is unavailable.
+    // Inline callers reject it; located channels may still fit its projected signatures.
     let attenuation = weight * f64::from(u32::try_from(size).expect("size <= 16"));
     if attenuation > 1.0 {
-        return Err(invalid(
+        return Ok(ExactPauliConversion::Unavailable(
             "inline depolarization exceeds the supported exact independent-channel range",
         ));
     }
@@ -149,7 +166,9 @@ fn independent_terms(gate: &Gate) -> Result<Vec<(usize, f64)>, DemBuilderError> 
             .exp_m1()
             / 2.0
     };
-    Ok((1..size).map(|word| (word, q)).collect())
+    Ok(ExactPauliConversion::Exact(
+        (1..size).map(|word| (word, q)).collect(),
+    ))
 }
 
 pub(super) fn build_inline_dem(
@@ -372,6 +391,21 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("deterministic ideal detector")
+        );
+    }
+
+    #[test]
+    fn duplicate_branches_keep_sum_error() {
+        let expression = channel::BitFlip(0.6, 0);
+        let ChannelExpr::MixedUnitary(mut ops) = expression else {
+            panic!("binary mixture")
+        };
+        let x = ops.pop().unwrap().1;
+        let gate = Gate::channel(ChannelExpr::MixedUnitary(vec![(0.6, x.clone()), (0.6, x)]));
+        let error = independent_terms(&gate).unwrap_err().to_string();
+        assert!(
+            error.contains("inline channel probabilities must sum to 1"),
+            "{error}"
         );
     }
 

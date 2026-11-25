@@ -71,6 +71,12 @@ struct Future {
 /// A force seals and releases a queue prefix through the requested measurement.
 /// Unforced work remains queued. Callers must drain ready batches after calls,
 /// deliver each emitted measurement, and drain shutdown work before starting the next shot.
+///
+/// A call that returns an error leaves the current shot unfinished, and
+/// `shot_start` then refuses to begin another one. After an error the host
+/// must discard the instance with `exit` and initialize a new one. Both
+/// supported hosts already do this: Selene stops the run on a runtime error,
+/// and PECOS reinitializes the plugin when it resets after a failed shot.
 pub struct PecosRuntime {
     config: RuntimeConfig,
     qubits: Vec<Qubit>,
@@ -104,18 +110,34 @@ fn operation_qubits(op: &Operation) -> impl Iterator<Item = u64> + Clone + use<>
 impl PecosRuntime {
     /// Construct a runtime. Gate durations may be zero; storage limits must be positive.
     /// # Errors
-    /// Rejects zero limits and unrepresentable qubit capacity.
+    /// Rejects zero limits and a qubit capacity whose state cannot be allocated.
     pub fn new(n_qubits: u64, start: Instant, config: RuntimeConfig) -> Result<Self> {
         ensure!(
-            config.max_batch_size > 0
-                && config.max_queued_batches > 0
-                && config.max_live_results.is_none_or(|limit| limit > 0),
-            "runtime limits must be positive"
+            config.max_batch_size > 0,
+            "max_batch_size must be positive, got 0"
         );
+        ensure!(
+            config.max_queued_batches > 0,
+            "max_queued_batches must be positive, got 0"
+        );
+        ensure!(
+            config.max_live_results != Some(0),
+            "max_live_results must be positive when set, got 0; omit it for no cap"
+        );
+        let capacity = usize::try_from(n_qubits).map_err(|_| {
+            anyhow::anyhow!("n_qubits {n_qubits} exceeds this platform's address space")
+        })?;
+        // The host controls n_qubits; report a failed allocation instead of
+        // aborting the host process across the plugin boundary.
+        let mut qubits = Vec::new();
+        qubits.try_reserve_exact(capacity).map_err(|error| {
+            anyhow::anyhow!("cannot allocate runtime state for n_qubits {n_qubits}: {error}")
+        })?;
+        qubits.resize(capacity, Qubit::default());
         let origin = start.into();
         Ok(Self {
             config,
-            qubits: vec![Qubit::default(); usize::try_from(n_qubits)?],
+            qubits,
             queue: VecDeque::new(),
             ready: 0,
             results: BTreeMap::new(),
@@ -134,10 +156,13 @@ impl PecosRuntime {
         self.live()?;
         ensure!(
             !self.ending,
-            "start a new shot before submitting operations"
+            "qubit {id} used after shot_end; start a new shot before using qubits"
         );
         self.qubits
-            .get(usize::try_from(id)?)
+            .get(
+                usize::try_from(id)
+                    .map_err(|_| anyhow::anyhow!("qubit {id} does not fit usize"))?,
+            )
             .filter(|q| q.allocated)
             .ok_or_else(|| anyhow::anyhow!("qubit {id} is not allocated"))
     }
@@ -198,12 +223,13 @@ impl PecosRuntime {
         } else {
             ensure!(
                 self.queue.len() < self.config.max_queued_batches,
-                "runtime queue full; drain ready operations before submitting more"
+                "runtime queue full at max_queued_batches = {}; drain ready operations before submitting more",
+                self.config.max_queued_batches
             );
             let start = self.tail.max(earliest);
-            let end = start
-                .checked_add(duration)
-                .ok_or_else(|| anyhow::anyhow!("runtime time overflow"))?;
+            let end = start.checked_add(duration).ok_or_else(|| {
+                anyhow::anyhow!("runtime time overflow: start {start} ns + duration {duration} ns")
+            })?;
             self.queue.push_back(BatchOperation::runtime(
                 vec![op],
                 start.into(),
@@ -218,12 +244,12 @@ impl PecosRuntime {
     }
     fn measure_impl(&mut self, q: u64, leaked: bool) -> Result<u64> {
         self.qubit(q)?;
-        ensure!(
-            self.config
-                .max_live_results
-                .is_none_or(|limit| self.results.len() < limit),
-            "live result limit exceeded; retire unused futures"
-        );
+        if let Some(limit) = self.config.max_live_results {
+            ensure!(
+                self.results.len() < limit,
+                "live result limit max_live_results = {limit} reached; retire unused futures"
+            );
+        }
         let id = self.next_result;
         let next = id
             .checked_add(1)
@@ -268,9 +294,10 @@ impl PecosRuntime {
             r.emitted && r.value.is_none(),
             "result {id} was not emitted or was already delivered"
         );
+        let max = if r.leaked { 2 } else { 1 };
         ensure!(
-            value <= if r.leaked { 2 } else { 1 },
-            "invalid measurement outcome {value}"
+            value <= max,
+            "invalid outcome {value} for result {id}; expected 0..={max}"
         );
         r.value = Some(value);
         if r.refs == 0 {
@@ -344,7 +371,10 @@ impl RuntimeInterface for PecosRuntime {
     }
     fn qalloc(&mut self) -> Result<u64> {
         self.live()?;
-        ensure!(!self.ending, "start a new shot before allocating");
+        ensure!(
+            !self.ending,
+            "qalloc after shot_end; start a new shot before allocating"
+        );
         if let Some((i, q)) = self
             .qubits
             .iter_mut()
@@ -364,10 +394,13 @@ impl RuntimeInterface for PecosRuntime {
         Ok(())
     }
     fn rxy_gate(&mut self, id: u64, theta: f64, phi: f64) -> Result<()> {
-        ensure!(theta.is_finite() && phi.is_finite(), "non-finite rotation");
+        ensure!(
+            theta.is_finite() && phi.is_finite(),
+            "RXY on qubit {id} needs finite angles, got theta={theta}, phi={phi}"
+        );
         let phase = self.qubit(id)?.phase;
+        // Both operands are finite and bounded, so the result is finite.
         let phi = normalize_phase(normalize_phase(phi) - phase);
-        ensure!(phi.is_finite(), "rotation phase overflow");
         self.push(
             Operation::RXYGate {
                 qubit_id: id,
@@ -378,13 +411,20 @@ impl RuntimeInterface for PecosRuntime {
         )
     }
     fn rz_gate(&mut self, id: u64, theta: f64) -> Result<()> {
-        ensure!(theta.is_finite(), "non-finite rotation phase");
+        ensure!(
+            theta.is_finite(),
+            "RZ on qubit {id} needs a finite angle, got theta={theta}"
+        );
         let phase = normalize_phase(self.qubit(id)?.phase + normalize_phase(theta));
         self.qubits[usize::try_from(id)?].phase = phase;
         Ok(())
     }
     fn rzz_gate(&mut self, a: u64, b: u64, theta: f64) -> Result<()> {
-        ensure!(a != b && theta.is_finite(), "invalid RZZ operands");
+        ensure!(a != b, "RZZ needs two distinct qubits, got {a} twice");
+        ensure!(
+            theta.is_finite(),
+            "RZZ on qubits {a} and {b} needs a finite angle, got theta={theta}"
+        );
         self.push(
             Operation::RZZGate {
                 qubit_id_1: a,
@@ -418,7 +458,7 @@ impl RuntimeInterface for PecosRuntime {
     }
     fn get_bool_result(&mut self, id: u64) -> Result<Option<bool>> {
         match self.future(id)?.value {
-            Some(2) => bail!("leakage outcome requires an integer result read"),
+            Some(2) => bail!("result {id} is a leakage outcome (2); read it with get_u64_result"),
             value => Ok(value.map(|v| v == 1)),
         }
     }
@@ -436,7 +476,7 @@ impl RuntimeInterface for PecosRuntime {
             .future(id)?
             .refs
             .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("reference count overflow"))?;
+            .ok_or_else(|| anyhow::anyhow!("reference count overflow for result {id}"))?;
         self.results.get_mut(&id).expect("validated future").refs = refs;
         Ok(())
     }
@@ -468,8 +508,11 @@ impl RuntimeInterface for PecosRuntime {
             }
             updates.push((
                 *id,
-                end.checked_add(sleep_ns)
-                    .ok_or_else(|| anyhow::anyhow!("barrier time overflow"))?,
+                end.checked_add(sleep_ns).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "barrier time overflow on qubit {id}: {end} ns + sleep {sleep_ns} ns"
+                    )
+                })?,
             ));
         }
         self.ready = ready;
@@ -485,9 +528,9 @@ impl RuntimeInterface for PecosRuntime {
             .iter()
             .filter(|q| q.allocated)
             .fold(self.tail, |t, q| t.max(q.available));
-        let end = end
-            .checked_add(sleep_ns)
-            .ok_or_else(|| anyhow::anyhow!("barrier time overflow"))?;
+        let end = end.checked_add(sleep_ns).ok_or_else(|| {
+            anyhow::anyhow!("global barrier time overflow: {end} ns + sleep {sleep_ns} ns")
+        })?;
         self.ready = self.queue.len();
         self.tail = end;
         for q in &mut self.qubits {

@@ -421,3 +421,32 @@ fn finite_rotations_do_not_overflow_the_virtual_frame() {
     };
     assert!(phi.abs() < 1e-12, "invalid calls changed the frame: {phi}");
 }
+
+#[test]
+fn unallocatable_qubit_capacity_is_an_error_not_an_abort() {
+    for n_qubits in [u64::MAX, 1 << 62] {
+        let error = PecosRuntime::new(n_qubits, 0.into(), RuntimeConfig::default())
+            .err()
+            .expect("capacity cannot be allocated");
+        assert!(error.to_string().contains(&n_qubits.to_string()), "{error}");
+    }
+}
+
+#[test]
+fn caller_errors_name_the_offending_values() {
+    let mut r = runtime(RuntimeConfig::default());
+    let message = |error: anyhow::Error| error.to_string();
+    assert!(message(r.rzz_gate(2, 2, 0.1).unwrap_err()).contains("got 2 twice"));
+    assert!(message(r.rzz_gate(0, 1, f64::NAN).unwrap_err()).contains("theta=NaN"));
+    assert!(message(r.rz_gate(1, f64::INFINITY).unwrap_err()).contains("qubit 1"));
+    assert!(message(r.rxy_gate(0, 1.0, f64::NAN).unwrap_err()).contains("phi=NaN"));
+    let limit = PecosRuntime::new(
+        1,
+        0.into(),
+        RuntimeConfig {
+            max_queued_batches: 0,
+            ..Default::default()
+        },
+    );
+    assert!(message(limit.err().unwrap()).contains("max_queued_batches"));
+}

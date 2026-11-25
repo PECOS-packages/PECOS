@@ -78,7 +78,12 @@ interface.
   `shot_start` requires the previous shot to be ended and drained, then resets
   allocation, phase and result state while preserving the continuous clock.
   Both Selene and PECOS can drain the shutdown work and return its feedback
-  after the end hook.
+  after the end hook. Qubit operations, including `qfree` and barriers, are
+  rejected between `shot_end` and the next `shot_start`.
+- A call that returns an error leaves the shot unfinished, and `shot_start`
+  refuses to continue from it. Hosts discard the instance and initialize a new
+  one: Selene stops the run on a runtime error, and PECOS reinitializes the
+  plugin when it resets after a failed shot.
 
 ## PECOS integration
 
@@ -104,9 +109,14 @@ release boundaries, so different input streams need not produce identical schedu
 
 ```sh
 cargo test -p pecos-selene-runtime
-cargo test -p pecos-qis --lib pecos_runtime -- --test-threads=1
+dir=$(cargo run -q -p pecos-cli --bin pecos -- qis-runtime --profile debug --tests)
+PECOS_SELENE_DIR=$dir PECOS_QIS_FFI_PATH=$dir/libpecos_qis_ffi.so \
+  cargo test -p pecos-qis --lib pecos_runtime -- --test-threads=1
 cargo build -p pecos-selene-runtime-plugin
 ```
+
+The `pecos-qis` tests load the staged plugin, so prepare the runtime directory
+first, as above, or run them through `pecos rust test`.
 
 The Python plugin tests exercise standalone Selene. The portable
 `tests/fixtures/feedback.ll` is used by both hosts and includes ordinary and

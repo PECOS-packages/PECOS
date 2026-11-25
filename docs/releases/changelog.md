@@ -17,6 +17,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with location-based readout matrices, no gate noise, and no Boolean measurement record.
 - **Fixed:** DAG-to-tick conversion preserves positional outcome order between Z
   heralds and record-bearing measurements on different qubits.
+- **Added:** Foundations for loss-conditioned DEMs. `GeneralNoiseModel::description()`
+  returns a read-only snapshot of the built, scaled settings, including loss. The new
+  `pecos_qec::loss_dem` module adds:
+  - a `TickCircuit` runner that labels each engine outcome as a record, loss probe or herald;
+  - a Pauli-noise bridge to `NoiseConfig`;
+  - location channels in `DemBuilder`, carrying recovery false alarms and Pauli loss events;
+  - symbolic parity and GF(2) helpers.
+
+  `pecos-qec` now depends on `pecos-engines` unconditionally.
 
 - **Breaking:** Trellis, Frontier and BpTrellis results no longer report
   `dropped_log_mass` by default, and float metrics no longer pay to accumulate it.

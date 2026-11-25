@@ -1354,6 +1354,16 @@ pub(crate) enum SelectedP2TransitionStep {
 }
 
 impl P2TransitionWeightedStep {
+    pub(crate) fn description(&self) -> super::general::HookProbabilities {
+        use super::general::HookProbabilities;
+        match self {
+            Self::Independent { first, second } => {
+                HookProbabilities::Independent([first.probability(), second.probability()])
+            }
+            Self::Joint { probability, .. } => HookProbabilities::Joint(*probability),
+        }
+    }
+
     pub(crate) fn probabilities(&self) -> [f64; 2] {
         match self {
             Self::Independent { first, second } => [first.probability(), second.probability()],
@@ -1810,6 +1820,16 @@ pub(crate) enum P2PauliLeakageWeightedStep {
 }
 
 impl P2PauliLeakageWeightedStep {
+    pub(crate) fn description(&self) -> super::general::HookProbabilities {
+        use super::general::HookProbabilities;
+        match self {
+            Self::Independent { first, second } => {
+                HookProbabilities::Independent([first.probability(), second.probability()])
+            }
+            Self::Joint(channel) => HookProbabilities::Joint(channel.probability()),
+        }
+    }
+
     pub(crate) fn probabilities(&self) -> [f64; 2] {
         match self {
             Self::Independent { first, second } => [first.probability(), second.probability()],

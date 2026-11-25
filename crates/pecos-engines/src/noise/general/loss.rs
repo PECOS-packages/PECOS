@@ -80,6 +80,7 @@ pub struct QubitLoss {
     lost_partner_probability: f64,
     lost_partner_pauli: Option<WeightedSampler<String>>,
     channels: Vec<LossChannel>,
+    default_recovery_added: bool,
     lost: BTreeSet<usize>,
     own_event: BTreeSet<usize>,
     suppressed: BTreeSet<usize>,
@@ -306,11 +307,11 @@ impl QubitLossBuilder {
             };
             channels.push(LossChannel { site, kind });
         }
-        if self.default_recovery
+        let default_recovery_added = self.default_recovery
             && !channels
                 .iter()
-                .any(|c| matches!(c.kind, ChannelKind::Recovery { .. }))
-        {
+                .any(|c| matches!(c.kind, ChannelKind::Recovery { .. }));
+        if default_recovery_added {
             channels.push(LossChannel {
                 site: LossSite::BeforeTwoQubit,
                 kind: ChannelKind::Recovery {
@@ -327,6 +328,7 @@ impl QubitLossBuilder {
             lost_partner_probability: self.lost_partner_probability,
             lost_partner_pauli,
             channels,
+            default_recovery_added,
             lost: BTreeSet::new(),
             own_event: BTreeSet::new(),
             suppressed: BTreeSet::new(),
@@ -910,6 +912,111 @@ impl GeneralNoiseModel {
             self.reload(usize::from(*q));
         }
         self.filter_lost_gate(gate)
+    }
+}
+
+/// Snapshot of the independent, built loss settings (no shot-local state).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LossDescription {
+    /// Scaled post-readout loss probability.
+    pub measurement: f64,
+    /// Scaled preparation loss probability.
+    pub prep: f64,
+    /// Scaled loss probability per time unit.
+    pub idle_rate: f64,
+    /// Whether preparation reloads a lost atom.
+    pub reload_on_prep: bool,
+    /// Partner spread probability.
+    pub lost_partner_probability: f64,
+    /// Optional present-partner Pauli distribution.
+    pub lost_partner_pauli: Option<BTreeMap<String, f64>>,
+    /// Channels in their configured order.
+    pub channels: Vec<LossChannelDescription>,
+    /// Whether building inserted the implicit before-two-qubit recovery.
+    pub default_recovery_added: bool,
+}
+
+/// A built channel and its application site.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LossChannelDescription {
+    /// Application site.
+    pub site: LossSite,
+    /// Event distribution or recovery error probabilities.
+    pub kind: LossChannelKind,
+}
+
+/// Plain-data loss channel parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LossChannelKind {
+    /// One categorical event, conditional on the outer coin.
+    Events {
+        /// Scaled outer probability.
+        probability: f64,
+        /// Normalized label probabilities used by the sampler.
+        events: BTreeMap<String, f64>,
+    },
+    /// Recovery FN and FP are never scaled.
+    Recovery {
+        /// Probability of leaving a lost operand lost.
+        false_negative: f64,
+        /// Probability of depolarizing a present operand.
+        false_positive: f64,
+    },
+}
+
+impl QubitLoss {
+    /// Copy built settings, excluding shot state.
+    #[must_use]
+    pub fn description(&self) -> LossDescription {
+        let Self {
+            measurement,
+            prep,
+            idle_rate,
+            reload_on_prep,
+            lost_partner_probability,
+            lost_partner_pauli,
+            channels,
+            default_recovery_added,
+            lost: _,
+            own_event: _,
+            suppressed: _,
+        } = self;
+        LossDescription {
+            measurement: *measurement,
+            prep: *prep,
+            idle_rate: *idle_rate,
+            reload_on_prep: *reload_on_prep,
+            lost_partner_probability: *lost_partner_probability,
+            lost_partner_pauli: lost_partner_pauli
+                .as_ref()
+                .map(|p| p.get_weighted_map().clone()),
+            default_recovery_added: *default_recovery_added,
+            channels: channels
+                .iter()
+                .map(|channel| {
+                    let LossChannel { site, kind } = channel;
+                    LossChannelDescription {
+                        site: *site,
+                        kind: match kind {
+                            ChannelKind::Events {
+                                probability,
+                                events,
+                            } => LossChannelKind::Events {
+                                probability: *probability,
+                                events: events.get_weighted_map().clone(),
+                            },
+                            ChannelKind::Recovery {
+                                false_negative,
+                                false_positive,
+                            } => LossChannelKind::Recovery {
+                                false_negative: *false_negative,
+                                false_positive: *false_positive,
+                            },
+                        },
+                    }
+                })
+                .collect(),
+        }
     }
 }
 

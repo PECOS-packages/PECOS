@@ -4070,10 +4070,33 @@ impl TryFrom<&TickCircuit> for DagCircuit {
     type Error = TickToDagError;
 
     fn try_from(tc: &TickCircuit) -> Result<Self, Self::Error> {
+        tc.to_dag_recording_nodes(None)
+    }
+}
+
+/// DAG node IDs in instance order, keyed by (tick, stored batch).
+pub type TickDagNodeMap = BTreeMap<(usize, usize), Vec<usize>>;
+
+impl TickCircuit {
+    /// Convert to a DAG and retain the actual inserted node IDs for every batch.
+    /// Empty metadata batches retain their single metadata node.
+    ///
+    /// # Errors
+    /// Returns the same gate insertion errors as `DagCircuit::try_from`.
+    pub fn to_dag_with_node_map(&self) -> Result<(DagCircuit, TickDagNodeMap), TickToDagError> {
+        let mut node_map = BTreeMap::new();
+        let dag = self.to_dag_recording_nodes(Some(&mut node_map))?;
+        Ok((dag, node_map))
+    }
+
+    fn to_dag_recording_nodes(
+        &self,
+        mut node_map: Option<&mut TickDagNodeMap>,
+    ) -> Result<DagCircuit, TickToDagError> {
         let mut dag = DagCircuit::new();
 
-        for (tick_idx, tick) in tc.iter_ticks() {
-            for batch in tick.iter_gate_batches() {
+        for (tick_idx, tick) in self.iter_ticks() {
+            for (batch_index, batch) in tick.iter_gate_batches().enumerate() {
                 // DagCircuit stores individual gate applications. Use the
                 // TickCircuit instance view so qubit/meas-id slicing has one
                 // implementation. Zero-gate metadata batches do not have gate
@@ -4104,6 +4127,9 @@ impl TryFrom<&TickCircuit> for DagCircuit {
                         dag.set_gate_attr(node, key, value.clone());
                     }
                 }
+                if let Some(map) = &mut node_map {
+                    map.insert((tick_idx, batch_index), split_nodes);
+                }
             }
 
             // Store tick-level attributes as circuit-level with tick[N].key prefix
@@ -4114,7 +4140,7 @@ impl TryFrom<&TickCircuit> for DagCircuit {
         }
 
         // Copy circuit-level attributes
-        for (key, value) in tc.circuit_attrs() {
+        for (key, value) in self.circuit_attrs() {
             dag.set_attr(key.clone(), value.clone());
         }
 
@@ -4122,7 +4148,7 @@ impl TryFrom<&TickCircuit> for DagCircuit {
         // and identities travel on the gates themselves. Tracked-Pauli meta
         // gates already crossed with the gate stream, so no meta gate is
         // re-inserted here.
-        for ann in &tc.annotations {
+        for ann in &self.annotations {
             dag.add_annotation_without_meta_gate(ann.clone());
         }
 

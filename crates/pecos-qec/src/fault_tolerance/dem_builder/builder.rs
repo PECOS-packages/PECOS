@@ -2411,7 +2411,7 @@ impl<'a> DemBuilder<'a> {
     }
 
     /// Builds mappings from measurement indices to detector/DEM-output IDs.
-    pub(super) fn build_measurement_mappings(
+    pub(crate) fn build_measurement_mappings(
         &self,
     ) -> (BTreeMap<usize, Vec<u32>>, BTreeMap<usize, Vec<u32>>) {
         let mut meas_to_detectors: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
@@ -2479,7 +2479,7 @@ impl<'a> DemBuilder<'a> {
     }
 
     /// Computes the fault mechanism for a fault at the given location and Pauli type.
-    pub(super) fn compute_mechanism(
+    pub(crate) fn compute_mechanism(
         &self,
         loc_idx: usize,
         pauli: Pauli,
@@ -3422,6 +3422,26 @@ fn identity_location_pair_for_request(
 // Convenience: build DEM from circuit (free function to handle lifetimes)
 // ============================================================================
 
+/// Build the ordinary fault map with circuit annotation outputs merged once.
+pub(crate) fn circuit_influence_map(
+    circuit: &pecos_quantum::DagCircuit,
+) -> Result<DagFaultInfluenceMap, DemBuilderError> {
+    let mut influence_map = crate::fault_tolerance::propagator::DagFaultAnalyzer::new(circuit)
+        .build_influence_map_diagnostic();
+    if let Some(error) = influence_map.unsupported_gate() {
+        return Err(DemBuilderError::UnsupportedGate(error.clone()));
+    }
+    let annotation_map = crate::fault_tolerance::influence_builder::InfluenceBuilder::new(circuit)
+        .map_err(DemBuilderError::UnsupportedGate)?
+        .with_circuit_annotations()
+        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
+        .build()
+        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
+    influence_map.merge_dem_outputs_from(&annotation_map);
+
+    Ok(influence_map)
+}
+
 /// Build a `DetectorErrorModel` from a `DagCircuit` and noise parameters.
 ///
 /// Reads detector/DEM output definitions from circuit metadata attributes.
@@ -3429,24 +3449,12 @@ fn build_dem_from_circuit(
     circuit: &pecos_quantum::DagCircuit,
     noise: NoiseConfig,
 ) -> Result<DetectorErrorModel, DemBuilderError> {
-    use crate::fault_tolerance::influence_builder::InfluenceBuilder;
-    use crate::fault_tolerance::propagator::DagFaultAnalyzer;
     if super::inline::uses_inline_noise(circuit) {
         return super::inline::build_inline_dem(circuit, &noise);
     }
     let definitions = definitions_from_dag_circuit(circuit)?;
 
-    let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map_diagnostic();
-    if let Some(error) = influence_map.unsupported_gate() {
-        return Err(DemBuilderError::UnsupportedGate(error.clone()));
-    }
-    let annotation_map = InfluenceBuilder::new(circuit)
-        .map_err(DemBuilderError::UnsupportedGate)?
-        .with_circuit_annotations()
-        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
-        .build()
-        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
-    influence_map.merge_dem_outputs_from(&annotation_map);
+    let influence_map = circuit_influence_map(circuit)?;
 
     let builder = DemBuilder::new(&influence_map)
         .with_noise_config(noise)

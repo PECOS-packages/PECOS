@@ -10,6 +10,38 @@ concern Rust and direct-runtime callers. For timing and noise on the scheduled
 route, see [Scheduled idle simulation](scheduled-idle-simulation.md). For operation
 capture, see [Runtime QIS tracing](runtime-qis-tracing.md).
 
+## PECOS runtime plugin
+
+The optional `pecos-selene-runtime-plugin` package supplies a standard Selene
+runtime backed by PECOS's Rust `pecos-selene-runtime` crate. It provides virtual-Z
+phase tracking, configurable pulse durations and batching, and deferred ordinary
+and leakage-aware measurement futures:
+
+```python
+import pecos
+from pecos_selene_runtime_plugin import PecosRuntimePlugin
+
+runtime = PecosRuntimePlugin(max_batch_size=2)
+engine = pecos.selene_engine(runtime=runtime)
+```
+
+The same plugin object works with standalone Selene. Both hosts use the standard
+runtime interface: submitting a measurement creates a future, and reading it
+releases the queued prefix needed to obtain its value. This runtime implements
+forcing for ordinary and leakage-aware measurements, preserving leakage outcome
+`2` through integer reads. Later unrelated measurements may remain queued.
+
+The Python convenience builder exposes `scheduled_batches()` and
+`scheduled_event_batches()`. Pair these with the corresponding scheduled noise
+profile, as described in [Scheduled idle simulation](scheduled-idle-simulation.md).
+
+Rust callers can also use `PecosRuntime` through Selene's existing
+`RuntimeInterface`. PECOS currently loads the standard shared-library plugin.
+See the [plugin README](../../python/selene-plugins/pecos-selene-runtime-plugin/README.md)
+for installation and standalone usage, and the
+[crate contract](../../crates/pecos-selene-runtime/README.md) for lifecycle and
+timing semantics. The scheduler does not model Anduril transport or predict
+hardware timing.
 ## Opt-in scoped execution
 
 QIS builders can run the native program synchronously on its Monte Carlo worker,
@@ -471,11 +503,18 @@ cannot copy live allocations, pending results or scheduler state. Configuration
 templates without a native instance remain cloneable for fresh shots. The main
 `QisEngine` execution path resets before each shot.
 
-Shot lifecycle cleanup remains the plugin's responsibility. The public runtimes
-clear allocations at `shot_end`, including measured handles not explicitly released
-by the program. Successful end allows instance reuse without requiring a forced
-drain. A continuous runtime clock is preserved, including time advanced by queued
-work the runtime later discards; the next trace uses the configured clock model.
+Shot lifecycle cleanup remains the plugin's responsibility, and plugins differ.
+Selene's simple and soft-RZ runtimes clear allocations, queued work and futures at
+`shot_end`, including measured handles not explicitly released by the program, so
+a successful end allows instance reuse without a forced drain. The PECOS runtime
+keeps its futures at `shot_end` so the host can drain the shutdown work and
+deliver feedback, then clears allocations and restarts its clock at the next
+`shot_start`. The adapter's clock model must match the plugin. `continuous` (the
+default) takes the previous shot's last collected batch end as the next shot's
+origin and subtracts it from native batch timestamps. `shot_relative` uses a zero
+origin and expects the plugin to restart its clock every shot.
+`PecosRuntimePlugin` declares `shot_relative`; a raw plugin path needs
+`clock_model="shot_relative"` (Rust: `RuntimeClockModel::ShotRelative`).
 This does not provide automatic mid-shot growth or native snapshots.
 
 Source annotations can span native-call chunks. PECOS retains them until the

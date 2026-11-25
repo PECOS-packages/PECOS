@@ -134,7 +134,7 @@ fn local_sleep_does_not_delay_an_unrelated_qubit() {
 #[test]
 fn retirement_before_execution_still_accepts_feedback_but_not_reads() {
     let mut r = runtime(RuntimeConfig {
-        max_live_results: 1,
+        max_live_results: Some(1),
         ..Default::default()
     });
     let a = r.measure_leaked(0).unwrap();
@@ -237,4 +237,216 @@ fn independent_measurements_never_pass_earlier_measurements() {
         })
         .collect();
     assert_eq!(ids, [a, b, c]);
+}
+
+#[test]
+fn trailing_barriers_and_delays_do_not_reach_the_next_shot() {
+    for global in [false, true] {
+        let mut r = runtime(RuntimeConfig::default());
+        if global {
+            r.global_barrier(1000).unwrap();
+        } else {
+            r.local_barrier(&[0], 1000).unwrap();
+            r.qfree(0).unwrap();
+        }
+        assert!(drain(&mut r).is_empty());
+        r.shot_end().unwrap();
+        r.shot_start(1, 9).unwrap();
+        let q = r.qalloc().unwrap();
+        r.rxy_gate(q, 1.0, 0.0).unwrap();
+        r.global_barrier(0).unwrap();
+        assert_eq!(
+            u64::from(drain(&mut r)[0].runtime_source().unwrap().start()),
+            100
+        );
+    }
+}
+
+#[test]
+fn default_retains_readable_futures_beyond_the_former_limit() {
+    let mut r = runtime(RuntimeConfig::default());
+    let first = r.measure(0).unwrap();
+    r.force_result(first).unwrap();
+    drain(&mut r);
+    r.set_bool_result(first, true).unwrap();
+    for _ in 0..65_536 {
+        let id = r.measure(0).unwrap();
+        r.force_result(id).unwrap();
+        drain(&mut r);
+        r.set_bool_result(id, false).unwrap();
+    }
+    assert_eq!(r.get_bool_result(first).unwrap(), Some(true));
+    assert_eq!(r.get_bool_result(first).unwrap(), Some(true));
+}
+
+#[test]
+fn explicit_result_limit_preserves_live_handles_and_reclaims_retired_ones() {
+    let mut r = runtime(RuntimeConfig {
+        max_live_results: Some(1),
+        ..Default::default()
+    });
+    let id = r.measure(0).unwrap();
+    r.force_result(id).unwrap();
+    drain(&mut r);
+    r.set_bool_result(id, true).unwrap();
+    r.increment_future_refcount(id).unwrap();
+    r.decrement_future_refcount(id).unwrap();
+    assert!(r.measure(1).is_err());
+    assert_eq!(r.get_bool_result(id).unwrap(), Some(true));
+    r.decrement_future_refcount(id).unwrap();
+    assert!(r.get_bool_result(id).is_err());
+    assert!(r.measure(1).is_ok());
+}
+
+#[test]
+fn two_qubit_dependencies_survive_independent_pulse_packing() {
+    for max_batch_size in [1, 2, 8] {
+        let mut r = runtime(RuntimeConfig {
+            max_batch_size,
+            duration_ns_rxy: 10,
+            duration_ns_rzz: 30,
+            ..Default::default()
+        });
+        r.rxy_gate(0, 0.1, 0.0).unwrap();
+        r.rzz_gate(0, 1, 0.2).unwrap();
+        r.rxy_gate(1, 0.3, 0.0).unwrap();
+        r.rxy_gate(2, 0.4, 0.0).unwrap();
+        r.rzz_gate(1, 2, 0.5).unwrap();
+        r.global_barrier(0).unwrap();
+        let batches = drain(&mut r);
+        let timings: Vec<_> = batches
+            .iter()
+            .map(|batch| {
+                let source = batch.runtime_source().unwrap();
+                (
+                    u64::from(source.start()),
+                    u64::from(source.end()),
+                    batch.len(),
+                )
+            })
+            .collect();
+        if max_batch_size == 1 {
+            assert_eq!(
+                timings,
+                [
+                    (100, 110, 1),
+                    (110, 140, 1),
+                    (140, 150, 1),
+                    (150, 160, 1),
+                    (160, 190, 1)
+                ]
+            );
+        } else {
+            assert_eq!(
+                timings,
+                [(100, 110, 2), (110, 140, 1), (140, 150, 1), (150, 180, 1)]
+            );
+            assert_eq!(
+                batches[0].iter_ops().cloned().collect::<Vec<_>>(),
+                [
+                    Operation::RXYGate {
+                        qubit_id: 0,
+                        theta: 0.1,
+                        phi: 0.0
+                    },
+                    Operation::RXYGate {
+                        qubit_id: 2,
+                        theta: 0.4,
+                        phi: 0.0
+                    },
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn large_cancelling_virtual_rotations_preserve_small_rotations() {
+    for large in [2_f64.powi(54), 1e100, f64::MAX] {
+        let mut r = runtime(RuntimeConfig::default());
+        for theta in [large, 1.0, -large] {
+            r.rz_gate(0, theta).unwrap();
+        }
+        r.rxy_gate(0, std::f64::consts::FRAC_PI_2, 0.0).unwrap();
+        r.global_barrier(0).unwrap();
+        let ops: Vec<_> = drain(&mut r).into_iter().flatten().collect();
+        let Operation::RXYGate { phi, .. } = ops[0] else {
+            panic!("expected pulse")
+        };
+        // The two large Z rotations cancel exactly, leaving a one-radian Z.
+        assert!(
+            (phi.sin() - (-1.0_f64).sin()).abs() < 1e-12,
+            "large={large}, phi={phi}"
+        );
+        assert!((phi.cos() - 1.0_f64.cos()).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn large_pulse_axis_preserves_small_virtual_frame() {
+    for phi in [2_f64.powi(54), -1e100, f64::MAX] {
+        let mut r = runtime(RuntimeConfig::default());
+        r.rz_gate(0, 0.25).unwrap();
+        r.rxy_gate(0, 1.0, phi).unwrap();
+        r.global_barrier(0).unwrap();
+        let ops: Vec<_> = drain(&mut r).into_iter().flatten().collect();
+        let Operation::RXYGate { phi: actual, .. } = ops[0] else {
+            panic!("expected pulse")
+        };
+        // Independent angle-subtraction identities avoid subtracting 0.25 from
+        // a huge floating-point angle when constructing the expected axis.
+        let (s, c) = phi.sin_cos();
+        let (sf, cf) = 0.25_f64.sin_cos();
+        assert!((actual.sin() - (s * cf - c * sf)).abs() < 1e-12);
+        assert!((actual.cos() - (c * cf + s * sf)).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn finite_rotations_do_not_overflow_the_virtual_frame() {
+    let mut r = runtime(RuntimeConfig::default());
+    for theta in [f64::MAX, f64::MAX, -f64::MAX, -f64::MAX] {
+        r.rz_gate(0, theta).unwrap();
+    }
+    r.rxy_gate(0, 1.0, f64::MAX).unwrap();
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(r.rz_gate(0, invalid).is_err());
+        assert!(r.rxy_gate(0, 1.0, invalid).is_err());
+    }
+    r.rxy_gate(0, 1.0, 0.0).unwrap();
+    r.global_barrier(0).unwrap();
+    let ops: Vec<_> = drain(&mut r).into_iter().flatten().collect();
+    let Operation::RXYGate { phi, .. } = ops[1] else {
+        panic!("expected pulse")
+    };
+    assert!(phi.abs() < 1e-12, "invalid calls changed the frame: {phi}");
+}
+
+#[test]
+fn unallocatable_qubit_capacity_is_an_error_not_an_abort() {
+    for n_qubits in [u64::MAX, 1 << 62] {
+        let error = PecosRuntime::new(n_qubits, 0.into(), RuntimeConfig::default())
+            .err()
+            .expect("capacity cannot be allocated");
+        assert!(error.to_string().contains(&n_qubits.to_string()), "{error}");
+    }
+}
+
+#[test]
+fn caller_errors_name_the_offending_values() {
+    let mut r = runtime(RuntimeConfig::default());
+    let message = |error: anyhow::Error| error.to_string();
+    assert!(message(r.rzz_gate(2, 2, 0.1).unwrap_err()).contains("got 2 twice"));
+    assert!(message(r.rzz_gate(0, 1, f64::NAN).unwrap_err()).contains("theta=NaN"));
+    assert!(message(r.rz_gate(1, f64::INFINITY).unwrap_err()).contains("qubit 1"));
+    assert!(message(r.rxy_gate(0, 1.0, f64::NAN).unwrap_err()).contains("phi=NaN"));
+    let limit = PecosRuntime::new(
+        1,
+        0.into(),
+        RuntimeConfig {
+            max_queued_batches: 0,
+            ..Default::default()
+        },
+    );
+    assert!(message(limit.err().unwrap()).contains("max_queued_batches"));
 }

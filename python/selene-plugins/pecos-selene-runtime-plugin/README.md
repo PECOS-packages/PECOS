@@ -37,10 +37,16 @@ shots = (
 ```
 
 Gate durations default to zero nanoseconds and `max_batch_size` defaults to one.
-`max_queued_batches` defaults to 4096 and `max_live_results` to 65536. Hosts must
-drain ready batches and retire unused futures. Results are deterministic for a
-given input stream and configuration; randomness belongs to the simulator and
-error model.
+`max_queued_batches` defaults to 4096. `max_live_results` defaults to `None`
+(no cap), matching SoftRZ's acceptance of long measurement streams. Set a
+positive integer to bound retained futures when the program and host retire
+unused handles. PECOS retires its temporary eager-measurement futures; the
+pinned Selene host retains them until shot end, so an explicit cap also limits
+eager measurements per shot there. Completed lazy futures remain readable
+until their references are released; they are never evicted to meet a cap.
+
+Hosts must drain ready batches. Results are deterministic for a given input
+stream and configuration; randomness belongs to the simulator and error model.
 
 For development builds, pass `library_path=Path(...)` to select the shared library
 produced by `cargo build -p pecos-selene-runtime-plugin`. Set
@@ -70,3 +76,7 @@ scheduled routes. They check that an exact outcome of `2` survives cached future
 reads and triggers a conditional reset to `0`. Zero-noise and zero-duration
 controls remain in `|1>`. The one-second idle used to make leakage deterministic
 is an artificial test duration, not a hardware timing recommendation.
+
+The lifetime regressions hold a lazy future across repeated eager measurements
+with `max_live_results=2` on all three PECOS routes, and verify that standalone
+Selene can perform 65,537 eager measurements with the default configuration.

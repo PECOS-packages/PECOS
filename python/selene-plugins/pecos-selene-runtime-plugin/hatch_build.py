@@ -18,7 +18,7 @@ class RuntimeBuildHook(BuildHookInterface):
         root = Path(self.root)
         workspace = root.parents[2]
         subprocess.run(
-            ["cargo", "build", "--release", "-p", "pecos-selene-runtime-plugin"],
+            ["cargo", "build", "--locked", "--release", "-p", "pecos-selene-runtime-plugin"],
             cwd=workspace,
             check=True,
         )

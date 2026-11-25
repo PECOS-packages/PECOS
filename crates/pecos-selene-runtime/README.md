@@ -75,25 +75,27 @@ interface.
   Measurement itself does not free a qubit. Reset retains the software frame,
   matching SoftRZ's frame convention.
 - `shot_end` releases shutdown work and keeps futures valid for feedback.
-  Callers end and drain each shot before the next `shot_start`, which rejects
-  leftover queued work, undelivered feedback, and, if the shot was not ended,
-  live futures or allocated qubits. It then resets allocation, phase, time and
-  result state. Every shot's clock starts at the
-  init time, so a trailing delay or barrier never idles the next shot; PECOS
-  runs this plugin with its `shot_relative` clock model to match.
-  Both Selene and PECOS can drain the shutdown work and return its feedback
-  after the end hook. Between `shot_end` and the next `shot_start`, operations
-  on qubits (gates, measurements, resets, `qalloc`, `qfree`, local barriers
-  naming qubits) are rejected. Global barriers and `simulate_delay` are still accepted; they only
-  move the clock, which the next `shot_start` resets.
+  `shot_start` rejects a shot that is still running, so each shot must be ended
+  with `shot_end` first. Before the first shot it rejects allocated qubits and
+  existing futures, since starting would discard them. It also rejects leftover
+  queued work and undelivered feedback, so the shutdown work must be drained and
+  its measurements delivered. It then resets allocation, phase, time and result
+  state. Every shot's clock starts at the init time, so a trailing delay or
+  barrier never idles the next shot; PECOS runs this plugin with its
+  `shot_relative` clock model to match. Both Selene and PECOS can drain the
+  shutdown work and return its feedback after the end hook. Between `shot_end`
+  and the next `shot_start`, operations on qubits (gates, measurements, resets,
+  `qalloc`, `qfree`, local barriers naming qubits) are rejected. Global barriers
+  and `simulate_delay` are still accepted; they only move the clock, which the
+  next `shot_start` resets.
 - The runtime does not recover from a failed call. After any call returns an
-  error, the caller must discard the instance (`exit`, then a new `init`)
-  rather than start another shot on it. Errors are not latched, so later calls
-  on the same instance may still be accepted; the runtime makes no promise
-  about their behaviour.
-  Selene's batch runner stops the run on a runtime error, and PECOS
-  reinitializes the plugin when it resets after a failed shot. Selene's
-  interactive API can call `next_shot` after an error; that use is unsupported.
+  error (an exhausted `qalloc` returning `u64::MAX` and an unready result read
+  returning `None` are not errors), every later call except `exit` is rejected
+  with a message naming the first error, so the instance must be discarded
+  (`exit`, then a new `init`). Selene's batch runner stops the run on a runtime
+  error, and PECOS reinitializes the plugin when it resets after a failed shot.
+  Selene's interactive API can call `next_shot` after an error, and the runtime
+  rejects that shot.
 
 ## PECOS integration
 

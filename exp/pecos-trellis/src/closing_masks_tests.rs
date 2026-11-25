@@ -24,7 +24,7 @@ fn words_for_indices(width: usize, detectors: &[usize]) -> Vec<u64> {
 }
 
 /// Reconstruct last-touch with the legacy *all-detectors* scan, independently
-/// of the proposed current-toggle/support-only optimization.
+/// of the current-toggle/support-only scan the constructors use.
 fn assert_legacy_masks(decoder: &TrellisDecoder) -> usize {
     let model = &decoder.model;
     let width = model.num_detectors;

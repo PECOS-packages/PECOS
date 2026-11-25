@@ -26,6 +26,8 @@ class PecosRuntimePlugin(Runtime):
     max_queued_batches: int = 4096
     max_live_results: int | None = None
     library_path: Path | None = None
+    # The runtime restarts its clock every shot; PECOS must not carry time over.
+    clock_model: ClassVar[str] = "shot_relative"
     native_gates: ClassVar[tuple[str, ...]] = ("rxy", "rz", "rzz")
 
     def __post_init__(self) -> None:

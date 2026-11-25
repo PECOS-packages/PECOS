@@ -72,11 +72,16 @@ struct Future {
 /// Unforced work remains queued. Callers must drain ready batches after calls,
 /// deliver each emitted measurement, and drain shutdown work before starting the next shot.
 ///
-/// A call that returns an error leaves the current shot unfinished, and
-/// `shot_start` then refuses to begin another one. After an error the host
-/// must discard the instance with `exit` and initialize a new one. Both
-/// supported hosts already do this: Selene stops the run on a runtime error,
-/// and PECOS reinitializes the plugin when it resets after a failed shot.
+/// Every shot's clock restarts at the `start` instant given to [`PecosRuntime::new`],
+/// so time left over from one shot, such as a trailing delay, never reaches the
+/// next. PECOS's Selene adapter must use its shot-relative clock model with this
+/// runtime.
+///
+/// The runtime does not recover from a failed call, and it does not detect
+/// reuse after one. After any call returns an error, the caller must discard
+/// the instance with `exit` and initialize a new one. Selene's batch runner
+/// stops the run on a runtime error, and PECOS reinitializes the plugin when it
+/// resets after a failed shot.
 pub struct PecosRuntime {
     config: RuntimeConfig,
     qubits: Vec<Qubit>,
@@ -84,6 +89,8 @@ pub struct PecosRuntime {
     ready: usize,
     results: BTreeMap<u64, Future>,
     next_result: u64,
+    /// Start of every shot's clock.
+    origin: u64,
     tail: u64,
     emitted_end: u64,
     closed: bool,
@@ -142,6 +149,7 @@ impl PecosRuntime {
             ready: 0,
             results: BTreeMap::new(),
             next_result: 0,
+            origin,
             tail: origin,
             emitted_end: origin,
             closed: false,
@@ -349,13 +357,10 @@ impl RuntimeInterface for PecosRuntime {
         self.results.clear();
         self.ending = false;
         self.next_result = 0;
-        // Runtime timestamps are continuous across shots in both hosts. Keep
-        // barrier-only advances too, even when no later gate was emitted.
-        self.tail = self
-            .qubits
-            .iter()
-            .fold(self.tail, |t, q| t.max(q.available));
-        self.emitted_end = self.tail;
+        // Shot-relative clock: PECOS pairs this plugin with
+        // RuntimeClockModel::ShotRelative, so timestamps restart every shot.
+        self.tail = self.origin;
+        self.emitted_end = self.origin;
         self.ready = 0;
         self.qubits.fill(Qubit::default());
         Ok(())

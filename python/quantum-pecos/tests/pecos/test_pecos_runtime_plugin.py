@@ -138,6 +138,33 @@ def test_leakage_value_drives_reset_with_real_noise(
         assert results["measurement_2"] == [0 if faulted else 1] * shots
 
 
+@pytest.mark.parametrize("transport", ["scheduled", "events"])
+def test_trailing_delay_does_not_idle_the_next_shot(runtime: PecosRuntimePlugin, transport: str) -> None:
+    """Each shot's clock restarts, so a delay after the last measurement is never charged later."""
+    source = Path(__file__).resolve().parents[4] / "crates/pecos-selene-runtime/tests/fixtures/trailing_delay.ll"
+    classical = pecos.selene_engine(runtime=replace(runtime, duration_ns_rxy=10, duration_ns_measure=10))
+    # Linear rate 1/s with an X channel: the fixture's one-second delay, if
+    # carried into the next shot before its first gate, would flip the qubit
+    # and read 0 instead of 1.
+    profile = pr.scheduled_idle_noise(1, linear=1.0, linear_model={"X": 1.0})
+    if transport == "events":
+        classical.scheduled_event_batches()
+        profile = pr.scheduled_event_idle_noise(profile, lambda _: PassThrough())
+    else:
+        classical.scheduled_batches()
+    built = (
+        pecos.sim(pecos.Qis(source.read_text()))
+        .classical(classical)
+        .quantum(pr.state_vector())
+        .noise(profile)
+        .qubits(1)
+        .workers(1)
+        .seed(3)
+        .build()
+    )
+    assert built.run(4).to_dict()["measurement_0"] == [1] * 4
+
+
 @pytest.mark.parametrize("transport", ["flat", "scheduled", "events"])
 def test_eager_measurements_retire_only_their_temporary_futures(
     runtime: PecosRuntimePlugin,

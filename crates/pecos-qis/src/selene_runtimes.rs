@@ -303,6 +303,7 @@ pub(crate) fn pecos_test_runtime(args: &[&str]) -> SeleneRuntime {
         .expect("Cargo must build the PECOS runtime plugin dev dependency");
     SeleneRuntime::with_plugin_config(path, args.iter().map(ToString::to_string).collect(), vec![])
         .with_native_gate_set(RuntimeNativeGateSet::RXY_RZ_RZZ)
+        .with_clock_model(crate::selene_runtime::RuntimeClockModel::ShotRelative)
 }
 
 #[cfg(test)]

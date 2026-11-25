@@ -87,7 +87,7 @@ fn batching_respects_dependencies_and_sealed_prefixes() {
     assert_eq!(drain(&mut r)[0].len(), 1);
 }
 #[test]
-fn barriers_and_delays_have_checked_timing_and_continue_between_shots() {
+fn barriers_and_delays_have_checked_timing_and_reset_between_shots() {
     let mut r = runtime(RuntimeConfig {
         duration_ns_rxy: 10,
         ..Default::default()
@@ -113,7 +113,7 @@ fn barriers_and_delays_have_checked_timing_and_continue_between_shots() {
     r.global_barrier(0).unwrap();
     assert_eq!(
         u64::from(drain(&mut r)[0].runtime_source().unwrap().start()),
-        175
+        100
     );
     assert!(r.simulate_delay(u64::MAX).is_err());
 }
@@ -240,7 +240,7 @@ fn independent_measurements_never_pass_earlier_measurements() {
 }
 
 #[test]
-fn shot_clock_preserves_barriers_without_emitted_work() {
+fn trailing_barriers_and_delays_do_not_reach_the_next_shot() {
     for global in [false, true] {
         let mut r = runtime(RuntimeConfig::default());
         if global {
@@ -257,7 +257,7 @@ fn shot_clock_preserves_barriers_without_emitted_work() {
         r.global_barrier(0).unwrap();
         assert_eq!(
             u64::from(drain(&mut r)[0].runtime_source().unwrap().start()),
-            1100
+            100
         );
     }
 }

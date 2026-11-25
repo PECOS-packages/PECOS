@@ -503,11 +503,18 @@ cannot copy live allocations, pending results or scheduler state. Configuration
 templates without a native instance remain cloneable for fresh shots. The main
 `QisEngine` execution path resets before each shot.
 
-Shot lifecycle cleanup remains the plugin's responsibility. The public runtimes
-clear allocations at `shot_end`, including measured handles not explicitly released
-by the program. Successful end allows instance reuse without requiring a forced
-drain. A continuous runtime clock is preserved, including time advanced by queued
-work the runtime later discards; the next trace uses the configured clock model.
+Shot lifecycle cleanup remains the plugin's responsibility, and plugins differ.
+Selene's simple and soft-RZ runtimes clear allocations, queued work and futures at
+`shot_end`, including measured handles not explicitly released by the program, so
+a successful end allows instance reuse without a forced drain. The PECOS runtime
+keeps its futures at `shot_end` so the host can drain the shutdown work and
+deliver feedback, then clears allocations and restarts its clock at the next
+`shot_start`. The adapter's clock model must match the plugin. `continuous` (the
+default) takes the previous shot's last collected batch end as the next shot's
+origin and subtracts it from native batch timestamps. `shot_relative` uses a zero
+origin and expects the plugin to restart its clock every shot.
+`PecosRuntimePlugin` declares `shot_relative`; a raw plugin path needs
+`clock_model="shot_relative"` (Rust: `RuntimeClockModel::ShotRelative`).
 This does not provide automatic mid-shot growth or native snapshots.
 
 Source annotations can span native-call chunks. PECOS retains them until the

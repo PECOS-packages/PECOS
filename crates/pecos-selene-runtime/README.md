@@ -75,15 +75,25 @@ interface.
   Measurement itself does not free a qubit. Reset retains the software frame,
   matching SoftRZ's frame convention.
 - `shot_end` releases shutdown work and keeps futures valid for feedback.
-  `shot_start` requires the previous shot to be ended and drained, then resets
-  allocation, phase and result state while preserving the continuous clock.
+  Callers end and drain each shot before the next `shot_start`, which rejects
+  leftover queued work, undelivered feedback, and, if the shot was not ended,
+  live futures or allocated qubits. It then resets allocation, phase, time and
+  result state. Every shot's clock starts at the
+  init time, so a trailing delay or barrier never idles the next shot; PECOS
+  runs this plugin with its `shot_relative` clock model to match.
   Both Selene and PECOS can drain the shutdown work and return its feedback
-  after the end hook. Qubit operations, including `qfree` and barriers, are
-  rejected between `shot_end` and the next `shot_start`.
-- A call that returns an error leaves the shot unfinished, and `shot_start`
-  refuses to continue from it. Hosts discard the instance and initialize a new
-  one: Selene stops the run on a runtime error, and PECOS reinitializes the
-  plugin when it resets after a failed shot.
+  after the end hook. Between `shot_end` and the next `shot_start`, operations
+  on qubits (gates, measurements, resets, `qalloc`, `qfree`, local barriers
+  naming qubits) are rejected. Global barriers and `simulate_delay` are still accepted; they only
+  move the clock, which the next `shot_start` resets.
+- The runtime does not recover from a failed call. After any call returns an
+  error, the caller must discard the instance (`exit`, then a new `init`)
+  rather than start another shot on it. Errors are not latched, so later calls
+  on the same instance may still be accepted; the runtime makes no promise
+  about their behaviour.
+  Selene's batch runner stops the run on a runtime error, and PECOS
+  reinitializes the plugin when it resets after a failed shot. Selene's
+  interactive API can call `next_shot` after an error; that use is unsupported.
 
 ## PECOS integration
 
@@ -96,7 +106,8 @@ Rust callers configure the same adapter explicitly:
 let runtime = pecos_qis::SeleneRuntime::with_plugin_config(
     library_path, vec!["--max-batch-size=2".into()], vec![],
 )
-.with_native_gate_set(pecos_qis::RuntimeNativeGateSet::RXY_RZ_RZZ);
+.with_native_gate_set(pecos_qis::RuntimeNativeGateSet::RXY_RZ_RZZ)
+.with_clock_model(pecos_qis::RuntimeClockModel::ShotRelative);
 ```
 
 The runtime's native future getters supply program-visible values after physical

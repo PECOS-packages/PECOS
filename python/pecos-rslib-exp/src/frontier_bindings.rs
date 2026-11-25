@@ -726,6 +726,7 @@ impl PyFrontierDecoder {
     /// can change near-tie pruning, outside snapshot/reference guarantees; unpruned results are unchanged.
     /// With it enabled, construction fails for non-finite static suffix values when BP scoring
     /// is off, and decoding can be slower on narrow models with few active detectors.
+    /// It requires metric_mode='logsumexp_float'; metric_mode='maxlog_int' is rejected.
     /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
     /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
@@ -777,6 +778,8 @@ impl PyFrontierDecoder {
     /// can change near-tie pruning, outside snapshot/reference guarantees; unpruned results are unchanged.
     /// With it enabled, construction fails for non-finite static suffix values when BP scoring
     /// is off, and decoding can be slower on narrow models with few active detectors.
+    /// It requires metric_mode='logsumexp_float'; metric_mode='maxlog_int' is rejected.
+    /// It also requires every factor to be binary; a multi-outcome factor is rejected.
     /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
     /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
@@ -955,6 +958,7 @@ impl PyFrontierCommitteeDecoder {
     /// can change near-tie pruning, outside snapshot/reference guarantees; unpruned results are unchanged.
     /// With it enabled, construction fails for non-finite static suffix values when BP scoring
     /// is off, and decoding can be slower on narrow models with few active detectors.
+    /// It requires metric_mode='logsumexp_float'; metric_mode='maxlog_int' is rejected.
     /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
     /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.

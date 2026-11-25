@@ -4380,6 +4380,9 @@ fn score_prune_candidates(
         for (&carried, &summed) in frontier.scores.iter().zip(&reference.scores) {
             assert!(
                 if carried.is_finite() && summed.is_finite() {
+                    // Relative to the current score: carried rounding error follows the
+                    // largest sum a lineage reached, which stays far below this bound for
+                    // the row counts and depths decoded here.
                     (carried - summed).abs() <= 1e-9 * (1.0 + summed.abs())
                 } else {
                     // A NaN BP posterior makes both scores NaN (payloads may differ);

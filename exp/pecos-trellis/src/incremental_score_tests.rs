@@ -457,8 +457,9 @@ fn bp_constructor_honours_incremental_score() {
 }
 
 #[test]
-fn carried_nan_scores_are_pruned() {
+fn carried_nan_score_empties_the_frontier() {
     // One state whose single active row has a NaN value, as a NaN BP posterior gives.
+    // The carried NaN has a different payload from the summed one.
     let mut frontier = FrontierScratch::<f64> {
         stride: 1,
         detector_words: 1,
@@ -466,7 +467,7 @@ fn carried_nan_scores_are_pruned() {
     };
     frontier.parent.words.push(0);
     frontier.parent.masses.push(0.0);
-    frontier.parent.suffix_sums.push(f64::NAN);
+    frontier.parent.suffix_sums.push(-f64::NAN);
     let mut values = SuffixValues::new(1, None);
     values.probabilities[0].zero = f64::NAN;
     values.probabilities[0].one = f64::NAN;

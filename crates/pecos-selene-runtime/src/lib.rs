@@ -77,12 +77,28 @@ struct Future {
 /// next. PECOS's Selene adapter must use its shot-relative clock model with this
 /// runtime.
 ///
-/// The runtime does not recover from a failed call, and it does not detect
-/// reuse after one. After any call returns an error, the caller must discard
-/// the instance with `exit` and initialize a new one. Selene's batch runner
-/// stops the run on a runtime error, and PECOS reinitializes the plugin when it
-/// resets after a failed shot.
+/// Hosts call `shot_start` before anything else in a shot and `shot_end` after
+/// it; `shot_start` rejects a shot that was never ended.
+///
+/// The runtime does not recover from a failed call. After any call returns an
+/// error, every later call except `exit` is rejected; discard the instance with
+/// `exit` and initialize a new one. Selene's batch runner stops the run on a
+/// runtime error, and PECOS reinitializes the plugin when it resets after a
+/// failed shot.
 pub struct PecosRuntime {
+    scheduler: Scheduler,
+    /// The first error a call returned; once set, the instance only accepts `exit`.
+    failure: Option<String>,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShotState {
+    /// Constructed, with no shot started yet.
+    Idle,
+    Running,
+    /// `shot_end` was called; shutdown work may still be drained.
+    Ended,
+}
+struct Scheduler {
     config: RuntimeConfig,
     qubits: Vec<Qubit>,
     queue: VecDeque<BatchOperation>,
@@ -94,7 +110,7 @@ pub struct PecosRuntime {
     tail: u64,
     emitted_end: u64,
     closed: bool,
-    ending: bool,
+    shot: ShotState,
 }
 // Only the physical operations emitted by this scheduler reach this helper.
 // Their one or two qubit IDs fit on the stack; conflict checks need no hash set.
@@ -119,6 +135,35 @@ impl PecosRuntime {
     /// # Errors
     /// Rejects zero limits and a qubit capacity whose state cannot be allocated.
     pub fn new(n_qubits: u64, start: Instant, config: RuntimeConfig) -> Result<Self> {
+        Ok(Self {
+            scheduler: Scheduler::new(n_qubits, start, config)?,
+            failure: None,
+        })
+    }
+    /// Run one interface call, rejecting it after an earlier failure and
+    /// recording its own failure.
+    fn guard<T>(&mut self, call: impl FnOnce(&mut Scheduler) -> Result<T>) -> Result<T> {
+        if let Some(failure) = &self.failure {
+            bail!(
+                "runtime is unusable after an earlier error ({failure}); call exit and initialize a new instance"
+            );
+        }
+        let result = call(&mut self.scheduler);
+        self.record(result)
+    }
+    /// Keep the first error a call returned.
+    fn record<T>(&mut self, result: Result<T>) -> Result<T> {
+        if let Err(error) = &result
+            && self.failure.is_none()
+        {
+            self.failure = Some(format!("{error:#}"));
+        }
+        result
+    }
+}
+
+impl Scheduler {
+    fn new(n_qubits: u64, start: Instant, config: RuntimeConfig) -> Result<Self> {
         ensure!(
             config.max_batch_size > 0,
             "max_batch_size must be positive, got 0"
@@ -153,7 +198,7 @@ impl PecosRuntime {
             tail: origin,
             emitted_end: origin,
             closed: false,
-            ending: false,
+            shot: ShotState::Idle,
         })
     }
     fn live(&self) -> Result<()> {
@@ -163,8 +208,8 @@ impl PecosRuntime {
     fn qubit(&self, id: u64) -> Result<&Qubit> {
         self.live()?;
         ensure!(
-            !self.ending,
-            "qubit {id} used after shot_end; start a new shot before using qubits"
+            self.shot != ShotState::Ended,
+            "qubit {id} used after shot_end; qubit operations need a running shot"
         );
         self.qubits
             .get(
@@ -231,7 +276,7 @@ impl PecosRuntime {
         } else {
             ensure!(
                 self.queue.len() < self.config.max_queued_batches,
-                "runtime queue full at max_queued_batches = {}; drain ready operations before submitting more",
+                "runtime queue full at max_queued_batches = {}; the host must drain ready operations before submitting more",
                 self.config.max_queued_batches
             );
             let start = self.tail.max(earliest);
@@ -255,7 +300,7 @@ impl PecosRuntime {
         if let Some(limit) = self.config.max_live_results {
             ensure!(
                 self.results.len() < limit,
-                "live result limit max_live_results = {limit} reached; retire unused futures"
+                "live result limit max_live_results = {limit} reached; the program must retire unused futures, or the host must raise the limit"
             );
         }
         let id = self.next_result;
@@ -315,7 +360,7 @@ impl PecosRuntime {
     }
 }
 
-impl RuntimeInterface for PecosRuntime {
+impl RuntimeInterface for Scheduler {
     fn exit(&mut self) -> Result<()> {
         self.live()?;
         self.queue.clear();
@@ -346,16 +391,23 @@ impl RuntimeInterface for PecosRuntime {
     }
     fn shot_start(&mut self, _shot_id: u64, _seed: u64) -> Result<()> {
         self.live()?;
+        match self.shot {
+            ShotState::Running => bail!(
+                "shot_start while a shot is running; the host must call shot_end and drain the shot first"
+            ),
+            // Starting clears allocations and futures, so nothing may exist yet.
+            ShotState::Idle => ensure!(
+                self.results.is_empty() && !self.qubits.iter().any(|q| q.allocated),
+                "shot_start after qubits or results were used before the first shot; the host must call shot_start first"
+            ),
+            ShotState::Ended => {}
+        }
         ensure!(
             self.queue.is_empty() && self.results.values().all(|r| r.value.is_some()),
-            "drain the previous shot and deliver its measurement feedback first"
-        );
-        ensure!(
-            self.ending || (self.results.is_empty() && !self.qubits.iter().any(|q| q.allocated)),
-            "finish the previous shot before starting another"
+            "shot_start with undrained work or undelivered feedback; the host must drain all queued work and deliver every measurement result first"
         );
         self.results.clear();
-        self.ending = false;
+        self.shot = ShotState::Running;
         self.next_result = 0;
         // Shot-relative clock: PECOS pairs this plugin with
         // RuntimeClockModel::ShotRelative, so timestamps restart every shot.
@@ -367,18 +419,18 @@ impl RuntimeInterface for PecosRuntime {
     }
     fn shot_end(&mut self) -> Result<()> {
         self.live()?;
-        ensure!(!self.ending, "shot already ended");
+        ensure!(self.shot != ShotState::Ended, "shot already ended");
         // Selene drains AFTER this callback. Preserve futures for that feedback;
         // PECOS may already have drained. Both hosts reset on the next shot.
         self.ready = self.queue.len();
-        self.ending = true;
+        self.shot = ShotState::Ended;
         Ok(())
     }
     fn qalloc(&mut self) -> Result<u64> {
         self.live()?;
         ensure!(
-            !self.ending,
-            "qalloc after shot_end; start a new shot before allocating"
+            self.shot != ShotState::Ended,
+            "qalloc after shot_end; allocation needs a running shot"
         );
         if let Some((i, q)) = self
             .qubits
@@ -463,7 +515,9 @@ impl RuntimeInterface for PecosRuntime {
     }
     fn get_bool_result(&mut self, id: u64) -> Result<Option<bool>> {
         match self.future(id)?.value {
-            Some(2) => bail!("result {id} is a leakage outcome (2); read it with get_u64_result"),
+            Some(2) => bail!(
+                "result {id} is a leakage outcome (2); the program must read leakage-aware results with get_u64_result"
+            ),
             value => Ok(value.map(|v| v == 1)),
         }
     }
@@ -551,6 +605,88 @@ impl RuntimeInterface for PecosRuntime {
     fn get_metric(&mut self, _nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
         self.live()?;
         Ok(None)
+    }
+}
+
+// Every call except `exit` goes through `guard`, including the ones this
+// runtime does not support, so any error leaves the instance able only to exit.
+impl RuntimeInterface for PecosRuntime {
+    fn exit(&mut self) -> Result<()> {
+        // Exit stays available after a failure so the host can discard the instance.
+        let result = self.scheduler.exit();
+        self.record(result)
+    }
+    fn get_next_operations(&mut self) -> Result<Option<BatchOperation>> {
+        self.guard(Scheduler::get_next_operations)
+    }
+    fn shot_start(&mut self, shot_id: u64, seed: u64) -> Result<()> {
+        self.guard(|s| s.shot_start(shot_id, seed))
+    }
+    fn shot_end(&mut self) -> Result<()> {
+        self.guard(Scheduler::shot_end)
+    }
+    fn custom_call(&mut self, tag: u64, data: &[u8]) -> Result<u64> {
+        self.guard(|s| s.custom_call(tag, data))
+    }
+    fn simulate_delay(&mut self, delay_ns: u64) -> Result<()> {
+        self.guard(|s| s.simulate_delay(delay_ns))
+    }
+    fn get_metric(&mut self, nth_metric: u8) -> Result<Option<(String, MetricValue)>> {
+        self.guard(|s| s.get_metric(nth_metric))
+    }
+    fn qalloc(&mut self) -> Result<u64> {
+        self.guard(Scheduler::qalloc)
+    }
+    fn qfree(&mut self, id: u64) -> Result<()> {
+        self.guard(|s| s.qfree(id))
+    }
+    fn rxy_gate(&mut self, id: u64, theta: f64, phi: f64) -> Result<()> {
+        self.guard(|s| s.rxy_gate(id, theta, phi))
+    }
+    fn rzz_gate(&mut self, a: u64, b: u64, theta: f64) -> Result<()> {
+        self.guard(|s| s.rzz_gate(a, b, theta))
+    }
+    fn rz_gate(&mut self, id: u64, theta: f64) -> Result<()> {
+        self.guard(|s| s.rz_gate(id, theta))
+    }
+    fn rpp_gate(&mut self, a: u64, b: u64, theta: f64, phi: f64) -> Result<()> {
+        self.guard(|s| s.rpp_gate(a, b, theta, phi))
+    }
+    fn measure(&mut self, id: u64) -> Result<u64> {
+        self.guard(|s| s.measure(id))
+    }
+    fn measure_leaked(&mut self, id: u64) -> Result<u64> {
+        self.guard(|s| s.measure_leaked(id))
+    }
+    fn reset(&mut self, id: u64) -> Result<()> {
+        self.guard(|s| s.reset(id))
+    }
+    fn force_result(&mut self, id: u64) -> Result<()> {
+        self.guard(|s| s.force_result(id))
+    }
+    fn get_bool_result(&mut self, id: u64) -> Result<Option<bool>> {
+        self.guard(|s| s.get_bool_result(id))
+    }
+    fn get_u64_result(&mut self, id: u64) -> Result<Option<u64>> {
+        self.guard(|s| s.get_u64_result(id))
+    }
+    fn set_bool_result(&mut self, id: u64, result: bool) -> Result<()> {
+        self.guard(|s| s.set_bool_result(id, result))
+    }
+    fn set_u64_result(&mut self, id: u64, result: u64) -> Result<()> {
+        self.guard(|s| s.set_u64_result(id, result))
+    }
+    fn increment_future_refcount(&mut self, id: u64) -> Result<()> {
+        self.guard(|s| s.increment_future_refcount(id))
+    }
+    fn decrement_future_refcount(&mut self, id: u64) -> Result<()> {
+        self.guard(|s| s.decrement_future_refcount(id))
+    }
+    fn local_barrier(&mut self, ids: &[u64], sleep_ns: u64) -> Result<()> {
+        self.guard(|s| s.local_barrier(ids, sleep_ns))
+    }
+    fn global_barrier(&mut self, sleep_ns: u64) -> Result<()> {
+        self.guard(|s| s.global_barrier(sleep_ns))
     }
 }
 

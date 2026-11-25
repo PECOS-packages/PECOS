@@ -6,9 +6,15 @@
 //! C entry points return a status; they never unwind or transfer control while
 //! Rust frames own resources. The generated caller handles errors afterwards.
 //!
-//! Fork is not supported: a forked child must not call the runtime from a thread
-//! that already made WASM calls. Its async workers and the timeout clocks of its
-//! cached modules are threads, and fork does not copy them.
+//! Fork is supported through the C ABI. A child discards all of the forking
+//! thread's per-thread runtime state: registrations, function handles, contexts,
+//! retained worker-scope instances and pending results. It must start a new shot
+//! and register again; inherited pending results fail as unknown contexts.
+//! Compiled code is kept, and timeouts and traps keep working. Fork requires
+//! that no other thread is performing a Wasmtime host-side operation (compiling,
+//! instantiating, creating the Engine, dropping stores or modules, or handling a
+//! trap). A worker parked in guest code is fine. Forks that skip `pthread_atfork`
+//! handlers (raw `clone`/`clone3`, `vfork`, or glibc `_Fork`) are unsupported.
 
 use pecos_wasm::{CompiledWasmModule, ForeignObject, WasmForeignObject, WasmScalarType};
 use std::borrow::Cow;
@@ -121,6 +127,9 @@ impl CompilationCache {
 }
 
 thread_local! {
+    // No destructor: remains readable while STATE, COMPILED and POOL are destroyed.
+    #[cfg(unix)]
+    static GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
     static STATE: tls::Value<RefCell<State>> = tls::Value::new(RefCell::default());
     // Immutable code survives shot reset; stores and instances never do.
     static COMPILED: tls::Value<RefCell<CompilationCache>> = tls::Value::new(RefCell::default());
@@ -129,6 +138,14 @@ thread_local! {
     static POOL: tls::Value<RefCell<Option<async_pool::Pool>>> = const { tls::Value::new(RefCell::new(None)) };
     // QIS panic uses a length-prefixed byte string (at most 255 bytes).
     static ERROR: RefCell<Vec<u8>> = RefCell::new(vec![0]);
+}
+
+#[cfg(unix)]
+fn inherited() -> bool {
+    GENERATION.with(|generation| {
+        let recorded = generation.get();
+        recorded != u64::MAX && recorded != pecos_wasm::fork_generation()
+    })
 }
 
 // Access only the calling thread's executor; workers and destructors never use TLS.
@@ -149,6 +166,17 @@ fn set_error(message: &str) {
 
 /// Execute an operation without allowing a Rust panic to cross the ABI.
 pub fn boundary<T: Copy>(failure: T, operation: impl FnOnce() -> Result<T>) -> T {
+    #[cfg(unix)]
+    {
+        if inherited() {
+            // Sibling threads vanished at fork. Even dropping their channels or
+            // instances may take locks they held, so deliberately leak this state.
+            POOL.with(|pool| std::mem::forget(pool.borrow_mut().take()));
+            STATE.with(|state| std::mem::forget(std::mem::take(&mut *state.borrow_mut())));
+            // COMPILED remains valid on the shared Engine and is reused normally.
+        }
+        GENERATION.with(|generation| generation.set(pecos_wasm::fork_generation()));
+    }
     match catch_unwind(AssertUnwindSafe(operation)) {
         Ok(Ok(value)) => value,
         Ok(Err(message)) => {
@@ -994,6 +1022,8 @@ macro_rules! export_wasm_runtime {
 mod tests {
     use super::*;
     mod async_tests;
+    #[cfg(unix)]
+    mod fork_tests;
 
     #[test]
     fn compilation_cache_reuses_exact_bytes_and_evicts_lru() {

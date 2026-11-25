@@ -19,9 +19,12 @@ parking_lot.workspace = true
 # Wasmtime dependencies (optional, enabled with "wasm" feature)
 wasmtime = { workspace = true, optional = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, optional = true }
+
 [features]
 default = ["wasm"]
-wasm = ["dep:wasmtime"]
+wasm = ["dep:wasmtime", "dep:libc"]
 
 [lints]
 workspace = true

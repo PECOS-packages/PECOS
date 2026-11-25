@@ -4969,6 +4969,7 @@ dependencies = [
 name = "pecos-wasm"
 version = "0.2.0-dev.0"
 dependencies = [
+ "libc",
  "log",
  "parking_lot",
  "pecos-core",
@@ -4979,6 +4980,7 @@ dependencies = [
 name = "pecos-wasm-runtime"
 version = "0.2.0-dev.0"
 dependencies = [
+ "libc",
  "pecos-wasm",
 ]
 

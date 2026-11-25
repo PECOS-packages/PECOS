@@ -283,7 +283,7 @@ fn owner_thread_exit_joins_pool() {
     }
 }
 
-mod abi {
+pub(crate) mod abi {
     crate::export_wasm_runtime!();
 }
 

@@ -13,6 +13,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `PecosRng` instead of `fastrand`, so seeded `CuStateVec` runs give different
   outcomes than before.
 
+- **Fixed:** WASM execution shares one engine and timeout thread, supports forked children, and avoids per-call type lookups.
+  macOS handles WASM traps with POSIX signals instead of Mach ports; unloading the runtime library after engine creation is a no-op.
 - **Added:** Non-collapsing `DetectLeaked`, `DetectLost`, and `DetectLeakedLost` gates,
   with location-based readout matrices, no gate noise, and no Boolean measurement record.
 - **Fixed:** DAG-to-tick conversion preserves positional outcome order between Z

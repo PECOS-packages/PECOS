@@ -1,0 +1,133 @@
+# Copyright 2026 The PECOS Developers
+# Licensed under the Apache License, Version 2.0
+
+"""Red/green and compatibility contracts for DEM duplicate-symptom merging."""
+
+import functools
+
+import pytest
+from pecos_rslib.decoders import (
+    BpLsdDecoder,
+    BpOsdDecoder,
+    DemAwareDecoder,
+    MinSumBpBuilder,
+    MinSumBpDecoder,
+    RelayBpBuilder,
+    RelayBpDecoder,
+)
+
+CONVENIENCE = {
+    "bp_lsd": BpLsdDecoder,
+    "bp_osd": BpOsdDecoder,
+    "min_sum_bp": MinSumBpDecoder,
+    "relay_bp": RelayBpDecoder,
+}
+
+
+@pytest.mark.parametrize("family", sorted(CONVENIENCE))
+@pytest.mark.parametrize("convenience", [False, True])
+def test_duplicate_dem_observables_preserve_original_mechanism_count(family, convenience):
+    """Merged decoding preserves observables and reports the original mechanism count."""
+    dem = "\n".join(
+        [
+            "error(0.1) D0 D1 L0",
+            "error(0.2) D2 L65",
+            "error(0.1) D0 D1 L0",
+            "error(0.3) D2 L65",
+        ]
+    )
+    if convenience:
+        decoder = CONVENIENCE[family].from_dem(dem)
+    else:
+        decoder = DemAwareDecoder.from_dem(dem, family)
+    assert decoder.num_mechanisms == 4
+    assert "mechanisms=4" in repr(decoder)
+    for syndrome, expected in [
+        ([1, 1, 0], [1, 0]),
+        ([0, 0, 1], [0, 1]),
+        ([1, 1, 1], [1, 1]),
+        ([0, 0, 0], [0, 0]),
+    ]:
+        result = decoder.decode_syndrome(syndrome)
+        assert result.converged
+        assert list(result.observable_flips) == [expected[0]] + [0] * 64 + [expected[1]]
+
+
+@pytest.mark.parametrize("family", ["min_sum_bp", "relay_bp"])
+@pytest.mark.parametrize("error_rate", [None, 0.15])
+def test_unique_dem_matches_original_raw_matrix_path(family, error_rate):
+    """Compatibility: compare observable predictions and convergence to the pre-merge path."""
+    dem = "error(0.1) D0 L0\nerror(0.2) D0 D1 L1\nerror(0.3) D1 L0 L1"
+    priors = [0.1, 0.2, 0.3] if error_rate is None else [error_rate] * 3
+    if family == "min_sum_bp":
+        original = MinSumBpBuilder([[1, 1, 0], [0, 1, 1]], priors).max_iter(100).build()
+    else:
+        original = RelayBpBuilder([[1, 1, 0], [0, 1, 1]], priors).build()
+    decoder = DemAwareDecoder.from_dem(dem, family, error_rate=error_rate)
+    assert decoder.num_mechanisms == 3
+    for syndrome in [[0, 0], [1, 0], [0, 1], [1, 1], [1, 0]]:
+        before = original.decode(syndrome)
+        after = decoder.decode_syndrome(syndrome)
+        correction = list(before.decoding)
+        assert after.converged == before.converged
+        assert after.iterations == before.iterations
+        assert list(after.observable_flips) == [
+            correction[0] ^ correction[2],
+            correction[1] ^ correction[2],
+        ]
+
+
+@pytest.mark.parametrize("family", sorted(CONVENIENCE))
+@pytest.mark.parametrize("error_rate", [float("nan"), float("inf"), -0.1, 1.5])
+@pytest.mark.parametrize("convenience", [False, True])
+def test_merged_families_reject_invalid_error_rate(family, error_rate, convenience):
+    """Red/green: an override that is not a probability is rejected before merging."""
+    dem = "error(0.1) D0 L0\nerror(0.1) D0 L0"
+    if convenience:
+        build = functools.partial(CONVENIENCE[family].from_dem, dem, error_rate=error_rate)
+    else:
+        build = functools.partial(DemAwareDecoder.from_dem, dem, family, error_rate=error_rate)
+    with pytest.raises(ValueError, match="error_rate must be finite and in"):
+        build()
+
+
+@pytest.mark.parametrize("family", sorted(CONVENIENCE))
+@pytest.mark.parametrize("convenience", [False, True])
+def test_exact_support(family, convenience):
+    """Endpoint support is exact, including wide observable-only biases."""
+    dem = "error(1) D0 L0\nerror(0) D1 L1\nerror(0.1) D2 L2\nerror(1) L65\ndetector D3"
+    build = (
+        CONVENIENCE[family].from_dem
+        if convenience
+        else functools.partial(DemAwareDecoder.from_dem, decoder_type=family)
+    )
+    decoder = build(dem)
+    assert decoder.num_mechanisms == 4
+    assert "mechanisms=4" in repr(decoder)
+    assert list(decoder.decode_syndrome([1, 0, 1, 0]).observable_flips) == [1, 0, 1] + [0] * 62 + [1]
+    with pytest.raises(ValueError, match="detector 1.*2 dead detectors"):
+        decoder.decode_syndrome([1, 1, 0, 1])
+    with pytest.raises(ValueError, match="expected 4, got 1"):
+        decoder.decode_syndrome([0])
+    with pytest.raises(ValueError, match="index 0.*2"):
+        decoder.decode_syndrome([2, 0, 0, 0])
+    for rate in [0.0, -0.0, 1.0]:
+        with pytest.raises(ValueError, match="no uncertain error mechanism remains"):
+            build(dem, error_rate=rate)
+
+
+def test_structured_decoder_dead_detector_is_value_error():
+    """Structured decoding preserves InvalidSyndrome as ValueError."""
+    from pecos_rslib import TickCircuit
+    from pecos_rslib.decoders import bp_osd
+    from pecos_rslib.qec import DetectorErrorModel
+
+    circuit = TickCircuit()
+    circuit.tick().pz([0])
+    circuit.tick().mz([0])
+    # D0 and D1 are declared by the sparse index, but have no mechanisms.
+    circuit.add_detector([-1], detector_id=2)
+    dem = DetectorErrorModel.from_circuit(circuit, p1=0, p2=0, p_meas=0.1, p_prep=0)
+    decoder = dem.build_decoder(bp_osd())
+    with pytest.raises(ValueError, match="detector 0 fired.*uncertain error mechanism"):
+        decoder.decode_syndrome([1, 0, 0])

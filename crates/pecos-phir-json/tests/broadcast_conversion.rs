@@ -155,9 +155,8 @@ fn every_converted_gate_has_canonical_broadcast_arity() {
 }
 
 #[test]
-fn cvar_export_and_result_have_different_native_selection_semantics() {
-    // The specification makes cvar_export selective; the current native engine
-    // ignores it. Replacing it with Result changes the observable result keys.
+fn cvar_export_and_result_select_the_same_subset() {
+    // Both directives select m, while cvar_export reads it at shot end.
     let source = |export| {
         json!({"format":"PHIR/JSON","version":"0.1.0","ops":[
             {"data":"qvar_define","data_type":"qubits","variable":"q","size":4},
@@ -175,18 +174,16 @@ fn cvar_export_and_result_have_different_native_selection_semantics() {
     let mapped = run(&mut PhirJsonEngine::from_json(&with_result).unwrap());
     let converted = run(&mut PhirEngine::new(phir_json_to_module(&with_result).unwrap()).unwrap());
     assert_eq!(exported.data["m"].as_u32(), Some(1));
-    assert!(exported.data.contains_key("scratch"));
+    assert!(!exported.data.contains_key("scratch"));
     assert_eq!(
         mapped.data.keys().collect::<Vec<_>>(),
         vec!["_width_m", "m"]
     );
     assert_eq!(converted.data.keys().collect::<Vec<_>>(), vec!["m"]);
     assert_eq!(mapped.data["m"].as_u32(), converted.data["m"].as_u32());
-    let error = phir_json_to_module(&with_export).unwrap_err().to_string();
-    assert!(
-        error.contains("data cvar_export") && error.contains("JSON-to-module"),
-        "{error}"
-    );
+    let converted_export =
+        run(&mut PhirEngine::new(phir_json_to_module(&with_export).unwrap()).unwrap());
+    assert_eq!(converted_export.data, converted.data);
 }
 
 #[test]
@@ -383,7 +380,7 @@ fn interpreter_indexed_results_match_native() {
             .handle_cop("Result", &args, &returns, &None)
             .unwrap();
     }
-    let results = interpreter.results(true);
+    let results = interpreter.results(true).unwrap();
     for (name, expected) in [("a", 1), ("small", 1), ("out", 1_u64 << 40)] {
         match &results[name] {
             ResultValue::UInt(value, _) => assert_eq!(*value, expected, "{name}"),
@@ -485,7 +482,7 @@ fn omitted_bool_size_supports_measurement_on_every_rust_path() {
         .receive_results(&[[(MeasKey::Bit("flag".into(), 0), 1)].into()])
         .unwrap();
     assert!(matches!(
-        interpreter.results(true)["flag"],
+        interpreter.results(true).unwrap()["flag"],
         ResultValue::UInt(1, _) | ResultValue::Int(1, _)
     ));
 }

@@ -17,6 +17,8 @@ import reprlib
 
 from pecos_rslib import validate_phir_classical_inputs
 
+from pecos._phir_exports import collect_exports, validate_measure_returns
+
 
 def validate_declaration_names(operations: list[dict]) -> None:
     """Reject a name declared more than once, regardless of declaration kind."""
@@ -28,7 +30,8 @@ def validate_declaration_names(operations: list[dict]) -> None:
         for node in ops:
             if not isinstance(node, dict):
                 continue
-            kind = {"qvar_define": "quantum", "cvar_define": "classical"}.get(node.get("data"))
+            data = node.get("data")
+            kind = {"qvar_define": "quantum", "cvar_define": "classical"}.get(data) if isinstance(data, str) else None
             if kind is not None:
                 variable = node["variable"]
                 if variable in declarations:
@@ -72,6 +75,8 @@ def validate_classical_inputs(program: dict) -> None:
         for node in operations:
             if not isinstance(node, dict):
                 continue
+            if node.get("qop") == "Measure":
+                validate_measure_returns("Measure", node.get("args"), node.get("returns"))
             if node.get("cop") == "Result":
                 inputs.append({key: node[key] for key in ("cop", "args", "returns") if key in node})
             elif node.get("data") in ("cvar_define", "qvar_define"):
@@ -86,3 +91,5 @@ def validate_classical_inputs(program: dict) -> None:
 
     collect(program.get("ops", []))
     validate_phir_classical_inputs(json.dumps({"ops": inputs}))
+    validate_declaration_names(program.get("ops", []))
+    collect_exports(program.get("ops", []))

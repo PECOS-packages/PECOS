@@ -148,7 +148,13 @@ impl NoiseChannel for MeasurementChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let NoiseEvent::AfterMeasurement { qubits, outcomes } = event else {
+        if ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
+        let NoiseEvent::AfterMeasurement {
+            qubits, outcomes, ..
+        } = event
+        else {
             return NoiseResponse::None;
         };
 
@@ -190,12 +196,18 @@ impl NoiseChannel for MeasurementChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> Option<NoiseResponse> {
+        if ctx.is_noiseless_operation(event) {
+            return None;
+        }
         // Early exit if no errors configured
         if !self.is_active() {
             return None;
         }
 
-        let NoiseEvent::AfterMeasurement { qubits, outcomes } = event else {
+        let NoiseEvent::AfterMeasurement {
+            qubits, outcomes, ..
+        } = event
+        else {
             return None;
         };
 
@@ -299,7 +311,10 @@ impl NoiseChannel for MeasurementStateFlipChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let NoiseEvent::BeforeMeasurement { qubits } = event else {
+        if ctx.is_noiseless_operation(event) {
+            return NoiseResponse::None;
+        }
+        let NoiseEvent::BeforeMeasurement { qubits, .. } = event else {
             return NoiseResponse::None;
         };
 
@@ -337,6 +352,7 @@ impl NoiseChannel for MeasurementStateFlipChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::GateType;
     use pecos_core::QubitId;
 
     /// The state-flip vs record-flip distinction: measuring the same
@@ -399,6 +415,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false]; // Measured 0
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -421,6 +438,7 @@ mod tests {
         let outcomes = [false, true]; // 0 and 1
 
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };
@@ -446,6 +464,7 @@ mod tests {
         let qubits = [QubitId(0)];
         let outcomes = [false];
         let event = NoiseEvent::AfterMeasurement {
+            gate_type: GateType::MZ,
             qubits: &qubits,
             outcomes: &outcomes,
         };

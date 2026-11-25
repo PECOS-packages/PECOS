@@ -264,10 +264,8 @@ def test_invalid_live_abi_request_fails_before_provider(original, replacement, m
     assert not starts
 
 
-@pytest.mark.parametrize("second_flip", [False, True])
-@pytest.mark.parametrize("route", [(), (0,)])
-def test_nonzero_composed_slices_correct_live_parity(second_flip, route):
-    """Each readout fault flips its own D and L0, so L0 = D0 XOR D1."""
+def composed_window(route=(0,)):
+    """Compose two independent readout slices with L0 = D0 XOR D1."""
     from pecos_rslib.qec import DemSliceRoundSchedule
 
     dag = DagCircuit()
@@ -291,7 +289,7 @@ def test_nonzero_composed_slices_correct_live_parity(second_flip, route):
         [0],
         [],
     ).compose(start_round=0, commit_rounds=2, buffer_rounds=0, forward_boundary="hard")
-    definition = replace(
+    return replace(
         window(),
         model=composed,
         detector_ids=("first", "second"),
@@ -300,6 +298,13 @@ def test_nonzero_composed_slices_correct_live_parity(second_flip, route):
         output_map=(route,),
         fault_ids=("first_readout", "second_readout"),
     )
+
+
+@pytest.mark.parametrize("second_flip", [False, True])
+@pytest.mark.parametrize("route", [(), (0,)])
+def test_nonzero_composed_slices_correct_live_parity(second_flip, route):
+    """Each readout fault flips its own D and L0, so L0 = D0 XOR D1."""
+    definition = composed_window(route)
     # Deterministic X probes have the modeled readout's detector/output action.
     # Expected answers come from parity algebra, not another decoder invocation.
     fixture = Path(__file__).resolve().parents[4] / "crates/pecos-qis/tests/fixtures/runtime_decode_composed.ll"

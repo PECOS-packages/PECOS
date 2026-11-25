@@ -94,6 +94,9 @@ def test_barrier_comment_and_measurement_batch_order() -> None:
             OpType.X,
             OpType.Z,
             OpType.CX,
+            OpType.SZ,
+            OpType.SZDG,
+            OpType.CZ,
             OpType.MEASURE,
             OpType.RELABEL,
             OpType.COMMENT,
@@ -111,8 +114,14 @@ def test_allocation() -> None:
     slots = [allocation.data(q) for q in range(20)]
     slots.extend(q for block in range(5) for q in (allocation.c4_plus(block), allocation.c4_zero(block)))
     slots.extend(q for basis in ("X", "Z") for index in range(4) for q in allocation.check(basis, index))
+    slots.extend(q for index in range(7) for q in allocation.cz_flags(index))
     assert slots == list(range(HelixAllocation.NUM_SLOTS))
-    for method, limit in [(allocation.data, 20), (allocation.c4_plus, 5), (allocation.c4_zero, 5)]:
+    for method, limit in [
+        (allocation.data, 20),
+        (allocation.c4_plus, 5),
+        (allocation.c4_zero, 5),
+        (allocation.cz_flags, 7),
+    ]:
         for bad in (-1, limit):
             with pytest.raises(ValueError, match=str(bad)):
                 method(bad)

@@ -93,6 +93,34 @@ per-qubit timing and shot/ordinal state after processing.
 Nested v6 angle words are exact little-endian u64 Angle64 fractions; all 64 bits
 are preserved. Normalization does not add another angle serialization round trip.
 
+## Experimental native adapter
+
+`pecos_rslib.scheduled_native_adapter(profile, library_path, *, config=None)`
+attaches a native normalizer to an existing checked scheduled profile. Accepted
+profiles are `ScheduledIdleZ`, `ScheduledIdleNoise`, and `ScheduledLocalNoise`,
+including profiles with explicit measurement-crosstalk settings. The result is a
+`ScheduledEventIdleNoise` wrapper accepted by the same QIS/HUGR `sim()` path and
+built simulations as Python factories. Local gate/readout settings are retained.
+
+Pass a path to an explicitly trusted library implementing
+[`pecos_scheduled_adapter.h`](https://github.com/PECOS-packages/PECOS/blob/dev/crates/pecos-foreign/include/pecos_scheduled_adapter.h).
+Loading executes native code; the plugin must satisfy the ABI's pointer, ownership,
+threading and no-unwind contract. This is not a sandbox. `config` is an opaque
+`bytes` value copied into the factory, limited to 1 MiB; `None` means empty bytes.
+Its interpretation belongs to the plugin. Loading/descriptor errors are raised as
+`ValueError`; shot creation/normalization errors surface during execution.
+
+Each shot that reaches normalization creates an independent native session. The
+host retains the library until sessions are destroyed, including failed shots.
+Repeated runs and worker changes keep the existing MonteCarlo/HybridEngine/
+QuantumSystem lifecycle. Runtime timing, input admission, measurement identity,
+noise sampling and quantum feedback stay with the existing owners. There are no
+per-batch Python adapter callbacks, and `python_worker_context` is not implicitly
+enabled. Other stacks and operation tracing remain unsupported.
+
+The interface is experimental. Windows execution and performance validation remain
+separate follow-ups; native execution alone is not a throughput or parity claim.
+
 ## Python factory
 
 Pair `qis_engine().scheduled_event_batches()` with
@@ -255,3 +283,20 @@ Source-annotated flat lowering retains its separate provenance boundary.
 The shared [timing and noise contract](scheduled-idle-simulation.md#timing-and-noise-contract)
 applies to every scheduled consumer: use native timestamps without rescheduling.
 Explicit source barriers and terminal draining still apply.
+
+## Encoded input snapshots
+
+Python adapters can call `batch.to_bytes()` to obtain an owned `bytes` value
+containing exactly one original batch in the existing checked v7 transport.
+Native extensions can decode it with `pecos_engines::scheduled_events::decode_event_batches`.
+The snapshot preserves timing, batch and shot IDs, custom event order and payloads,
+exact native angle bits, and both measurement identity namespaces. It remains valid
+after the callback returns. Encoding applies the transport's field and size checks
+and raises `ValueError` on invalid input.
+
+This accessor is optional; existing operation and measurement list accessors are
+unchanged. It does not cache callbacks or validation, alter batch boundaries, or
+accept encoded adapter output. Adapters must still independently validate each
+input and return the existing checked output list. Native angle bits can retain
+more precision than converting the Python gate angle floats back to native angles;
+consumers migrating from that conversion must choose and test their rounding semantics.

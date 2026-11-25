@@ -170,6 +170,12 @@ impl PyStabilizer {
         slf
     }
 
+    /// Fixed register capacity, or None for a growable simulator.
+    #[getter]
+    fn gate_capacity(&self) -> Option<usize> {
+        self.inner.qubit_capacity()
+    }
+
     #[getter]
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
@@ -588,7 +594,8 @@ impl PyStabilizer {
         self.inner.destab_tableau()
     }
 
-    fn _gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
+    #[pyo3(name = "_gens_data")]
+    fn gens_data(&self, is_stab: bool) -> crate::simulator_utils::GensData {
         self.inner.gens_data(is_stab)
     }
 

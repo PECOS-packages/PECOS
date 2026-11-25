@@ -149,7 +149,7 @@ class TestAstToQasmPrepMeasure:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Measure(q[0]) > c[0],
+            qb.MeasureZ(q[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 
@@ -218,7 +218,7 @@ class TestAstToQasmQEC:
             c := CReg("c", 1),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
-            qb.Measure(ancilla[0]) > c[0],
+            qb.MeasureZ(ancilla[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 

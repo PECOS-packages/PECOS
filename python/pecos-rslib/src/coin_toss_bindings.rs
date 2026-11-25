@@ -54,6 +54,12 @@ impl PyCoinToss {
         self.inner.reset();
     }
 
+    /// Fixed register capacity, or None for a growable simulator.
+    #[getter]
+    fn gate_capacity(&self) -> Option<usize> {
+        self.inner.qubit_capacity()
+    }
+
     /// Returns the number of qubits in the system
     #[getter]
     fn num_qubits(&self) -> usize {

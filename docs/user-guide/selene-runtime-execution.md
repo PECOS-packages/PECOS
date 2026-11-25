@@ -10,6 +10,36 @@ concern Rust and direct-runtime callers. For timing and noise on the scheduled
 route, see [Scheduled idle simulation](scheduled-idle-simulation.md). For operation
 capture, see [Runtime QIS tracing](runtime-qis-tracing.md).
 
+## Opt-in scoped execution
+
+QIS builders can run the native program synchronously on its Monte Carlo worker,
+servicing runtime requests through the existing noise/quantum engine feedback
+loop. Both `pecos.qis_engine()` and `pecos_rslib.qis_engine()` expose
+`.scoped_execution(enabled=True)`; omitting it keeps staged execution, and
+`.scoped_execution(enabled=False)` switches the builder back.
+
+```python
+import pecos
+import pecos_rslib as pr
+
+classical = pecos.qis_engine().selene_runtime().interface(pr.qis_helios_interface()).scoped_execution()
+# program is a Guppy function or a QIS program; supply its qubit capacity.
+# results = pecos.sim(program).classical(classical).qubits(2).run(100)
+```
+
+The interface must support scoped execution; unsupported interfaces fail during
+build. Runtime scheduling, timing and measurement feedback remain runtime-owned.
+Scheduled transport still requires its matching scheduled noise profile.
+Monte Carlo retains shot identity, seeding, worker management and reset.
+
+Scoped execution cannot detach an unresponsive native program. Cancellation
+requires cooperative checkpoints, so it does not provide staged execution's
+worker-detach behavior. Rust callers must use `run_with` (as `HybridEngine` does),
+not direct `start`/`continue_processing` driving. Scoped execution also does not
+synthesize staged worker polls; arbitrary noise models that mutate on those
+empty polls need separate compatibility validation. No speedup is implied by
+selecting this option.
+
 ## Shot identity and randomness
 
 `QisEngine` calls runtime `shot_start` with IDs `0, 1, 2, ...` per engine

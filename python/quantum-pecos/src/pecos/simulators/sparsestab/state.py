@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.simulators.clifford_lowering import CLIFFORD_ROTATION_SYMBOLS, lower_rotation_params
 from pecos.simulators.gate_syms import alt_symbols
 from pecos.simulators.sim_class_types import Stabilizer
 from pecos.simulators.sparsestab import bindings
@@ -50,6 +51,8 @@ from pecos.simulators.sparsestab.refactor import refactor as refactor_generators
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
     from pecos.typing import SimulatorGateParams
+
+_ROTATION_SYMBOLS_BY_BINDING = {bindings.gate_dict[symbol]: symbol for symbol in CLIFFORD_ROTATION_SYMBOLS}
 
 
 class SparseStabPy(Stabilizer):
@@ -64,6 +67,9 @@ class SparseStabPy(Stabilizer):
         gens (Tuple[Gens, Gens]):
     """
 
+    # Clifford lowering accepts singleton sequences, including the U1q alias.
+    _singleton_symbols = frozenset({"RX", "RY", "RZ", "RXY1Q", "R1XY", "U1q"})
+
     def __init__(self, num_qubits: int) -> None:
         """Initializes the stabilizer state.
 
@@ -77,6 +83,7 @@ class SparseStabPy(Stabilizer):
             msg = f"`num_qubits` should be of type `int` but got type: {type(num_qubits)}"
             raise TypeError(msg)
 
+        self.gate_capacity = num_qubits
         self.num_qubits = num_qubits
 
         self.bindings = dict(bindings.gate_dict)
@@ -90,6 +97,23 @@ class SparseStabPy(Stabilizer):
         self.gens = (self.stabs, self.destabs)
 
         self.reset()
+
+    def validate_gate_params(self, symbol: str, **params: object) -> None:
+        """Check an active registered step against its rotation binding's contract."""
+        # Follow the callable, so aliases are checked and user replacements keep
+        # their own parameter contract.
+        binding = self.bindings.get(symbol)
+        rotation = next(
+            (name for candidate, name in _ROTATION_SYMBOLS_BY_BINDING.items() if binding is candidate),
+            None,
+        )
+        if rotation is not None:
+            # Match run_gate's normalization without changing the caller's params.
+            if params.get("angles") and len(params["angles"]) == 1:
+                params["angle"] = params["angles"][0]
+            elif "angle" in params and "angles" not in params:
+                params["angles"] = (params["angle"],)
+            lower_rotation_params(rotation, **params)
 
     def reset(self) -> SparseStabPy:
         """Reset the quantum state for another run without reinitializing."""

@@ -147,6 +147,11 @@ impl BpSchedule {
 /// BP+OSD construction options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BpOsdConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
+    /// Endpoint mechanisms are reduced exactly after merging; an empty reduced
+    /// model is invalid. Fired dead detectors return `InvalidSyndrome`.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,
@@ -168,14 +173,24 @@ impl Default for BpOsdConfig {
     }
 }
 
-/// BP+LSD construction options.
+/// BP+LSD construction options, mirroring the paper settings in
+/// `pecos_ldpc_decoders::bp_lsd_defaults` without requiring the optional backend.
+/// The `spec_and_raw_builder_use_shared_paper_defaults` test keeps them equal.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BpLsdConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
+    /// Endpoint mechanisms are reduced exactly after merging; an empty reduced
+    /// model is invalid. Fired dead detectors return `InvalidSyndrome`.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub bp_schedule: BpSchedule,
+    /// `None` selects product-sum; `Some` selects minimum-sum with this factor.
     pub ms_scaling_factor: Option<f64>,
+    /// 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
     pub lsd_order: usize,
+    /// Bits grown per step; zero grows all candidate bits.
     pub bits_per_step: usize,
     pub random_schedule_seed: Option<i32>,
 }
@@ -184,11 +199,11 @@ impl Default for BpLsdConfig {
     fn default() -> Self {
         Self {
             error_rate: None,
-            max_iter: 100,
+            max_iter: 30,
             bp_schedule: BpSchedule::Parallel,
-            ms_scaling_factor: None,
+            ms_scaling_factor: Some(0.625),
             lsd_order: 0,
-            bits_per_step: 0,
+            bits_per_step: 1,
             random_schedule_seed: None,
         }
     }
@@ -205,10 +220,17 @@ pub enum RelayStoppingCriterion {
 }
 
 /// Relay BP construction options.
+///
+/// The gamma0 default mirrors `pecos_relay_bp::DEFAULT_GAMMA0` without requiring
+/// the optional backend; a test keeps the two equal.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RelayBpConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
+    /// Endpoint mechanisms are reduced exactly after merging; an empty reduced
+    /// model is invalid. Fired dead detectors return `InvalidSyndrome`.
     pub error_rate: Option<f64>,
-    pub max_iter: usize,
     pub alpha: Option<f64>,
     pub alpha_iteration_scaling_factor: f64,
     pub gamma0: Option<f64>,
@@ -224,10 +246,9 @@ impl Default for RelayBpConfig {
     fn default() -> Self {
         Self {
             error_rate: None,
-            max_iter: 200,
             alpha: None,
             alpha_iteration_scaling_factor: 1.0,
-            gamma0: Some(0.65),
+            gamma0: Some(0.35),
             pre_iter: 80,
             num_sets: 300,
             set_max_iter: 60,
@@ -241,6 +262,11 @@ impl Default for RelayBpConfig {
 /// Standalone min-sum BP construction options.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MinSumBpConfig {
+    /// Uniform probability per original DEM error line, before duplicate merging.
+    /// A group of k identical symptoms receives the k-fold independent XOR of
+    /// this rate. `None` keeps each line's DEM probability; duplicates are XOR-merged the same way.
+    /// Endpoint mechanisms are reduced exactly after merging; an empty reduced
+    /// model is invalid. Fired dead detectors return `InvalidSyndrome`.
     pub error_rate: Option<f64>,
     pub max_iter: usize,
     pub alpha: Option<f64>,
@@ -434,4 +460,50 @@ impl Default for BeamSearchConfig {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EnsembleConfig {
     pub members: Vec<DecoderSpec>,
+}
+
+#[cfg(all(test, feature = "ldpc"))]
+mod bp_lsd_tests {
+    use super::BpLsdConfig;
+    use pecos_ldpc_decoders::{BpLsdBuilder, SparseMatrix, bp_lsd_defaults as defaults};
+
+    #[test]
+    fn spec_and_raw_builder_use_shared_paper_defaults() {
+        let pcm = SparseMatrix::from_coo(2, 3, vec![0, 0, 1, 1], vec![0, 1, 1, 2]).unwrap();
+        let raw = BpLsdBuilder::new(&pcm).error_rate(0.1).build().unwrap();
+        let spec = BpLsdConfig::default();
+        assert_eq!(raw.max_iter(), defaults::MAX_ITER);
+        assert_eq!(spec.max_iter, defaults::MAX_ITER);
+        assert_eq!(raw.bp_method(), defaults::BP_METHOD);
+        assert_eq!(raw.bp_schedule(), defaults::BP_SCHEDULE);
+        assert_eq!(
+            super::super::build::ldpc_bp_schedule(spec.bp_schedule),
+            defaults::BP_SCHEDULE
+        );
+        assert_eq!(spec.error_rate, None);
+        assert_eq!(spec.random_schedule_seed, None);
+        assert_eq!(
+            raw.ms_scaling_factor().to_bits(),
+            defaults::MS_SCALING_FACTOR.to_bits()
+        );
+        assert_eq!(
+            spec.ms_scaling_factor.map(f64::to_bits),
+            Some(defaults::MS_SCALING_FACTOR.to_bits())
+        );
+        assert_eq!(raw.lsd_method(), defaults::LSD_METHOD);
+        assert_eq!(raw.lsd_order(), defaults::LSD_ORDER);
+        assert_eq!(spec.lsd_order, defaults::LSD_ORDER);
+        assert_eq!(raw.bits_per_step(), defaults::BITS_PER_STEP);
+        assert_eq!(spec.bits_per_step, defaults::BITS_PER_STEP);
+    }
+}
+
+#[cfg(all(test, feature = "relay-bp"))]
+mod relay_bp_tests {
+    #[test]
+    fn spec_and_raw_relay_use_shared_gamma0_default() {
+        let spec = super::RelayBpConfig::default();
+        assert_eq!(spec.gamma0, Some(pecos_relay_bp::DEFAULT_GAMMA0));
+        assert_eq!(spec.gamma0, pecos_relay_bp::RelayConfig::default().gamma0);
+    }
 }

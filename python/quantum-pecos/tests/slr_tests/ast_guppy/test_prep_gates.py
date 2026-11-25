@@ -37,7 +37,7 @@ import stim
 from pecos.simulators import StateVec
 from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ._selene_harness import run_ast_guppy_via_selene  # noqa: TID252
 
@@ -77,7 +77,7 @@ def test_prep_gate_selene_guppy(gate: str) -> None:
         c := CReg("c", 1),
         getattr(qb, gate)(q[0]),
         *[getattr(qb, g)(q[0]) for g in rot],
-        Measure(q[0]) > c[0],
+        MeasureZ(q[0]) > c[0],
         Return(c),
     )
     records = run_ast_guppy_via_selene(prog, shots=8)
@@ -117,7 +117,7 @@ def test_prep_gate_selene_guppy(gate: str) -> None:
 def test_prep_gate_emitted_tail(gate: str, needles: dict[str, list[str]]) -> None:
     """(c) The distinguishing reset+Clifford tail is emitted per the
     pinned `_prep_tail` table (QIR + QASM spot-check)."""
-    prog = Main(q := QReg("q", 1), c := CReg("c", 1), getattr(qb, gate)(q[0]), Measure(q[0]) > c[0], Return(c))
+    prog = Main(q := QReg("q", 1), c := CReg("c", 1), getattr(qb, gate)(q[0]), MeasureZ(q[0]) > c[0], Return(c))
     qir = SlrConverter(prog).qir()
     for n in needles["qir"]:
         assert n in qir, f"{gate}: QIR missing {n!r}"
@@ -144,7 +144,7 @@ def test_b1_blockcall_preserves_prep_basis() -> None:
         outer := QReg("outer", 1),
         c := CReg("c", 1),
         PrepXBlock(outer),
-        Measure(outer[0]) > c[0],
+        MeasureZ(outer[0]) > c[0],
         Return(c),
     )
 
@@ -169,7 +169,7 @@ def test_b1_blockcall_preserves_prep_basis() -> None:
         c := CReg("c", 1),
         PrepXThenH(outer),
         qb.H(outer[0]),
-        Measure(outer[0]) > c[0],
+        MeasureZ(outer[0]) > c[0],
         Return(c),
     )
     recs = run_ast_guppy_via_selene(prog2, shots=8)

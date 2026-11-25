@@ -288,9 +288,7 @@ def terminal_graphlike_projection(raw_dem: str) -> str:
             )
 
     rendered_lines = [
-        f"error({probability:.16g}) {targets}"
-        for targets, probability in sorted(by_targets.items())
-        if probability > 0.0
+        f"error({probability}) {targets}" for targets, probability in sorted(by_targets.items()) if probability > 0.0
     ]
     return "\n".join([*annotation_lines, *rendered_lines])
 

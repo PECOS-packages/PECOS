@@ -20,6 +20,7 @@ env:
   RUSTFLAGS: -C debuginfo=0
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   extended-semantics:
@@ -54,7 +55,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           cache-bin: false
           prefix-key: v1-selene-general-noise-semantics
@@ -67,11 +68,18 @@ jobs:
           tool: just@1.59.0
           fallback: none
 
+      - name: Identify the runner image for the LLVM cache key
+        # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+        # or ubuntu26) keeps a copy from one image from being restored onto another.
+        id: runner-image
+        shell: bash
+        run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-21.1
-          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env

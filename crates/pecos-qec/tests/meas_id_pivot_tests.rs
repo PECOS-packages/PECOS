@@ -559,7 +559,7 @@ fn measured_pauli_queries_read_current_gates_and_reject_unresolved_ids() {
         Err(TickMeasResolveError::Inconsistent(reference.meas_id))
     );
 
-    let mut leaked = Gate::measure_leaked(&[4usize]);
+    let mut leaked = Gate::measure_z_leaked(&[4usize]);
     let id = MeasId::from_raw(7);
     leaked.meas_ids = smallvec::smallvec![id];
     let node = dag.try_add_gate_auto_wire(leaked.clone()).unwrap();
@@ -614,7 +614,7 @@ fn tick_batch_measurement_resolution_matches_individual_queries() {
     );
 
     let leaked_id = MeasId::from_raw(7);
-    let mut leaked = Gate::measure_leaked(&[4usize]);
+    let mut leaked = Gate::measure_z_leaked(&[4usize]);
     leaked.meas_ids = smallvec::smallvec![leaked_id];
     circuit.tick().try_add_gate(leaked).unwrap();
     assert_eq!(

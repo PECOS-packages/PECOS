@@ -13,12 +13,769 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `PecosRng` instead of `fastrand`, so seeded `CuStateVec` runs give different
   outcomes than before.
 
+- **Added:** Non-collapsing `DetectLeaked`, `DetectLost`, and `DetectLeakedLost` gates,
+  with location-based readout matrices, no gate noise, and no Boolean measurement record.
+- **Fixed:** DAG-to-tick conversion preserves positional outcome order between Z
+  heralds and record-bearing measurements on different qubits.
+
+- **Breaking:** Trellis, Frontier and BpTrellis results no longer report
+  `dropped_log_mass` by default, and float metrics no longer pay to accumulate it.
+  The integer max-log metric still keeps its cheap running maximum. Set
+  `dropped_mass` on the config (Rust) or `dropped_mass=True` (Python detailed
+  decoders) to get it. The field is now `Option<f64>` / `float | None`. The Rust
+  methods that skipped it per call (`*_without_dropped_mass`,
+  `attempt_prediction_only`, `*_prediction_without_evidence`) are removed because
+  the default now skips.
+
+- **Fixed:** Validating a just-installed managed LLVM now waits out the "text file
+  busy" window left by extraction before running `llvm-config` and `clang`, instead
+  of occasionally reporting a good installation as failed.
+- **Fixed:** Union-find now rejects NaN weights instead of sorting them (undefined
+  behaviour), and BeliefFind reports a BP-produced NaN log-probability ratio as an error.
+- **Breaking:** MBP now updates stored edge messages and excludes the current
+  edge during message passing; it previously decoded from priors alone, so
+  results change. Product-sum and min-sum now floor denominators at `1e-12`. The
+  product-sum negative saturation guard also preserves the sign, but this branch
+  is unreachable through the public API: each factor is at least
+  `tanh(log(1e-12) / 2) > -1` (approximately `tanh(-13.8)`), so this defensive
+  correction has no observable decoding effect. NaN log ratios raise a decoder
+  error before the hard decision. MBP now requires a finite `error_rate` in `(0,
+  1)` and positive XYZ weights whose normalized Pauli probabilities are strictly
+  positive with finite `(1-p)/p` ratios. For pure dephasing use small positive
+  X/Y weights satisfying this condition. Build-time patches update the shared
+  dependency cache and affect other local checkouts.
+- **Fixed:** DEM text written by `generate_repetition_code_dem`,
+  `generate_surface_code_dem`, the surface circuit builder, the correlation
+  DEM export in `pecos-qec`, the experimental `pecos-eeg` and `pecos-zx` crates
+  and the DEM decomposition diagnostics example now uses the shortest exact
+  representation of each probability instead of fixed precision. Before,
+  `generate_*_code_dem` and `pecos-zx` wrote six decimal places, so priors at or
+  below about 5e-7 became `error(0.000000)`; the other writers kept six, seven or
+  eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
+
+- **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
+  and Python: measurement, preparation, idle and gate-event sources; recovery,
+  optional reload on prep, partner spreading and lost-state readout. Loss is rejected
+  by neo routing, runtime frames and the Selene general-noise adapter.
+- **Added:** Core `MeasureZLost` and `MeasureZLeakedLost` herald gates, with alphabets
+  `{0, 1, 3}` and `{0, 1, 2, 3}`, and per-flavor general-noise readout matrices
+  configurable from Rust, JSON, and Python. Lost rows require configured qubit loss.
+- **Changed:** Unsupported runtime-frame and scheduled gate errors now name the gate
+  after their existing error prefix. Scheduled Z-herald errors suggest
+  `MeasureZLeaked` (which cannot herald loss) or a non-scheduled engine.
+- **Fixed:** The QEC fault-injection runner now executes gates its preflight already
+  accepted but its simulator dispatch silently skipped: `QAlloc`, Z herald collapses,
+  and Clifford-angle rotations such as RX/RY/RZ/RXX/RYY/RZZ/U. This fixes incorrect
+  `FaultChecker` results on those circuits; unsupported gates were already rejected
+  by the preflight.
+- **Fixed:** Raw-measurement sampling no longer lets custom p1 Pauli weights scale
+  preparation or MZ measurement noise (or zero it with Z-only weights), and no longer
+  applies p1 noise at record-less Z heralds or transparent gates. Batched DAG nodes
+  apply p1 channels independently per qubit and p2 channels per pair; single-qubit
+  gates no longer use a two-qubit weight lookup just because a node contains two
+  qubits. Preparation and idle location batches are also split per
+  qubit, and idle residuals identify the correct instance's location.
+- **Fixed:** Influence-map samplers reject probability slices with the wrong length
+  with a configuration error instead of panicking or silently accepting extra entries.
+- **Fixed:** `LookupDecoder` selects custom Pauli weights by gate kind, preserving
+  preparation and measurement rates, and enumerates batched gate instances as
+  independent channels. Its shared rate computation no longer assigns p1 noise to
+  record-less Z heralds or transparent gates.
+- **Fixed:** `PerGateTypeNoise::to_neo_channel` returns an error naming an unmapped gate
+  instead of panicking. `GeneralNoiseConfig` JSON rejects duplicate object keys at any depth.
+- **Breaking:** DEM-built Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind
+  now handle probability-0 and probability-1 mechanisms exactly by reducing
+  support and applying fixed syndrome/observable biases. Construction fails when
+  no uncertain error mechanism remains after support reduction (including
+  `error_rate=0`). A biased syndrome firing dead detectors, including
+  declared-but-unused detectors, raises `InvalidSyndrome`, naming the lowest
+  index and count; this aborts a batch. Python `DemAwareDecoder` raises
+  `ValueError` for empty reduced support and invalid syndromes.
+  `StructuredDemDecoder.decode_syndrome` raises `ValueError` for fired dead
+  detectors and non-binary input, but `RuntimeError` for wrong lengths. On
+  spec-built paths, empty reduced support raises `RuntimeError` when the decoder
+  is built (for the logical-subgraph, logical-algorithm and logical-circuit
+  decoders, in their constructors). `SampleBatch.decode`, `DemSampler` decoding
+  and the logical decoders' `decode`/`decode_count` raise `RuntimeError` for
+  fired dead detectors; `SampleBatch.compare_decoders` counts them as
+  decode-error outcomes for those shots. Wrappers validate syndrome
+  length and binary values before applying biases. Raw BP-OSD, BP-LSD,
+  soft-information BP and BeliefFind builders now reject endpoint priors and
+  require finite values in `(0, 1)`; see the MBP entry above for its prior rule.
+  Product-sum check updates bound saturated tanh products so check-to-bit
+  messages remain finite; all other products are unchanged. `belief_matching`, experimental BP-trellis, and
+  the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
+  perturbed ensemble members retain their existing prior clamp.
+- **Breaking:** Native Relay-BP and min-sum now flip bits whose posterior is
+  exactly zero (using `<= 0`, matching relay-bp and ldpc). PECOS always floors
+  the stored prior that seeds messages and memory at magnitude `4e-5`, as
+  relay-bp does when `min_log_prior_ratio` is set (its default is `None`).
+  The sign is preserved except that zero becomes positive, so priors of exactly
+  one half no longer sit at a tie. Nothing downstream is floored again.
+  Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
+  Native Relay-BP and min-sum decoding results can change.
+- **Breaking:** Relay-BP now defaults to `gamma0=0.35` instead of 0.65 across
+  the Rust (`pecos-relay-bp`, `DecoderSpec`) and Python construction paths.
+  Decoding results change with default settings; set `gamma0=0.65` explicitly to
+  retain the previous behavior. The low-level `pecos_bp::RelayConfig::default()`
+  keeps its paper operating point (gamma0 0.1).
+
+- **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
+  a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs
+  `libxml2.so.2`), is now reported as invalid. `pecos llvm ensure --managed`
+  reinstalls it, and `pecos install llvm` asks for `--force`. Validation now runs
+  the managed `clang`, because `llvm-config` does not load `libLLVM` and kept
+  reporting such a copy as ready.
+
+- **Fixed:** The BP+LSD decoder no longer writes past the end of an OSD candidate
+  vector when a cluster has fewer free columns than `lsd_order`. The vendored
+  `ldpc` dense OSD now limits its pair search to the cluster size, as PECOS
+  already did for the BP+OSD decoder; decoding results are unchanged. GCC 15
+  debug builds (Ubuntu 26.04) aborted on this out-of-bounds write.
+
+- **Breaking:** QIS and Selene development/test runtimes now use Cargo-reported
+  artifacts instead of implicit Cargo build-directory searches (including on
+  Rust 1.100). Use `just build-debug` for Python, `just rstest debug` for Rust,
+  or set `PECOS_QIS_FFI_PATH` and `PECOS_SELENE_DIR` to the directory printed by
+  `pecos qis-runtime --profile debug` (`--tests` includes the Rust fixture).
+  Staged files use canonical platform names regardless of the names Cargo reports.
+  `pecos run` and `pecos compile` require explicitly prepared libraries.
+  These override directories are searched only for the exact library file
+  name, never `deps/` or Cargo hash-suffixed files, and a set
+  `PECOS_SELENE_DIR` that lacks the library is now an error instead of falling
+  back to the bundled runtime.
+
+- **Deprecated:** Core `GateType::MeasureLeaked` is now `GateType::MeasureZLeaked`
+  (wire value 105 is unchanged); its deprecated associated-const alias works in
+  values and patterns but cannot be `use`-imported. The builders
+  `Gate::measure_leaked` and `ByteMessageBuilder::measure_leakages` are now
+  `measure_z_leaked`, with deprecated forwarding aliases. SLR's qubit `Measure`
+  is now `MeasureZ`; `Measure` remains a warning-emitting function alias, so
+  `isinstance(..., Measure)`, subclassing `Measure`, and class-attribute access
+  such as `Measure.csize` no longer work. Pickles referencing the old
+  `pecos.slr.qeclib.qubit.measures.Measure` class no longer load. The Steane
+  logical `Measure` block is unchanged.
+- **Changed:** Serialized trace `gate_type` strings and core gate Display/Debug
+  output now say `"MeasureZLeaked"`. Trace readers accept both `"MeasureLeaked"`
+  and `"MeasureZLeaked"` for compatibility with saved traces. Gate-symbol-based
+  SLR diagnostics (`QGate.sym`) now say `MeasureZ`, and the Print-ordering and
+  unused-SCRATCH call-syntax hints now say `MeasureZ(...)`.
+- PHIR JSON parsers accept `"MeasureZ"` and canonicalize it to `"Measure"`;
+  emitted PHIR and all other generated circuit formats remain unchanged.
+  GateType parsers also accept `MeasureZ` for `MZ`, and Python exposes
+  `GateType.MeasureZ` alongside `GateType.Measure`. QuantumCircuit gate symbols
+  are unchanged.
+
+- Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
+  GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
+
+- **Breaking:** BP+LSD now grows clusters from the most likely bits. The order
+  was inverted for every `bits_per_step`, including 0, because insertion order
+  fixes the column order, the pivots and the solution. Results change.
+- **Breaking:** Every BP+LSD construction path now defaults to the BP+LSD paper
+  settings: minimum-sum BP with scaling 0.625, at most 30 iterations, parallel
+  scheduling, one bit per growth step, and LSD-0 (`lsd_order=0`, no
+  reprocessing). A positive `lsd_order` selects OSD-CS reprocessing of that
+  order. The Python `BpLsdBuilder` previously grew clusters to the requested
+  positive order but solved them with OSD-0: order affected results without
+  reprocessing. The raw Rust builder infers the method unless one is set.
+  Both the builder and `BpLsdDecoder::new` reject `Off` at every order and
+  reject `Osd0` with a positive order.
+- **Breaking:** BP+LSD settings on the Python side: `BpLsdBuilder` gains
+  `ms_scaling_factor` (`build` previously used 1.0); `BpLsdDecoder.from_dem`
+  gains `bp_method`, `bits_per_step` and `lsd_order`;
+  `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` gains those and
+  `ms_scaling_factor`. On every Python
+  BP+LSD path an explicit `ms_scaling_factor=None` selects product-sum, an
+  explicit `bp_method` overrides that (`"product_sum"`/`"ps"` ignores the
+  scaling, `"minimum_sum"`/`"ms"` with None uses 0.625), and `bits_per_step=0`
+  grows all candidates each step. Invalid `bp_method` or `schedule` values on
+  `BpLsdBuilder` now raise in the setter rather than in `build`, and a
+  non-numeric `ms_scaling_factor` in `from_dem` or the `bp_lsd` spec factory
+  raises `ValueError` instead of `TypeError`.
+  Non-integer or negative `lsd_order` and `bits_per_step` now raise `ValueError`
+  on the builder, DEM constructors and spec factory. Previously, builder
+  negatives raised `OverflowError`, non-integers raised `TypeError` on both
+  builder and spec factory, and spec negatives already raised `ValueError`.
+  The DEM constructors did not accept these keywords before.
+- **Breaking:** Named-result measurement identity now comes from a compile-time
+  shadow pass instead of read adjacency, so reordered reads and copied arrays
+  retain exact measurement IDs. `NamedResultTrace` gains `provenance` and
+  `control_dependent`. QIS FFI ABI advances from 7 to 8; rebuild both the host
+  and QIS FFI artifacts. DEM consumers reject outputs with unknown provenance,
+  and the native DEM builder accepts exact ID permutations while retaining
+  bijection and physical-outcome checks. Fixes SZZ final readout binding (#498).
+
+- **Breaking:** Relay-BP, min-sum, BP-OSD and BP-LSD decoders built from a DEM
+  merge mechanisms with identical detector and observable sets using
+  independent-XOR probabilities. This improves decoding of repeated symptoms,
+  such as stim's flattened multi-round DEMs; BP-OSD and BP-LSD results change on such DEMs, and their `max_iter=0`
+  ("one iteration per column") counts merged columns. `error_rate` applies to each
+  original line before merging. Union-find and other decoders are unchanged.
+- **Breaking:** BP-OSD, BP-LSD, soft-information BP, BeliefFind and MBP reject a
+  non-finite or out-of-[0, 1] error rate or channel probability (and MBP a
+  non-finite or negative XYZ bias): Python DEM constructors raise `ValueError`
+  naming `error_rate`, Rust `DecoderSpec` builds return `DecoderError::MatrixError`,
+  and the raw LDPC constructors return `LdpcError::InvalidInput` naming `error_rate`,
+  the `error_channel` entry or the `xyz_bias` entry (`ValueError` from the Python `BpOsdBuilder` /
+  `BpLsdBuilder`). They previously decoded with meaningless priors.
+- **Breaking:** The LDPC decoder classes in `pecos_rslib.decoders` (the raw
+  builders and decoders, and `DemAwareDecoder`) raise `ValueError` instead of
+  `RuntimeError` for input errors that the Rust layer detects
+  (`LdpcError::InvalidInput`), such as an invalid prior, a channel of the wrong
+  length, or a union-find syndrome of the wrong length. Errors raised by the C++
+  core remain `RuntimeError`; BP-OSD and BP-LSD check the syndrome length there.
+  Decoders built from a `DecoderSpec` keep their exception types.
+- **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
+  results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
+  of decode order, batch splitting and worker count, enabling parallel batches.
+  `gamma0=None` makes only leg zero memoryless; relay legs retain memory.
+  When no leg converges, the correction is the first executed leg's hard
+  decision (leg 0, or leg 1 when `pre_iter=0`). For `pre_iter >= 1` this matches the
+  original relay-bp crate, which returned a stale correction when `pre_iter=0`.
+- **Breaking:** The `relay_bp` spec factory, Python `RelayBpBuilder`, and
+  `RelayBpDecoder.from_dem` no longer accept `max_iter` (it never affected Relay
+  decoding). Rust `RelayBpBuilder::max_iter()` and `RelayBpDecoder::max_iter()`
+  are removed, as is the public `max_iter` field of
+  `pecos_decoders::RelayBpConfig`. Generic `DemAwareDecoder.from_dem` raises
+  `ValueError` for Relay or union-find with explicit `max_iter`; use `pre_iter`
+  and `set_max_iter` for Relay. Min-sum keeps `max_iter`.
+- **Breaking:** Python `RelayBpDecoder.from_dem` and `MinSumBpDecoder.from_dem`
+  require keyword arguments for every option after `dem`, preventing positional
+  arguments from silently changing meaning when options are removed.
+- **Breaking:** Python Relay/min-sum matrix, prior, configuration and syndrome
+  errors now raise `ValueError` instead of `RuntimeError`; internal decode failures
+  remain `RuntimeError`. Their DEM constructors reject non-finite `error_rate`
+  values or values outside `[0, 1]`, naming the parameter.
+- Fixed Relay/min-sum `CheckMatrixDecoder::from_sparse_matrix_with_config`:
+  mismatched coordinate counts or out-of-range indices return `MatrixError`
+  instead of silently truncating coordinates or panicking.
+- **Breaking:** Relay/min-sum require finite `alpha_iteration_scaling_factor > 0`.
+  `NConv { stop_after: 0 }`, `stopping("n_conv_0")`, Relay `pre_iter=0` with
+  `num_sets=0`, min-sum `max_iter=0`, and non-binary syndromes are rejected.
+  Builders now apply `BpGraph` validation: matrices must be binary and priors
+  must be finite probabilities in `[0, 1]`, one per column. Graph errors map to
+  `InvalidMatrix`; explicit-gamma and other configuration errors map to
+  `Configuration` (explicit-gamma errors previously used `InvalidMatrix`).
+- **Breaking:** Rust `StoppingCriterion` is PECOS-owned.
+  `RelayBpDecoder::new` takes `(check_matrix, error_priors, &RelayConfig)`;
+  `RelayConfig` gains `alpha`, `alpha_iteration_scaling_factor`, and `gamma0`.
+- Fixed Relay's stale correction with `pre_iter=0`: when no relay leg converged,
+  the external decoder could return the previous decode's correction.
+- Removed the external `relay-bp` crate, vendored `ndarray-npy` fork, associated
+  compatibility dependencies and six related advisory ignores.
+
+- **Breaking:** `pecos-bp` replaces `RelayConfig`'s convergence count and scalar
+  alpha with `StopRule` and `Alpha` enums, adding `PreIter` stopping and dynamic
+  alpha schedules. Relay-BP now permits `pre_iterations = 0` when relay legs run
+  and samples random gammas from one per-shot RNG stream in leg order, changing
+  seeded outcomes. `BpGraph::from_dense_check_matrix` validates dense binary
+  matrices and per-mechanism error probabilities.
+
+- Fixed generator-certified Guppy DEM builds binding measurements from layout
+  order when provenance was missing. Every layout slot now requires independent
+  runtime provenance or compiled scalar analysis, with agreement required when
+  both are available.
+
+- **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
+  allocator, block input or generated temporary. Loop labels, registers,
+  allocators and block inputs are also rejected when the same generated function
+  both binds the name and calls it (including builtins such as `range`). This rule
+  is deliberately conservative: it rejects even when the call comes before the
+  binding, without flow analysis. Shadowing unused imports or helpers remains supported.
+  A nested `For` that reuses an enclosing loop variable is now rejected in Guppy:
+  Python leaves the variable at the inner loop's last value, silently changing
+  subsequent operations in the outer loop. Errors name the collision and ask
+  the user to rename the loop label, register, allocator or block input.
+  User names starting with the generated prefixes `_measurement_`, `_call_ret_`,
+  `_repeat_` or `_comprehension_` are now rejected.
+
+- Guppy entry wrappers avoid binding user allocator and return names, so names
+  such as `qubit`, `range`, `main`, `array` and `result` do not shadow wrapper calls.
+
+- Guppy `Repeat` counters and array-comprehension variables use reserved temporary
+  names, preserving user loop variables such as `_`.
+
+- **Breaking:** Guppy rejects invalid identifiers, Python keywords, `__debug__` and names that
+  are not NFKC-normalized when used as register, allocator, block input or loop
+  names. The code generation error names the binding and asks the user to rename it.
+
+- QASM code generation renders boolean literals as `1` and `0`, including
+  assignments and expressions in the deprecated QASM generator.
+
+- SLR conversion recognizes NumPy boolean scalars as boolean literals rather
+  than references to variables named `True` or `False`.
+
+- Guppy supports zero-width classical registers, including literal assignments,
+  copies and returns, by preserving the element type of empty bool arrays.
+
+- The deprecated QuantumCircuit generator handles empty `For` loops in both
+  range and start/stop forms and preserves outer iteration values after nested loops.
+
+- Guppy single-bit assignment errors name the SLR value and suggest a comparison,
+  bit index or valid bit value. Integer-to-bool errors suggest using `0` or `1`.
+
+- **Breaking:** pecos-neo `channel_action` now runs its wrapped channel once per
+  operand group per invocation site and stage (#1568). Each stage chooses its
+  first eligible member (first leaked member for suppressed groups); that leader
+  stays fixed within the stage. Rates change, not only seeds: on a k-member group,
+  a wrapped channel with rate p no longer fires at about `1 - (1 - p)^k`. This
+  includes wrapped single-qubit channels on multi-operand preparation, measurement
+  and idle events (one group of all operands), and nested composites.
+  `channel_action` and `ChannelAdapter::new` now return `ValidationResult` and
+  reject wrapped channels whose `event_kinds()` omit `AfterGate`, naming the
+  channel in the error: adapters only run wrapped channels on gate events.
+  Guards around an adapter are decided on the leader's invocation. A wrapped
+  skip is recorded by every enclosing sequence at the step that returned it.
+  After evaluating that step, the sequence stops only for named members, even if
+  their guard bypasses the adapter or an inner sequence; unnamed members, including
+  the leader, continue. Earlier steps and the evaluated step retain their effects.
+  Skip propagation emits no duplicate targets. `CompositeResponse::Channel(Box<NoiseResponse>)`
+  retains all response targets, `SkipGateAlreadyReported` propagates sequence
+  stopping without another runner effect, and `CompositeResponse::causes_unleak`
+  queries unleak effects. `CompositeResponse::skips_qubit` checks a skip against
+  the current member; `skips_gate` remains a qubit-independent query.
+  The new `Primitive::reads_operands`, `GateAction::reads_operands` and
+  `Condition::reads_operands` capabilities opt into full operand installation
+  before geometric single-pass non-gate sampling; undeclared readers see no
+  operands. Linear and two-pass paths always install operands, once per group,
+  and `CompositeChannel` and `BatchCompositeChannel` set member indices on their
+  linear, geometric and two-pass paths. Crosstalk's per-target loop keeps index 0.
+  Function conditions can opt in with
+  `FnCondition::with_operand_reads`; `FnCondition` now implements `Clone` when its
+  callback does, allowing it to be used in `when` and `skip_if`.
+  Nested `CompositeCrosstalkChannel` isolates event state so adapters act on each
+  crosstalk target. Consequently its primitives no longer see the enclosing
+  `current_gate()` or `is_current_gate_suppressed()`.
+
+- **Breaking:** classical registers must be declared with `creg` before their
+  first use, and bit indices must fit the declared width, anywhere a
+  classical value is read or written: conditions, assignments, operands,
+  function arguments and measurement targets. Before, the engine evaluated an
+  undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
+  Errors name the register and explain the required declaration or width:
+  move a later declaration before the first reference, or declare it wider;
+  undeclared `JOB_shotnum` instead gets the unsupported-built-in error below.
+  A gate body referencing a name that is not one of its declared parameters
+  is also rejected, even if the gate is unused or a classical register has that
+  name. Gate and opaque formal parameters are unaffected.
+  `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
+  drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
+  gains an `InvalidProgram` variant.
+
+- **Breaking:** a register may be declared only once with `qreg` or `creg`,
+  including across kinds. Previously a later declaration of the same kind
+  replaced the earlier one, and a `qreg` and a `creg` could share a name.
+  Declare each register once, or use a different name.
+  The deprecated SLR `QASMGenerator` now emits one declaration per register
+  name and raises `ValueError` when one name is declared with different kinds
+  or sizes.
+
+- **Breaking:** a QASM statement keyword must be followed by a non-identifier
+  character. Glued forms such as `cregc[1];`, previously read as `creg c[1];`,
+  are no longer read as keywords. Depending on the surrounding syntax, they
+  may instead be read as identifiers or rejected. The version header still
+  accepts `OPENQASM2.0;`.
+
+- The PECOS QASM parser recognizes `pi` only at a word boundary, so `pivot`,
+  `pi_2` and `pi2` can be used as identifiers in expressions.
+  Classical expressions support integer remainder (`%`) with the precedence
+  of multiplication and division, including PHIR-JSON export. Gate arguments
+  retain floating-point arithmetic for remainder, as they do for division.
+
+- **Breaking:** `pecos_qasm::ast::Operation::ClassicalAssignment` removes
+  `is_indexed`. Its `index: Option<usize>` is the sole assignment selector:
+  `None` writes the whole register and `Some(index)` writes that bit. Invalid
+  indexed assignments can no longer silently write bit 0 or skip the write.
+
+- The PECOS Rust QASM engine rejects an empty classical measurement target
+  as an unknown register instead of substituting `c`.
+
+- An undeclared classical reference to `JOB_shotnum` now reports that the PECOS
+  Rust QASM engine does not provide the shot-number built-in and says to remove
+  the reference, instead of advising a `creg` declaration. Quantum registers,
+  gate names and gate parameters named `JOB_shotnum` follow ordinary name
+  resolution. An explicitly declared `creg JOB_shotnum` remains an ordinary
+  writable register, initially zero.
+- **Breaking:** seeded StabVec results change for circuits with non-Clifford
+  rotations; `is_deterministic` may report false for a multi-term measurement
+  made deterministic only by interference. `set_rng` changes future draws only:
+  it preserves the sampled bitstring, so reseeding clones does not decorrelate
+  an already sampled branch.
+- **Breaking:** `StabVecBuilder::pruning_threshold` now returns `Result`,
+  accepting only finite values in `[0.0, 1.0)`; Python raises `ValueError` for
+  invalid thresholds. Pruning now uses strict `<`, so terms exactly at the
+  cutoff survive.
+- **Breaking:** removed StabVec's `mc_threshold` builder option in Rust and
+  constructor parameter in Python.
+- StabVec now uses exact gate-by-gate sampling for faster multi-term measurement,
+  eliminating pairwise Gram overlaps and Monte Carlo measurement approximation.
+- Added the `pecos-selene-stab-active` Selene plugin with current and peak active
+  width metrics, using the platform maximum width. `StabActive` exposes
+  `max_supported_active_width()` and the configured `max_active_width()`.
+  `HeisenbergProgram::compile` now accepts T/Tdg as exact +/-pi/4 Z rotations
+  (up to global phase).
+
+- `SamplingPlan::run_batch` and `par_run_batch` (StabActive) run many seeded shots
+  at once. Shots that agree on every rotation sign and projection value share one
+  amplitude vector, and each result is bit-identical to `SamplingPlan::run` for
+  its seed. An explicit `lane_budget_bytes` bounds amplitude memory per chunk.
+
+- `pecos-simulators` now contains the stabilizer tensor-network simulators (StabMps,
+  MAST) as `pecos_simulators::stab_tn`, formerly the unpublished `pecos-stab-tn`
+  crate; `rayon` is now always a dependency and `parallel` only selects parallel gate
+  execution.
+
+- The Selene plugins `pecos-selene-stabilizer`, `pecos-selene-statevec` and
+  `pecos-selene-stab-mps` are now built for PyPI release on the Python release
+  train, included in the distribution bundle and published manually.
+
+- **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
+  noise builders, including noiseless gates and models with no configured leak
+  source (#1574, #1575). Noiseless operations suppress faults, including composite,
+  preparation, measurement, crosstalk and idle-after-two-qubit noise, while
+  preparation clearing, lifecycle tracking and leaked readout still run.
+  Scheduled idle and `BeforeGate` composite primitives remain active.
+  `LeakageChannel` partner Pauli noise is now opt-in with
+  `with_partner_pauli_probability` (default 0), and the channel no longer flips
+  an earlier measurement record before leaked readout. Seeded results shift.
+  `NoiseEvent::AfterPreparation`, `BeforeMeasurement` and `AfterMeasurement`
+  gained a `gate_type` field holding the scheduled operation.
+
+- **Breaking:** pecos-neo validates operand counts per operation and groups native
+  batches by quantum arity (#1442). `AdaptedOp::Gate` execution and batching now
+  reject repeated qubits, including `H([q0, q0])`, which previously ran twice.
+  `BatchedCircuit::from_resolved` takes `GateDefinitions`, validates angle counts for
+  gates with a `GateType`, and returns `Result`. `Batch::General` replaces `MultiAngle`, and `BatchExecutor`
+  requires `execute_general`. `ExecutionError` and `ResolutionError` gain variants
+  for invalid operands and missing decomposition angle inputs. `PathExplorer`
+  now panics on invalid circuit input, including repeated qubits.
+  MeasureLeaked, MeasureFree, QAlloc, QFree, PrepX and PrepY gain core specs matching
+  `GateRegistry`. Configured category noise now applies when they run as
+  `AdaptedOp::Gate`, or as a queued QFree, through an override or decomposition,
+  and it draws from the RNG.
+
+- **Breaking:** Guppy code generation checks classical expression types (#1569).
+  An operand Guppy cannot accept, such as `d[0] ^ 1.5`, `d[0] < d[1]` or a whole
+  register in arithmetic, a condition that is not a boolean or a number, a `For`
+  bound that is not an integer, and a literal Guppy cannot write now raise
+  `GuppyCodegenError` at `.guppy()`, naming the expression. Before, `.guppy()`
+  returned source that failed at `.hugr()`. `&` and `|` on a loop variable also
+  raise: they compiled as logical `and` and `or`, which is not what they mean in
+  SLR. `d[i] == 1` now compiles, and integer division renders as `//`, like the
+  QIR backend's on non-negative values. A whole-register comparison such as
+  `If(c == 5)` or `If(c < d)` compiles to the unsigned register value for widths
+  up to 63 bits. The other side must be a register or a non-negative literal, or
+  a loop variable for `==` and `!=`, because computed Guppy integers are signed.
+
+- **Breaking:** pecos-neo single- and two-qubit gate channels now discard a
+  seeping qubit's state with an independent uniform I/X/Y/Z twirl (#1570),
+  including seepage after leaked-suppressed gates. The marginal seepage rate
+  remains `p * emission_ratio * seepage`; seeded results shift. `unleak()` and
+  `NoiseResponse::MarkUnleaked` still clear only the leakage flag.
+
+- **Breaking:** pecos-neo `CompositeNoiseModelBuilder` now registers `CorePlugin`
+  (#1571). Preparation clears earlier leakage before preparation faults run;
+  leakage drawn by that preparation still sticks. Prepared qubits become active,
+  and measured qubits become inactive. This enables the builder's preparation
+  and measurement crosstalk on other active, non-leaked qubits, which previously
+  never fired, and changes `active()` conditions and seeded results. This crosstalk
+  does not measure the affected qubit, so it differs from `GeneralNoiseModel`.
+
+- **Breaking:** PHIR runner results now have a consistent set of keys across shots.
+  Every `Result` destination is reported in every shot, including when its Result
+  never runs: its final value is reported, initially zero unless another operation
+  writes it. Result-created names are hoisted at load like declarations, so other
+  operations may read or write them before their Result executes, including when
+  that Result is in an unexecuted branch. Declared destinations keep their width
+  and signedness without restrictions on source types. An undeclared destination
+  takes the largest width contributed by its sources (a whole-register source's
+  size, or one bit for an indexed source). Indexed destination writes use unsigned
+  64-bit storage, sized to at least `max(32, largest destination index + 1)` across
+  the program. Whole-register copies to an undeclared destination keep their
+  common source data type, such as `bool` or `i8`; differing source data types use
+  `u64` or `i64` according to signedness. Conflicting signedness between
+  whole-register sources of an undeclared destination is a load-time error naming
+  the destination and sources.
+  The native `measurement_` name filter is removed, and quantum registers are
+  no longer reported by its all-variables fallback. `HybridEngine` writes
+  measurements into user registers beginning with `__`, keeps noise-only
+  measurements internal, and raises
+  a named shot/key error instead of accumulating ragged columns. Every runner,
+  including the native engine, rejects `Measure` without `returns` or with a
+  different number of destinations than measured qubits at load time; grouped
+  arguments are flattened before counting. Implicit measurement destinations
+  (`measurement_N` and `m`) have been removed.
+
+- **Breaking:** `QuantumCircuit.to_phir_json()` handles a measurement with no
+  destination (#1497), such as SLR `qb.MeasureZ(q[1])` with no `> c`. It used to
+  emit a PHIR `Measure` without `returns`. PHIR validation and `HybridEngine`
+  rejected that, and the native PHIR-JSON engine accepted it but reported the
+  result under an internal `measurement_N` name, or wrote it into a user register
+  named `m`, or failed when that register was too small. Each bare-measured qubit
+  now writes to its own bit of an internal `__pecos_scratch` variable, renamed to
+  avoid every declared and destination name and split every 64 bits. The program
+  then exports every non-empty user classical register unless it already exports,
+  so the scratch is never reported, and bare results no longer appear in native
+  results.
+
+- **Breaking:** pecos-neo `NoiseEvent::AfterGate` gains `leaked_suppressed` and
+  `group_size`; `BeforeGate` gains `group_size`. `AfterGate.qubits` now contains
+  executed groups only. Group size is `NonZeroUsize`, shared by every event producer.
+  `NoiseContext::set_current_gate` also takes `NonZeroUsize`.
+
+- **Breaking:** pecos-neo `DispatchContext` gains `leaked_suppressed`. Queue
+  after-gate handlers receive the same split as noise channels, can receive empty
+  `qubits`, and do not run for adapted execution.
+
+- **Breaking:** pecos-neo groups skipped while leaked retain seepage, partner noise,
+  healthy-member idle noise and crosstalk source/exclusion effects, but receive
+  no gate error. Membership is fixed after before-gate dispatch. All-suppressed
+  commands emit; all-dropped non-empty commands do not. Custom channels must opt
+  in to suppressed groups. Coherent idle noise now excludes leaked members.
+
+- **Breaking:** pecos-neo composite filters classify by operand-group size and
+  rules now fire on batched commands (#1443), including registered custom gates.
+  Every processing path supplies group-local partner context. Suppressed groups
+  run primitives only on currently leaked members, not healthy partners.
+  In geometric and batch processing, stage 2 of a two-stage primitive now runs
+  on every operand as a second pass, as linear processing does. All paths finish
+  both stages group by group, shifting seeded results for multi-group commands
+  and for `BatchCompositeChannel` and geometric `CompositeChannel` models using
+  them. A composite channel nested through `channel_action` now keeps the
+  enclosing event's gate, suppression marker, and operands for every member.
+
+- **Breaking:** Two-qubit and composite seepage now use the marginal rate
+  `p * emission_ratio * seepage`, including angle scaling and excluding leakage
+  scale. Two-qubit outer draws are shared per pair; composite draws remain per
+  qubit. Seeded results shift.
+
+- **Breaking:** All seven pecos-neo user-handler sites apply leakage marks and
+  notify observers once per mark. Before-gate marks are visible to noise channels
+  in the same dispatch. Without a noise model, marks return the new
+  `ExecutionError::HandlerLeakageWithoutNoise` variant; exhaustive error matches
+  must handle it.
+
+- **Breaking:** `bb_memory_circuit` and `coloration_memory_circuit` `detectors`
+  metadata no longer contains `fault_sector`. Callers of
+  `with_detectors_json(circuit.get_meta("detectors"))` must use
+  `with_circuit_metadata(circuit)` in Python, or also supply `measurement_classes`
+  in influence-map record order with `with_measurement_classes_json` (Rust callers
+  can use `DemBuilder::from_tick_circuit`). Without this change the DEM builds
+  with no labels and no error.
+
+- **Breaking:** PHIR `cvar_export` selects the reported classical variables in
+  every PECOS runner (#1323): the native PHIR-JSON engine (`sim(PhirJson(...))`),
+  the Rust and Python classical interpreters behind `HybridEngine`, and
+  `phir_json_to_module`, which used to reject it. Before, runners ignored it
+  and used their default output selection. The export set is the union of every
+  `cvar_export` in the program, including unexecuted branches; values are read at
+  the end of the shot; `to` renames positionally. Programs with exports no longer
+  report unexported variables, and an explicitly exported `measurement_*`
+  register is reported. Load-time errors name an undeclared exported variable, a
+  malformed `to`, an output name used by two sources, an output that equals
+  another declared variable or a `Result` destination (exporting a `Result`
+  destination under its own name is allowed), and the reserved `_width_`
+  prefix. A `cvar_define` or `qvar_define` inside a block is supported only in
+  programs that use `cvar_export`; elsewhere it is a load-time error. `qc2phir`
+  drops exports of size-0 registers it does not declare. Without `cvar_export`,
+  the native engine and module converter retain Result-only output selection
+  when Results exist; HybridEngine continues to report all classical variables.
+
+- `belief_find` now gives its Union Find fallback the raw BP log-probability
+  ratios. It previously passed a transform that reversed their order, so on
+  shots where BP failed to converge the fallback visited the least likely bits
+  first. Seeded `belief_find` results can change on those shots.
+
+- **Breaking:** the native Union-Find decoder always peels on a BFS forest.
+  `PeelingStrategy` and `UfDecoderConfig::peeling` are removed, and the `fast`,
+  `balanced` and `accurate` configurations are now identical. The Prim spanning
+  forest gave 2 to 3.6 times more logical errors on rotated surface-code memory
+  (d=5 and 7, p=0.003 and 0.005, 100,000 shots). Results can change for
+  `pecos_uf_correlated`, `pecos_uf:balanced`, `pecos_uf:accurate`, `pecos_uf:bp`,
+  `pecos_uf:bp_serial`, `beamsearch`, `WindowedLogicalSubgraphDecoder`, the Python
+  `CssUfDecoder`, and Rust callers that used those configurations. `pecos_uf:fast`
+  is unchanged.
+
+- **Breaking:** Guppy code generation lowers a whole-register `CReg` assignment
+  from an integer or boolean literal to the matching bits (least significant
+  first, truncated to the register width) and an equal-width register copy to a
+  copy.
+  Before, `c.set(1)` emitted `c = 1` on a bool array, so `.guppy()` returned
+  invalid source and `.hugr()` failed. Any other whole-register expression now
+  raises `GuppyCodegenError` at `.guppy()` naming the target or the unresolved
+  reference. A literal written
+  to a loop-indexed bit (`c[i].set(1)`) now renders as a Guppy bool; it used to
+  fail at `.hugr()`. A single-bit assignment directly from a whole register, a
+  loop variable, a float or arithmetic now raises `GuppyCodegenError` at
+  `.guppy()` instead of emitting invalid source. The deprecated
+  `QuantumCircuitGenerator` raises on classical `SET`, `Print` and standalone
+  classical expressions instead of silently dropping them.
+
+- `SlrConverter.from_quantum_circuit` keeps the qubit register names that
+  SLR -> QuantumCircuit records in `qvars` and `qvar_spec` (#1498), so a round
+  trip reproduces `qreg data[2]; qreg anc[1];` instead of one `q` register.
+  Without that metadata the single `q` register stays. Supplying only one of
+  `qvars` and `qvar_spec`, a gate qubit missing from `qvars`, an out-of-range or
+  duplicate mapping, or a classical register sharing a quantum register's name
+  raises `ValueError`; a non-mapping `qvars` or `qvar_spec` raises `TypeError`.
+  With `qvars` and `qvar_spec` present, unused declared quantum registers
+  survive, JSON string keys are accepted, and a classical register named `q`
+  is accepted when no quantum register is named `q`.
+  A bool is no longer accepted as a `cvar_spec` width, a `var`/`var_output`
+  index or a qubit location in tuple-tick input; previously `False` and `True`
+  counted as 0 and 1.
+
+- The PECOS QASM parser accepts a `//` line comment that ends at end of input
+  without a newline (#1518). Before, such a program failed with a syntax error,
+  which included SLR-generated QASM ending in a `Comment`.
+
+- **Breaking:** SLR `LoopVar` comparisons (`==`, `!=`, `<`, `>`, `<=`, `>=`)
+  and `+`/`-` build SLR expressions (#1517). Before, `i == 0` was a plain
+  Python `False`, so `If(i == 0)` inside `For(i, ...)` became a branch that
+  never ran in Guppy, QASM and QIR, with no error. Guppy now emits the
+  comparison in its `for` loop. QASM and QIR raise `NotImplementedError` for a
+  loop variable used as a classical value, since their unrolling does not bind
+  it. Stim and QuantumCircuit keep rejecting such conditions. Bitwise and unary
+  operators on a `LoopVar` stay a `TypeError`. A `LoopVar` used outside the
+  `For` loop that binds it raises `ValueError` during conversion. `LoopVar`
+  stays hashable by identity.
+
+- The SLR parallel optimizer, on by default in `SlrConverter`, treats `For` and
+  `While` inside a `Parallel` as control flow, like `If` and `Repeat`. Before, it
+  flattened their bodies into the parallel group and dropped iterations:
+  `Parallel(For("i", 0, 2).Do(X(q[0])), ...)` applied `X` once instead of twice.
+
+- `QuantumCircuit.from_json_str` restores the integer qubit ids and
+  `(register, index)` tuples in `qvars`. Before, they came back as strings and
+  lists, and `to_phir_dict` on the restored circuit failed with "Couldn't find
+  qsym for qid". A malformed `qvars` raises an error naming the bad value.
+
+- **Breaking:** Python simulator wrappers and the public `pecos.HybridEngine`
+  validate whole known-gate batches per `run_gate` call and per circuit item
+  before changing state, including when `simulate_gate=False`. Registered-gate
+  batches are fully decomposed before any step runs. The pre-pass checks each
+  step's binding and qubits, plus every outer location's arity from the registry
+  definition, distinct operands,
+  and bounds against the state's capacity (including unused operands).
+  Step failures name the registered gate and failing step; outer-location failures
+  name the registered gate. SparseStabPy uses the same pure Clifford rotation
+  lowering check for active registered steps' parameters before any step runs;
+  plain `run_gate` and HybridEngine leave parameter checks to dispatch.
+  With `simulate_gate=False`, locations and registered-step bindings are still
+  validated, but rotation parameters are not. Step metadata can disable a step
+  (skipping parameter checks and execution), but no longer re-enables a step
+  inside a gate whose outer `simulate_gate` is `False`. An unbound registered step now raises even when disabled, where it was
+  previously silently skipped. Empty registered decompositions are valid no-ops
+  after outer-location validation.
+  Malformed locations,
+  repeated operands within a location, and out-of-range qubits raise gate-named
+  `ValueError`s; some errors previously raised `TypeError`.
+  StateVec, CuStateVec, MPS and CudaStateVec require scalar one-qubit locations.
+  SparseStabPy accepts singleton sequences for RX, RY, RZ, RXY1Q, R1XY and U1q;
+  its other one-qubit gates require scalars. PauliProp/PauliFaultProp accept
+  singleton tuples/lists, and DefaultSimulator accepts singleton sized, indexable
+  sequences. `I` is a single-qubit gate and follows the same per-state rule as
+  `X`; a pair location for `I` is rejected (use `II`), except for CoinToss
+  built-in no-op bindings. Integer-like scalars are classified before sequences, and
+  unhashable qubit indices are rejected up front, including inside locations.
+  Zero-dimensional arrays used as qubit indices inside a batch (including
+  operands inside a location) are now rejected, even where Rust-backed bindings
+  and SparseStabPy accepted them for non-measuring gates. A bare `np.array(0)`
+  batch still skips dispatch in the non-CoinToss wrappers (and CoinToss no-ops).
+  Multi-qubit locations must be ordered:
+  set/frozenset pairs are rejected, including in SparseStabPy and CudaStateVec
+  where they previously ran. Batches may still repeat or overlap qubits and
+  execute sequentially.
+  Native SparseStab, Stabilizer, StateVec, StabVec, CoinToss and PauliProp expose
+  a read-only `gate_capacity` property; PauliProp returns `None` and remains
+  growable. CoinToss's `run_circuit` pre-checks
+  measurement batches before drawing RNG or recording results.
+  Through HybridEngine, every CoinToss measurement binding (including MX/MY/MZ)
+  is validated for every iterable batch container; built-in non-measurement
+  bindings remain no-ops, while custom bindings execute.
+
+- **Breaking:** CoinToss now measures MX/MY/MZ and iterable measurement batches
+  (set, frozenset, list, tuple, and generator) through both `run_circuit` and
+  `run_gate`. Previously, `run_gate` discarded measurements; `run_circuit`
+  measured prefixed spellings only in sets or as bare Python integers.
+  Both methods accept integer-like scalar locations and return nonzero binding
+  results under their original location keys. Custom bindings execute,
+  including custom measurement callables.
+  Built-in measurements and custom bindings with known positive arities or
+  measurement prefixes validate the whole batch before dispatch, even with
+  `simulate_gate=False`; built-in no-op bindings retain their permissive inputs.
+  Custom bindings with unknown or zero arities skip location validation.
+  All native measurement spellings have bindings, including `measure X`,
+  `measure Y`, and `MZForced`. Native Z measurement spellings honour
+  `forced_outcome` (-1 draws a coin, 0/1 return that outcome without a coin);
+  `MZForced` requires the parameter. This also changes paths that already
+  measured on dev: `Measure`, `measure Z`, and `Measure +Z` in `run_circuit`,
+  and Z measurements through HybridEngine, previously drew a coin and ignored
+  `forced_outcome`. They now return 0/1 without a coin when forced, and reject
+  invalid values before dispatch, including with `simulate_gate=False`.
+  This affects the QEC ideal gates in `checks2circuit.py` and
+  `color_488/circuit_implementation1.py`, which emit `measure Z` with
+  `forced_outcome=0`. MX and `Measure -Z` continue to ignore `forced_outcome`.
+  An unbound case-insensitive "measure"-prefixed spelling also measures in
+  `run_circuit` and `run_gate`. The public `pecos.HybridEngine` validates these
+  unbound prefixed batches before rejecting them as unsupported when enabled.
+  Rebinding a prefixed spelling can make it non-measuring.
+  Locations execute in container order, including duplicates. Outcomes and
+  coin use change for circuits that relied on the old silent skips or ignored
+  `simulate_gate=False` or `forced_outcome`.
+
+- Fixed registered simulator gates treating radians as turns and then treating
+  decomposed turns as radians, which silently produced incorrect rotations.
+  The simulator now converts at the registry boundary, including fixed and
+  negated input angles. The Python registry API continues to use turns.
+  Registered gates also accept `angle=` for a one-angle gate, as built-in gates
+  do, and `angle64` values; non-finite angles raise a gate-named `ValueError`.
+
 - `derive_seed` hashes its purpose string with a fixed SipHash-1-3 instead of
   `std`'s `DefaultHasher`, whose algorithm is unspecified across Rust releases
   (#1496). Every derived seed keeps its current value, so seeded results do not
   change. Component seeds in `MonteCarloEngine` and `HybridEngine`, and so the
   replay of a recorded `SeedReport`, no longer depend on the Rust release.
 
+- SLR registers and allocators declared in a nested `Block` (at any depth,
+  including `If`, `For`, `While`, `Repeat` and `Parallel` bodies) are now
+  declared in the generated program (#1511). Before, only the outermost
+  block's declarations were kept, so QASM wrote to registers it never
+  declared, and the QASM swap temporary could take a nested register's name.
+  `Vars(a, b)` keeps its arguments; it used to discard them. The parallel
+  optimizer keeps the declarations of the regions it regroups.
+  Child allocator declarations carry their actual offset within the parent;
+  QASM, Stim, QIR and QuantumCircuit resolve parent chains independently of
+  declaration order. Noncontiguous child placements raise `ValueError`.
+  Hand-built AST child allocators must specify `offset`; older JSON without a
+  child offset raises `ValueError` instead of silently aliasing sibling storage.
+  **Breaking:** `QAlloc(n, parent=p)` now reserves slots exactly like
+  `p.child(n)`, so the parent slots it covers can no longer be used directly
+  (it used to reserve nothing). Every declaration, including declarations in Main, must use
+  the same storage for a duplicate name (same size and, for child allocators,
+  the same parent and offset), or conversion raises `ValueError`.
+  Nested `block_inputs` functions cannot introduce registers that exist only
+  inside their bodies. They may repeat ordinary-scope declarations or their
+  own bound inputs; a root block with `block_inputs` is inlined normally.
+  In complete programs (`Main`), QASM rejects undeclared register and allocator
+  references, including inline measurement outputs that could collide with swap
+  temporaries. Stim, QIR and QuantumCircuit also reject undeclared quantum
+  allocators in complete programs. These undeclared-reference errors, and the
+  existing ones for QIR undeclared classical storage, unknown `Permute`
+  references and unknown `prepare_all` allocators, raise `ValueError` instead
+  of `NotImplementedError`. Of the backends that accepted inline measurement outputs on dev,
+  only QASM rejects them: every classical register must be declared in the program.
+  Stim and QuantumCircuit continue to accept inline outputs and preserve their
+  measurement mappings. QIR continues to require declared classical storage;
+  Guppy's existing inline-output support is unchanged. Fragments may reference
+  caller-owned registers: undeclared quantum names denote root storage at offset
+  zero, and QASM, Stim and QuantumCircuit accept caller-owned measurement outputs.
+- Guppy code generation raises `GuppyCodegenError` for a classical reference it
+  cannot resolve in the current function (#1525). Before, a `block_inputs`
+  block that used an outer register with a loop-variable index, such as
+  `c[x].set(e[x])`, produced Guppy source with undefined names that failed
+  only at HUGR compilation.
 - **Breaking:** SLR code generation rejects constructs it previously silently
   dropped (#1189): QASM `While`, dynamic or non-integer `For` bounds, zero steps,
   `Print`, and unsupported `Permute` shapes; QIR non-integer
@@ -51,8 +808,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Stim invalidates the whole register's measurement provenance after a symbolic
   bit assignment, so later conditions cannot read stale measurement records.
   QASM, Stim, QIR and QuantumCircuit report actionable errors for symbolic
-  `Permute` indices. Stim's undeclared `Permute` diagnostic explains the
-  block-local register limitation (#1511) and directs callers to Main scope.
+  `Permute` indices. Stim's undeclared `Permute` diagnostic names the missing
+  register and directs callers to declare it in Main or an ordinary Block.
   Deprecated `QIRGenerator` now
   rejects `For` and `While` instead of executing their bodies once and directs
   callers to `SlrConverter(...).qir()`. Barrier conversion widens individual
@@ -116,6 +873,37 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   measurement path. `SparseStabGeneric::mz_with_work` measures one qubit and
   also returns `MeasurementWork`, the refactor and decouple work that
   measurement executed, for benchmarking.
+
+- `SparseStab` has an opt-in batch measurement order,
+  `with_measurement_batch_order(MeasurementBatchOrder::BitReversed)`. It measures
+  batch positions in bit-reversed order and returns results in caller order.
+  The outcome distribution is unchanged, but seeded outcomes change. On the
+  6.6.6 color code with the refactor rule, touches per gate grow as sqrt(n)
+  instead of linearly: at d = 511, 117.6 with bit-reversed order versus 1,134.9
+  in caller order (2,856 with the default rule in caller order). On the surface
+  code at d = 511, the refactor rule uses 59.3 touches per gate with bit-reversed
+  order versus 82.3 in caller order. On the typical small-code workloads
+  (surface, color, bivariate bicycle, hypergraph product and tricycle codes),
+  refactor plus bit-reversed order is 1.18x slower than the default (geomean),
+  so it stays opt-in.
+
+- Python: C4-Helix two-block transversal-CNOT circuits render to certified Guppy
+  programs with block-prefixed gadget functions and result tags, using 44 qubits.
+  `cnot_definitions` supplies typed parities for `build_dem_from_guppy`.
+
+- Python: C4-Helix two-block circuits apply a transversal CNOT between syndrome
+  rounds, with block-prefixed measurement labels and discovered detectors
+  (`cnot_circuit`, `cnot_definitions`); measured distance is 5 <= d <= 6.
+
+- Python: C4-Helix logic words render to certified Guppy programs with reusable
+  gate gadgets and data relabels. `logic_definitions` supplies typed detectors
+  and signed observable references for `build_dem_from_guppy`.
+
+- Python: C4-Helix logical gate gadgets flag all seven physical CZs and compile
+  signed two-qubit Cliffords with minimal S0S1 count. Logic circuits discover
+  detectors using pulled-back logical conjugates. Distance tests pin the
+  gate-only weight-six witness, full-noise Z bounds of 5 <= d <= 6, and the
+  owner-accepted full-noise X distance of four.
 
 - Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
   with scalar, round-free result tags and `mem_swap` swap-out gadgets.
@@ -227,7 +1015,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   carry the reset's hidden random outcome, so a Bell partner measured later is
   random rather than reported deterministic. `symbolic_measurement_history`,
   `InfluenceBuilder`, the DEM builders and the samplers built on them give
-  correct determinism and detectors for such circuits. `MeasureLeaked` is now
+  correct determinism and detectors for such circuits. `MeasureZLeaked` is now
   supported in these record-aligned replays: its outcome stays hidden until a
   recorded measurement observes it. Breaking:
   `MeasurementHistoryError::LeakedMeasurementNotRepresentable` is removed, and
@@ -336,6 +1124,15 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   attempts; detailed direct calls retain full results. Defaults and provider
   protocol v1 remain unchanged.
 
+- Circuits can supply typed `measurement_classes` metadata to derive detector
+  `fault_sector` labels from parity-reduced record support, with explicit-label
+  agreement checks during definition resolution and DEM construction. Resolved
+  circuit definitions carry the effective labels. Rust CSS memory builders emit
+  these classes; Python `DemBuilder.with_circuit_metadata` copies all four DEM
+  metadata attributes, checks detectors, observables and the count against the
+  circuit, and rejects an influence map whose measurement records differ from the
+  circuit's. Manual Rust and Python DEM builders accept class JSON in influence-map
+  record order; Guppy builders do not accept positional classes.
 - `LogicalCircuitBuilder` detector `fault_sector` labels follow the code's
   stabilizer family across a transversal H; previously post-H detectors were
   labelled with the measured family, which made graph decoders' labelled
@@ -370,6 +1167,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 
 ### Python additions
+
+- `pecos.analysis.circuit_parallelism` measures how densely selected operations
+  of an existing `QuantumCircuit` pack into layers that preserve per-qubit and
+  condition order, and reports mean operations, active qubits and density for
+  all selected layers and for unconditional layers only. Unselected and
+  zero-qubit operations are barriers unless explicitly projected out.
 
 - Decode APIs and `build_decoder` accept a `DetectorErrorModel` object as standard
   text plus labels. Graph specs accept the `irreducible` keyword, and results
@@ -939,8 +1742,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - pecos-neo gate suppression applies per operand group in batched commands,
   including adapted circuits and importance sampling. `LeakageChannel` injects
   partner Pauli noise only within pairs containing exactly one leaked qubit.
-  Adapted gate execution now emits one after-gate event with the full operand
-  slice even when some or all groups are skipped, matching queue execution.
 
 - Gate commands with more than 255 qubits no longer panic. PHIR-JSON broadcasts
   use one command per operation, retaining individual preparation/measurement

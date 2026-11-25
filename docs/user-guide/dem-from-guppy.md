@@ -869,8 +869,10 @@ The direct backend `from_dem` constructors above remain text-only.
   branch — wrong and seed-dependent. Guppy programs whose compiled HUGR
   contains branching or looping control flow therefore raise `ValueError`
   before tracing; built-in generators such as `make_surface_code` and
-  `make_surface_memory` cross this boundary through a trusted program-bound
-  layout certificate.
+  `make_surface_memory` cross this boundary through a program-bound layout
+  certificate. Every layout slot must agree with independent runtime provenance
+  or compiled scalar analysis. If both are available they must agree, and a
+  slot with neither rejects the build.
   Statically-scheduled gates after measurements (every QEC round has them)
   are fine; genuinely conditioned gates are not.
 - **Clifford circuits only.** Traced operations must normalize to named

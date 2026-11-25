@@ -48,6 +48,7 @@ pub use crate::noise::{
     PauliLeakageDict,
     PauliLeakageEvent,
     QubitTransitionState,
+    ReadoutMatrix,
     StateTransitionChannel,
     TransitionDict,
     TwoQubitPauliLeakageChannel,

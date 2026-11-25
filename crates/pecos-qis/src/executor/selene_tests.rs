@@ -1,6 +1,7 @@
 //! ABI and recovery checks against the dynamically loaded runtime only.
 
 use super::*;
+use crate::selene_test_ir;
 use crate::test_env::ENV_MUTEX;
 
 // Explicit public ABI surface: adding or removing an entry requires review.
@@ -220,10 +221,18 @@ fn generated_program_selene_binds_to_selected_ffi() {
     let _env_lock = ENV_MUTEX.lock().expect("environment lock");
     let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
     let mut interface = QisHeliosInterface::new();
-    let import = if cfg!(windows) { "dllimport" } else { "" };
+    let declaration = selene_test_ir::declaration("selene_qalloc", "ptr").replacen(
+        "declare",
+        if cfg!(windows) {
+            "declare dllimport"
+        } else {
+            "declare"
+        },
+        1,
+    );
     interface.program = format!(
         r"
-        declare {import} {{ i32, i64 }} @selene_qalloc(ptr)
+        {declaration}
         define i64 @qmain(i64 %arg) {{
             %address = ptrtoint ptr @selene_qalloc to i64
             ret i64 %address

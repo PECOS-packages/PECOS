@@ -1,0 +1,34 @@
+{
+  "doi": "10.5281/zenodo.22820614",
+  "archive": "denser_planar_color_codes_source_v1.zip",
+  "files": {
+    "__init__.py": {
+      "upstream_path": "src/vendor/_torus488_cnot/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "geometry.py": {
+      "upstream_path": "src/vendor/_torus488_cnot/geometry.py",
+      "sha256": "5a7e317680c451be834d0b75420e1471ce7d34fd00da77b26640caf690c98837"
+    },
+    "rule.py": {
+      "upstream_path": "src/vendor/_torus488_cnot/rule.py",
+      "sha256": "fdf0946e1e3f18c109bdca7a6e49c7963410a6224ab55a416c361a16c509ad65"
+    },
+    "rule_seed.json": {
+      "upstream_path": "src/vendor/_torus488_cnot/rule_seed.json",
+      "sha256": "6222a7cb1e52836eaa9bd4916619f01bb5bf1cb7b74de3e7b19d4ffa510ce98d"
+    },
+    "instrument.py": {
+      "upstream_path": "src/vendor/_torus488_cnot/instrument.py",
+      "sha256": "64a27e36de9d0f286ac7d2fd66643982027c2d5b354835f64b3c0d612f62f5c4"
+    },
+    "linear_circuit.py": {
+      "upstream_path": "src/vendor/_torus488_cnot/linear_circuit.py",
+      "sha256": "fc28dddc2e6741e0bf128aee685c14d0ee0411e95d298f0fd89cda5db503311f"
+    },
+    "make_memory.py": {
+      "upstream_path": "src/vendor/_torus488_cnot/make_memory.py",
+      "sha256": "94ee05686b934d42ccdd5e18a27f3a0e9f3043b5fc3c1e61e7ec7535ad7b1093"
+    }
+  }
+}

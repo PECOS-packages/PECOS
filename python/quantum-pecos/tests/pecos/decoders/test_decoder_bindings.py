@@ -275,6 +275,18 @@ class TestSparseMatrix:
 class TestBpOsdDecoder:
     """Tests for BpOsdDecoder via BpOsdBuilder."""
 
+    def test_invalid_bp_method_rejected_at_build(self) -> None:
+        """An unknown BP method fails at build, quoting the value and every accepted spelling."""
+        from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
+
+        builder = BpOsdBuilder(SparseMatrix([[1]]), error_rate=0.01).bp_method("bad")
+        with pytest.raises(ValueError, match="bp_method") as exc_info:
+            builder.build()
+        message = str(exc_info.value)
+        assert repr("bad") in message
+        for spelling in ["minimum_sum", "product_sum", "ms", "ps"]:
+            assert repr(spelling) in message
+
     def test_create_decoder(self) -> None:
         """Test construction via builder."""
         from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
@@ -328,8 +340,20 @@ class TestBpOsdDecoder:
         from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
-        with pytest.raises(RuntimeError, match="length must match"):
+        with pytest.raises(ValueError, match="length must match"):
             BpOsdBuilder(H, error_rate=[0.01, 0.02]).build()
+
+    @pytest.mark.parametrize("bad", [0.0, -0.0, 1.0, float("nan"), -0.1, 1.5])
+    def test_non_probability_prior_rejected(self, bad: float) -> None:
+        """A rate or channel entry outside (0, 1) fails at build, naming the argument."""
+        from pecos_rslib.decoders import BpLsdBuilder, BpOsdBuilder, SparseMatrix
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        for builder in (BpOsdBuilder, BpLsdBuilder):
+            with pytest.raises(ValueError, match=r"error_rate must be finite and in \(0, 1\)"):
+                builder(H, error_rate=bad).build()
+            with pytest.raises(ValueError, match=r"error_channel\[2\] must be finite"):
+                builder(H, error_rate=[0.01, 0.01, bad, 0.01]).build()
 
 
 class TestBpLsdDecoder:
@@ -400,6 +424,20 @@ class TestUnionFindDecoder:
         decoder_peel = UnionFindBuilder(H).method("peeling").build()
         result_peel = decoder_peel.decode_syndrome([0, 0, 0])
         assert result_peel is not None
+
+    def test_wrong_syndrome_length_raises_value_error(self) -> None:
+        """A syndrome whose length differs from the check count is a caller error."""
+        from pecos_rslib.decoders import DemAwareDecoder, SparseMatrix, UnionFindBuilder
+
+        H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
+        decoder = UnionFindBuilder(H).build()
+        with pytest.raises(ValueError, match="Syndrome length 2 does not match check count 3"):
+            decoder.decode_syndrome([0, 1])
+
+        dem = "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1"
+        dem_decoder = DemAwareDecoder.from_dem(dem, decoder_type="union_find")
+        with pytest.raises(ValueError, match="Invalid input dimensions: expected 2, got 3"):
+            dem_decoder.decode_syndrome([0, 1, 1])
 
 
 class TestMinSumBpDecoder:
@@ -498,7 +536,6 @@ class TestRelayBpDecoder:
         H = [[1, 1, 0], [0, 1, 1]]
         decoder = (
             RelayBpBuilder(H, error_priors=[0.003, 0.003, 0.003])
-            .max_iter(100)
             .gamma0(0.9)
             .pre_iter(40)
             .num_sets(20)
@@ -551,3 +588,140 @@ def test_experimental_factory_names_the_missing_package(monkeypatch: pytest.Monk
         match=r"frontier requires the optional pecos-rslib-exp package.*not published to PyPI.*just build",
     ):
         _ = decoders.frontier
+
+
+def test_relay_builder_removed_max_iter_and_zero_convergence_target() -> None:
+    from pecos_rslib.decoders import RelayBpBuilder
+
+    builder = RelayBpBuilder([[1, 1, 0], [0, 1, 1]], [0.1] * 3)
+    with pytest.raises(AttributeError, match="max_iter"):
+        builder.max_iter(100)
+    with pytest.raises(ValueError, match="positive integer"):
+        builder.stopping("n_conv_0").build()
+
+
+@pytest.mark.parametrize("family", ["RelayBpBuilder", "MinSumBpBuilder"])
+def test_relay_family_input_errors_are_value_errors(family: str) -> None:
+    import pecos_rslib.decoders as decoders
+
+    builder = getattr(decoders, family)
+    with pytest.raises(ValueError, match=r"check_matrix.*2"):
+        builder([[1, 2]], [0.1, 0.1]).build()
+    for priors in [[-0.1, 0.1], [1.1, 0.1], [float("nan"), 0.1], [float("inf"), 0.1], [0.1]]:
+        with pytest.raises(ValueError, match="probability"):
+            builder([[1, 1]], priors).build()
+    decoder = builder([[1, 1]], [0.1, 0.1]).build()
+    with pytest.raises(ValueError, match=r"syndrome.*2"):
+        decoder.decode([2])
+    with pytest.raises(ValueError, match="syndrome length"):
+        decoder.decode([0, 0])
+    with pytest.raises(ValueError, match="alpha"):
+        builder([[1, 1]], [0.1, 0.1]).alpha(-1.0).build()
+
+
+def test_min_sum_zero_iterations_is_value_error() -> None:
+    from pecos_rslib.decoders import MinSumBpBuilder
+
+    with pytest.raises(ValueError, match=r"max_iter.*0"):
+        MinSumBpBuilder([[1, 1]], [0.1, 0.1]).max_iter(0).build()
+
+
+def test_relay_internal_decode_failure_remains_runtime_error() -> None:
+    from pecos_rslib.decoders import MinSumBpBuilder
+
+    decoder = MinSumBpBuilder([[1, 1]], [0.1, 0.1]).gamma0(1e308).build()
+    with pytest.raises(RuntimeError, match="non-finite posterior"):
+        decoder.decode([1])
+
+
+@pytest.fixture
+def native_bp_batch_data() -> tuple[list[list[int]], list[list[int]]]:
+    """Sparse code with short cycles exercises relay legs on 50 weight-two shots."""
+    import numpy as np
+
+    rng = np.random.default_rng(712)
+    matrix = np.zeros((30, 60), dtype=np.uint8)
+    for column in range(60):
+        matrix[rng.choice(30, 3, replace=False), column] = 1
+    errors = np.zeros((50, 60), dtype=np.uint8)
+    for shot in errors:
+        shot[rng.choice(60, 2, replace=False)] = 1
+    return matrix.tolist(), ((errors @ matrix.T) % 2).tolist()
+
+
+def test_relay_explicit_gammas(native_bp_batch_data: tuple[list[list[int]], list[list[int]]]) -> None:
+    from pecos_rslib.decoders import RelayBpBuilder, RelayBpDecoder
+
+    matrix, shots = native_bp_batch_data
+    rows = [[-0.8] * 60, [0.9] * 60]
+
+    def builder() -> RelayBpBuilder:
+        return RelayBpBuilder(matrix, [0.05] * 60).seed(42).pre_iter(0).num_sets(5).set_max_iter(3).stopping("all")
+
+    def results(decoder: RelayBpDecoder) -> list[tuple[list[int], bool, int]]:
+        decoded = [decoder.decode(shot) for shot in shots]
+        return [(result.decoding, result.converged, result.iterations) for result in decoded]
+
+    explicit = results(builder().explicit_gammas(rows).build())
+    assert explicit == results(builder().explicit_gammas(rows).build())
+    assert explicit == results(builder().explicit_gammas((rows * 3)[:5]).build())
+    assert explicit != results(builder().build())
+    assert results(builder().explicit_gammas(rows).explicit_gammas(None).build()) == results(builder().build())
+    assert results(builder().gamma_dist_interval(0.3, 0.3).build()) == results(
+        builder().explicit_gammas([[0.3] * 60]).build(),
+    )
+
+
+@pytest.mark.parametrize("interval", [(1.0, -1.0), (float("nan"), 1.0), (0.0, float("inf")), (-1e308, 1e308)])
+def test_relay_gamma_interval_validation(interval: tuple[float, float]) -> None:
+    from pecos_rslib.decoders import RelayBpBuilder
+
+    with pytest.raises(ValueError, match=r"gamma_dist_interval.*got \("):
+        RelayBpBuilder([[1, 1]], [0.1, 0.1]).gamma_dist_interval(*interval).build()
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        ([], r"explicit_gammas.*row count 0"),
+        ([[0.1]], r"explicit_gammas.*column count 1"),
+        ([[0.1, float("inf")]], r"explicit_gammas\[0\]\[1\].*inf"),
+    ],
+)
+def test_relay_explicit_gamma_validation(rows: list[list[float]], message: str) -> None:
+    from pecos_rslib.decoders import RelayBpBuilder
+
+    with pytest.raises(ValueError, match=message):
+        RelayBpBuilder([[1, 1]], [0.1, 0.1]).explicit_gammas(rows).build()
+
+
+@pytest.mark.parametrize("family", ["RelayBpBuilder", "MinSumBpBuilder"])
+def test_native_bp_decode_batch(
+    family: str,
+    native_bp_batch_data: tuple[list[list[int]], list[list[int]]],
+) -> None:
+    import numpy as np
+    import pecos_rslib.decoders as decoders
+
+    matrix, shots = native_bp_batch_data
+    builder = getattr(decoders, family)(matrix, [0.05] * 60)
+    if family == "RelayBpBuilder":
+        builder.seed(42).pre_iter(2).num_sets(5).set_max_iter(10)
+    decoder = builder.build()
+    expected = bytes(bit for shot in shots for bit in decoder.decode(shot).decoding)
+    flat = np.asarray(shots).astype(np.uint8).tobytes()
+    actual = decoder.decode_batch(flat, num_shots=50)
+    assert isinstance(actual, bytes)
+    assert len(actual) == 50 * decoder.bit_count
+    assert actual == expected
+    split = 17 * decoder.check_count
+    assert decoder.decode_batch(flat[:split], 17) + decoder.decode_batch(flat[split:], 33) == expected
+    assert decoder.decode_batch(b"", 0) == b""
+    for invalid in [flat[:-1], flat + b"\x00"]:
+        with pytest.raises(ValueError, match=rf"length {len(invalid)}.*num_shots \(50\).*check_count \(30\)"):
+            decoder.decode_batch(invalid, 50)
+    with pytest.raises(ValueError, match=r"syndrome.*2"):
+        decoder.decode_batch(flat[:-1] + b"\x02", 50)
+    with pytest.raises(ValueError, match=r"num_shots.*check_count"):
+        decoder.decode_batch(b"", sys.maxsize)
+    assert decoder.decode_batch(flat, 50) == expected

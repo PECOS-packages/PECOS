@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._allocator_layout import allocator_offsets
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.codegen._loop_bounds import static_for_range
 from pecos.slr.ast.codegen._permutation import iter_permutes, parse_permute_ref, reject_permute_in_region
@@ -155,6 +156,7 @@ _GATE_DECOMP: dict[GateKind, tuple[tuple[str, tuple[int, ...]], ...]] = {
 class StimCodeGenContext:
     """Context for Stim code generation."""
 
+    is_fragment: bool = False
     qubit_map: dict[tuple[str, int], int] = field(default_factory=dict)
     next_qubit_id: int = 0
     # Number of measurements in the current record frame: the top-level
@@ -189,11 +191,16 @@ class StimCodeGenContext:
         current = name
         while self.allocator_parents.get(current) is not None:
             current = self.allocator_parents[current]
+        if current not in self.allocator_parents and not self.is_fragment:
+            msg = f"Undeclared allocator {current!r}; declare it before generating code."
+            raise ValueError(msg)
         return current
 
     def get_absolute_index(self, allocator: str, index: int) -> int:
         """Get the absolute index in the root allocator."""
-        offset = self.allocator_offsets.get(allocator, 0)
+        if self.is_fragment and allocator not in self.allocator_offsets:
+            return index
+        offset = self.allocator_offsets[allocator]
         return offset + index
 
     def get_qubit(self, allocator: str, index: int) -> int:
@@ -246,7 +253,7 @@ class AstToStim:
 
         program = flatten_block_calls(program)
 
-        self.context = StimCodeGenContext()
+        self.context = StimCodeGenContext(is_fragment=program.is_fragment)
         self.circuit = stim.Circuit()
 
         # Process declarations to allocate qubits
@@ -269,7 +276,7 @@ class AstToStim:
             self.context.allocator_parents[program.allocator.name] = program.allocator.parent
 
         # Calculate offsets for child allocators
-        self._calculate_allocator_offsets(program)
+        self.context.allocator_offsets = allocator_offsets(program)
 
         # Allocate qubits only for root allocators
         for decl in program.declarations:
@@ -287,29 +294,6 @@ class AstToStim:
         if program.allocator and program.allocator.parent is None:
             for i in range(program.allocator.capacity):
                 self.context.get_qubit(program.allocator.name, i)
-
-    def _calculate_allocator_offsets(self, program: Program) -> None:
-        """Calculate the offset of each child allocator within its parent."""
-        parent_next_offset: dict[str, int] = {}
-
-        # Root allocators have offset 0
-        for decl in program.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is None:
-                self.context.allocator_offsets[decl.name] = 0
-
-        if program.allocator and program.allocator.parent is None:
-            self.context.allocator_offsets[program.allocator.name] = 0
-
-        # Process child allocators in declaration order
-        for decl in program.declarations:
-            if isinstance(decl, AllocatorDecl) and decl.parent is not None:
-                parent = decl.parent
-                if parent not in parent_next_offset:
-                    parent_next_offset[parent] = 0
-
-                parent_offset = self.context.allocator_offsets.get(parent, 0)
-                self.context.allocator_offsets[decl.name] = parent_offset + parent_next_offset[parent]
-                parent_next_offset[parent] += decl.capacity
 
     def _process_statement(self, stmt: Statement) -> None:
         """Process a statement using recursive descent."""
@@ -461,7 +445,7 @@ class AstToStim:
                 f"Stim codegen: prepare_all references unknown allocator {node.allocator!r}; "
                 "declare the allocator before preparing it."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
         slots = range(self.context.qreg_sizes[node.allocator]) if node.slots is None else node.slots
         qubits = [self.context.get_qubit(node.allocator, slot) for slot in slots]
         self.circuit.append_operation("R", qubits)
@@ -684,15 +668,15 @@ class AstToStim:
         sizes = {**self.context.creg_sizes, **self.context.qreg_sizes}
         if name not in sizes:
             msg = (
-                f"Stim codegen: unknown Permute reference {ref!r}; block-local registers are not declared "
-                f"by the AST converter (#1511). Declare register {name!r} at Main scope."
+                f"Stim codegen: unknown Permute reference {ref!r}; "
+                f"declare register {name!r} in Main or in an ordinary Block."
             )
-            raise NotImplementedError(msg)
+            raise ValueError(msg)
         if parsed is not None:
             _, index = parsed
             if not 0 <= index < sizes[name]:
                 msg = f"Stim codegen: Permute reference {ref!r} is not a declared slot."
-                raise NotImplementedError(msg)
+                raise ValueError(msg)
             return [(name, index)]
         if name in self.context.qreg_sizes:
             return [(name, i) for i in range(sizes[name])]

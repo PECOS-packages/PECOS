@@ -227,6 +227,24 @@ class DemInferenceSettings:
 class DetectorErrorModel:
     """Rust-backed detector error model."""
 
+    @staticmethod
+    def from_circuit(
+        circuit: DagCircuit | TickCircuit,
+        p1: float | None = None,
+        p2: float | None = None,
+        p_meas: float | None = None,
+        p_prep: float | None = None,
+        **noise_options: Any,
+    ) -> DetectorErrorModel: ...
+    @staticmethod
+    def from_independent_mechanisms(
+        mechanisms: Sequence[tuple[float, Sequence[int], Sequence[int]]],
+        *,
+        num_detectors: int,
+        num_observables: int,
+        detector_coordinates: Sequence[Sequence[float] | None] | None = None,
+    ) -> DetectorErrorModel: ...
+    def independent_mechanisms(self) -> list[tuple[float, list[int], list[int]]]: ...
     def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
     def detector_fault_sectors(self) -> list[tuple[int, str | None]]: ...
     def detector_bases(self) -> list[str]: ...

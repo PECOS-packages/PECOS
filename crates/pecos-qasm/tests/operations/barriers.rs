@@ -15,7 +15,7 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
         qreg a[1];
         qreg b[5];
         qreg c[3];
-        creg a[5];
+        creg result[5];
 
         // Regular barrier with multiple qubits
         barrier q[0],q[3],q[2];
@@ -30,7 +30,7 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
         barrier w[1], w[7];
 
         // Inside a conditional
-        if(a>=5) barrier w[1], w[7];
+        if(result>=5) barrier w[1], w[7];
     "#;
 
     let program = QASMParser::parse_str(qasm)?;

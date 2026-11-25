@@ -1,4 +1,5 @@
 //! Mandatory v6 batches for checked local noise profiles. Not a custom-event format.
+use crate::byte_message::ByteMessageBuilder;
 use crate::noise::{GeneralNoiseModel, GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{error, processing_error};
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
@@ -553,6 +554,30 @@ impl IntoNoiseModel for ScheduledNoise {
         Ok(Box::new(self.build_model()))
     }
 }
+
+/// Explain why a non-collapsing detection gate cannot be encoded on a wire.
+#[must_use]
+pub fn unsupported_detection_message(gate: GateType) -> String {
+    format!(
+        "{gate} is a non-collapsing detect gate, which this wire cannot carry; remove it or run the circuit on a non-scheduled engine"
+    )
+}
+
+pub(crate) fn unsupported_scheduled_gate(gate_type: GateType) -> PecosError {
+    if gate_type.is_detection() {
+        return error(&unsupported_detection_message(gate_type));
+    }
+    let fix = if matches!(
+        gate_type,
+        GateType::MeasureZLost | GateType::MeasureZLeakedLost
+    ) {
+        "; the scheduled wire carries only MeasureZLeaked among Z heralds; use MeasureZLeaked (which cannot herald loss) or a non-scheduled engine"
+    } else {
+        ""
+    };
+    error(&format!("unsupported scheduled gate: {gate_type}{fix}"))
+}
+
 pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> {
     g.validate().map_err(|s| error(&s))?;
     let (code, n, angles) = match g.gate_type {
@@ -564,8 +589,8 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, u64, u64), PecosError> 
         // revisit the idle-omission rule in ScheduleTimeline::prepare.
         GateType::PZ => (5, 1, 0),
         GateType::MZ => (6, 1, 0),
-        GateType::MeasureLeaked => (7, 1, 0),
-        _ => return Err(error("unsupported scheduled gate")),
+        GateType::MeasureZLeaked => (7, 1, 0),
+        _ => return Err(unsupported_scheduled_gate(g.gate_type)),
     };
     if g.qubits.len() != n
         || g.angles.len() != angles
@@ -602,7 +627,52 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
     if size > MAX_SCHEDULE_BYTES {
         return Err(error("schedule transport size limit"));
     }
+    let mut bytes = frame_bytes(size, batches.len())?;
+    for batch in batches {
+        write_batch(
+            &mut bytes,
+            [
+                batch.runtime_shot_id,
+                batch.batch_index,
+                batch.start_nanos,
+                batch.duration_nanos,
+            ],
+            batch.gates.len(),
+            batch.gates.iter(),
+        )?;
+    }
+    Ok(ByteMessage::new(&bytes))
+}
+
+// Reuse call-local scratch storage for nested v6 frames. On error the contents
+// are not a frame and must not be consumed; the next call clears them again.
+pub(crate) fn encode_borrowed_batch_into<'a>(
+    bytes: &mut Vec<u8>,
+    metadata: [u64; 4],
+    gates: impl Iterator<Item = &'a Gate> + Clone,
+) -> Result<(), PecosError> {
+    bytes.clear();
+    let count = gates.clone().count();
+    let size = count
+        .checked_mul(40)
+        .and_then(|n| n.checked_add(56))
+        .ok_or_else(|| error("schedule size overflow"))?;
+    if size > MAX_SCHEDULE_BYTES {
+        return Err(error("schedule transport size limit"));
+    }
+    frame_bytes_into(bytes, size, 1)?;
+    write_batch(bytes, metadata, count, gates)
+}
+
+fn frame_bytes(size: usize, count: usize) -> Result<Vec<u8>, PecosError> {
     let mut bytes = Vec::new();
+    frame_bytes_into(&mut bytes, size, count)?;
+    Ok(bytes)
+}
+
+// Callers supply an empty buffer, possibly retaining capacity from a prior frame.
+fn frame_bytes_into(bytes: &mut Vec<u8>, size: usize, count: usize) -> Result<(), PecosError> {
+    debug_assert_eq!(bytes.as_slice(), b"");
     bytes
         .try_reserve_exact(size)
         .map_err(|_| processing_error("schedule allocation failed"))?;
@@ -614,7 +684,7 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
         0,
     ]);
     bytes.extend_from_slice(
-        &u32::try_from(batches.len())
+        &u32::try_from(count)
             .map_err(|_| error("batch count overflow"))?
             .to_le_bytes(),
     );
@@ -623,25 +693,27 @@ pub fn encode_timed_batches(batches: &[TimedBatch]) -> Result<ByteMessage, Pecos
             .map_err(|_| error("size overflow"))?
             .to_le_bytes(),
     );
-    for batch in batches {
-        for v in [
-            batch.runtime_shot_id,
-            batch.batch_index,
-            batch.start_nanos,
-            batch.duration_nanos,
-            batch.gates.len() as u64,
-        ] {
+    Ok(())
+}
+
+fn write_batch<'a>(
+    bytes: &mut Vec<u8>,
+    metadata: [u64; 4],
+    count: usize,
+    gates: impl Iterator<Item = &'a Gate>,
+) -> Result<(), PecosError> {
+    for v in metadata.into_iter().chain(std::iter::once(count as u64)) {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    for gate in gates {
+        let (op, q0, q1, theta, phi) = fields(gate)?;
+        for v in [op, q0, q1, theta, phi] {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
-        for gate in &batch.gates {
-            let (op, q0, q1, theta, phi) = fields(gate)?;
-            for v in [op, q0, q1, theta, phi] {
-                bytes.extend_from_slice(&v.to_le_bytes());
-            }
-        }
     }
-    Ok(ByteMessage::new(&bytes))
+    Ok(())
 }
+
 fn word(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(
         bytes[offset..offset + 8]
@@ -683,7 +755,12 @@ pub(crate) fn validate_scheduled_header(
 }
 
 pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
-    let bytes = input.as_bytes();
+    decode_bytes(input.as_bytes())
+}
+
+// Nested frames can start at any byte offset after an opaque event payload.
+// Read little-endian words from slices; do not require ByteMessage alignment.
+pub(crate) fn decode_bytes(bytes: &[u8]) -> Result<Vec<TimedBatch>, PecosError> {
     validate_scheduled_header(
         bytes,
         u32::from(crate::byte_message::protocol::SCHEDULED_FRAME_VERSION),
@@ -728,7 +805,7 @@ pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError>
                 4 => Gate::rxyxy2q(a, p, &[(q0, q1)]),
                 5 => Gate::pz(&[q0]),
                 6 => Gate::mz(&[q0]),
-                7 => Gate::measure_leaked(&[q0]),
+                7 => Gate::measure_z_leaked(&[q0]),
                 _ => return Err(error("unknown mandatory scheduled operation")),
             };
             if !matches!(op, 3 | 4) && q1 != 0
@@ -815,6 +892,23 @@ impl ScheduleTimeline {
             ends: BTreeMap::new(),
         }
     }
+    /// Validate already decoded source gates without materializing discarded commands.
+    /// Callers must first apply the scheduled codec's gate and transport bounds.
+    pub(crate) fn admit_decoded_source<'a, G>(
+        &self,
+        config: &ScheduledNoise,
+        batches: impl IntoIterator<Item = ([u64; 4], G)>,
+    ) -> Result<Self, PecosError>
+    where
+        G: IntoIterator<Item = &'a Gate>,
+    {
+        let mut timeline = self.clone();
+        for (metadata, gates) in batches {
+            timeline.visit_batch(config, metadata, gates, &mut SourceAdmission)?;
+        }
+        Ok(timeline)
+    }
+
     pub(crate) fn prepare(
         &self,
         config: &ScheduledNoise,
@@ -825,67 +919,18 @@ impl ScheduleTimeline {
             timeline: self.clone(),
         };
         for batch in batches {
-            if prepared
-                .timeline
-                .native_shot
-                .is_some_and(|id| id != batch.runtime_shot_id)
-                || batch.batch_index != prepared.timeline.next_batch
-            {
-                return Err(error("scheduled identity mismatch"));
-            }
-            prepared.timeline.native_shot = Some(batch.runtime_shot_id);
-            prepared.timeline.next_batch = prepared
-                .timeline
-                .next_batch
-                .checked_add(1)
-                .ok_or_else(|| error("batch ordinal overflow"))?;
-            let end = batch
-                .start_nanos
-                .checked_add(batch.duration_nanos)
-                .ok_or_else(|| error("schedule time overflow"))?;
-            let mut touched = BTreeSet::new();
             let mut builder = ByteMessage::quantum_operations_builder();
-            for gate in batch.gates {
-                if gate.gate_type.is_crosstalk_payload() {
-                    // An exposure is ordered noise metadata, not a physical use.
-                    // It neither closes an idle gap nor advances a busy endpoint.
-                    // Only `push_crosstalk` creates one, after validating it
-                    // against this profile.
-                    builder.add_gate_command(&gate);
-                    continue;
-                }
-                for q in &gate.qubits {
-                    let q = q.0;
-                    if q >= config.qubits {
-                        return Err(error(&format!(
-                            "scheduled qubit {q} is outside profile capacity {}; use qubits 0..{} or enlarge the profile",
-                            config.qubits, config.qubits
-                        )));
-                    }
-                    let busy_until = prepared.timeline.ends.get(&q).copied().unwrap_or(0);
-                    if batch.start_nanos < busy_until {
-                        return Err(error(&format!(
-                            "scheduled batch {} starts at {} ns while qubit {q} is busy until {busy_until} ns; start the batch at or after {busy_until} ns",
-                            batch.batch_index, batch.start_nanos
-                        )));
-                    }
-                    if touched.insert(q) {
-                        let gap = batch.start_nanos - busy_until;
-                        let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
-                        config.validate_idle(seconds)?;
-                        // All admitted idle channels are local. PZ erases
-                        // their effect and clears leakage before any local prep fault,
-                        // so do not sample a discarded channel.
-                        if gap != 0 && gate.gate_type != GateType::PZ {
-                            builder.idle(seconds, &[q]);
-                        }
-                    }
-                }
-                builder.add_gate_command(&gate);
-            }
-            for q in touched {
-                prepared.timeline.ends.insert(q, end);
-            }
+            prepared.timeline.visit_batch(
+                config,
+                [
+                    batch.runtime_shot_id,
+                    batch.batch_index,
+                    batch.start_nanos,
+                    batch.duration_nanos,
+                ],
+                batch.gates,
+                &mut builder,
+            )?;
             let msg = builder.build();
             if !msg.is_empty()? {
                 prepared.messages.push(msg);
@@ -893,7 +938,101 @@ impl ScheduleTimeline {
         }
         Ok(prepared)
     }
+
+    fn visit_batch<G: std::borrow::Borrow<Gate>>(
+        &mut self,
+        config: &ScheduledNoise,
+        [shot, index, start, duration]: [u64; 4],
+        gates: impl IntoIterator<Item = G>,
+        output: &mut impl ScheduleOutput,
+    ) -> Result<(), PecosError> {
+        if self.native_shot.is_some_and(|id| id != shot) || index != self.next_batch {
+            return Err(error("scheduled identity mismatch"));
+        }
+        self.native_shot = Some(shot);
+        self.next_batch = self
+            .next_batch
+            .checked_add(1)
+            .ok_or_else(|| error("batch ordinal overflow"))?;
+        let end = start
+            .checked_add(duration)
+            .ok_or_else(|| error("schedule time overflow"))?;
+        let mut touched = BTreeSet::new();
+        for gate in gates {
+            // Emission owns each gate and releases its payload after this iteration;
+            // source admission borrows gates retained for adapter callbacks.
+            let gate = gate.borrow();
+            if gate.gate_type.is_crosstalk_payload() {
+                // Ordered noise metadata does not close idle gaps or advance endpoints.
+                output.gate(gate);
+                continue;
+            }
+            for q in &gate.qubits {
+                let q = q.0;
+                if q >= config.qubits {
+                    return Err(error(&format!(
+                        "scheduled qubit {q} is outside profile capacity {}; use qubits 0..{} or enlarge the profile",
+                        config.qubits, config.qubits
+                    )));
+                }
+                let busy_until = self.ends.get(&q).copied().unwrap_or(0);
+                if start < busy_until {
+                    return Err(error(&format!(
+                        "scheduled batch {index} starts at {start} ns while qubit {q} is busy until {busy_until} ns; start the batch at or after {busy_until} ns"
+                    )));
+                }
+                if touched.insert(q) {
+                    let gap = start - busy_until;
+                    let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
+                    config.validate_idle(seconds)?;
+                    // PZ omits sampling, not validation, of the preceding local idle.
+                    if gap != 0 && gate.gate_type != GateType::PZ {
+                        output.idle(seconds, q);
+                    }
+                }
+            }
+            output.gate(gate);
+        }
+        for q in touched {
+            self.ends.insert(q, end);
+        }
+        Ok(())
+    }
 }
+
+trait ScheduleOutput {
+    fn idle(&mut self, seconds: f64, qubit: usize);
+    fn gate(&mut self, gate: &Gate);
+}
+impl ScheduleOutput for ByteMessageBuilder {
+    fn idle(&mut self, seconds: f64, qubit: usize) {
+        self.idle(seconds, &[qubit]);
+    }
+    fn gate(&mut self, gate: &Gate) {
+        self.add_gate_command(gate);
+    }
+}
+
+// Only used after decode_event_batches has validated ordinary source gates.
+// Codec admission excludes channels/spectators and bounds gates to two targets
+// and two angles. Each source gate could emit at most 96 bytes (one gate plus
+// two idles) and three records; the 64 MiB input cap keeps both the total byte
+// size and record count below u32::MAX. Builder framing is valid by construction.
+// Target IDs alone still need the builder's u32 check. Keep its panic and the
+// exact point of that check, including idle emission before later targets, so
+// the execution owner's existing failure/recovery boundary does not change.
+struct SourceAdmission;
+impl ScheduleOutput for SourceAdmission {
+    fn idle(&mut self, _: f64, qubit: usize) {
+        let _ = u32::try_from(qubit).expect("Qubit index too large");
+    }
+    fn gate(&mut self, gate: &Gate) {
+        for q in &gate.qubits {
+            let _ = u32::try_from(q.0).expect("Qubit index too large");
+        }
+    }
+}
+
 impl ControlEngine for ScheduledIdleModel {
     type Input = ByteMessage;
     type Output = ByteMessage;
@@ -953,6 +1092,249 @@ mod timing_tests {
             gates,
         }
     }
+    fn admit_source(
+        timeline: &ScheduleTimeline,
+        config: &ScheduledNoise,
+        batches: &[TimedBatch],
+    ) -> Result<ScheduleTimeline, PecosError> {
+        timeline.admit_decoded_source(
+            config,
+            batches.iter().map(|b| {
+                (
+                    [
+                        b.runtime_shot_id,
+                        b.batch_index,
+                        b.start_nanos,
+                        b.duration_nanos,
+                    ],
+                    b.gates.iter(),
+                )
+            }),
+        )
+    }
+
+    fn same_timeline(a: &ScheduleTimeline, b: &ScheduleTimeline) {
+        assert_eq!(a.native_shot, b.native_shot);
+        assert_eq!(a.next_batch, b.next_batch);
+        assert_eq!(a.ends, b.ends);
+    }
+
+    #[test]
+    fn source_admission_matches_emission_without_constructing_messages() {
+        use crate::byte_message::message::created_message_count;
+        let mut timeline = ScheduleTimeline::new();
+        let groups = [
+            vec![],
+            vec![batch(0, 0, 0, vec![])],
+            vec![batch(
+                1,
+                2,
+                1,
+                vec![
+                    Gate::pz(&[0]),
+                    Gate::rz(Angle64::new(1), &[0]),
+                    Gate::rz(Angle64::new(2), &[1]),
+                ],
+            )],
+            vec![batch(
+                2,
+                4,
+                0,
+                vec![Gate::rzz(Angle64::new(3), &[(0, 1)]), Gate::mz(&[0])],
+            )],
+            vec![batch(3, 4, 1, vec![Gate::measure_z_leaked(&[1])])],
+        ];
+        for batches in groups {
+            let before = created_message_count();
+            let admitted = admit_source(&timeline, &config(), &batches).unwrap();
+            assert_eq!(created_message_count(), before);
+            let prepared = timeline.prepare(&config(), batches.clone()).unwrap();
+            assert_eq!(created_message_count() - before, batches.len());
+            same_timeline(&admitted, &prepared.timeline);
+            timeline = admitted;
+        }
+        assert_eq!(timeline.next_batch, 4);
+        assert_eq!(
+            timeline.ends,
+            BTreeMap::from([(0, 4_000_000_000), (1, 5_000_000_000)])
+        );
+    }
+
+    #[test]
+    fn source_admission_rejections_match_emission_and_do_not_commit() {
+        let original = ScheduleTimeline::new();
+        let timeline = admit_source(
+            &original,
+            &config(),
+            &[batch(0, 0, 2, vec![Gate::pz(&[0])])],
+        )
+        .unwrap();
+        let mut wrong_shot = batch(1, 2, 0, vec![]);
+        wrong_shot.runtime_shot_id += 1;
+        let mut overflow = batch(1, 0, 0, vec![]);
+        overflow.start_nanos = u64::MAX;
+        overflow.duration_nanos = 1;
+        for b in [
+            wrong_shot,
+            overflow,
+            batch(2, 2, 0, vec![]),
+            batch(1, 1, 0, vec![Gate::mz(&[0])]),
+            batch(1, 2, 0, vec![Gate::pz(&[2])]),
+        ] {
+            let error = admit_source(&timeline, &config(), std::slice::from_ref(&b))
+                .err()
+                .unwrap()
+                .to_string();
+            assert_eq!(
+                error,
+                timeline
+                    .prepare(&config(), vec![b])
+                    .err()
+                    .unwrap()
+                    .to_string()
+            );
+            assert_eq!(timeline.next_batch, 1);
+            assert_eq!(timeline.ends[&0], 2_000_000_000);
+        }
+        let mut at_end = timeline.clone();
+        at_end.next_batch = u64::MAX;
+        let b = batch(u64::MAX, 2, 0, vec![]);
+        assert!(
+            admit_source(&at_end, &config(), std::slice::from_ref(&b))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("batch ordinal overflow")
+        );
+        assert!(
+            at_end
+                .prepare(&config(), vec![b])
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("batch ordinal overflow")
+        );
+        let recovered = admit_source(
+            &timeline,
+            &config(),
+            &[batch(1, 2, 0, vec![Gate::mz(&[0])])],
+        )
+        .unwrap();
+        assert_eq!(recovered.next_batch, 2);
+        same_timeline(&original, &ScheduleTimeline::new());
+    }
+
+    #[test]
+    fn source_admission_keeps_idle_validation_even_for_preparation() {
+        let config: ScheduledNoise = ScheduledIdleZ::new(1, f64::MAX, 0.0, 0.0).unwrap().into();
+        for gate in [Gate::pz(&[0]), Gate::rz(Angle64::ZERO, &[0])] {
+            for start in [0, 2] {
+                let b = batch(0, start, 0, vec![gate.clone()]);
+                let source =
+                    admit_source(&ScheduleTimeline::new(), &config, std::slice::from_ref(&b));
+                let emitted = ScheduleTimeline::new().prepare(&config, vec![b]);
+                assert_eq!(source.is_ok(), start == 0);
+                assert_eq!(
+                    source.err().map(|e| e.to_string()),
+                    emitted.err().map(|e| e.to_string())
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn source_admission_keeps_builder_target_width_and_error_order() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let too_wide = u32::MAX as usize + 1;
+        let config = ScheduledNoise::new(too_wide + 1).unwrap();
+        for (gate, start) in [
+            (Gate::pz(&[too_wide]), 0),
+            (Gate::mz(&[too_wide]), 1),
+            (Gate::rzz(Angle64::ZERO, &[(too_wide, too_wide + 1)]), 1),
+        ] {
+            let b = batch(0, start, 0, vec![gate]);
+            let panic_text = |panic: Box<dyn Any + Send>| {
+                panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap()
+            };
+            let source = catch_unwind(AssertUnwindSafe(|| {
+                admit_source(&ScheduleTimeline::new(), &config, std::slice::from_ref(&b))
+            }));
+            let emitted = catch_unwind(AssertUnwindSafe(|| {
+                ScheduleTimeline::new().prepare(&config, vec![b])
+            }));
+            let source_panic = panic_text(source.err().unwrap());
+            assert!(source_panic.starts_with("Qubit index too large:"));
+            assert_eq!(source_panic, panic_text(emitted.err().unwrap()));
+        }
+        // At zero gap the second target's capacity error precedes gate serialization.
+        let b = batch(
+            0,
+            0,
+            0,
+            vec![Gate::rzz(Angle64::ZERO, &[(too_wide, too_wide + 1)])],
+        );
+        assert!(
+            admit_source(&ScheduleTimeline::new(), &config, std::slice::from_ref(&b))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("outside profile capacity")
+        );
+        assert!(
+            ScheduleTimeline::new()
+                .prepare(&config, vec![b])
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("outside profile capacity")
+        );
+    }
+
+    #[test]
+    fn decoded_source_record_bound_fits_ordinary_transport() {
+        let gates = [
+            Gate::rxy1q(Angle64::new(1), Angle64::new(2), &[0]),
+            Gate::rz(Angle64::new(3), &[0]),
+            Gate::rzz(Angle64::new(4), &[(0, 1)]),
+            Gate::rxyxy2q(Angle64::new(5), Angle64::new(6), &[(0, 1)]),
+            Gate::pz(&[0]),
+            Gate::mz(&[0]),
+            Gate::measure_z_leaked(&[0]),
+        ];
+        for gate in gates {
+            fields(&gate).unwrap();
+            let prepared = ScheduleTimeline::new()
+                .prepare(&config(), vec![batch(0, 1, 0, vec![gate])])
+                .unwrap();
+            assert!(prepared.messages[0].as_bytes().len() <= 16 + 96);
+            assert!(prepared.messages[0].quantum_ops().unwrap().len() <= 3);
+        }
+        let max_source_gates = (MAX_SCHEDULE_BYTES - 16) / 40;
+        assert!(u32::try_from(16 + 96 * max_source_gates).is_ok());
+        assert!(u32::try_from(3 * max_source_gates).is_ok());
+    }
+
+    #[test]
+    fn scheduled_fields_herald_error_gives_repair_guidance() {
+        assert!(fields(&Gate::measure_z_leaked(&[0])).is_ok());
+        for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let error = fields(&Gate::simple(gate, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            for part in [
+                &gate.to_string(),
+                "use MeasureZLeaked (which cannot herald loss) or a non-scheduled engine",
+            ] {
+                assert!(error.contains(part), "missing {part} in {error}");
+            }
+        }
+    }
+
     #[test]
     fn scheduled_angles_keep_every_fraction_bit() {
         for fraction in [0, 1, u64::MAX, pecos_core::radians!(-0.73).fraction()] {
@@ -967,6 +1349,65 @@ mod timing_tests {
             let mut old = message.as_bytes().to_vec();
             old[4] = 3;
             assert!(decode(&ByteMessage::new(&old)).is_err());
+        }
+    }
+
+    #[test]
+    fn borrowed_decoder_accepts_unaligned_frames_and_rejects_truncation() {
+        let gates = vec![Gate::rxy1q(Angle64::new(1), Angle64::new(u64::MAX), &[2])];
+        let encoded = encode_timed_batches(&[batch(0, 0, 0, gates.clone())]).unwrap();
+        for offset in 0..8 {
+            let mut storage = vec![0xff; offset];
+            storage.extend_from_slice(encoded.as_bytes());
+            let input = &storage[offset..];
+            assert_eq!(decode_bytes(input).unwrap()[0].gates, gates);
+            for end in 0..input.len() {
+                assert!(decode_bytes(&input[..end]).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn borrowed_encoder_checks_size_before_allocating_and_checks_fields() {
+        let gate = Gate::pz(&[0]);
+        let too_many = std::iter::repeat_n(&gate, MAX_SCHEDULE_BYTES / 40);
+        let mut bytes = Vec::new();
+        let err = encode_borrowed_batch_into(&mut bytes, [0; 4], too_many).unwrap_err();
+        assert!(err.to_string().contains("schedule transport size limit"));
+        assert_eq!(bytes.capacity(), 0);
+        assert!(
+            encode_borrowed_batch_into(&mut bytes, [0; 4], std::iter::once(&Gate::x(&[0])))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn borrowed_encoder_reuses_storage_without_stale_bytes_after_errors() {
+        let mut bytes = Vec::new();
+        let gates = [
+            Gate::rxy1q(Angle64::new(1), Angle64::new(u64::MAX), &[2]),
+            Gate::mz(&[0]),
+            Gate::pz(&[1]),
+        ];
+        encode_borrowed_batch_into(&mut bytes, [7, 3, 11, 5], gates.iter()).unwrap();
+        let pointer = bytes.as_ptr();
+        let capacity = bytes.capacity();
+        // Include a failed partial write, followed by shorter and empty frames.
+        let invalid = [gates[0].clone(), Gate::x(&[0])];
+        assert!(encode_borrowed_batch_into(&mut bytes, [0; 4], invalid.iter()).is_err());
+        for count in [1, 0, 3, 2] {
+            let source = TimedBatch {
+                runtime_shot_id: 7,
+                batch_index: 9,
+                start_nanos: 23,
+                duration_nanos: 4,
+                gates: gates[..count].to_vec(),
+            };
+            let expected = encode_timed_batches(&[source]).unwrap();
+            encode_borrowed_batch_into(&mut bytes, [7, 9, 23, 4], gates[..count].iter()).unwrap();
+            assert_eq!(bytes, expected.as_bytes());
+            assert_eq!(bytes.as_ptr(), pointer);
+            assert_eq!(bytes.capacity(), capacity);
         }
     }
 
@@ -1110,6 +1551,24 @@ mod header_tests {
             );
             bytes[4..8].copy_from_slice(&version.to_le_bytes());
             decode(&bytes).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod detection_tests {
+    use super::*;
+    #[test]
+    fn detects_rejected_by_scheduled_wire() {
+        for kind in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let error = fields(&Gate::simple(kind, vec![0.into()]))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&format!("{kind} is a non-collapsing detect gate")));
         }
     }
 }

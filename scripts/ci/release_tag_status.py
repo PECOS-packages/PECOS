@@ -29,6 +29,7 @@ NON_VALIDATION = {
     "dependency-review.yml": "Reviews dependency diffs rather than validating the whole commit.",
     "julia-update-hash.yml": "Opens a build-hash update PR rather than validating the tag.",
     "trunk-ci-issues.yml": "Writes CI tracking issues rather than validating the commit.",
+    "prune-superseded-caches.yml": "Deletes superseded Actions caches rather than validating the commit.",
     "pr-core-gate.yml": "PR-only duplicate of rust-test's Ubuntu leg and python-core.",
 }
 

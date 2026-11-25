@@ -709,3 +709,57 @@ fn test_soft_info_bp_decoder() {
         .expect("Decoding failed");
     println!("Custom schedule decoding converged: {}", result3.converged);
 }
+
+#[test]
+fn test_bplsd_constructor_validates_method_and_order() {
+    let pcm = repetition_code(3);
+    for (method, order, valid) in [
+        (OsdMethod::Off, 0, false),
+        (OsdMethod::Off, 3, false),
+        (OsdMethod::Osd0, 3, false),
+        (OsdMethod::Osd0, 0, true),
+        (OsdMethod::OsdCs, 0, true),
+        (OsdMethod::OsdE, 0, true),
+        (OsdMethod::OsdCs, 3, true),
+        (OsdMethod::OsdE, 3, true),
+    ] {
+        let result = BpLsdDecoder::new(
+            &pcm,
+            Some(0.1),
+            None,
+            30,
+            BpMethod::MinimumSum,
+            BpSchedule::Parallel,
+            0.625,
+            method,
+            order,
+            1,
+            InputVectorType::Syndrome,
+            None,
+            None,
+            None,
+        );
+        if valid {
+            let decoder = result.unwrap();
+            assert_eq!(decoder.lsd_method(), method);
+            assert_eq!(decoder.lsd_order(), order);
+        } else {
+            let error = result.err().unwrap();
+            assert!(matches!(
+                error,
+                pecos_ldpc_decoders::LdpcError::InvalidInput(_)
+            ));
+            let message = error.to_string();
+            assert!(message.contains(&format!("lsd_method {method:?}")));
+            assert!(message.contains(&format!("lsd_order {order}")));
+            if method == OsdMethod::Off {
+                assert!(message.contains("LSD cannot be disabled"));
+                assert!(message.contains(
+                    "use Osd0 with lsd_order 0 for LSD-0, or OsdCs/OsdE with a positive order for reprocessing"
+                ));
+            } else {
+                assert!(message.contains("use OsdCs or OsdE for reprocessing, or lsd_order 0"));
+            }
+        }
+    }
+}

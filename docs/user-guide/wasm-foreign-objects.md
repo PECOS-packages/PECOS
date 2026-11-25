@@ -1,5 +1,8 @@
 # WebAssembly Foreign Objects
 
+For Guppy programs, use the explicit `wasm_modules` mapping described in
+[Guppy WASM calls](guppy-wasm.md). This guide covers the QASM/PHIR foreign-object API.
+
 This guide covers using WebAssembly (WASM) modules for classical computation within PECOS quantum simulations. WASM foreign objects allow you to execute custom classical logic alongside quantum operations in QASM and PHIR programs.
 
 ## What You'll Learn

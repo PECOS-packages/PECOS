@@ -10,11 +10,13 @@ import hashlib
 import json
 from collections import Counter, defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from copy import copy
+from dataclasses import dataclass, field
 from numbers import Integral
 from typing import TYPE_CHECKING, Any, Self
 
 from pecos._traced_circuit import measurement_ids_in_execution_order
+from pecos._value_provenance import known_provenance_traces
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -79,6 +81,14 @@ def result_ref(tag: str, *, occurrence: int = 0, element: int | None = None) -> 
 MeasurementRef = RecordRef | ResultRef
 
 
+def _xor_constant(value: bool | int) -> bool:
+    if type(value) not in (bool, int):
+        raise TypeError("XOR constant must be bool or integer 0/1")
+    if value not in (0, 1):
+        raise ValueError("XOR constant must be 0 or 1")
+    return bool(value)
+
+
 def _coerce_refs(refs: tuple[MeasurementRef | str, ...]) -> tuple[MeasurementRef, ...]:
     """Accept a bare tag string as shorthand for ``result_ref(tag)``."""
     if not refs:
@@ -93,6 +103,22 @@ def _coerce_refs(refs: tuple[MeasurementRef | str, ...]) -> tuple[MeasurementRef
             msg = 'measurement references must be rec[...], result_ref(...), or a "tag" string'
             raise TypeError(msg)
     return tuple(coerced)
+
+
+def _coerce_parity_terms(
+    terms: tuple[MeasurementRef | str | bool | int, ...],
+    constant: bool,
+) -> tuple[tuple[MeasurementRef, ...], bool]:
+    """Separate literal XOR bits from measurement selectors."""
+    if type(constant) is not bool:
+        raise TypeError("parity constant must be bool")
+    refs = []
+    for term in terms:
+        if type(term) in (bool, int):
+            constant ^= _xor_constant(term)
+        else:
+            refs.append(term)
+    return _coerce_refs(tuple(refs)), constant
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,25 +145,39 @@ class Detector:
     id: int | None
     coords: tuple[float, ...] | None
     metadata: Mapping[str, Any] | None
+    constant: bool
 
     def __init__(
         self,
-        *refs: MeasurementRef | str,
+        *refs: MeasurementRef | str | bool | int,
         id: int | None = None,
         coords: Sequence[float] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        constant: bool = False,
     ) -> None:
         """Create a detector from measurement references.
 
         Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
-        string, which is shorthand for ``result_ref(tag)``.
+        string, which is shorthand for ``result_ref(tag)``. Literal 0/1 terms
+        XOR into the expression constant; repeated ones cancel. ``constant=True``
+        and ``definition ^ 1`` are equivalent spellings. Constants are not
+        noiseless-reference claims and do not change fault propagation.
         """
-        refs_tuple = _coerce_refs(tuple(refs))
+        refs_tuple, constant = _coerce_parity_terms(tuple(refs), constant)
+        object.__setattr__(self, "constant", constant)
         object.__setattr__(self, "refs", refs_tuple)
         object.__setattr__(self, "inferred_output", None)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "coords", tuple(float(value) for value in coords) if coords is not None else None)
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)
+
+    def __xor__(self, value: bool | int) -> Detector:
+        """Return the same detector definition with an explicit XOR constant."""
+        result = copy(self)
+        object.__setattr__(result, "constant", self.constant ^ _xor_constant(value))
+        return result
+
+    __rxor__ = __xor__
 
     @classmethod
     def inferred(
@@ -156,6 +196,7 @@ class Detector:
         """
         selector = InferredOutput(tag, element)
         instance = object.__new__(cls)
+        object.__setattr__(instance, "constant", False)
         object.__setattr__(instance, "refs", ())
         object.__setattr__(instance, "inferred_output", selector)
         object.__setattr__(instance, "id", id)
@@ -172,23 +213,37 @@ class Observable:
     inferred_output: InferredOutput | None
     id: int | None
     metadata: Mapping[str, Any] | None
+    constant: bool
 
     def __init__(
         self,
-        *refs: MeasurementRef | str,
+        *refs: MeasurementRef | str | bool | int,
         id: int | None = None,
         metadata: Mapping[str, Any] | None = None,
+        constant: bool = False,
     ) -> None:
         """Create an observable from measurement references.
 
         Each reference is ``rec[-k]``, ``result_ref(...)``, or a bare tag
-        string, which is shorthand for ``result_ref(tag)``.
+        string, which is shorthand for ``result_ref(tag)``. Literal 0/1 terms
+        XOR into the expression constant; repeated ones cancel. ``constant=True``
+        and ``definition ^ 1`` are equivalent spellings. Constants are not
+        noiseless-reference claims and do not change fault propagation.
         """
-        refs_tuple = _coerce_refs(tuple(refs))
+        refs_tuple, constant = _coerce_parity_terms(tuple(refs), constant)
+        object.__setattr__(self, "constant", constant)
         object.__setattr__(self, "refs", refs_tuple)
         object.__setattr__(self, "inferred_output", None)
         object.__setattr__(self, "id", id)
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)
+
+    def __xor__(self, value: bool | int) -> Observable:
+        """Return the same observable definition with an explicit XOR constant."""
+        result = copy(self)
+        object.__setattr__(result, "constant", self.constant ^ _xor_constant(value))
+        return result
+
+    __rxor__ = __xor__
 
     @classmethod
     def inferred(
@@ -206,6 +261,7 @@ class Observable:
         """
         selector = InferredOutput(tag, element)
         instance = object.__new__(cls)
+        object.__setattr__(instance, "constant", False)
         object.__setattr__(instance, "refs", ())
         object.__setattr__(instance, "inferred_output", selector)
         object.__setattr__(instance, "id", id)
@@ -328,6 +384,17 @@ class GuppyDemBuild:
     _observable_meas_ids: tuple[tuple[int, tuple[int, ...]], ...]
     _result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...]
     inference: InferredGuppyDemAnnotations | None = None
+
+    _parity_constants: tuple[dict[int, int], dict[int, int]] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Cache explicit expression constants, independently of reference values."""
+        constants = (
+            parity_constants(self.detectors_json, "detector"),
+            parity_constants(self.observables_json, "observable"),
+        )
+        object.__setattr__(self, "_parity_constants", constants)
+
     definition_origins: tuple[Mapping[str, Any], ...] = ()
 
     @property
@@ -423,10 +490,11 @@ class GuppyDemBuild:
                 & 1
             )
 
-        events = [parity(meas_ids) for meas_ids in self._detector_meas_ids]
+        detector_constants, observable_constants = self._parity_constants
+        events = [parity(meas_ids) ^ detector_constants.get(i, 0) for i, meas_ids in enumerate(self._detector_meas_ids)]
         observable_mask = 0
         for observable_id, meas_ids in self._observable_meas_ids:
-            observable_mask |= parity(meas_ids) << observable_id
+            observable_mask |= (parity(meas_ids) ^ observable_constants.get(observable_id, 0)) << observable_id
         return events, observable_mask
 
 
@@ -444,7 +512,7 @@ def _index_result_traces(
     calls: dict[str, dict[int, tuple[int | None, ...]]] = defaultdict(dict)
     next_occurrence: dict[str, int] = defaultdict(int)
     refs_by_id: dict[int, list[ResultRef]] = defaultdict(list)
-    for trace in traces:
+    for trace in known_provenance_traces(traces):
         tag = trace.get("name")
         if not isinstance(tag, str):
             continue
@@ -529,6 +597,37 @@ def _xor_normalize(meas_ids: Sequence[int], *, context: str) -> tuple[int, ...]:
     return normalized
 
 
+def parity_constant(entry: Mapping[str, Any]) -> int:
+    """Read the explicit XOR constant from serialized parity metadata.
+
+    This is neither a measured reference value nor a determinism certificate.
+    Fault propagation depends only on support; raw-record evaluation applies it.
+    """
+    value = entry.get("parity_constant", 0)
+    if type(value) is not int or value not in (0, 1):
+        raise ValueError("parity_constant metadata must be integer 0 or 1")
+    return value
+
+
+def parity_constants(metadata: str | None, kind: str) -> dict[int, int]:
+    """Resolve constants using the native parser's ID aliases and prefix forms."""
+    if kind not in {"detector", "observable"}:
+        raise ValueError("parity kind must be detector or observable")
+    entries = json.loads((metadata or "").strip() or "[]")
+    if not isinstance(entries, list):
+        raise TypeError("parity metadata must be a JSON list")
+    prefix = "D" if kind == "detector" else "L"
+    result = {}
+    for entry in entries:
+        value = entry.get("id", entry.get(f"{kind}_id"))
+        if isinstance(value, str) and value.startswith(prefix) and value[1:].isascii() and value[1:].isdigit():
+            value = int(value[1:])
+        if type(value) is not int or not 0 <= value < 2**32:
+            raise ValueError(f"Invalid {kind} ID in parity metadata: {value!r}")
+        result[value] = parity_constant(entry)
+    return result
+
+
 def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     entry = dict(metadata or {})
     reserved = {
@@ -537,6 +636,7 @@ def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
         "meas_ids",
         "result_tags",
         "coords",
+        "parity_constant",
         "inferred_from_result_tag",
         "result_element",
     }.intersection(entry)
@@ -598,6 +698,8 @@ def _resolve_dem_specs(
         meas_ids = support(detector, f"detector {detector_id}")
         entry = entry_metadata(detector)
         entry.update({"id": detector_id, "meas_ids": list(meas_ids)})
+        if detector.constant:
+            entry["parity_constant"] = 1
         if detector.coords is not None:
             entry["coords"] = list(detector.coords)
         resolved_detectors.append((detector_id, entry, meas_ids))
@@ -618,6 +720,8 @@ def _resolve_dem_specs(
         # (including surface_memory_dem_spec's), and leave unknown values absent.
         entry = entry_metadata(observable)
         entry.update({"id": observable_id, "meas_ids": list(meas_ids)})
+        if observable.constant:
+            entry["parity_constant"] = 1
         resolved_observables.append((observable_id, entry, meas_ids))
     observable_ids = [item[0] for item in resolved_observables]
     if len(set(observable_ids)) != len(observable_ids):

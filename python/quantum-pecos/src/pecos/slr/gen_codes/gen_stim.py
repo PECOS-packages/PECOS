@@ -240,7 +240,7 @@ class StimGenerator(Generator):
             self._handle_two_qubit_gate("CY", op)
         elif op_class == "CZ":
             self._handle_two_qubit_gate("CZ", op)
-        elif op_class == "Measure":
+        elif op_class == "MeasureZ":
             self.circuit.append_operation("M", qubits)
             self.measurement_count += len(qubits)
         elif op_class == "PZ":

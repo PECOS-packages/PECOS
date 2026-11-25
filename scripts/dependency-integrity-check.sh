@@ -581,6 +581,7 @@ unexpected_writable_permissions="$(
         $1 == ".github/workflows/codeql.yml" && $2 == "-" && $3 == "security-events" { next }
         $1 == ".github/workflows/osv-scanner.yml" && $2 == "-" && $3 == "security-events" { next }
         $1 == ".github/workflows/trunk-ci-issues.yml" && $2 == "track" && $3 == "issues" { next }
+        $1 == ".github/workflows/prune-superseded-caches.yml" && $2 == "prune" && $3 == "actions" { next }
         NF { print }
     '
 )"

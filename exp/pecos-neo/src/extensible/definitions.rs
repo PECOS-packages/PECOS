@@ -541,10 +541,40 @@ impl GateDefinitions {
                 .with_category(GateCategory::Measurement),
         );
 
+        self.set_core_spec(
+            gates::MEASURE_LEAKED,
+            GateSpec::new("MeasureLeaked")
+                .with_returns_result(true)
+                .with_category(GateCategory::Measurement),
+        );
+        self.set_core_spec(
+            gates::MEASURE_FREE,
+            GateSpec::new("MeasureFree")
+                .with_returns_result(true)
+                .with_category(GateCategory::Measurement),
+        );
+        self.set_core_spec(
+            gates::QALLOC,
+            GateSpec::new("QAlloc").with_category(GateCategory::QubitManagement),
+        );
+        self.set_core_spec(
+            gates::QFREE,
+            GateSpec::new("QFree").with_category(GateCategory::QubitManagement),
+        );
+
         // Preparation
         self.set_core_spec(
             gates::PZ,
             GateSpec::new("PZ").with_category(GateCategory::Preparation),
+        );
+
+        self.set_core_spec(
+            gates::PX,
+            GateSpec::new("PrepX").with_category(GateCategory::Preparation),
+        );
+        self.set_core_spec(
+            gates::PY,
+            GateSpec::new("PrepY").with_category(GateCategory::Preparation),
         );
 
         // Idle

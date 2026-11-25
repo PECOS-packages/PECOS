@@ -57,8 +57,13 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "RXYXY2Q" => Ok(GateType::RXYXY2Q),
         "RXXRYYRZZ" => Ok(GateType::RXXRYYRZZ),
         "CCX" | "Toffoli" => Ok(GateType::CCX),
-        "Measure" | "MZ" => Ok(GateType::MZ),
-        "MeasureLeaked" => Ok(GateType::MeasureLeaked),
+        "Measure" | "MeasureZ" | "MZ" => Ok(GateType::MZ),
+        "MeasureLeaked" | "MeasureZLeaked" => Ok(GateType::MeasureZLeaked),
+        "MeasureZLost" => Ok(GateType::MeasureZLost),
+        "MeasureZLeakedLost" => Ok(GateType::MeasureZLeakedLost),
+        "DetectLeaked" => Ok(GateType::DetectLeaked),
+        "DetectLost" => Ok(GateType::DetectLost),
+        "DetectLeakedLost" => Ok(GateType::DetectLeakedLost),
         "MeasureFree" => Ok(GateType::MeasureFree),
         "Prep" | "PZ" => Ok(GateType::PZ),
         "QAlloc" => Ok(GateType::QAlloc),
@@ -402,6 +407,13 @@ impl PyGateRegistry {
     /// Check if a gate is registered.
     fn contains(&self, name: &str) -> bool {
         self.inner.contains(name)
+    }
+
+    /// Return the definition's qubit arity, or None if the gate is not registered.
+    fn quantum_arity(&self, name: &str) -> Option<usize> {
+        self.inner
+            .get(name)
+            .map(|definition| definition.quantum_arity)
     }
 
     fn __len__(&self) -> usize {

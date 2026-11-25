@@ -46,6 +46,37 @@ pub trait ControlEngine: DynClone + Send + Sync {
         result: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError>;
 
+    /// Run one input with synchronous access to the controlled engine.
+    ///
+    /// The default drives [`Self::start`] and [`Self::continue_processing`],
+    /// forwarding every `NeedsProcessing` input exactly once, including empty
+    /// messages. It does not reset, reseed, batch, or discard any exchanges.
+    ///
+    /// An override can execute a program on the calling thread and invoke
+    /// `process` whenever it needs the controlled engine. The callback is scoped
+    /// to this call: it must not escape or be moved to another thread. Overrides
+    /// must preserve ordering and terminal delivery, and stop on callback failure.
+    /// Existing callers can still drive the staged interface directly.
+    ///
+    /// # Errors
+    /// Returns a controller or controlled-engine error, without continuing the
+    /// default loop after that error.
+    fn run_with(
+        &mut self,
+        input: Self::Input,
+        process: &mut dyn FnMut(Self::EngineInput) -> Result<Self::EngineOutput, PecosError>,
+    ) -> Result<Self::Output, PecosError> {
+        let mut stage = self.start(input)?;
+        loop {
+            match stage {
+                EngineStage::NeedsProcessing(commands) => {
+                    stage = self.continue_processing(process(commands)?)?;
+                }
+                EngineStage::Complete(output) => return Ok(output),
+            }
+        }
+    }
+
     /// Reset engine state for reuse between simulation runs.
     ///
     /// # Errors
@@ -186,6 +217,14 @@ impl<I, O, EI, EO> ControlEngine
         result: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         (**self).continue_processing(result)
+    }
+
+    fn run_with(
+        &mut self,
+        input: Self::Input,
+        process: &mut dyn FnMut(Self::EngineInput) -> Result<Self::EngineOutput, PecosError>,
+    ) -> Result<Self::Output, PecosError> {
+        (**self).run_with(input, process)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {

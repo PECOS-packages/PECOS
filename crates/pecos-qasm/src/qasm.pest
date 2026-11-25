@@ -1,6 +1,7 @@
 // OpenQASM 2.0 Grammar, supporting classical operations
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
-COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
+// A line comment runs to the end of the line or input; WHITESPACE consumes the newline.
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
 
 // Top level program
 program = { SOI ~ oqasm? ~ statement* ~ EOI }
@@ -13,13 +14,13 @@ version_num = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
 statement = { include | register_decl | quantum_op | classical_op | function_call_stmt | if_stmt | gate_def | opaque_def }
 
 // Include statement
-include = { "include" ~ string ~ ";" }
+include = { &keyword ~ "include" ~ string ~ ";" }
 string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
 // Register declarations
 register_decl = { qreg | creg }
-qreg = { "qreg" ~ indexed_id ~ ";" }
-creg = { "creg" ~ indexed_id ~ ";" }
+qreg = { &keyword ~ "qreg" ~ indexed_id ~ ";" }
+creg = { &keyword ~ "creg" ~ indexed_id ~ ";" }
 
 // Quantum operations - barrier should be checked before gate_call
 quantum_op = { barrier | measure | reset | gate_call }
@@ -37,7 +38,7 @@ qubit_id = ${ identifier ~ "[" ~ int ~ "]" }
 
 // Measurement
 measure = {
-    "measure" ~ WHITE_SPACE* ~ (
+    &keyword ~ "measure" ~ WHITE_SPACE* ~ (
         // Form 1: measure q[0] -> c[0]
         (qubit_id ~ WHITE_SPACE* ~ "->" ~ WHITE_SPACE* ~ bit_id) |
         // Form 2: measure q -> c
@@ -47,14 +48,14 @@ measure = {
 bit_id = ${ identifier ~ "[" ~ int ~ "]" }
 
 // Reset and barrier
-reset = { "reset" ~ any_item ~ ";" }
-barrier = { "barrier" ~ any_list ~ ";" }
+reset = { &keyword ~ "reset" ~ any_item ~ ";" }
+barrier = { &keyword ~ "barrier" ~ any_list ~ ";" }
 any_list = { any_item ~ ("," ~ any_item)* }
 any_item = { qubit_id | identifier }
 
 // Conditional statements - OpenQASM 2.0 spec plus extensions
 if_stmt = {
-    "if" ~ "(" ~ condition_expr ~ ")" ~ (quantum_op | classical_op)
+    &keyword ~ "if" ~ "(" ~ condition_expr ~ ")" ~ (quantum_op | classical_op)
 }
 
 // Conditional expression - parses as general expression and engine validates
@@ -71,20 +72,20 @@ classical_op = {
 function_call_stmt = { identifier ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" ~ ";" }
 
 // Gate definition (simplified)
-gate_def = { "gate" ~ identifier ~ param_list? ~ identifier_list ~ "{" ~ gate_def_statement* ~ "}" }
+gate_def = { &keyword ~ "gate" ~ identifier ~ param_list? ~ identifier_list ~ "{" ~ gate_def_statement* ~ "}" }
 gate_def_statement = { gate_def_call }
 param_list = { "(" ~ (identifier ~ ("," ~ identifier)*)? ~ ")" }
 identifier_list = { identifier ~ ("," ~ identifier)* }
 
 // Opaque gate declaration
-opaque_def = { "opaque" ~ identifier ~ param_list? ~ identifier_list ~ ";" }
+opaque_def = { &keyword ~ "opaque" ~ identifier ~ param_list? ~ identifier_list ~ ";" }
 
 // Simplified expression parsing - let Rust handle precedence
 expr = { unary_expr ~ (binary_op ~ unary_expr)* }
 
 // All binary operators in one place
 binary_op = {
-    "**" | "*" | "/" | "+" | "-" |
+    "**" | "*" | "/" | "%" | "+" | "-" |
     "<<" | ">>" |
     "<=" | ">=" | "<" | ">" |
     "==" | "!=" |
@@ -107,7 +108,7 @@ primary_expr = {
 
 // Function calls (sin, cos, etc. or any identifier for WASM functions)
 function_call = { identifier ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
-pi_constant = @{ "pi" }
+pi_constant = @{ "pi" ~ !identifier_continue }
 number = @{ real | int }
 
 real = @{
@@ -115,7 +116,12 @@ real = @{
     int ~ ("e" | "E") ~ ("+" | "-")? ~ int
 }
 
+// Keyword lookahead is atomic so the boundary is checked before whitespace.
+// Lookahead produces no pairs, preserving statement parser inputs.
+keyword = @{ ("include" | "qreg" | "creg" | "measure" | "reset" | "barrier" | "if" | "gate" | "opaque") ~ !identifier_continue }
+
 // Basic tokens
-identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+identifier_continue = _{ ASCII_ALPHANUMERIC | "_" }
+identifier = @{ ASCII_ALPHA ~ identifier_continue* }
 indexed_id = ${ identifier ~ "[" ~ int ~ "]" }
 int = @{ ASCII_DIGIT+ }

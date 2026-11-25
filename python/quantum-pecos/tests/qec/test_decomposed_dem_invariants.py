@@ -127,11 +127,7 @@ def build_source_tracked_dem(distance: int, basis: str, rounds: int = 20) -> obj
 
     builder = DemBuilder(influence_map)
     builder.with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep)
-    builder.with_num_measurements(int(tc.get_meta("num_measurements") or "0"))
-    builder.with_detectors_json(tc.get_meta("detectors"))
-    observables_json = tc.get_meta("observables")
-    if observables_json:
-        builder.with_observables_json(observables_json)
+    builder.with_circuit_metadata(tc)
     return builder.build()
 
 

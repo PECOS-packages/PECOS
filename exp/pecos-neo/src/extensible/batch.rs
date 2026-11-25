@@ -5,9 +5,32 @@
 //! - `BatchExecutor`: Trait for simulators to implement batched execution
 //! - `SimpleBatchExecutor`: Sequential fallback for simulators without batching
 
-use super::{GateId, ResolvedCircuit, ResolvedOp};
+use super::{GateDefinitions, GateId, ResolvedCircuit, ResolvedOp};
 use pecos_core::{Angle64, QubitId};
 use smallvec::SmallVec;
+
+/// Invalid gate operands at the batching boundary.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum BatchError {
+    #[error("Gate {gate_id:?} expected {expected} angles, got {got}")]
+    AngleArity {
+        gate_id: GateId,
+        expected: usize,
+        got: usize,
+    },
+    #[error("Gate {gate_id:?} requires distinct qubits; duplicated qubits: {qubits:?}")]
+    DuplicateQubits { gate_id: GateId, qubits: Vec<usize> },
+    #[error("Gate {gate_id:?} received {got} targets; expected a multiple of arity {arity}")]
+    QubitArity {
+        gate_id: GateId,
+        arity: usize,
+        got: usize,
+    },
+    #[error(
+        "Gate {gate_id:?} has no positive operand arity; register the gate with a declared positive quantum arity in GateDefinitions"
+    )]
+    UnknownArity { gate_id: GateId },
+}
 
 /// A batch of operations of the same type.
 ///
@@ -16,7 +39,7 @@ use smallvec::SmallVec;
 /// - SIMD-friendly contiguous data
 /// - Better cache utilization
 #[derive(Clone, Debug)]
-#[allow(clippy::type_complexity)] // MultiAngle intentionally uses nested generics
+#[allow(clippy::type_complexity)] // General intentionally uses nested generics
 pub enum Batch {
     /// Single-qubit gates with no angles.
     SingleQubit {
@@ -36,8 +59,8 @@ pub enum Batch {
         ops: Vec<(QubitId, Angle64)>,
     },
 
-    /// Multi-angle gates (rare, but supported).
-    MultiAngle {
+    /// General gates, stored as individual arity-sized operand groups.
+    General {
         gate_id: GateId,
         ops: Vec<(SmallVec<[QubitId; 4]>, SmallVec<[Angle64; 3]>)>,
     },
@@ -79,7 +102,7 @@ impl Batch {
             Self::SingleQubit { qubits, .. } => qubits.len(),
             Self::TwoQubit { pairs, .. } => pairs.len(),
             Self::Rotation { ops, .. } => ops.len(),
-            Self::MultiAngle { ops, .. } => ops.len(),
+            Self::General { ops, .. } => ops.len(),
             Self::Prep { qubits, .. } => qubits.len(),
             Self::Measure { ops, .. } => ops.len(),
             Self::Conditional { .. } => 1,
@@ -121,28 +144,32 @@ impl BatchedCircuit {
     ///
     /// Groups consecutive operations of the same type into batches.
     ///
-    /// # Panics
-    /// Panics if `current_batch` is unexpectedly `None` during flush.
-    #[must_use]
-    pub fn from_resolved(resolved: &ResolvedCircuit) -> Self {
+    /// # Errors
+    /// Returns [`BatchError::UnknownArity`] for missing or zero quantum arity,
+    /// [`BatchError::QubitArity`] for incomplete operand groups,
+    /// [`BatchError::AngleArity`] for an incorrect angle count on a gate with a
+    /// `GateType`, or
+    /// [`BatchError::DuplicateQubits`] for repeated qubits.
+    pub fn from_resolved(
+        resolved: &ResolvedCircuit,
+        definitions: &GateDefinitions,
+    ) -> Result<Self, BatchError> {
+        let ops = Self::group_ops(&resolved.ops, definitions)?;
         let mut batched = Self::new();
         batched.result_count = resolved.result_count;
 
         let mut current_batch: Option<Batch> = None;
 
-        for op in &resolved.ops {
+        for op in &ops {
             // Check if we can extend the current batch
-            if let Some(ref mut batch) = current_batch {
-                if Self::can_extend(batch, op) {
-                    Self::extend_batch(batch, op);
+            if let Some(mut batch) = current_batch.take() {
+                if Self::can_extend(&batch, op) {
+                    Self::extend_batch(&mut batch, op);
+                    current_batch = Some(batch);
                     continue;
                 }
                 // Flush current batch and start new one
-                batched.batches.push(
-                    current_batch
-                        .take()
-                        .expect("current_batch is Some in this branch"),
-                );
+                batched.batches.push(batch);
             }
 
             // Start a new batch
@@ -154,7 +181,79 @@ impl BatchedCircuit {
             batched.batches.push(batch);
         }
 
-        batched
+        Ok(batched)
+    }
+
+    // Normalize every gate, including conditional children, before constructing
+    // any batch. Each resulting operation is exactly one quantum-arity group.
+    fn group_ops(
+        ops: &[ResolvedOp],
+        definitions: &GateDefinitions,
+    ) -> Result<Vec<ResolvedOp>, BatchError> {
+        let mut grouped = Vec::new();
+        for op in ops {
+            match op {
+                ResolvedOp::Gate {
+                    gate_id,
+                    qubits,
+                    angles,
+                } => {
+                    let arity = definitions
+                        .quantum_arity(*gate_id)
+                        .map(usize::from)
+                        .filter(|&arity| arity > 0)
+                        .ok_or(BatchError::UnknownArity { gate_id: *gate_id })?;
+                    if !qubits.len().is_multiple_of(arity) {
+                        return Err(BatchError::QubitArity {
+                            gate_id: *gate_id,
+                            arity,
+                            got: qubits.len(),
+                        });
+                    }
+                    // As in execution, only gates with a `GateType` have a checked
+                    // angle count: a user spec's zero also means undeclared.
+                    if let Some(expected) = gate_id
+                        .try_to_gate_type()
+                        .map(crate::command::GateType::angle_arity)
+                        && angles.len() != expected
+                    {
+                        return Err(BatchError::AngleArity {
+                            gate_id: *gate_id,
+                            expected,
+                            got: angles.len(),
+                        });
+                    }
+                    if qubits.len() > 1 {
+                        let duplicates = pecos_core::duplicate_qubits(qubits.iter().map(|q| q.0));
+                        if !duplicates.is_empty() {
+                            return Err(BatchError::DuplicateQubits {
+                                gate_id: *gate_id,
+                                qubits: duplicates,
+                            });
+                        }
+                    }
+                    let size = crate::noise::gate_group_size(arity, qubits.len());
+                    for group in qubits.chunks(size.get()) {
+                        grouped.push(ResolvedOp::Gate {
+                            gate_id: *gate_id,
+                            qubits: group.iter().copied().collect(),
+                            angles: angles.clone(),
+                        });
+                    }
+                }
+                ResolvedOp::Conditional {
+                    condition,
+                    if_one,
+                    if_zero,
+                } => grouped.push(ResolvedOp::Conditional {
+                    condition: *condition,
+                    if_one: Self::group_ops(if_one, definitions)?,
+                    if_zero: Self::group_ops(if_zero, definitions)?,
+                }),
+                _ => grouped.push(op.clone()),
+            }
+        }
+        Ok(grouped)
     }
 
     /// Check if an operation can extend the current batch.
@@ -184,6 +283,9 @@ impl BatchedCircuit {
                     angles,
                 },
             ) if qubits.len() == 1 && angles.len() == 1 => *g1 == *g2,
+            (Batch::General { gate_id: g1, .. }, ResolvedOp::Gate { gate_id: g2, .. }) => {
+                *g1 == *g2
+            }
             (Batch::Prep { basis: b1, .. }, ResolvedOp::Prep { basis: b2, .. }) => *b1 == *b2,
             (Batch::Measure { basis: b1, .. }, ResolvedOp::Measure { basis: b2, .. }) => *b1 == *b2,
             (Batch::XorResult { .. }, ResolvedOp::XorResult { .. })
@@ -212,7 +314,7 @@ impl BatchedCircuit {
                             pairs: vec![(qubits[0], qubits[1])],
                         }
                     } else {
-                        Batch::MultiAngle {
+                        Batch::General {
                             gate_id: *gate_id,
                             ops: vec![(qubits.clone(), angles.clone())],
                         }
@@ -223,7 +325,7 @@ impl BatchedCircuit {
                         ops: vec![(qubits[0], angles[0])],
                     }
                 } else {
-                    Batch::MultiAngle {
+                    Batch::General {
                         gate_id: *gate_id,
                         ops: vec![(qubits.clone(), angles.clone())],
                     }
@@ -278,6 +380,9 @@ impl BatchedCircuit {
             ) => {
                 ops.push((q[0], a[0]));
             }
+            (Batch::General { ops, .. }, ResolvedOp::Gate { qubits, angles, .. }) => {
+                ops.push((qubits.clone(), angles.clone()));
+            }
             (Batch::Prep { qubits, .. }, ResolvedOp::Prep { qubit, .. }) => {
                 qubits.push(*qubit);
             }
@@ -326,6 +431,9 @@ pub trait BatchExecutor {
     /// Execute a rotation gate batch.
     fn execute_rotation(&mut self, gate_id: GateId, ops: &[(QubitId, Angle64)]);
 
+    /// Execute one general gate with an arity-sized operand group.
+    fn execute_general(&mut self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]);
+
     /// Execute preparations.
     fn execute_prep(&mut self, basis: super::PrepBasis, qubits: &[QubitId]);
 
@@ -347,11 +455,6 @@ pub trait BatchExecutor {
     );
 
     /// Execute the full batched circuit.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the default executor encounters a multi-angle operation it
-    /// cannot represent instead of silently dropping it.
     fn execute_batched(&mut self, circuit: &BatchedCircuit) -> Self::MeasurementResults
     where
         Self::MeasurementResults: Default,
@@ -369,23 +472,9 @@ pub trait BatchExecutor {
                 Batch::Rotation { gate_id, ops } => {
                     self.execute_rotation(*gate_id, ops);
                 }
-                Batch::MultiAngle { gate_id, ops } => {
-                    // Fall back to individual execution for multi-angle gates
+                Batch::General { gate_id, ops } => {
                     for (qubits, angles) in ops {
-                        if qubits.len() == 1 && angles.len() == 1 {
-                            self.execute_rotation(*gate_id, &[(qubits[0], angles[0])]);
-                        } else if qubits.len() == 1 && angles.is_empty() {
-                            self.execute_single_qubit(*gate_id, &[qubits[0]]);
-                        } else if qubits.len() == 2 && angles.is_empty() {
-                            self.execute_two_qubit(*gate_id, &[(qubits[0], qubits[1])]);
-                        } else {
-                            panic!(
-                                "BatchExecutor cannot execute multi-angle gate {gate_id:?} with \
-                                 {} qubit(s) and {} angle(s)",
-                                qubits.len(),
-                                angles.len()
-                            );
-                        }
+                        self.execute_general(*gate_id, qubits, angles);
                     }
                 }
                 Batch::Prep { basis, qubits } => {
@@ -461,6 +550,10 @@ impl<T: SimpleExecutor> BatchExecutor for T {
         }
     }
 
+    fn execute_general(&mut self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) {
+        self.execute_gate(gate_id, qubits, angles);
+    }
+
     fn execute_prep(&mut self, basis: super::PrepBasis, qubits: &[QubitId]) {
         for &qubit in qubits {
             SimpleExecutor::execute_prep(self, basis, qubit);
@@ -525,12 +618,17 @@ mod tests {
     use super::super::gates;
     use super::*;
 
-    struct NoopExecutor;
+    #[derive(Default)]
+    struct RecordingExecutor {
+        calls: Vec<(GateId, Vec<QubitId>, Vec<Angle64>)>,
+    }
 
-    impl SimpleExecutor for NoopExecutor {
+    impl SimpleExecutor for RecordingExecutor {
         type MeasurementResults = Vec<bool>;
 
-        fn execute_gate(&mut self, _gate_id: GateId, _qubits: &[QubitId], _angles: &[Angle64]) {}
+        fn execute_gate(&mut self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) {
+            self.calls.push((gate_id, qubits.to_vec(), angles.to_vec()));
+        }
 
         fn execute_prep(&mut self, _basis: super::super::PrepBasis, _qubit: QubitId) {}
 
@@ -568,20 +666,24 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BatchExecutor cannot execute multi-angle gate")]
-    fn unsupported_multi_angle_batch_panics() {
+    fn general_batch_executes() {
         let circuit = BatchedCircuit {
-            batches: vec![Batch::MultiAngle {
+            batches: vec![Batch::General {
                 gate_id: gates::U,
                 ops: vec![(
                     smallvec::smallvec![QubitId(0)],
-                    smallvec::smallvec![Angle64::ZERO, Angle64::ZERO],
+                    smallvec::smallvec![Angle64::ZERO, Angle64::ZERO, Angle64::ZERO],
                 )],
             }],
             result_count: 0,
         };
 
-        let _ = NoopExecutor.execute_batched(&circuit);
+        let mut executor = RecordingExecutor::default();
+        executor.execute_batched(&circuit);
+        assert_eq!(
+            executor.calls,
+            vec![(gates::U, vec![QubitId(0)], vec![Angle64::ZERO; 3])]
+        );
     }
 
     #[test]
@@ -594,7 +696,7 @@ mod tests {
             ResolvedOp::gate2(gates::CX, QubitId(1), QubitId(2)),
         ]);
 
-        let batched = BatchedCircuit::from_resolved(&resolved);
+        let batched = BatchedCircuit::from_resolved(&resolved, &GateDefinitions::new()).unwrap();
 
         // Should have 2 batches: 3 H gates, then 2 CX gates
         assert_eq!(batched.batch_count(), 2);
@@ -625,7 +727,7 @@ mod tests {
             ResolvedOp::gate1(gates::H, QubitId(1)),
         ]);
 
-        let batched = BatchedCircuit::from_resolved(&resolved);
+        let batched = BatchedCircuit::from_resolved(&resolved, &GateDefinitions::new()).unwrap();
 
         // Should have 3 batches: H, X, H (different gate types don't merge)
         assert_eq!(batched.batch_count(), 3);
@@ -638,7 +740,7 @@ mod tests {
             ResolvedOp::rotation(gates::RZ, QubitId(1), Angle64::HALF_TURN),
         ]);
 
-        let batched = BatchedCircuit::from_resolved(&resolved);
+        let batched = BatchedCircuit::from_resolved(&resolved, &GateDefinitions::new()).unwrap();
 
         assert_eq!(batched.batch_count(), 1);
 
@@ -679,7 +781,7 @@ mod tests {
             },
         ]);
 
-        let batched = BatchedCircuit::from_resolved(&resolved);
+        let batched = BatchedCircuit::from_resolved(&resolved, &GateDefinitions::new()).unwrap();
 
         // Prep(Z) batch, H batch, Measure(Z) batch
         assert_eq!(batched.batch_count(), 3);
@@ -715,7 +817,7 @@ mod tests {
             ResolvedOp::gate1(gates::H, QubitId(0)),
         ]);
 
-        let batched = BatchedCircuit::from_resolved(&resolved);
+        let batched = BatchedCircuit::from_resolved(&resolved, &GateDefinitions::new()).unwrap();
 
         // Conditionals should not be merged
         assert_eq!(batched.batch_count(), 3);
@@ -725,7 +827,7 @@ mod tests {
     #[test]
     fn test_empty_batch() {
         let resolved = ResolvedCircuit::new(vec![]);
-        let batched = BatchedCircuit::from_resolved(&resolved);
+        let batched = BatchedCircuit::from_resolved(&resolved, &GateDefinitions::new()).unwrap();
 
         assert_eq!(batched.batch_count(), 0);
         assert_eq!(batched.op_count(), 0);

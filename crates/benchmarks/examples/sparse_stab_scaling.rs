@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 //! One surface- or color-code size per process. Usage:
-//! `sparse_stab_scaling SET D ROUNDS [P [F [SEED]]] [--stats-every K] [--code surface|color] [--rule ag|refactor] [--count-work]`.
+//! `sparse_stab_scaling SET D ROUNDS [P [F [SEED]]] [--stats-every K] [--code surface|color] [--rule ag|refactor] [--batch-order given|bitrev] [--count-work]`.
 //!
 //! SET is bitset, sorted, unsorted, adaptive, or cpp (requires feature cppsparsestab).
 
@@ -10,7 +10,8 @@ use benchmarks::color_code::color_code;
 use pecos_core::{AdaptiveIndexSet, BitSet, IndexSet, QubitId, SortedVecSet, VecSet};
 use pecos_random::PecosRng;
 use pecos_simulators::{
-    CliffordGateable, GensGeneric, MeasurementResult, MeasurementRule, SparseStabGeneric,
+    CliffordGateable, GensGeneric, MeasurementBatchOrder, MeasurementResult, MeasurementRule,
+    SparseStabGeneric,
 };
 use rand::RngExt;
 use std::time::Instant;
@@ -25,6 +26,7 @@ struct Config {
     code: Code,
     count_work: bool,
     rule: MeasurementRule,
+    batch_order: MeasurementBatchOrder,
 }
 
 #[derive(Clone, Copy)]
@@ -298,18 +300,36 @@ fn counted_measure_reset<S: IndexSet>(
     work: &mut WorkCounters,
     seconds: &mut f64,
 ) -> Vec<MeasurementResult> {
-    let mut results = Vec::with_capacity(qubits.len());
-    for &q in qubits {
-        results.push(work.measure(sim, q, seconds));
-    }
-    // PZ measures again before its conditional X; preserve MZ(all), PZ(all).
-    for &q in qubits {
-        let result = work.measure(sim, q, seconds);
-        if result.outcome {
-            let start = Instant::now();
-            sim.x(&[q]);
-            *seconds += start.elapsed().as_secs_f64();
-        }
+    let results = counted_measure(sim, qubits, work, seconds);
+    // Match PZ exactly: another batch MZ, then all corrections in caller order.
+    // In particular, duplicate qubits can produce repeated X corrections.
+    let reset_results = counted_measure(sim, qubits, work, seconds);
+    let corrections: Vec<_> = qubits
+        .iter()
+        .zip(reset_results)
+        .filter_map(|(&q, result)| result.outcome.then_some(q))
+        .collect();
+    let start = Instant::now();
+    sim.x(&corrections);
+    *seconds += start.elapsed().as_secs_f64();
+    results
+}
+
+fn counted_measure<S: IndexSet>(
+    sim: &mut SparseStabGeneric<S>,
+    qubits: &[QubitId],
+    work: &mut WorkCounters,
+    seconds: &mut f64,
+) -> Vec<MeasurementResult> {
+    let positions = sim.measurement_batch_permutation(qubits);
+    let mut results: Vec<_> = (0..qubits.len())
+        .map(|_| MeasurementResult {
+            outcome: false,
+            is_deterministic: false,
+        })
+        .collect();
+    for i in positions {
+        results[i] = work.measure(sim, qubits[i], seconds);
     }
     results
 }
@@ -437,10 +457,14 @@ impl ScalingSimulator for pecos_cppsparsestab::CppSparseStab {
 }
 
 fn run<S: IndexSet>(config: &Config) {
-    println!("# measurement_rule={:?}", config.rule);
+    println!(
+        "# measurement_rule={:?}; batch_order={:?}",
+        config.rule, config.batch_order
+    );
     run_simulator(config, |n| {
         SparseStabGeneric::<S>::with_rng(n, PecosRng::seed_from_u64(config.seed))
             .with_measurement_rule(config.rule)
+            .with_measurement_batch_order(config.batch_order)
     });
 }
 
@@ -462,6 +486,11 @@ fn run_cpp(config: &Config) {
             config.rule,
             MeasurementRule::AaronsonGottesman,
             "--rule does not apply to cpp; only the default ag value is accepted"
+        );
+        assert_eq!(
+            config.batch_order,
+            MeasurementBatchOrder::AsGiven,
+            "--batch-order does not apply to cpp; only given is accepted"
         );
         println!("# simulator=cpp; measurement_rule=NA; tableau_statistics=NA");
         run_simulator(config, |n| {
@@ -634,6 +663,19 @@ fn main() {
         };
         args.drain(i..=i + 1);
     }
+    let mut batch_order = MeasurementBatchOrder::AsGiven;
+    if let Some(i) = args.iter().position(|s| s == "--batch-order") {
+        batch_order = match args
+            .get(i + 1)
+            .expect("--batch-order requires given|bitrev")
+            .as_str()
+        {
+            "given" => MeasurementBatchOrder::AsGiven,
+            "bitrev" => MeasurementBatchOrder::BitReversed,
+            other => panic!("unknown batch order {other}; expected given|bitrev"),
+        };
+        args.drain(i..=i + 1);
+    }
     let count_work = if let Some(i) = args.iter().position(|s| s == "--count-work") {
         args.remove(i);
         true
@@ -642,7 +684,7 @@ fn main() {
     };
     assert!(
         (3..=6).contains(&args.len()),
-        "usage: SET D ROUNDS [P [F [SEED]]] [--stats-every K] [--code surface|color] [--rule ag|refactor] [--count-work]"
+        "usage: SET D ROUNDS [P [F [SEED]]] [--stats-every K] [--code surface|color] [--rule ag|refactor] [--batch-order given|bitrev] [--count-work]"
     );
     let config = Config {
         d: args[1].parse().expect("integer distance"),
@@ -660,6 +702,7 @@ fn main() {
         code,
         count_work,
         rule,
+        batch_order,
     };
     assert!(config.d >= 3 && config.d % 2 == 1 && config.rounds > 0 && stats_every > 0);
     assert!((0.0..=1.0).contains(&config.p) && (0.0..=1.0).contains(&config.f));
@@ -783,12 +826,18 @@ mod tests {
         assert_eq!(work.gate_touches, 5);
     }
 
-    fn check_counting_preserves_trajectory<S: IndexSet>(ops: &Schedule, rule: MeasurementRule) {
+    fn check_counting_preserves_trajectory<S: IndexSet>(
+        ops: &Schedule,
+        rule: MeasurementRule,
+        order: MeasurementBatchOrder,
+    ) {
         let n = ops.data_qubits + ops.ancillas.len();
         let mut counted = SparseStabGeneric::<S>::with_rng(n, PecosRng::seed_from_u64(1434))
-            .with_measurement_rule(rule);
+            .with_measurement_rule(rule)
+            .with_measurement_batch_order(order);
         let mut batched = SparseStabGeneric::<S>::with_rng(n, PecosRng::seed_from_u64(1434))
-            .with_measurement_rule(rule);
+            .with_measurement_rule(rule)
+            .with_measurement_batch_order(order);
         for round in 0..4 {
             let x = [QubitId(round)];
             let z = [QubitId(round + 1)];
@@ -826,11 +875,16 @@ mod tests {
             MeasurementRule::AaronsonGottesman,
             MeasurementRule::RefactorDecouple,
         ] {
-            for ops in [surface_schedule(5), color_schedule(5)] {
-                check_counting_preserves_trajectory::<AdaptiveIndexSet>(&ops, rule);
-                check_counting_preserves_trajectory::<BitSet>(&ops, rule);
-                check_counting_preserves_trajectory::<SortedVecSet>(&ops, rule);
-                check_counting_preserves_trajectory::<VecSet<usize>>(&ops, rule);
+            for order in [
+                MeasurementBatchOrder::AsGiven,
+                MeasurementBatchOrder::BitReversed,
+            ] {
+                for ops in [surface_schedule(5), color_schedule(5)] {
+                    check_counting_preserves_trajectory::<AdaptiveIndexSet>(&ops, rule, order);
+                    check_counting_preserves_trajectory::<BitSet>(&ops, rule, order);
+                    check_counting_preserves_trajectory::<SortedVecSet>(&ops, rule, order);
+                    check_counting_preserves_trajectory::<VecSet<usize>>(&ops, rule, order);
+                }
             }
         }
     }

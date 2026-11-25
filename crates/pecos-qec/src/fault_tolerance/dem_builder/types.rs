@@ -2026,8 +2026,8 @@ pub fn record_offset_to_absolute_index(num_measurements: usize, offset: i32) -> 
 pub struct DetectorDef {
     /// Unique detector ID.
     pub id: u32,
-    /// Optional 3D coordinates (x, y, t) for visualization.
-    pub coords: Option<[f64; 3]>,
+    /// Optional detector annotation coordinates. Extra axes may encode categories.
+    pub coords: Option<Vec<f64>>,
     /// Measurement record offsets (negative indices from end of record).
     pub records: SmallVec<[i32; 2]>,
     /// Optional fault sector; omitted from all DEM text and PECOS metadata output.
@@ -2048,8 +2048,8 @@ impl DetectorDef {
 
     /// Sets the detector coordinates.
     #[must_use]
-    pub fn with_coords(mut self, coords: [f64; 3]) -> Self {
-        self.coords = Some(coords);
+    pub fn with_coords(mut self, coords: impl Into<Vec<f64>>) -> Self {
+        self.coords = Some(coords.into());
         self
     }
 
@@ -2364,6 +2364,8 @@ pub(crate) enum GateRateKeyError {
         "{table} key Idle has no effect: Idle gates take noise only from the idle model. Set p_idle (set_idle) or per-gate Idle rates instead."
     )]
     IdleKey { table: &'static str },
+    #[error("{gate} has no noise; remove the per-gate rate ({table})")]
+    DetectionKey { table: &'static str, gate: GateType },
 }
 
 /// The rate representation shared by the one- and two-qubit tables.
@@ -2452,8 +2454,11 @@ fn validate_active_gate_rate_keys(
     table: &'static str,
     keys: impl IntoIterator<Item = (GateType, GateRateQubits, GateRateTableFamily)>,
     locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
-) -> Result<(), GateRateKeyMismatch> {
+) -> Result<(), GateRateKeyError> {
     for (key, qubits, family) in keys {
+        if key.is_detection() {
+            return Err(GateRateKeyError::DetectionKey { table, gate: key });
+        }
         if let Some(location) = locations.iter().find(|location| {
             location.gate_type != key
                 && matches!(location.clifford,
@@ -2469,7 +2474,8 @@ fn validate_active_gate_rate_keys(
                 matches_scheduled: locations
                     .iter()
                     .any(|other| other.gate_type == key && qubits.matches(other, locations)),
-            });
+            }
+            .into());
         }
     }
     Ok(())
@@ -4858,7 +4864,7 @@ impl PerGateTypeNoise {
     ///
     /// # Errors
     ///
-    /// Returns an error if this model carries invalid probabilities, requested idle noise, or any
+    /// Returns an error for unmapped per-gate rates, invalid probabilities, requested idle noise, or any
     /// `GateType::Idle` rates, including base gate-rate keys -- idle noise cannot be
     /// represented in the returned Pauli channel.
     #[cfg(feature = "neo")]
@@ -4890,13 +4896,13 @@ impl PerGateTypeNoise {
             if self.rates_1q.contains_key(&gate) {
                 continue;
             }
-            channel = channel.with_1q_rates(core_gate_to_neo(gate), [total / 3.0; 3])?;
+            channel = channel.with_1q_rates(core_gate_to_neo(gate)?, [total / 3.0; 3])?;
         }
         for (&gate, &rates) in &self.rates_1q {
-            channel = channel.with_1q_rates(core_gate_to_neo(gate), rates)?;
+            channel = channel.with_1q_rates(core_gate_to_neo(gate)?, rates)?;
         }
         for (&(gate, qubit), &rates) in &self.rates_1q_per_qubit {
-            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate), qubit, rates)?;
+            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate)?, qubit, rates)?;
         }
 
         for (&gate, &total) in &self.base.p2_gate_rates {
@@ -4904,16 +4910,16 @@ impl PerGateTypeNoise {
                 continue;
             }
             channel = channel.with_2q_rates(
-                core_gate_to_neo(gate),
+                core_gate_to_neo(gate)?,
                 qec_2q_rates_to_neo([total / 15.0; 15]),
             )?;
         }
         for (&gate, &rates) in &self.rates_2q {
-            channel = channel.with_2q_rates(core_gate_to_neo(gate), qec_2q_rates_to_neo(rates))?;
+            channel = channel.with_2q_rates(core_gate_to_neo(gate)?, qec_2q_rates_to_neo(rates))?;
         }
         for (&(gate, first, second), &rates) in &self.rates_2q_per_qubits {
             channel = channel.with_2q_rates_for_qubits(
-                core_gate_to_neo(gate),
+                core_gate_to_neo(gate)?,
                 first,
                 second,
                 qec_2q_rates_to_neo(rates),
@@ -4932,8 +4938,10 @@ impl PerGateTypeNoise {
 }
 
 #[cfg(feature = "neo")]
-fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
-    match gate {
+fn core_gate_to_neo(
+    gate: GateType,
+) -> pecos_neo::noise::validation::ValidationResult<pecos_neo::GateType> {
+    Ok(match gate {
         GateType::I => pecos_neo::GateType::I,
         GateType::X => pecos_neo::GateType::X,
         GateType::Y => pecos_neo::GateType::Y,
@@ -4970,16 +4978,34 @@ fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
         GateType::RXYXY2Q => pecos_neo::GateType::RXYXY2Q,
         GateType::CCX => pecos_neo::GateType::CCX,
         GateType::MZ => pecos_neo::GateType::MZ,
-        GateType::MeasureLeaked => pecos_neo::GateType::MeasureLeaked,
+        GateType::MeasureZLeaked => pecos_neo::GateType::MeasureLeaked,
         GateType::MeasureFree => pecos_neo::GateType::MeasureFree,
         GateType::PZ => pecos_neo::GateType::PZ,
         GateType::QAlloc => pecos_neo::GateType::QAlloc,
         GateType::QFree => pecos_neo::GateType::QFree,
         GateType::Idle => pecos_neo::GateType::Idle,
-        unsupported => {
-            panic!("unsupported gate type for NEO per-gate noise conversion: {unsupported:?}")
+        gate if gate.is_detection() => {
+            return Err(pecos_neo::noise::validation::ValidationError::new(
+                format!("per-gate rate for {gate}"),
+                format!("neo has no detect gate; remove the per-gate rate for {gate}"),
+            )
+            .with_value(&gate.to_string())
+            .with_suggestion("remove the per-gate rate"));
         }
-    }
+        unsupported => {
+            let reason = if unsupported.is_recordless_z_measurement() {
+                "neo has no matching herald gate"
+            } else {
+                "neo has no matching gate for per-gate noise conversion"
+            };
+            return Err(pecos_neo::noise::validation::ValidationError::new(
+                format!("per-gate rate for {unsupported}"),
+                reason,
+            )
+            .with_value(&unsupported.to_string())
+            .with_suggestion("remove the per-gate rate"));
+        }
+    })
 }
 
 #[cfg(feature = "neo")]
@@ -5562,9 +5588,20 @@ impl DetectorErrorModel {
         &self,
     ) -> Result<pecos_decoder_core::window::StructuredDem, pecos_decoder_core::errors::DecoderError>
     {
-        let parsed = pecos_decoder_core::window::StructuredDem::from_dem_str(&self.to_string())?;
+        let mut parsed =
+            pecos_decoder_core::window::StructuredDem::from_dem_str(&self.to_string())?;
         let mut detector_fault_sectors = vec![None; parsed.num_detectors];
         for detector in &self.detectors {
+            let index = detector.id as usize;
+            let Some(slot) = parsed.detector_coords.get_mut(index) else {
+                return Err(
+                    pecos_decoder_core::errors::DecoderError::InvalidConfiguration(format!(
+                        "detector D{} is outside the model's detector dimension {}",
+                        detector.id, parsed.num_detectors
+                    )),
+                );
+            };
+            slot.clone_from(&detector.coords);
             // The index is in bounds because to_string declares every detector definition.
             detector_fault_sectors[detector.id as usize].clone_from(&detector.fault_sector);
         }
@@ -5674,8 +5711,13 @@ impl DetectorErrorModel {
         let mut lines = Vec::new();
 
         for det in &self.detectors {
-            if let Some([x, y, z]) = det.coords {
-                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            if let Some(coords) = det.coords.as_ref().filter(|coords| !coords.is_empty()) {
+                let coords = coords
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("detector({coords}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -6480,7 +6522,7 @@ impl DetectorErrorModel {
         let coords: Vec<(u32, Vec<f64>)> = self
             .detectors
             .iter()
-            .filter_map(|det| det.coords.map(|[x, y, z]| (det.id, vec![x, y, z])))
+            .filter_map(|det| det.coords.clone().map(|coords| (det.id, coords)))
             .collect();
 
         (mechanisms, coords)
@@ -6615,8 +6657,13 @@ impl DetectorErrorModel {
 
         // Add detector coordinate annotations
         for det in &self.detectors {
-            if let Some([x, y, z]) = det.coords {
-                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            if let Some(coords) = det.coords.as_ref().filter(|coords| !coords.is_empty()) {
+                let coords = coords
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("detector({coords}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -6659,7 +6706,20 @@ impl DetectorErrorModel {
     fn detector_coordinate_map(&self) -> BTreeMap<u32, [f64; 3]> {
         self.detectors
             .iter()
-            .filter_map(|detector| detector.coords.map(|coords| (detector.id, coords)))
+            // The existing pairing heuristic uses x/y/time only. Additional axes
+            // (e.g. color/basis labels) are metadata, not metric dimensions.
+            .filter_map(|detector| {
+                detector
+                    .coords
+                    .as_ref()
+                    .filter(|coords| !coords.is_empty())
+                    .map(|coords| {
+                        (
+                            detector.id,
+                            std::array::from_fn(|i| coords.get(i).copied().unwrap_or(0.0)),
+                        )
+                    })
+            })
             .collect()
     }
 
@@ -6974,8 +7034,13 @@ impl DetectorErrorModel {
         let mut lines = Vec::new();
 
         for det in &self.detectors {
-            if let Some([x, y, z]) = det.coords {
-                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            if let Some(coords) = det.coords.as_ref().filter(|coords| !coords.is_empty()) {
+                let coords = coords
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("detector({coords}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -7646,8 +7711,13 @@ impl DetectorErrorModel {
 
         // Add detector coordinate annotations
         for det in &self.detectors {
-            if let Some([x, y, z]) = det.coords {
-                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            if let Some(coords) = det.coords.as_ref().filter(|coords| !coords.is_empty()) {
+                let coords = coords
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(format!("detector({coords}) D{}", det.id));
             } else {
                 lines.push(format!("detector D{}", det.id));
             }
@@ -8024,6 +8094,46 @@ mod tests {
     use super::is_two_qubit_noise_gate;
     use pecos_core::CliffordLowering;
     use pecos_core::gate_type::GateType;
+
+    #[cfg(feature = "neo")]
+    #[test]
+    fn neo_detect_gate_rates_are_rejected_by_name() {
+        use super::*;
+        for gate in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let noise = PerGateTypeNoise::from_base_noise(NoiseConfig::default())
+                .with_1q_rates(gate, [0.01; 3]);
+            let error = noise.to_neo_channel().unwrap_err().to_string();
+            assert!(
+                error.contains(&format!(
+                    "neo has no detect gate; remove the per-gate rate for {gate}"
+                )),
+                "{error}"
+            );
+        }
+    }
+    #[cfg(feature = "neo")]
+    #[test]
+    fn neo_unmapped_gate_rates_return_actionable_errors() {
+        use super::*;
+        for gate in [
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+            GateType::Custom,
+        ] {
+            let noise = PerGateTypeNoise::from_base_noise(NoiseConfig::default())
+                .with_1q_rates(gate, [0.01; 3]);
+            let error = noise
+                .to_neo_channel()
+                .expect_err("unmapped rate must fail")
+                .to_string();
+            assert!(error.contains(&gate.to_string()), "{error}");
+            assert!(error.contains("remove the per-gate rate"), "{error}");
+        }
+    }
 
     #[test]
     fn two_qubit_noise_gate_membership_is_pinned() {
@@ -8758,6 +8868,44 @@ mod tests {
         assert_eq!(
             recovered.tracked_paulis()[0].label.as_deref(),
             Some("tracked_z3")
+        );
+    }
+
+    #[test]
+    fn detector_coordinate_vectors_survive_all_export_forms() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0).with_coords([1.0, 2.0, 3.0, 5.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords(Vec::<f64>::new()));
+        dem.add_detector(DetectorDef::new(2));
+        for text in [
+            dem.to_string(),
+            dem.to_pecos_string(),
+            dem.to_string_decomposed(),
+            dem.to_string_source_decomposed(),
+            dem.to_string_source_graphlike_decomposed(),
+            dem.to_string_graphlike_search_decomposed(),
+            dem.to_string_decomposed_maximally(),
+            dem.to_string_terminal_graphlike_decomposed().unwrap(),
+        ] {
+            assert!(text.contains("detector(1, 2, 3, 5) D0"));
+            assert!(text.contains("detector D1"));
+            assert!(text.contains("detector D2"));
+        }
+        assert_eq!(
+            dem.to_mechanisms().1,
+            vec![(0, vec![1.0, 2.0, 3.0, 5.0]), (1, vec![])]
+        );
+        let structured = dem.to_structured_decoder_dem().unwrap();
+        assert_eq!(
+            structured.detector_coords,
+            vec![Some(vec![1.0, 2.0, 3.0, 5.0]), Some(vec![]), None]
+        );
+        // Extra categorical axes are retained in export but excluded from the existing metric.
+        assert_eq!(dem.detector_coordinate_map()[&0], [1.0, 2.0, 3.0]);
+        dem.add_detector(DetectorDef::new(3).with_coords([1.0, 2.0, 3.0, -99.0]));
+        assert_eq!(
+            DetectorErrorModel::detector_coordinate_distance(0, 3, &dem.detector_coordinate_map()),
+            0.0
         );
     }
 

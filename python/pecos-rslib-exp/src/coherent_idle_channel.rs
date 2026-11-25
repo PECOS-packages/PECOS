@@ -10,7 +10,7 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Coherent idle noise channel: RZ(angle) on both qubits after each CX gate.
+//! Coherent idle noise: RZ(angle) on healthy retained operands after controlled gates.
 
 use pecos_core::Angle64;
 use pecos_neo::command::{GateCommand, GateType};
@@ -18,7 +18,7 @@ use pecos_neo::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse};
 use pecos_random::PecosRng;
 use smallvec::SmallVec;
 
-/// Applies coherent RZ rotation after each two-qubit gate on both qubits.
+/// Applies coherent RZ rotation to healthy executed and leaked-suppressed operands.
 ///
 /// Models uncompensated phase accumulation during idle time between gates.
 /// The rotation angle represents the coherent Z-phase acquired per gate
@@ -49,15 +49,19 @@ impl NoiseChannel for CoherentIdleChannel {
     fn apply(
         &self,
         event: &NoiseEvent<'_>,
-        _ctx: &mut NoiseContext,
+        ctx: &mut NoiseContext,
         _rng: &mut PecosRng,
     ) -> NoiseResponse {
-        if let NoiseEvent::AfterGate { qubits, .. } = event {
+        if let NoiseEvent::AfterGate { .. } = event {
             let mut gates = SmallVec::new();
-            for &q in *qubits {
+            for &q in event.gated_qubits().iter().filter(|&&q| !ctx.is_leaked(q)) {
                 gates.push(GateCommand::rz(q, self.angle));
             }
-            NoiseResponse::inject_gates(gates)
+            if gates.is_empty() {
+                NoiseResponse::None
+            } else {
+                NoiseResponse::inject_gates(gates)
+            }
         } else {
             NoiseResponse::None
         }

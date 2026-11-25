@@ -1,0 +1,52 @@
+/* Copyright 2026 The PECOS Developers. Licensed under Apache-2.0. */
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #203044; background: #f5f7fa; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.pecos-inspector { max-width: 1600px; margin: auto; padding: 24px; }
+h1 { margin: 0 0 6px; font-size: 24px; }
+header p, .summary, footer, .selection-status { color: #526075; font-size: 14px; line-height: 1.5; }
+header p { margin: 0; }
+.summary { margin: 16px 0; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.controls[hidden] { display: none; }
+.viewport-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.viewport-controls[hidden], .trace-controls[hidden] { display: none; }
+.viewport-controls output { min-width: 60px; text-align: center; font-variant-numeric: tabular-nums; }
+.trace-controls button { margin: 0 6px 6px 0; }
+.stage-position, .stage-hint { font-size: 13px; color: #526075; line-height: 1.5; }
+.controls label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+select, button, input[type="search"] { font: inherit; border: 1px solid #a7b4c5; border-radius: 6px; background: white; color: #203044; padding: 8px 10px; }
+input[type="search"] { width: min(280px, 58vw); }
+.filter-status, .legend { flex-basis: 100%; margin: 0; font-size: 13px; color: #526075; }
+select { width: min(360px, 58vw); }
+button { cursor: pointer; }
+button:disabled { color: #738096; background: #edf0f5; cursor: default; }
+:focus-visible { outline: 3px solid #087ca0; outline-offset: 3px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 16px; align-items: start; }
+.diagram, aside { border: 1px solid #cdd6e1; border-radius: 10px; background: white; }
+.diagram { overflow: auto; max-height: 70vh; padding: 16px; }
+.diagram svg { display: block; max-width: none; }
+aside { min-width: 0; padding: 16px; }
+.selection-status { margin: 0 0 12px; }
+article { border-top: 1px solid #e0e5ec; padding-top: 12px; margin-top: 12px; }
+h2 { margin: 0 0 12px; font-size: 20px; }
+h3 { font-size: 15px; margin: 20px 0 8px; }
+dl { margin: 0; }
+dt { font-size: 12px; font-weight: 650; color: #526075; margin-top: 12px; overflow-wrap: anywhere; }
+dd { margin: 4px 0 0; }
+pre { font: 13px/1.5 ui-monospace, monospace; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+footer { margin-top: 16px; max-width: 900px; }
+.interactive article { display: none; }
+.interactive article.selected { display: block; }
+.interactive [data-pecos-operation] { cursor: pointer; }
+.interactive [data-pecos-operation].filtered-out { opacity: 0.2; pointer-events: none; cursor: default; }
+.interactive [data-pecos-operation].related { opacity: 1; }
+.interactive [data-pecos-operation].related > :not(text) { stroke: #087c78; stroke-width: 3; stroke-dasharray: 5 3; }
+.interactive [data-pecos-operation].hovered > :not(text),
+.interactive [data-pecos-operation]:focus-visible > :not(text) { stroke: #087ca0; stroke-width: 3; }
+.interactive [data-pecos-operation].selected > :not(text) { stroke: #b84b00; stroke-width: 3; }
+@media (max-width: 760px) {
+  .pecos-inspector { padding: 14px; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .diagram { max-height: 55vh; }
+}

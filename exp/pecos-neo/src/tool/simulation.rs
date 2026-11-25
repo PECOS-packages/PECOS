@@ -4236,7 +4236,7 @@ mod tests {
             _ctx: &mut NoiseContext,
             _rng: &mut PecosRng,
         ) -> NoiseResponse {
-            let NoiseEvent::AfterPreparation { qubits } = event else {
+            let NoiseEvent::AfterPreparation { qubits, .. } = event else {
                 return NoiseResponse::None;
             };
             NoiseResponse::inject_gate(GateCommand::new(

@@ -15,12 +15,11 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 import pecos.decoders
+import pytest
 from pecos import asarray, dtypes
 
 if TYPE_CHECKING:
     from types import ModuleType
-
-    import pytest
 
 
 def _repo_root() -> Path:
@@ -282,16 +281,21 @@ def test_bootstrap_ci_is_deliberately_rebaselined_for_pecos_rng() -> None:
     summary = _private(sweep, "_fit_summary_from_points")(_captured_points(sweep))
 
     # Deliberate re-baseline: PECOS's seeded RNG stream is expected to differ from NumPy's.
+    # Preserve that baseline while allowing platform-level rounding in the fitted values.
     assert (
         summary.fitted_logical_error_rate_per_round_ci_low,
         summary.fitted_logical_error_rate_per_round_ci_high,
         summary.fitted_projected_logical_error_rate_over_d_rounds_ci_low,
         summary.fitted_projected_logical_error_rate_over_d_rounds_ci_high,
-    ) == (
-        0.004567745863951806,
-        0.005495604203696777,
-        0.02242523794681137,
-        0.02688059024790983,
+    ) == pytest.approx(
+        (
+            0.004567745863951806,
+            0.005495604203696777,
+            0.02242523794681137,
+            0.02688059024790983,
+        ),
+        rel=1e-12,
+        abs=1e-15,
     )
 
 

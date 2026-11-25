@@ -110,7 +110,7 @@ impl ScheduledEventBatch {
     }
 }
 fn measured(gate: &Gate) -> bool {
-    matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked)
+    matches!(gate.gate_type, GateType::MZ | GateType::MeasureZLeaked)
 }
 fn validate_batch(batch: &ScheduledEventBatch) -> Result<(), PecosError> {
     if batch
@@ -189,11 +189,26 @@ impl Writer {
 pub fn encode_event_batches(batches: &[ScheduledEventBatch]) -> Result<ByteMessage, PecosError> {
     validate_batches(batches)?;
     let mut w = Writer(Vec::new());
+    // Scratch belongs to this encoding call, never to a runtime or shot owner.
+    let mut nested = Vec::new();
     w.bytes(&[0; 16])?;
     for b in batches {
-        let nested = scheduled_frame::encode_timed_batches(&[b.source_gates()])?;
-        w.word(nested.as_bytes().len() as u64)?;
-        w.bytes(nested.as_bytes())?;
+        let gates = b.operations.iter().filter_map(|op| match op {
+            ScheduledEventOp::Gate(gate) => Some(gate.as_ref()),
+            ScheduledEventOp::Custom { .. } => None,
+        });
+        scheduled_frame::encode_borrowed_batch_into(
+            &mut nested,
+            [
+                b.runtime_shot_id,
+                b.batch_index,
+                b.start_nanos,
+                b.duration_nanos,
+            ],
+            gates,
+        )?;
+        w.word(nested.len() as u64)?;
+        w.bytes(&nested)?;
         w.word(
             b.operations
                 .iter()
@@ -215,6 +230,8 @@ pub fn encode_event_batches(batches: &[ScheduledEventBatch]) -> Result<ByteMessa
             w.word(m.program_result)?;
         }
     }
+    // Do not keep the largest nested frame alive during the final aligned copy.
+    drop(nested);
     w.0[..4].copy_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
     w.0[4] = crate::byte_message::protocol::SCHEDULED_EVENT_VERSION;
     w.0[8..12].copy_from_slice(
@@ -261,7 +278,7 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
     let mut result = Vec::new();
     for _ in 0..count {
         let nested_bytes = r.size()?;
-        let mut nested = scheduled_frame::decode(&ByteMessage::new(r.take(nested_bytes)?))?;
+        let mut nested = scheduled_frame::decode_bytes(r.take(nested_bytes)?)?;
         if nested.len() != 1 {
             return Err(error("expected one nested scheduled batch"));
         }
@@ -526,16 +543,24 @@ impl ScheduledEventModel {
             return Err(processing_error("cloned event session requires reset"));
         }
         let batches = decode_event_batches(input)?;
-        let source = self
-            .source_timeline
-            .prepare(
-                &self.inner.config,
-                batches
-                    .iter()
-                    .map(ScheduledEventBatch::source_gates)
-                    .collect(),
-            )?
-            .timeline;
+        let source = self.source_timeline.admit_decoded_source(
+            &self.inner.config,
+            batches.iter().map(|batch| {
+                let gates = batch.operations.iter().filter_map(|op| match op {
+                    ScheduledEventOp::Gate(g) => Some(g.as_ref()),
+                    ScheduledEventOp::Custom { .. } => None,
+                });
+                (
+                    [
+                        batch.runtime_shot_id,
+                        batch.batch_index,
+                        batch.start_nanos,
+                        batch.duration_nanos,
+                    ],
+                    gates,
+                )
+            }),
+        )?;
         Ok(AdmittedEvents { batches, source })
     }
     pub(crate) fn prepare(
@@ -583,15 +608,11 @@ impl ScheduledEventModel {
             if let Some(message) = output.failure {
                 return Err(error(&message));
             }
-            let original: Vec<_> = batch
-                .operations
-                .iter()
-                .filter_map(|op| match op {
-                    ScheduledEventOp::Gate(g) if measured(g) => Some((g.gate_type, &g.qubits)),
-                    _ => None,
-                })
-                .collect();
-            if !original.into_iter().eq(output
+            let original = batch.operations.iter().filter_map(|op| match op {
+                ScheduledEventOp::Gate(g) if measured(g) => Some((g.gate_type, &g.qubits)),
+                _ => None,
+            });
+            if !original.eq(output
                 .gates
                 .iter()
                 .filter(|g| measured(g))

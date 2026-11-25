@@ -36,7 +36,7 @@ pub use adaptor::{
     AdaptedGate, CompositeAdaptor, CompositeExtendedAdaptor, CustomAdaptor, GateAdaptor,
     LiftedAdaptor, StandardAdaptor,
 };
-pub use batch::{Batch, BatchExecutor, BatchedCircuit, SimpleExecutor};
+pub use batch::{Batch, BatchError, BatchExecutor, BatchedCircuit, SimpleExecutor};
 pub use bridge::GateIdConversionError;
 pub use canonicalizer::{CanonicalForm, GateCanonicalizer};
 pub use decomposition::{

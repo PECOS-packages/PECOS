@@ -208,7 +208,7 @@ def _map_gate(gate_name, targets, q, c, measurement_offset):
                 ops.append(qubit.SZdg(q[idx]))
             if basis in ["X", "Y"]:
                 ops.append(qubit.H(q[idx]))
-            ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
+            ops.append(qubit.MeasureZ(q[idx]) > c[measurement_offset + i])
             if basis in ["X", "Y"]:
                 ops.append(qubit.H(q[idx]))
             if basis == "Y":

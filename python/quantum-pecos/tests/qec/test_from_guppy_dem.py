@@ -710,7 +710,11 @@ def test_from_guppy_idle_insertion_matches_manual_pass_pipeline() -> None:
 
     rate = 0.01
     reference_circuit = trace_program_to_tick_circuit(_two_qubit_idle_target, 2, seed=0)
-    normalize_traced_tick_circuit(reference_circuit, context="from_guppy idle insertion reference")
+    normalize_traced_tick_circuit(
+        reference_circuit,
+        context="from_guppy idle insertion reference",
+        simplify_single_qubit_clifford_chains=False,
+    )
     reference_circuit.insert_idle_after_two_qubit_gates(1.0)
     reference_circuit.set_meta("detectors", _TWO_QUBIT_DETECTORS_JSON)
     reference_circuit.set_meta("observables", _TWO_QUBIT_OBSERVABLES_JSON)
@@ -1628,7 +1632,11 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
             basis,
             circuit_source="traced_qis",
         )
-        normalize_traced_tick_circuit(ref, context="from_guppy surface reference")
+        normalize_traced_tick_circuit(
+            ref,
+            context="from_guppy surface reference",
+            simplify_single_qubit_clifford_chains=False,
+        )
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=3, basis=basis),
@@ -1641,11 +1649,6 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
         assert got == ref_dem, f"surface from_guppy not byte-identical ({basis})"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ValueError,
-    reason="#498: SZZ final provenance reversed",
-)
 @pytest.mark.parametrize("distance", [3, 5])
 def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: int) -> None:
     """SZZ-basis surface Guppy generation must match the traced-QIS reference DEM."""
@@ -1659,7 +1662,11 @@ def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: in
             circuit_source="traced_qis",
             interaction_basis="szz",
         )
-        normalize_traced_tick_circuit(ref, context="from_guppy SZZ surface reference")
+        normalize_traced_tick_circuit(
+            ref,
+            context="from_guppy SZZ surface reference",
+            simplify_single_qubit_clifford_chains=False,
+        )
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(
@@ -1740,7 +1747,11 @@ def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise, check_pla
         circuit_source="traced_qis",
         check_plan=check_plan,
     )
-    normalize_traced_tick_circuit(ref, context="from_guppy constrained surface reference")
+    normalize_traced_tick_circuit(
+        ref,
+        context="from_guppy constrained surface reference",
+        simplify_single_qubit_clifford_chains=False,
+    )
     ref_dem = DetectorErrorModel.from_circuit(ref, **noise).to_string()
 
     got = DetectorErrorModel.from_guppy(
@@ -1795,22 +1806,8 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
 @pytest.mark.parametrize(
     "check_plan",
     [
-        pytest.param(
-            "szz_balanced_data_round_order_1032_v1",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=ValueError,
-                reason="#498: SZZ final provenance reversed",
-            ),
-        ),
-        pytest.param(
-            "szz_balanced_data_round_order_3102_v1",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=ValueError,
-                reason="#498: SZZ final provenance reversed",
-            ),
-        ),
+        "szz_balanced_data_round_order_1032_v1",
+        "szz_balanced_data_round_order_3102_v1",
     ],
 )
 def test_from_guppy_round_order_szz_surface_dem_byte_identical(check_plan: str) -> None:
@@ -1832,22 +1829,8 @@ def test_from_guppy_round_order_szz_surface_dem_byte_identical(check_plan: str) 
     "check_plan",
     [
         None,
-        pytest.param(
-            "szz_balanced_data_round_order_1032_v1",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=ValueError,
-                reason="#498: SZZ final provenance reversed",
-            ),
-        ),
-        pytest.param(
-            "szz_balanced_data_round_order_3102_v1",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=ValueError,
-                reason="#498: SZZ final provenance reversed",
-            ),
-        ),
+        "szz_balanced_data_round_order_1032_v1",
+        "szz_balanced_data_round_order_3102_v1",
     ],
 )
 def test_constrained_surface_traced_metadata_matches_abstract(check_plan: str | None) -> None:

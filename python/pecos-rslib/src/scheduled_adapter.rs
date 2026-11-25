@@ -3,7 +3,7 @@ use crate::dag_circuit_bindings::PyGate;
 use pecos_core::errors::PecosError;
 use pecos_engines::scheduled_events::{
     ScheduledBatchAdapter, ScheduledCrosstalk, ScheduledEventBatch, ScheduledEventNoise,
-    ScheduledEventOp, ScheduledGateBuffer,
+    ScheduledEventOp, ScheduledGateBuffer, encode_event_batches,
 };
 use pecos_engines::scheduled_frame::{ScheduledIdleZ, ScheduledNoise};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -88,11 +88,12 @@ impl Drop for CallbackScope {
     }
 }
 /// Waiting for an engine from one of its callbacks would create a worker cycle.
-/// Reject built simulation operations from callbacks; external threads may wait.
+/// Reject built simulation operations from callbacks and worker-context teardown;
+/// external threads may wait.
 pub(crate) fn reject_callback_reentry() -> PyResult<()> {
     if IN_CALLBACK.get() {
         Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "Built simulation run/reset cannot be called from a scheduled adapter callback",
+            "Built simulation run/reset cannot be called from a scheduled adapter callback or Python worker context",
         ))
     } else {
         Ok(())
@@ -106,6 +107,15 @@ struct PyScheduledEventBatch {
 }
 #[pymethods]
 impl PyScheduledEventBatch {
+    /// Owned v7 message containing exactly this original batch.
+    /// Preserves native angle bits, event order, timing and measurement identities.
+    /// Encoding applies the checked transport bounds and can raise ValueError.
+    fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let message = encode_event_batches(std::slice::from_ref(&self.inner))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyBytes::new(py, message.as_bytes()))
+    }
+
     #[getter]
     fn runtime_shot_id(&self) -> u64 {
         self.inner.runtime_shot_id
@@ -268,6 +278,38 @@ pub fn scheduled_event_idle_noise(
         inner: event_profile(profile.inner, adapter_factory, py)?,
     })
 }
+/// Attach an experimental native normalizer from an explicitly trusted library.
+/// Native code must obey pecos_scheduled_adapter.h; it is not sandboxed. Config
+/// bytes are copied into the immutable factory. No Python callbacks run per batch.
+#[pyfunction]
+#[pyo3(signature = (profile, library_path, *, config = None))]
+pub fn scheduled_native_adapter(
+    profile: Py<PyAny>,
+    library_path: std::path::PathBuf,
+    config: Option<&Bound<'_, PyBytes>>,
+    py: Python<'_>,
+) -> PyResult<PyScheduledEventIdleNoise> {
+    use pecos_foreign::scheduled_adapter::{MAX_CONFIG_BYTES, NativeScheduledAdapter};
+    let profile =
+        crate::engine_builders::extract_scheduled_idle(&profile, py).ok_or_else(|| {
+            PyTypeError::new_err("expected a checked scheduled idle or local noise profile")
+        })?;
+    let config = config.map_or(&[][..], |bytes| bytes.as_bytes());
+    if config.len() > MAX_CONFIG_BYTES {
+        return Err(PyValueError::new_err("native adapter configuration limit"));
+    }
+    let config = config.to_vec();
+    // SAFETY: this explicit native-plugin API requires the caller to supply a
+    // trusted library satisfying the documented C ABI and threading contract.
+    // Detach only after extracting owned values; no borrowed Python data escapes.
+    let adapter = py
+        .detach(move || unsafe { NativeScheduledAdapter::load(&library_path, &config) })
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(PyScheduledEventIdleNoise {
+        inner: adapter.with_noise(profile),
+    })
+}
+
 /// A per-shot adapter with the checked local fault profile.
 #[pyclass(name = "ScheduledEventLocalNoise", from_py_object)]
 #[derive(Clone)]
@@ -333,6 +375,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScheduledEventIdleZ>()?;
     m.add_class::<PyScheduledEventIdleNoise>()?;
     m.add_class::<PyScheduledEventLocalNoise>()?;
+    m.add_function(wrap_pyfunction!(scheduled_native_adapter, m)?)?;
     m.add_function(wrap_pyfunction!(scheduled_event_local_noise, m)?)?;
     m.add_function(wrap_pyfunction!(scheduled_event_idle_noise, m)?)?;
     m.add_function(wrap_pyfunction!(scheduled_event_idle_z, m)?)?;
@@ -352,4 +395,112 @@ pub(crate) fn unsupported_route() -> PyErr {
     PyTypeError::new_err(
         "scheduled event noise requires QIS/HUGR on the engines stack without operation tracing",
     )
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use pecos_core::{Angle64, gates::Gate};
+    use pecos_engines::{
+        ByteMessage,
+        scheduled_events::{ScheduledResult, decode_event_batches},
+    };
+
+    fn example() -> ScheduledEventBatch {
+        ScheduledEventBatch {
+            runtime_shot_id: u64::MAX,
+            batch_index: 29,
+            start_nanos: 123,
+            duration_nanos: 45,
+            operations: vec![
+                ScheduledEventOp::Custom {
+                    tag: 91,
+                    payload: vec![0, 255, 7],
+                },
+                ScheduledEventOp::Gate(Box::new(Gate::rz(
+                    Angle64::new(0x1234_5678_9abc_def1),
+                    &[2],
+                ))),
+                ScheduledEventOp::Gate(Box::new(Gate::mz(&[2]))),
+                ScheduledEventOp::Custom {
+                    tag: 92,
+                    payload: vec![],
+                },
+                ScheduledEventOp::Gate(Box::new(Gate::mz(&[3]))),
+            ],
+            measurements: vec![
+                ScheduledResult {
+                    operation_index: 2,
+                    runtime_result: u64::MAX,
+                    program_result: 11,
+                },
+                ScheduledResult {
+                    operation_index: 4,
+                    runtime_result: 4,
+                    program_result: 11,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_exact_values_and_owns_bytes() {
+        Python::initialize();
+        Python::attach(|py| {
+            let snapshot = PyScheduledEventBatch { inner: example() };
+            let bytes = snapshot.to_bytes(py).unwrap();
+            drop(snapshot);
+            let decoded = decode_event_batches(&ByteMessage::new(bytes.as_bytes())).unwrap();
+            assert_eq!(decoded.len(), 1);
+            let b = &decoded[0];
+            assert_eq!(
+                (
+                    b.runtime_shot_id,
+                    b.batch_index,
+                    b.start_nanos,
+                    b.duration_nanos
+                ),
+                (u64::MAX, 29, 123, 45)
+            );
+            assert_eq!(b.measurements, example().measurements);
+            assert_eq!(b.operations.len(), 5);
+            assert!(
+                matches!(&b.operations[0], ScheduledEventOp::Custom { tag: 91, payload } if payload == &[0,255,7])
+            );
+            assert!(
+                matches!(&b.operations[3], ScheduledEventOp::Custom { tag: 92, payload } if payload.is_empty())
+            );
+            let ScheduledEventOp::Gate(gate) = &b.operations[1] else {
+                panic!("missing rotation")
+            };
+            assert_eq!(gate.angles[0].fraction(), 0x1234_5678_9abc_def1);
+            assert_eq!(gate.qubits[0].0, 2);
+        });
+    }
+
+    #[test]
+    fn snapshot_rejects_invalid_identities_and_oversized_payload() {
+        Python::initialize();
+        Python::attach(|py| {
+            let mut input = example();
+            input.measurements[1].runtime_result = u64::MAX;
+            assert!(
+                PyScheduledEventBatch { inner: input }
+                    .to_bytes(py)
+                    .unwrap_err()
+                    .is_instance_of::<PyValueError>(py)
+            );
+            let mut input = example();
+            input.operations[0] = ScheduledEventOp::Custom {
+                tag: 91,
+                payload: vec![0; pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD + 1],
+            };
+            assert!(
+                PyScheduledEventBatch { inner: input }
+                    .to_bytes(py)
+                    .unwrap_err()
+                    .is_instance_of::<PyValueError>(py)
+            );
+        });
+    }
 }

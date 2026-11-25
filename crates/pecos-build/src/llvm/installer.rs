@@ -705,7 +705,33 @@ pub fn is_valid_installation(path: &Path) -> bool {
         }
     }
 
-    super::get_llvm_version(path).is_ok_and(|version| super::is_required_llvm_version(&version))
+    // An install validates straight after extracting both files, so each one's first
+    // execution goes through `version_output`, which waits out the write's `ETXTBSY`
+    // window instead of reporting a good install as broken.
+    //
+    // `clang` must run as well: `llvm-config` does not link `libLLVM`, so it still runs
+    // when those libraries cannot load on this host, for example a copy kept across an
+    // OS upgrade or restored from a cache built on an older release, whose `libLLVM`
+    // needs a `libxml2.so.2` the host lacks.
+    version_output(&path.join(&critical_executables[0]))
+        .is_some_and(|version| super::is_required_llvm_version(&version))
+        && version_output(&path.join(&critical_executables[1])).is_some()
+}
+
+/// Run `exe --version` and return its trimmed standard output if it exits successfully.
+fn version_output(exe: &Path) -> Option<String> {
+    // `run_when_executable` already logs why the file could not be run.
+    let output = crate::executable::run_when_executable(exe, &["--version"]).ok()?;
+    if output.status.success() {
+        return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    }
+    log::warn!(
+        "{} --version exited with {}: {}",
+        exe.display(),
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    None
 }
 
 /// Return whether an LLVM installation reports shared libLLVM support.
@@ -887,4 +913,46 @@ printf '%s\n' "$output"
 #[allow(clippy::unnecessary_wraps)]
 fn apply_platform_fixes(_llvm_dir: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::is_valid_installation;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    fn write_script(path: &Path, body: &str) {
+        fs::write(path, format!("#!/bin/sh\n{body}\n")).expect("Should write script");
+        let mut permissions = fs::metadata(path)
+            .expect("Should stat script")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("Should chmod script");
+    }
+
+    fn fake_llvm(clang_body: &str) -> tempfile::TempDir {
+        let llvm = tempfile::tempdir().expect("Should create fake LLVM dir");
+        let bin = llvm.path().join("bin");
+        fs::create_dir_all(&bin).expect("Should create bin dir");
+        write_script(&bin.join("llvm-config"), "echo 21.1.8");
+        write_script(&bin.join("clang"), clang_body);
+        llvm
+    }
+
+    #[test]
+    fn an_installation_whose_clang_runs_is_valid() {
+        let llvm = fake_llvm("echo clang version 21.1.8");
+        assert!(is_valid_installation(llvm.path()));
+    }
+
+    #[test]
+    fn an_installation_whose_shared_libraries_do_not_load_is_invalid() {
+        // The exit status and message the dynamic loader gives when libLLVM needs a
+        // libxml2 soname the host lacks; llvm-config still reports the right version.
+        let llvm = fake_llvm(
+            "echo 'clang: error while loading shared libraries: libxml2.so.2' >&2; exit 127",
+        );
+        assert!(!is_valid_installation(llvm.path()));
+    }
 }

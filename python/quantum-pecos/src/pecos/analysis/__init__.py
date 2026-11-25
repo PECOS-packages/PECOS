@@ -50,6 +50,12 @@ from pecos.analysis.find_cliffs import (
     rz_ang2str,
     rz_matrix,
 )
+from pecos.analysis.parallelism import (
+    CircuitParallelism,
+    ParallelismSummary,
+    ParallelLayer,
+    circuit_parallelism,
+)
 from pecos.analysis.stabilizer_tools import (
     compatible_stabilizer_groups,
     pauli_to_circuit,
@@ -68,16 +74,20 @@ from pecos.analysis.tool_anticommute import anticommute
 from pecos.analysis.tool_collection import fault_tolerance_check
 
 __all__ = [
+    "CircuitParallelism",
     "CircuitRunStatistics",
     "CircuitStatistics",
     "CircuitStatisticsData",
     "ExecutionViews",
     "OperationClassifier",
     "OperationStatistic",
+    "ParallelLayer",
+    "ParallelismSummary",
     "RuntimeSummary",
     "StatisticValue",
     "VerifyStabilizers",
     "anticommute",
+    "circuit_parallelism",
     "classify_operations",
     "cliff_str2matrix",
     "codecapacity_logical_rate",

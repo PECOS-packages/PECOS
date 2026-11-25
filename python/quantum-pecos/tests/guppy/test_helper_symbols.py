@@ -1,5 +1,7 @@
 """PECOS helper normalization must preserve the runtime ABI without LLVM bindings."""
 
+import sys
+
 import pytest
 from pecos_rslib.hugr_lowering import PECOS_HELPER_ABIS, normalize_pecos_helper_symbols
 
@@ -21,6 +23,10 @@ def test_rename_every_symbol_occurrence(prefix: str, suffix: str) -> None:
 def test_all_helper_abis(helper: str, abi: str) -> None:
     result, parameters = abi.split(" (", 1)
     declaration = f"declare {result} @__hugr__.{helper}({parameters}\n"
+    if sys.platform == "win32" and result.startswith("{"):
+        with pytest.raises(ValueError, match="Windows aggregate-return ABI adapter"):
+            normalize_pecos_helper_symbols(declaration)
+        return
     expected = declaration.replace("@__hugr__.", "@")
     assert normalize_pecos_helper_symbols(declaration) == expected
     assert normalize_pecos_helper_symbols(expected) == expected
@@ -107,6 +113,10 @@ def test_aggregate_declarations_merge_with_spacing_and_return_attributes() -> No
     helper = "pecos_qis_runtime_barrier_qubits2_hugr"
     first = f"declare {{i64,i64}} @__hugr__.a.{helper}.1(i64,i64) local_unnamed_addr\n"
     second = f"declare noundef {{ i64, i64 }} @{helper}(i64 noundef, i64) #1\n"
+    if sys.platform == "win32":
+        with pytest.raises(ValueError, match="Windows aggregate-return ABI adapter"):
+            normalize_pecos_helper_symbols(first + second)
+        return
     assert normalize_pecos_helper_symbols(first + second) == first.replace(f"__hugr__.a.{helper}.1", helper) + "\n"
 
 
@@ -238,3 +248,15 @@ def test_conflicting_return_pointer_types_report_complete_signatures() -> None:
         normalize_pecos_helper_symbols(first + second)
     assert "i64 * (i64, ptr, ptr)" in str(error.value)
     assert "i32 * (i64, ptr, ptr)" in str(error.value)
+
+
+@pytest.mark.parametrize("helper", ["pecos_qis_runtime_barrier_qubits2_hugr", "pecos_qis_ordering_join_hugr"])
+def test_windows_aggregate_helpers_fail_before_native_linking(monkeypatch, helper):
+    from pecos_rslib import hugr_lowering
+
+    monkeypatch.setattr(hugr_lowering.sys, "platform", "win32")
+    with pytest.raises(ValueError, match="Windows aggregate-return ABI adapter"):
+        normalize_pecos_helper_symbols(f"declare {{ i64, i64 }} @__hugr__.m.{helper}.1(i64, i64)")
+    # Scalar helper ABIs do not need the aggregate-return adapter.
+    scalar = "declare i64 @pecos_qis_ordering_barrier_hugr(i64)"
+    assert normalize_pecos_helper_symbols(scalar) == scalar

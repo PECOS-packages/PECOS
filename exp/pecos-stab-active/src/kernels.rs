@@ -14,8 +14,8 @@
 
 use num_complex::Complex64;
 use pecos_core::Angle64;
-use pecos_stab_tn::stab_mps::coordinate_tableau::{CoordinateGate, MeasurementCase};
-use pecos_stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
+use pecos_simulators::stab_tn::stab_mps::coordinate_tableau::{CoordinateGate, MeasurementCase};
+use pecos_simulators::stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
 
 pub(crate) fn rotate(
     amplitudes: &mut [Complex64],

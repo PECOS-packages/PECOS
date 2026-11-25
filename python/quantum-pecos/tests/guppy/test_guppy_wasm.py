@@ -1,0 +1,703 @@
+"""Guppy WASM compilation and real execution through the PECOS sim() stack."""
+
+import importlib.util
+import re
+import reprlib
+import subprocess
+import sys
+from collections import Counter
+from pathlib import Path
+
+import pecos as pc
+import pytest
+from guppylang import guppy
+from guppylang.std.builtins import nat, result
+from guppylang.std.quantum import measure, qubit, x
+from guppylang_internals.decorator import wasm, wasm_module
+from guppylang_internals.error import GuppyError
+from hugr import ops
+from hugr.package import Package
+
+EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
+# Every "requires explicit wasm_modules" error ends with this fix.
+PASS_MODULES = re.escape("pass wasm_modules={module_name: wasm_bytes}")
+
+
+@pytest.fixture(scope="module")
+def examples():
+    modules = {}
+    for name in (
+        "arithmetic",
+        "stateful",
+        "floating_point",
+        "indexed_exports",
+        "integer32",
+        "mixed_integers",
+        "worker_state",
+        "memory_lifecycle",
+        "managed_objects",
+    ):
+        spec = importlib.util.spec_from_file_location(f"wasm_{name}", EXAMPLES / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        modules[name] = module
+    return modules
+
+
+@pytest.fixture
+def arithmetic(examples):
+    module = pc.WasmForeignObject.from_file(examples["arithmetic"].WASM_PATH)
+    module.init()
+    try:
+        yield module
+    finally:
+        module.teardown()
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "expected"),
+    [
+        ("add", [2, 3], 5),
+        ("add", [0, 0], 0),
+        ("add", [-7, 3], -4),
+        ("add", [2**40, 3], 2**40 + 3),
+        ("multiply", [5, 4], 20),
+        ("multiply", [-7, 3], -21),
+        ("multiply", [0, 9], 0),
+    ],
+)
+def test_direct_wasm_arithmetic(arithmetic, name, arguments, expected) -> None:
+    """Exercise the real exports, including signed and wider-than-i32 values."""
+    assert arithmetic.exec(name, arguments) == expected
+
+
+def test_chained_wasm_calls(arithmetic) -> None:
+    total = arithmetic.exec("add", [2, 3])
+    assert arithmetic.exec("multiply", [total, 4]) == 20
+
+
+@pytest.mark.parametrize(
+    ("name", "exports"),
+    [("addition", ["add"]), ("chained_arithmetic", ["add", "multiply"]), ("conditional_x", ["add"])],
+)
+def test_guppy_wasm_hugr_roundtrip(examples, name, exports) -> None:
+    """PECOS's Guppy wrapper must preserve actual WASM calls and their context."""
+    program = pc.Guppy(getattr(examples["arithmetic"], name))
+    package = Package.from_bytes(program.hugr_bytes)
+    wasm_ops = [
+        op
+        for graph in package.modules
+        for node in graph
+        if isinstance(op := graph[node].op, ops.ExtOp) and op.op_def().get_extension().name == "tket.wasm"
+    ]
+    names = Counter(op.op_def().name for op in wasm_ops)
+    assert names == {
+        "get_context": 1,
+        "lookup_by_name": len(exports),
+        "call": len(exports),
+        "read_result": len(exports),
+        "dispose_context": 1,
+    }
+    assert [op.args[0].value for op in wasm_ops if op.op_def().name == "lookup_by_name"] == exports
+
+
+def test_program_wasm_options_are_validated_on_construction() -> None:
+    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64, or 'auto'; got 16$"):
+        pc.Hugr(b"unused", wasm_modules={"m": b""}, wasm_int_width=16)
+    with pytest.raises(ValueError, match=rf"^wasm_int_width=32 requires explicit wasm_modules; {PASS_MODULES}$"):
+        pc.Hugr.from_bytes(b"unused", wasm_int_width=32)
+
+
+def test_missing_export_is_rejected(examples) -> None:
+    with pytest.raises(GuppyError, match="isn't exported"):
+
+        @wasm_module(str(examples["arithmetic"].WASM_PATH))
+        class MissingExport:
+            @wasm
+            def subtract(self, a: int, b: int) -> int: ...
+
+
+def test_wrong_signature_is_rejected(examples) -> None:
+    @wasm_module(str(examples["arithmetic"].WASM_PATH))
+    class WrongSignature:
+        @wasm
+        def add(self, a: int) -> int: ...
+
+    @guppy
+    def wrong_call() -> int:
+        arithmetic = WrongSignature(nat(0))
+        total = arithmetic.add(2)
+        arithmetic.discard()
+        return total
+
+    with pytest.raises(GuppyError, match="Wasm signature mismatch"):
+        wrong_call.compile()
+
+
+@pytest.mark.parametrize(
+    ("name", "label", "expected"),
+    [
+        ("addition", "sum", 5),
+        ("chained_arithmetic", "product", 20),
+        ("conditional_x", "measured", 1),
+        ("conditional_calls", "value", 6),
+    ],
+)
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+def test_pecos_wasm_execution(examples, name, label, expected, wrapper):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["arithmetic"]
+    function = getattr(example, name)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    program = (
+        pc.Guppy(function, wasm_modules=modules)
+        if wrapper == "guppy"
+        else pc.Hugr(
+            function.compile().to_bytes(),
+            wasm_modules=modules,
+        )
+    )
+    data = pc.sim(program).qubits(1).quantum(pc.state_vector()).seed(42).run(4).to_dict()
+    assert data[label] == [expected] * 4
+
+
+def test_pecos_state_and_error_recovery(examples):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["stateful"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+
+    def run(function):
+        return pc.sim(pc.Guppy(function, wasm_modules=modules)).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
+
+    for _ in range(2):
+        data = run(example.stateful_calls)
+        assert data["three"] == [3] * 4
+        assert data["four"] == [4] * 4
+        assert data["independent"] == [1] * 4
+        assert data["cleared"] == [1] * 4
+        with pytest.raises(RuntimeError, match=r"WASM|wasm|unreachable|2001"):
+            run(example.trapped)
+    data = run(example.context_helpers)
+    assert data["second"] == [2] * 4
+    assert data["third"] == [3] * 4
+
+
+@pytest.mark.parametrize("backend", ["pecos", "selene"])
+def test_example_runs_from_another_directory(tmp_path, backend) -> None:
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    completed = subprocess.run(
+        [sys.executable, str(EXAMPLES / "arithmetic.py"), "--run", backend],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert f"{backend}: addition: {{'sum': [5, 5, 5, 5]}}" in completed.stdout
+    assert f"{backend}: chained_arithmetic: {{'product': [20, 20, 20, 20]}}" in completed.stdout
+    assert f"{backend}: conditional_x: {{'measured': [1, 1, 1, 1]}}" in completed.stdout
+
+
+@guppy
+def control_without_wasm() -> None:
+    """Verify both runners and result parsing independently of WASM support."""
+    result("sum", 5)
+    result("product", 20)
+    q = qubit()
+    x(q)
+    result("measured", measure(q).read())
+
+
+@pytest.mark.parametrize("backend", ["pecos", "selene"])
+def test_runtime_probe_control(tmp_path, backend) -> None:
+    """Keep the default compiler/runtime control separate from WASM configuration."""
+    if backend == "pecos":
+        data = pc.sim(pc.Guppy(control_without_wasm)).qubits(1).quantum(pc.state_vector()).seed(42).run(3).to_dict()
+        shots = [dict(zip(data, values, strict=True)) for values in zip(*data.values(), strict=True)]
+    else:
+        import selene_sim
+
+        instance = selene_sim.build(control_without_wasm.compile(), build_dir=tmp_path)
+        shots = [
+            dict(shot)
+            for shot in instance.run_shots(
+                simulator=selene_sim.Quest(),
+                n_qubits=1,
+                n_shots=3,
+                n_processes=1,
+                random_seed=42,
+            )
+        ]
+    assert shots == [{"sum": 5, "product": 20, "measured": 1}] * 3
+
+
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("mixed_arithmetic", {"value": [-4.25] * 4, "integer": [-4] * 4}),
+        ("float_feedback", {"measured": [1] * 4}),
+        ("float_state", {"initial": [0.0] * 4, "retained": [-2.5] * 4}),
+        ("float_loop", {"value": [3.75] * 4, "measured": [1] * 4}),
+    ],
+)
+def test_pecos_float_wasm(examples, wrapper, name, expected):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["floating_point"]
+    function = getattr(example, name)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    program = (
+        pc.Guppy(function, wasm_modules=modules)
+        if wrapper == "guppy"
+        else pc.Hugr(function.compile().to_bytes(), wasm_modules=modules)
+    )
+    data = pc.sim(program).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
+    assert data == expected
+
+
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("stateful_loop", {"three": 3}),
+        ("loop_control", {"zero": 99, "one": 1, "nested": 7, "condition": 10, "steps": 3}),
+        ("loop_helpers", {"helper": 3, "after": 4}),
+    ],
+)
+def test_pecos_wasm_loops(examples, wrapper, name, expected):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["stateful"]
+    function = getattr(example, name)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    program = (
+        pc.Guppy(function, wasm_modules=modules)
+        if wrapper == "guppy"
+        else pc.Hugr(function.compile().to_bytes(), wasm_modules=modules)
+    )
+    data = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).run(4).to_dict()
+    assert data == {label: [value] * 4 for label, value in expected.items()}
+
+
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+def test_external_loop_uses_safe_frontend_after_normal_cache(examples, monkeypatch, wrapper):
+    import re
+
+    from guppylang.library import link_name
+
+    plugin = pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["stateful"]
+    counter_module = example.Counter
+
+    @guppy.declare
+    @link_name("wasm_test_increment")
+    def external(value: int) -> int: ...
+
+    @guppy
+    def program() -> None:
+        counter = counter_module(nat(0))
+        result("counter", counter.increment())
+        counter.discard()
+        value = 0
+        for _ in range(3):
+            value = external(value)
+        result("total", value)
+
+    # Populate the ordinary per-definition cache first. WASM must not reuse it.
+    normal = pc.Guppy(program).hugr_bytes
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    prepared = pc.Guppy(program, wasm_modules=modules)
+    safe_bytes = prepared.hugr_bytes
+    assert safe_bytes is prepared.hugr_bytes
+    assert pc.Guppy(program).hugr_bytes is normal
+    assert safe_bytes != normal
+    original_compile = plugin.compile_wasm
+
+    def compile_with_native_fixture(*args, **kwargs):
+        ir = original_compile(*args, **kwargs)
+        # Implement the declared add-one function independently of lowering.
+        body = r"define i64 \1(i64 %n) {\nentry:\n  %next = add i64 %n, 1\n  ret i64 %next\n}"
+        ir, count = re.subn(
+            r"^declare i64 (@[^\s(]*wasm_test_increment[^\s(]*)\(i64\)[^\n]*$",
+            body,
+            ir,
+            flags=re.MULTILINE,
+        )
+        assert count == 1
+        return ir
+
+    monkeypatch.setattr(plugin, "compile_wasm", compile_with_native_fixture)
+    executable = prepared if wrapper == "guppy" else pc.Hugr(safe_bytes, wasm_modules=modules)
+    data = pc.sim(executable).qubits(1).quantum(pc.state_vector()).run(2).to_dict()
+    assert data == {"counter": [1, 1], "total": [3, 3]}
+
+
+def test_missing_wasm_extra_has_install_guidance(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pecos_selene_wasm", None)
+    with pytest.raises(ImportError, match=r"quantum-pecos\[wasm\]"):
+        _ = pc.Guppy(control_without_wasm, wasm_modules={}).hugr_bytes
+
+
+@pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("indexed_arithmetic", {"sum": 4, "product": 20, "named": 22}),
+        ("indexed_feedback", {"value": 1.5, "measured": 1}),
+        ("indexed_state", {"three": 3, "reset": 1}),
+    ],
+)
+def test_pecos_indexed_exports(examples, wrapper, name, expected):
+    plugin = pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["indexed_exports"]
+    function = getattr(example, name)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    program = (
+        pc.Guppy(function, wasm_modules=modules)
+        if wrapper == "guppy"
+        else pc.Hugr(plugin.compile_guppy(function).to_bytes(), wasm_modules=modules)
+    )
+    data = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).run(4).to_dict()
+    assert data == {label: [value] * 4 for label, value in expected.items()}
+
+
+def test_pecos_indexed_export_error_recovery(examples):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["indexed_exports"]
+    bad_modules = {str(example.WASM_PATH): b'(module (func (export "only")))'}
+    with pytest.raises(RuntimeError, match=r"out of range|2001"):
+        pc.sim(pc.Guppy(example.indexed_feedback, wasm_modules=bad_modules)).qubits(1).quantum(pc.state_vector()).run(1)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    data = (
+        pc.sim(pc.Guppy(example.indexed_feedback, wasm_modules=modules))
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .run(2)
+        .to_dict()
+    )
+    assert data == {"value": [1.5, 1.5], "measured": [1, 1]}
+
+
+def test_pecos_parity_cli_executes_public_workloads(tmp_path):
+    import json
+
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    output = tmp_path / "pecos.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(EXAMPLES / "parity/parity.py"),
+            "run",
+            "--backend",
+            "pecos",
+            "--output",
+            str(output),
+            "--stack-tag",
+            "ci-pecos",
+            "--host-tag",
+            "ci",
+            "--shots",
+            "2",
+            "--repeats",
+            "1",
+            "--workers",
+            "2",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+    report = json.loads(output.read_text())
+    assert {"i32-boundaries", "i32-state-feedback", "repetition-correction"} <= {case["id"] for case in report["cases"]}
+    assert len(report["cases"]) == 22
+    assert all(case["status"] == "completed" for case in report["cases"])
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "boundaries",
+            {
+                "sum": 5,
+                "overflow": -2147483648,
+                "underflow": 2147483647,
+                "wide": 5,
+                "negative_wide": 2147483647,
+                "indexed": -5,
+            },
+        ),
+        ("state_and_feedback", {"initial": 0, "retained": -7, "measured": 1}),
+    ],
+)
+def test_pecos_i32_guppy_exports(examples, name, expected):
+    pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    example = examples["integer32"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    runner = (
+        pc.sim(pc.Guppy(getattr(example, name), wasm_modules=modules, wasm_int_width=32))
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .workers(2)
+        .build()
+    )
+    for _ in range(2):
+        assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
+
+
+def test_pecos_i32_precompiled_hugr(examples, tmp_path):
+    plugin = pytest.importorskip("pecos_selene_wasm", reason="requires quantum-pecos[wasm]")
+    compile_guppy = plugin.compile_guppy
+
+    example = examples["integer32"]
+    path = tmp_path / "integer32.hugr"
+    data = compile_guppy(example.boundaries).to_bytes()
+    path.write_bytes(data)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    for program in (
+        pc.Hugr.from_file(path, wasm_modules=modules, wasm_int_width=32),
+        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_int_width=32),
+    ):
+        output = pc.sim(program).qubits(1).quantum(pc.state_vector()).run(1).to_dict()
+        assert output["overflow"] == [-2147483648]
+        assert output["wide"] == [5]
+
+
+@pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
+def test_pecos_rejects_invalid_wasm_timeout(timeout):
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        message = f"wasm_timeout_seconds must be a positive finite number of seconds; got {reprlib.repr(timeout)}"
+        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+            constructor(source, wasm_modules={}, wasm_timeout_seconds=timeout)
+
+
+def test_nondefault_wasm_timeout_requires_modules():
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(
+            ValueError,
+            match=rf"^wasm_timeout_seconds=2\.0 requires explicit wasm_modules; {PASS_MODULES}$",
+        ):
+            constructor(source, wasm_timeout_seconds=2.0)
+
+
+def test_pecos_timeout_propagates_through_guppy_and_hugr(examples, tmp_path, monkeypatch):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    from pecos_rslib import hugr_lowering
+
+    original = hugr_lowering.compile_hugr_to_qis
+    emitted = []
+
+    def record(*args, **kwargs):
+        assert kwargs["wasm_timeout_seconds"] == 2.5
+        llvm = original(*args, **kwargs)
+        assert "call i32 @pecos_wasm_v2_register" in llvm
+        assert "double 0x4004000000000000" in llvm
+        emitted.append(llvm)
+        return llvm
+
+    monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", record)
+    example = examples["arithmetic"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    data = plugin.compile_guppy(example.addition).to_bytes()
+    path = tmp_path / "program.hugr"
+    path.write_bytes(data)
+    options = {"wasm_modules": modules, "wasm_timeout_seconds": 2.5}
+    for program in (
+        pc.Guppy(example.addition, **options),
+        pc.Hugr.from_bytes(data, **options),
+        pc.Hugr.from_file(path, **options),
+    ):
+        assert pc.sim(program).qubits(1).quantum(pc.state_vector()).run(2).to_dict() == {"sum": [5, 5]}
+    assert len(emitted) == 3
+
+
+@pytest.mark.parametrize("value", [0, 1, None, "false"])
+def test_pecos_rejects_invalid_auto_init(value):
+    for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match=rf"^wasm_auto_init must be True or False; got {re.escape(repr(value))}$"):
+            constructor(source, wasm_modules={}, wasm_auto_init=value)
+
+
+def test_auto_init_opt_out_requires_modules():
+    for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match=rf"^wasm_auto_init=False requires explicit wasm_modules; {PASS_MODULES}$"):
+            constructor(source, wasm_auto_init=False)
+
+
+@pytest.mark.parametrize("auto_init", [True, False])
+@pytest.mark.parametrize("explicit", [True, False])
+def test_pecos_memory_lifecycle_initialization(examples, tmp_path, auto_init, explicit):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    example = examples["memory_lifecycle"]
+    function = example.explicit_initialization if explicit else example.memory_operations
+    data = plugin.compile_guppy(function).to_bytes()
+    path = tmp_path / "memory.hugr"
+    path.write_bytes(data)
+    options = {
+        "wasm_modules": {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        "wasm_auto_init": auto_init,
+        "wasm_timeout_seconds": 2.5,
+    }
+    initial = 42 if auto_init else 11
+    expected = (
+        {"before": initial, "after": initial + 31}
+        if explicit
+        else {
+            "initialized": initial,
+            "incremented": initial + 1,
+            "old_pages": 1,
+            "pages": 2,
+            "zero": 0,
+            "stored": -7,
+            "indirect": 12,
+            "growth_refused": -1,
+        }
+    )
+    for program in (
+        pc.Guppy(function, **options),
+        pc.Hugr.from_bytes(data, **options),
+        pc.Hugr.from_file(path, **options),
+    ):
+        runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).build()
+        for _ in range(2):
+            assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
+
+
+def test_pecos_managed_objects_use_fresh_stores(examples):
+    example = examples["managed_objects"]
+    expected = {"initial": 7, "next": 8, "sum": 5, "retained": 8, "independent": 7}
+    runner = (
+        pc.sim(
+            pc.Guppy(
+                example.managed_state,
+                wasm_modules={str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()},
+            ),
+        )
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .workers(2)
+        .build()
+    )
+    for _ in range(2):
+        assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
+
+
+def test_pecos_mixed_integer_widths(examples, tmp_path):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    example = examples["mixed_integers"]
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    data = plugin.compile_guppy(example.mixed).to_bytes()
+    path = tmp_path / "mixed.hugr"
+    path.write_bytes(data)
+    programs = (
+        pc.Guppy(example.mixed, wasm_modules=modules, wasm_int_width="auto"),
+        pc.Hugr.from_file(path, wasm_modules=modules, wasm_int_width="auto"),
+        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_int_width="auto"),
+    )
+    expected = {"small": -2147483648, "large": 4294967308, "small_indexed": -3, "large_indexed": 4294967293}
+    for program in programs:
+        runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).build()
+        for _ in range(2):
+            assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
+
+
+@pytest.mark.parametrize("width", [True, 32.0, 64.0, "32", "AUTO", None])
+def test_pecos_rejects_invalid_integer_width(width):
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        message = f"wasm_int_width must be 32 or 64, or 'auto'; got {reprlib.repr(width)}"
+        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+            constructor(source, wasm_modules={}, wasm_int_width=width)
+
+
+def test_pecos_auto_integer_width_requires_modules():
+    message = rf"^wasm_int_width='auto' requires explicit wasm_modules; {PASS_MODULES}$"
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match=message):
+            constructor(source, wasm_int_width="auto")
+
+
+@pytest.mark.parametrize("workers", [1, 2, 3])
+@pytest.mark.parametrize("shots", [1, 4, 5])
+@pytest.mark.parametrize("scope", ["shot", "worker"])
+def test_pecos_worker_state_scope_and_fresh_batches(examples, workers, shots, scope):
+    pytest.importorskip("pecos_selene_wasm")
+    example = examples["worker_state"]
+    runner = (
+        pc.sim(
+            pc.Guppy(
+                example.counter,
+                wasm_modules={str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+                wasm_state_scope=scope,
+            ),
+        )
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .workers(workers)
+        .build()
+    )
+    expected = (
+        [1] * shots
+        if scope == "shot"
+        else sorted(
+            value for worker in range(workers) for value in range(1, shots // workers + (worker < shots % workers) + 1)
+        )
+    )
+    for _ in range(2):
+        assert sorted(runner.run(shots).to_dict()["count"]) == expected
+
+
+@pytest.mark.parametrize("auto_init", [True, False])
+def test_pecos_worker_state_initialization_runs_once(examples, auto_init):
+    pytest.importorskip("pecos_selene_wasm")
+    example = examples["worker_state"]
+    payload = examples["memory_lifecycle"].WASM_PATH.read_bytes()
+    runner = (
+        pc.sim(
+            pc.Guppy(
+                example.counter,
+                wasm_modules={str(example.WASM_PATH): payload},
+                wasm_state_scope="worker",
+                wasm_auto_init=auto_init,
+            ),
+        )
+        .qubits(1)
+        .quantum(pc.state_vector())
+        .workers(1)
+        .build()
+    )
+    initial = 43 if auto_init else 12
+    for _ in range(2):
+        assert runner.run(4).to_dict()["count"] == list(range(initial, initial + 4))
+
+
+def test_pecos_worker_state_precompiled_hugr(examples, tmp_path):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    example = examples["worker_state"]
+    data = plugin.compile_guppy(example.counter).to_bytes()
+    path = tmp_path / "counter.hugr"
+    path.write_bytes(data)
+    modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
+    for program in (
+        pc.Hugr.from_file(path, wasm_modules=modules, wasm_state_scope="worker"),
+        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_state_scope="worker"),
+    ):
+        runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(1).build()
+        for _ in range(2):
+            assert runner.run(4).to_dict()["count"] == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("scope", [None, 1, True, "batch", "WORKER"])
+def test_pecos_invalid_wasm_state_scope(scope):
+    message = f"wasm_state_scope must be 'shot' or 'worker'; got {reprlib.repr(scope)}"
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+            constructor(source, wasm_modules={}, wasm_state_scope=scope)
+
+
+def test_pecos_worker_state_requires_modules():
+    message = rf"^wasm_state_scope='worker' requires explicit wasm_modules; {PASS_MODULES}$"
+    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
+        with pytest.raises(ValueError, match=message):
+            constructor(source, wasm_state_scope="worker")

@@ -205,9 +205,25 @@ class QisEngineBuilder:
         )
         return self
 
-    def runtime_decoder(self, factory: object) -> Self:
-        """Configure a fresh host decoder session per shot, for live QIS calls."""
-        self._builder = self._builder.runtime_decoder(factory)
+    def runtime_decoder(
+        self,
+        factory: object,
+        *,
+        capture_batches: bool = False,
+        capture_control_flow: bool = False,
+    ) -> Self:
+        """Configure shot-local decoding, optionally with bounded emitted batches.
+
+        ``capture_batches`` requires observed native decode calls and ordinary
+        transport. The provider sees runtime timing/operations, never noise truth.
+        ``capture_control_flow`` additionally instruments a strict LLVM text
+        subset and requires batch capture; unsupported programs reject.
+        """
+        self._builder = self._builder.runtime_decoder(
+            factory,
+            capture_batches=capture_batches,
+            capture_control_flow=capture_control_flow,
+        )
         return self
 
     def interface(self, builder: object) -> Self:
@@ -217,6 +233,26 @@ class QisEngineBuilder:
             Self for method chaining.
         """
         self._builder = self._builder.interface(builder)
+        return self
+
+    def scoped_execution(self, *, enabled: bool = True) -> Self:
+        """Run synchronously on the Monte Carlo worker with noise/quantum feedback.
+
+        Staged execution remains the default. Requires a supporting interface
+        at build time. Cannot detach an unresponsive native program; cancellation
+        requires cooperative checkpoints. Runtime scheduling is unchanged.
+        """
+        self._builder = self._builder.scoped_execution(enabled)
+        return self
+
+    def scheduled_batches(self, *, enabled: bool = True) -> Self:
+        """Select scheduled transport, paired with a scheduled noise profile."""
+        self._builder = self._builder.scheduled_batches(enabled)
+        return self
+
+    def scheduled_event_batches(self, *, enabled: bool = True) -> Self:
+        """Select scheduled event transport, paired with an event noise profile."""
+        self._builder = self._builder.scheduled_event_batches(enabled)
         return self
 
     def to_sim(self) -> prs.SimBuilder:
@@ -310,6 +346,16 @@ def _known_runtime_name(runtime: object) -> str | None:
     package = type(runtime).__module__.partition(".")[0]
     name = package.removesuffix("_plugin")
     return name if name != package and name in _KNOWN_RUNTIME_NATIVE_GATES else None
+
+
+def _runtime_native_gates(runtime: object | None) -> object | None:
+    """Resolve plugin declarations and known-package defaults in one place."""
+    gates = getattr(runtime, "native_gates", None)
+    if gates is None and runtime is not None and not isinstance(runtime, (str, PathLike)):
+        known_name = _known_runtime_name(runtime)
+        if known_name is not None:
+            gates = _KNOWN_RUNTIME_NATIVE_GATES[known_name]
+    return gates
 
 
 def _configure_selene_runtime(

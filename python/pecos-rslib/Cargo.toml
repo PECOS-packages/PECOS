@@ -50,6 +50,7 @@ pecos-num.workspace = true
 pecos-random.workspace = true
 pecos-simulators.workspace = true
 pecos-engines.workspace = true
+pecos-foreign.workspace = true
 # Unified sim() facade with neo-stack routing (strangler-fig: Python .stack("neo"))
 pecos = { workspace = true, default-features = false, features = ["neo"] }
 pecos-programs.workspace = true
@@ -110,3 +111,7 @@ pecos-build = { workspace = true }
 
 [lints]
 workspace = true
+
+# Include root Cargo patch sources in Maturin sdists (no runtime dependencies).
+[dev-dependencies]
+highs.workspace = true

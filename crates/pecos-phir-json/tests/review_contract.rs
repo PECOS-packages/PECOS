@@ -80,10 +80,6 @@ fn converter_rejects_other_unimplemented_operation_kinds() {
             "PHIR meta barrier:",
             json!({"meta":"barrier","args":[["q",0]]}),
         ),
-        (
-            "cvar_export",
-            json!({"data":"cvar_export","variables":["m"]}),
-        ),
         ("cop =", json!({"cop":"=","args":[1],"returns":["m"]})),
         ("unexpected", json!({"unexpected":true})),
         ("42", json!(42)),
@@ -131,7 +127,11 @@ fn all_quantum_paths_reject_duplicate_qubits_identically() {
         ("Measure", json!([["q", 1], ["q", 1]])),
         ("CX", json!([[["q", 0], ["q", 1]], [["q", 1], ["q", 2]]])),
     ] {
-        let source = program(&json!({"qop":name,"args":args}));
+        let mut op = json!({"qop":name,"args":args});
+        if name == "Measure" {
+            op["returns"] = json!([["m", 0], ["m", 1]]);
+        }
+        let source = program(&op);
         let error = native_error(&source);
         assert_eq!(error, interpreter_error(&source));
         assert_eq!(error, phir_json_to_module(&source).unwrap_err().to_string());
@@ -519,7 +519,7 @@ fn result_and_assignment_sign_extend_identically() {
                         u64::MAX - 7,
                         "{dtype} {size} {destination}"
                     );
-                    match &interpreter.results(true)[name] {
+                    match &interpreter.results(true).unwrap()[name] {
                         ResultValue::Int(value, _) => assert_eq!(*value, -8),
                         ResultValue::UInt(value, _) => assert_eq!(*value, u64::MAX - 7),
                         other @ ResultValue::BitString(_) => panic!("unexpected {other:?}"),
@@ -774,10 +774,20 @@ fn declaration_diagnostics_bound_json_values() {
 #[test]
 fn non_declaration_data_errors_name_the_directive() {
     use pecos_phir_json::v0_1::ast::Operation;
-    for (data, fix) in [
-        ("cvar_export", "supply the required variables array"),
-        ("future_data", "use a string variable name"),
+    for malformed in [
+        json!({"data":"cvar_export"}),
+        json!({"data":"cvar_export","variable":"a","data_type":"u32"}),
     ] {
+        let error = serde_json::from_value::<Operation>(malformed)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "Input error: cvar_export: invalid variables <missing or null>; supply an array of strings"
+        );
+    }
+    {
+        let (data, fix) = ("future_data", "use a string variable name");
         let error = serde_json::from_value::<Operation>(json!({"data":data}))
             .unwrap_err()
             .to_string();

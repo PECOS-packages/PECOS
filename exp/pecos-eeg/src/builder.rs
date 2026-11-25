@@ -433,14 +433,14 @@ mod tests {
         );
     }
 
-    /// `MeasureLeaked` stays refused: it consumes no record, so the
+    /// `MeasureZLeaked` stays refused: it consumes no record, so the
     /// record-aligned expansion genuinely cannot represent it.
     #[test]
     fn a_measure_leaked_circuit_is_refused() {
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
         tc.tick()
-            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .try_add_gate(pecos_core::Gate::measure_z_leaked(&[0usize]))
             .expect("gate is valid");
         tc.tick().mz(&[1]);
 

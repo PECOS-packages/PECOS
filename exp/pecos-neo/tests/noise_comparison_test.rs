@@ -587,7 +587,7 @@ fn test_idle_noise_with_time_scale() {
 
     // Verify time scale is set
     assert!(model.time_scale().is_some());
-    assert_eq!(model.channel_count(), 1);
+    assert_eq!(model.channel_count(), 2); // Idle plus unconditional leakage suppression.
 
     // Circuit with idle - use H gates to make the Y/Z phase-changing errors detectable.
     // H|+> = |0>, H|-> = |1>, so Y|+> and Z|+> give |-> up to phase.

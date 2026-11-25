@@ -3,7 +3,6 @@
 //! This module implements the standard traits from pecos-decoder-core
 //! to ensure Relay BP decoders are compatible with the common decoder interface.
 
-use crate::builder::DEFAULT_GAMMA0;
 use crate::config::{MinSumConfig, RelayConfig};
 use crate::decoder::{DecodingResult, MinSumBpDecoder, RelayBpDecoder};
 use crate::errors::RelayBpError;
@@ -23,7 +22,9 @@ impl DecodingResultTrait for DecodingResult {
     }
 
     fn correction(&self) -> &[u8] {
-        self.decoding.as_slice().unwrap_or(&[])
+        self.decoding
+            .as_slice()
+            .expect("decoder corrections are contiguous")
     }
 
     fn cost(&self) -> Option<f64> {
@@ -99,11 +100,9 @@ impl CheckMatrixDecoder for RelayBpDecoder {
         // Use weights from config as error priors, or default to 0.1
         let error_priors = config.weights.unwrap_or_else(|| vec![0.1; ncols]);
 
-        let mut ms_config = MinSumConfig::new(error_priors);
-        ms_config.gamma0 = Some(DEFAULT_GAMMA0);
         let relay_config = RelayConfig::default();
 
-        RelayBpDecoder::new(check_matrix, &ms_config, &relay_config)
+        RelayBpDecoder::new(check_matrix, &error_priors, &relay_config)
             .map_err(pecos_decoder_core::DecoderError::from)
     }
 
@@ -113,10 +112,7 @@ impl CheckMatrixDecoder for RelayBpDecoder {
         shape: (usize, usize),
         config: Self::CheckMatrixConfig,
     ) -> Result<Self, pecos_decoder_core::DecoderError> {
-        let mut dense = ndarray::Array2::zeros(shape);
-        for (&r, &c) in rows.iter().zip(cols.iter()) {
-            dense[[r, c]] = 1;
-        }
+        let dense = sparse_to_dense(&rows, &cols, shape)?;
         Self::from_dense_matrix_with_config(&dense.view(), config)
     }
 }
@@ -144,12 +140,35 @@ impl CheckMatrixDecoder for MinSumBpDecoder {
         shape: (usize, usize),
         config: Self::CheckMatrixConfig,
     ) -> Result<Self, pecos_decoder_core::DecoderError> {
-        let mut dense = ndarray::Array2::zeros(shape);
-        for (&r, &c) in rows.iter().zip(cols.iter()) {
-            dense[[r, c]] = 1;
-        }
+        let dense = sparse_to_dense(&rows, &cols, shape)?;
         Self::from_dense_matrix_with_config(&dense.view(), config)
     }
+}
+
+fn sparse_to_dense(
+    rows: &[usize],
+    cols: &[usize],
+    shape: (usize, usize),
+) -> Result<ndarray::Array2<u8>, pecos_decoder_core::DecoderError> {
+    if rows.len() != cols.len() {
+        return Err(pecos_decoder_core::DecoderError::MatrixError(format!(
+            "rows length {} does not match cols length {}",
+            rows.len(),
+            cols.len()
+        )));
+    }
+    for (index, (&row, &col)) in rows.iter().zip(cols).enumerate() {
+        if row >= shape.0 || col >= shape.1 {
+            return Err(pecos_decoder_core::DecoderError::MatrixError(format!(
+                "sparse index {index}: row={row}, col={col} outside shape {shape:?}"
+            )));
+        }
+    }
+    let mut dense = ndarray::Array2::zeros(shape);
+    for (&row, &col) in rows.iter().zip(cols) {
+        dense[[row, col]] = 1;
+    }
+    Ok(dense)
 }
 
 // ============================================================================
@@ -184,7 +203,8 @@ mod tests {
         let h = Array2::from_shape_vec((2, 3), vec![1, 1, 0, 0, 1, 1]).unwrap();
         let ms_config = MinSumConfig::new(vec![0.1, 0.1, 0.1]);
         let relay_config = RelayConfig::default();
-        let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+        let mut decoder =
+            RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
         let syndrome = Array1::from_vec(vec![1u8, 0]);
         let result = <RelayBpDecoder as Decoder>::decode(&mut decoder, &syndrome.view()).unwrap();

@@ -18,6 +18,7 @@ from release_tag_status import NON_VALIDATION, checkout_workflows, expected_work
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github/workflows"
 EXPECTED = {
     "cargo-deny.yml",
+    "circuit-inspector.yml",
     "codeql.yml",
     "cuda-build-check.yml",
     "dependency-integrity-check.yml",

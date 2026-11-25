@@ -35,8 +35,8 @@ class TestConversionConsistency:
             qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
             Return(c),
         )
 
@@ -244,9 +244,9 @@ class TestConversionConsistency:
             qubit.CX(q[0], q[1]),
             qubit.CX(q[1], q[2]),
             # Measure all qubits
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
-            qubit.Measure(q[2]) > c[2],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
+            qubit.MeasureZ(q[2]) > c[2],
             Return(c),
         )
 
@@ -308,9 +308,9 @@ class TestQASMValidation:
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.CX(q[1], q[2]),
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
-            qubit.Measure(q[2]) > c[2],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
+            qubit.MeasureZ(q[2]) > c[2],
             Return(c),
         )
 
@@ -346,8 +346,8 @@ class TestQASMValidation:
             c2 := CReg("syndrome", 2),
             qubit.H(q1[0]),
             qubit.CX(q1[0], q2[0]),
-            qubit.Measure(q1[0]) > c1[0],
-            qubit.Measure(q2[0]) > c2[0],
+            qubit.MeasureZ(q1[0]) > c1[0],
+            qubit.MeasureZ(q2[0]) > c2[0],
             Return(c1, c2),
         )
 

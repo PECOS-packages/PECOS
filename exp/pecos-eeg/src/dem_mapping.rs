@@ -969,11 +969,7 @@ pub fn format_dem(entries: &[DemEntry]) -> String {
             parts.push(format!("L{o}"));
         }
         if !parts.is_empty() {
-            lines.push(format!(
-                "error({:.6e}) {}",
-                entry.probability,
-                parts.join(" ")
-            ));
+            lines.push(format!("error({}) {}", entry.probability, parts.join(" ")));
         }
     }
     lines.join("\n")
@@ -1244,7 +1240,7 @@ pub fn format_dem_decomposed(entries: &[DecomposableDemEntry]) -> String {
     let mut lines = Vec::new();
     for (targets, prob) in &by_targets {
         if *prob > 0.0 {
-            lines.push(format!("error({prob:.6e}) {targets}"));
+            lines.push(format!("error({prob}) {targets}"));
         }
     }
     lines.join("\n")

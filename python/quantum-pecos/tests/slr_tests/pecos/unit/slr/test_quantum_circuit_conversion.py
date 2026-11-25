@@ -11,10 +11,11 @@ sys.path.insert(
 
 import pytest
 from pecos.circuits.quantum_circuit import QuantumCircuit
-from pecos.slr import CReg, For, If, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
+from pecos.slr import Block, CReg, For, If, Main, Parallel, Print, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
+from pecos_rslib import Qasm, sim, state_vector
 
 
 def _return_declared_cregs(prog: Main) -> Main:
@@ -172,8 +173,8 @@ class TestSLRToQuantumCircuit:
             qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
             Return(c),
         )
 
@@ -184,7 +185,7 @@ class TestSLRToQuantumCircuit:
         # Check for reset and measure operations
         circuit_str = str(qc)
         assert "RESET" in circuit_str or "PZ" in circuit_str
-        assert "Measure" in circuit_str
+        assert [symbol for symbol, _, _ in qc.items() if symbol.startswith("Measure")] == ["Measure", "Measure"]
 
     def test_parallel_block_to_qc(self) -> None:
         """Test conversion of Parallel blocks from SLR to QuantumCircuit."""
@@ -361,10 +362,10 @@ class TestQuantumCircuitRoundTrip:
             qubit.CX(q[1], q[2]),
             qubit.CX(q[2], q[3]),
             # Measure
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
-            qubit.Measure(q[2]) > c[2],
-            qubit.Measure(q[3]) > c[3],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
+            qubit.MeasureZ(q[2]) > c[2],
+            qubit.MeasureZ(q[3]) > c[3],
             Return(c),
         )
 
@@ -411,7 +412,7 @@ class TestQuantumCircuitStaticForAndWhile:
             q := QReg("q", 1),
             c := CReg("c", 1),
             For("i", 0, 3).Do(qubit.X(q[0])),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         qc = SlrConverter(prog).quantum_circuit()
@@ -422,7 +423,7 @@ class TestQuantumCircuitStaticForAndWhile:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            While(c[0] == 0).Do(qubit.X(q[0]), Measure(q[0]) > c[0]),
+            While(c[0] == 0).Do(qubit.X(q[0]), MeasureZ(q[0]) > c[0]),
             Return(c),
         )
         with pytest.raises(NotImplementedError, match=r"While loops cannot be converted"):
@@ -455,26 +456,53 @@ class TestQuantumCircuitIf:
         if shape == "then-else":
             conditional.Else(qubit.Z(q[1]))
         body = Repeat(2).block(conditional) if shape == "inside-repeat" else conditional
-        prog = Main(q, c, Measure(q[0]) > c[0], body, Return(c))
+        prog = Main(q, c, MeasureZ(q[0]) > c[0], body, Return(c))
         with pytest.raises(NotImplementedError, match=r"If cannot be converted to QuantumCircuit"):
             generate(prog)
 
     @pytest.mark.parametrize("generate", [_ast_quantum_circuit, _legacy_quantum_circuit], ids=["ast", "legacy"])
     def test_classical_assignment_support(self, generate) -> None:
-        """The AST backend rejects assignments that would change stored results."""
+        """Both backends reject assignments that would change stored results."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             c[1].set(c[0] ^ 1),
             qubit.H(q[0]),
             Return(c),
         )
-        if generate is _ast_quantum_circuit:
-            with pytest.raises(NotImplementedError, match=r"does not yet support AssignOp"):
-                generate(prog)
-        else:
-            assert "{'H': {0}}" in str(generate(prog))
+        with pytest.raises(NotImplementedError, match=r"does not yet support (AssignOp|SET).*QASM, QIR or Guppy"):
+            generate(prog)
+
+
+@pytest.mark.parametrize("scope", ["main", "block", "parallel", "repeat", "for-range", "for-bounds", "nested-for"])
+@pytest.mark.parametrize(
+    "kind",
+    ["register-set", "bit-set", "register-print", "bit-print", "binary", "unary", "compare"],
+)
+def test_legacy_quantum_circuit_rejects_classical_operations(scope: str, kind: str) -> None:
+    """Classical statements must not fall through the empty quantum-target path."""
+    c = CReg("c", 2)
+    operation = {
+        "register-set": c.set(3),
+        "bit-set": c[0].set(1),
+        "register-print": Print(c),
+        "bit-print": Print(c[0]),
+        "binary": c + 1,
+        "unary": ~c,
+        "compare": c == 1,
+    }[kind]
+    body = {
+        "main": operation,
+        "block": Block(operation),
+        "parallel": Parallel(operation),
+        "repeat": Repeat(2).block(operation),
+        "for-range": For("i", range(2)).Do(operation),
+        "for-bounds": For("i", 0, 2).Do(operation),
+        "nested-for": For("i", 0, 2).Do(Block(Repeat(2).block(For("j", range(2)).Do(operation)))),
+    }[scope]
+    with pytest.raises(NotImplementedError, match=rf"support {type(operation).__name__}.*QASM, QIR or Guppy"):
+        _legacy_quantum_circuit(Main(c, body))
 
 
 def test_repeated_mx_and_my_agree() -> None:
@@ -611,26 +639,26 @@ def _assert_classical_samples(program: Main, expected: dict) -> None:
 def test_destination_round_trip(case: str, *, optimize_parallel: bool, json_round_trip: bool) -> None:
     """Destinations, declarations and deterministic values survive both conversions."""
     q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 3)
-    measurements = (Measure(q[1]) > c[1], Measure(q[0]) > c[0])
+    measurements = (MeasureZ(q[1]) > c[1], MeasureZ(q[0]) > c[0])
     cases = {
         "out_of_order": (measurements, {"c": [1, 0], "d": [0, 0, 0]}),
-        "two_registers": ((Measure(q[0]) > d[2], Measure(q[1]) > c[0]), {"c": [0, 0], "d": [0, 0, 1]}),
-        "overwritten": ((Measure(q[1]) > c[0], Measure(q[0]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
-        "bare": ((Measure(q[1]), Measure(q[0])), {"c": [0, 0], "d": [0, 0, 0]}),
-        "short_results": ((Measure(q[1]), Measure(q[0], q[1]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
+        "two_registers": ((MeasureZ(q[0]) > d[2], MeasureZ(q[1]) > c[0]), {"c": [0, 0], "d": [0, 0, 1]}),
+        "overwritten": ((MeasureZ(q[1]) > c[0], MeasureZ(q[0]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
+        "bare": ((MeasureZ(q[1]), MeasureZ(q[0])), {"c": [0, 0], "d": [0, 0, 0]}),
+        "short_results": ((MeasureZ(q[1]), MeasureZ(q[0], q[1]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
         # Prepare and measure the -X and -Y eigenstates using the existing basis decomposition.
         "bases": (
             (
                 qubit.H(q[0]),
                 qubit.H(q[0]),
-                Measure(q[0]) > c[1],
+                MeasureZ(q[0]) > c[1],
                 qubit.H(q[0]),
                 qubit.H(q[1]),
                 qubit.SZ(q[1]),
                 qubit.Z(q[1]),
                 qubit.SZdg(q[1]),
                 qubit.H(q[1]),
-                Measure(q[1]) > c[0],
+                MeasureZ(q[1]) > c[0],
                 qubit.H(q[1]),
                 qubit.SZ(q[1]),
             ),
@@ -726,12 +754,15 @@ def test_metadata_selects_destination_mode(spec: dict, *, measure: bool) -> None
         ({0}, {"var_output": {0: ("c", -1)}}, 0, ("c", -1)),
         ({0}, {"var_output": {0: (3, 0)}}, 0, (3, 0)),
         ({0}, {"var_output": {0: ("c", 0.5)}}, 0, ("c", 0.5)),
+        ({0}, {"var_output": {0: ("c", True)}}, 0, ("c", True)),
+        ({1}, {"var_output": {True: ("c", 0)}}, True, ("c", 0)),
         ({0}, {"var_output": {0: ("c", 0, 1)}}, 0, ("c", 0, 1)),
         ({0}, {"var_output": {0: ["c", 0]}}, 0, ["c", 0]),
         ({0}, {"var_output": {"0": ("c", 0)}}, "0", ("c", 0)),
         ({0}, {"var_output": None}, 0, None),
         ({0}, {"var": "c0"}, 0, "c0"),
         ({0}, {"var": ["c", -1]}, 0, ["c", -1]),
+        ({0}, {"var": ("c", False)}, 0, ("c", False)),
         ({0, 1}, {"var": ("c", 0)}, 1, ("c", 0)),
     ],
 )
@@ -755,6 +786,17 @@ def test_destination_outside_declared_register(size: int, key: str) -> None:
         SlrConverter.from_quantum_circuit(qc)
     assert "Measure" in str(exc.value)
     assert repr(("c", size)) in str(exc.value)
+
+
+@pytest.mark.parametrize("size", [-1, 1.5, "2", True, None])
+def test_invalid_cvar_spec_width(size: object) -> None:
+    """A cvar_spec width must be a non-negative int; a bool is not one."""
+    qc = QuantumCircuit()
+    qc.append("X", {0})
+    qc.metadata["cvar_spec"] = {"c": size}
+    with pytest.raises(ValueError, match="cvar_spec entry 'c'") as exc:
+        SlrConverter.from_quantum_circuit(qc)
+    assert repr(size) in str(exc.value)
 
 
 @pytest.mark.parametrize("key", ["var_output", "var"])
@@ -837,7 +879,7 @@ def test_valid_classical_register_name(name: str) -> None:
 @pytest.mark.parametrize("json_round_trip", [False, True])
 def test_bare_measurement_round_trip_without_registers(*, json_round_trip: bool) -> None:
     q = QReg("q", 2)
-    original = Main(q, qubit.X(q[0]), Measure(q[0]), Measure(q[1]))
+    original = Main(q, qubit.X(q[0]), MeasureZ(q[0]), MeasureZ(q[1]))
     qc = SlrConverter(original).quantum_circuit()
     if json_round_trip:
         qc = QuantumCircuit.from_json_str(qc.to_json_str())
@@ -865,7 +907,7 @@ def test_parallel_measurement_overwrite(basis: str, source: str) -> None:
         restore.append(qubit.SZ(q[0]))
     prepare.append(qubit.Z(q[0]))
     result = {"slr_register": c, "slr_slice": c[:]}.get(source, c[0])
-    original = Main(q, c, *prepare, Parallel(*rotate, Measure(q[0]) > result, *restore, Measure(q[1]) > c[0]))
+    original = Main(q, c, *prepare, Parallel(*rotate, MeasureZ(q[0]) > result, *restore, MeasureZ(q[1]) > c[0]))
     program = original
     if source == "quantum_circuit":
         qc = SlrConverter(Main(q, c, *prepare)).quantum_circuit()
@@ -908,6 +950,8 @@ def test_nonmeasurement_params_rejected(symbol: str, params: dict) -> None:
         ("M", {(-1,)}),
         ("CX", {(0, -1)}),
         ("CX", {(0, 0)}),
+        ("X", {True}),
+        ("CX", {(False, True)}),
     ],
 )
 def test_malformed_gate_locations_rejected(symbol: str, locations: set) -> None:
@@ -923,6 +967,180 @@ def test_unsupported_quantum_circuit_gates(symbol: str) -> None:
     locations = {(0, 1)} if symbol == "CH" else {0}
     with pytest.raises(NotImplementedError, match=f"Unsupported QuantumCircuit gate {symbol}"):
         SlrConverter.from_quantum_circuit([(symbol, locations, {})])
+
+
+@pytest.mark.parametrize("json_round_trip", [False, True])
+def test_qvars_reproducer(*, json_round_trip: bool) -> None:
+    """Red/green: #1498 retains register names and declared widths."""
+    original = Main(
+        data := QReg("data", 2),
+        anc := QReg("anc", 1),
+        CReg("m", 1),
+        qubit.CX(data[0], anc[0]),
+        MeasureZ(anc[0]),
+    )
+    qc = SlrConverter(original).quantum_circuit()
+    if json_round_trip:
+        qc = QuantumCircuit.from_json_str(qc.to_json_str())
+    qasm = SlrConverter(SlrConverter.from_quantum_circuit(qc)).qasm()
+    assert "qreg data[2];" in qasm
+    assert "qreg anc[1];" in qasm
+    assert "cx data[0], anc[0];" in qasm
+
+
+@pytest.mark.parametrize("flipped", [(), (0,), (1, 2), (0, 1, 2)])
+@pytest.mark.parametrize("json_round_trip", [False, True])
+def test_qvars_simulation_oracle(flipped: tuple, *, json_round_trip: bool) -> None:
+    """Red/green on the declarations; the register values are a compatibility guard.
+
+    The pre-fix converter already reproduced these values up to qubit renaming.
+    """
+    data, anc, spare = QReg("data", 2), QReg("anc", 1), QReg("spare", 1)
+    out, flags = CReg("out", 2), CReg("flags", 2)
+    bits = (data[0], data[1], anc[0])
+    original = Main(
+        data,
+        anc,
+        spare,
+        out,
+        flags,
+        *(qubit.X(bits[i]) for i in flipped),
+        MeasureZ(data[1]) > out[0],
+        MeasureZ(anc[0]) > flags[1],
+        MeasureZ(data[0]) > out[1],
+    )
+    qc = SlrConverter(original).quantum_circuit()
+    if json_round_trip:
+        qc = QuantumCircuit.from_json_str(qc.to_json_str())
+    reconstructed = SlrConverter.from_quantum_circuit(qc)
+    codes = [SlrConverter(program).qasm() for program in (original, reconstructed)]
+    results = [sim(Qasm.from_string(code)).quantum(state_vector()).seed(7).run(4).to_dict() for code in codes]
+    assert results[0]["out"] == results[1]["out"] == [int(1 in flipped) + 2 * int(0 in flipped)] * 4
+    assert results[0]["flags"] == results[1]["flags"] == [2 * int(2 in flipped)] * 4
+    assert re.findall(r"qreg .*;", codes[0]) == re.findall(r"qreg .*;", codes[1])
+
+
+@pytest.mark.parametrize("gates", [False, True])
+def test_qvars_unused_registers(*, gates: bool) -> None:
+    """Red/green: retain unused registers, including entirely idle programs."""
+    original = Main(data := QReg("data", 2), QReg("unused", 3))
+    if gates:
+        original.extend(qubit.X(data[0]))
+    qc = SlrConverter(original).quantum_circuit()
+    program = SlrConverter.from_quantum_circuit(qc)
+    assert re.findall(r"qreg .*;", SlrConverter(program).qasm()) == ["qreg data[2];", "qreg unused[3];"]
+
+
+@pytest.mark.parametrize(
+    ("metadata", "key"),
+    [({"qvars": None, "qvar_spec": {}}, "qvars"), ({"qvars": {}, "qvar_spec": []}, "qvar_spec")],
+)
+def test_qvars_metadata_must_be_mappings(metadata: dict, key: str) -> None:
+    """Red/green: a non-mapping qvars or qvar_spec is a type error, as for cvar_spec."""
+    with pytest.raises(TypeError, match=rf"Invalid QuantumCircuit {key}: .*expected a mapping"):
+        SlrConverter.from_quantum_circuit(QuantumCircuit(**metadata))
+
+
+@pytest.mark.parametrize(
+    ("metadata", "bad", "fix"),
+    [
+        ({"qvars": {}}, "qvar_spec", "supply both"),
+        ({"qvar_spec": {}}, "qvars", "supply both"),
+        *[
+            ({"qvars": {}, "qvar_spec": {"data": size}}, repr(size), "non-negative integer")
+            for size in (-1, 1.5, "2", True, None)
+        ],
+        *[
+            ({"qvars": {}, "qvar_spec": {name: 1}}, repr(name), "rename")
+            for name in ("", "a b", "q[0]", "2q", "q-d", "q\n", "é", 3)
+        ],
+        *[
+            ({"qvars": {key: ("data", 0)}, "qvar_spec": {"data": 1}}, repr(key), "non-negative int")
+            for key in ("bad", "1.0", "-1", " 1", "+1", 0.5, -1, True)
+        ],
+        *[
+            ({"qvars": {0: value}, "qvar_spec": {"data": 1}}, repr(value), "pair")
+            for value in ("data", None, ("data",), ("data", 0, 1), {"data": 0})
+        ],
+        ({"qvars": {0: ("unknown", 0)}, "qvar_spec": {"data": 1}}, "'unknown'", "declare"),
+        ({"qvars": {0: ([], 0)}, "qvar_spec": {"data": 1}}, "[]", "declare"),
+        ({"qvars": {0: ("data", True)}, "qvar_spec": {"data": 2}}, "True", "index below"),
+        ({"qvars": {"\u0663": ("data", 0)}, "qvar_spec": {"data": 1}}, repr("\u0663"), "non-negative int"),
+        *[
+            ({"qvars": {0: ("data", index)}, "qvar_spec": {"data": 1}}, repr(index), "index below")
+            for index in (-1, 1, 0.5, "0", True, None)
+        ],
+        ({"qvars": {0: ("data", 0)}, "qvar_spec": {"data": 0}}, "0", "index below"),
+        ({"qvars": {0: ("data", 0), 1: ["data", 0]}, "qvar_spec": {"data": 1}}, "('data', 0)", "distinct"),
+        ({"qvars": {0: ("data", 0), "0": ("data", 1)}, "qvar_spec": {"data": 2}}, "'0'", "one key"),
+    ],
+)
+def test_qvars_invalid_metadata(metadata: dict, bad: str, fix: str) -> None:
+    """Red/green: validate every entry, even when no gate uses it."""
+    with pytest.raises(ValueError, match=r"qvars|qvar_spec") as exc:
+        SlrConverter.from_quantum_circuit(QuantumCircuit(**metadata))
+    assert bad in str(exc.value)
+    assert fix in str(exc.value)
+
+
+@pytest.mark.parametrize(("symbol", "locations"), [("X", {7}), ("CX", {(0, 7)}), ("SWAP", {(0, 7)}), ("MY", {7})])
+@pytest.mark.parametrize("empty", [False, True])
+def test_qvars_missing_gate_id(symbol: str, locations: set, *, empty: bool) -> None:
+    """Red/green: every gate operand must have an explicit mapping."""
+    qc = QuantumCircuit(qvars={} if empty else {0: ("data", 0)}, qvar_spec={} if empty else {"data": 1})
+    qc.append(symbol, locations)
+    with pytest.raises(ValueError, match="Missing qvars entry") as exc:
+        SlrConverter.from_quantum_circuit(qc)
+    assert "add its" in str(exc.value)
+
+
+@pytest.mark.parametrize("source", ["cvar_spec", "zero_size", "var", "var_output", "automatic"])
+def test_qvars_name_collision(source: str) -> None:
+    """Red/green: explicit and automatic classical registers cannot shadow quantum names."""
+    name = "c" if source == "automatic" else "data"
+    qc = QuantumCircuit(qvars={0: (name, 0)}, qvar_spec={name: 1})
+    if source in {"cvar_spec", "zero_size"}:
+        qc.metadata["cvar_spec"] = {name: 0 if source == "zero_size" else 1}
+    elif source == "automatic":
+        qc.append("M", {0})
+    else:
+        qc.append("M", {0}, **{source: {0: (name, 0)} if source == "var_output" else (name, 0)})
+    with pytest.raises(ValueError, match="rename") as exc:
+        SlrConverter.from_quantum_circuit(qc)
+    assert repr(name) in str(exc.value)
+    assert "quantum register" in str(exc.value)
+    if source == "automatic":
+        assert "destinations (cvar_spec, var or var_output)" in str(exc.value)
+
+
+@pytest.mark.parametrize("json_round_trip", [False, True])
+def test_qvars_classical_q(*, json_round_trip: bool) -> None:
+    """Red/green: q is available as a classical name without a synthesized quantum q."""
+    original = Main(data := QReg("data", 1), bits := CReg("q", 1), qubit.X(data[0]), MeasureZ(data[0]) > bits[0])
+    qc = SlrConverter(original).quantum_circuit()
+    if json_round_trip:
+        qc = QuantumCircuit.from_json_str(qc.to_json_str())
+    program = SlrConverter.from_quantum_circuit(qc)
+    assert "measure data[0] -> q[0];" in SlrConverter(program).qasm()
+    _assert_classical_samples(program, {"q": [1]})
+
+
+@pytest.mark.parametrize("spec", [{}, {"empty": 0}, {"unused": 2, "empty": 0}])
+def test_qvars_empty_and_zero_width(spec: dict) -> None:
+    """Red/green for unused; compatibility for empty and zero-only specs."""
+    program = SlrConverter.from_quantum_circuit(QuantumCircuit(qvars={}, qvar_spec=spec))
+    assert {var.sym: len(var) for var in program.vars if isinstance(var, QReg)} == {
+        name: size for name, size in spec.items() if size
+    }
+
+
+def test_qvars_sparse_ids_and_order() -> None:
+    """Red/green: IDs select slots, while qvar_spec controls declaration order."""
+    qc = QuantumCircuit(qvars={"09": ["first", 1], 2: ("second", 0)}, qvar_spec={"second": 3, "first": 2})
+    qc.append("CX", {(9, 2)})
+    qasm = SlrConverter(SlrConverter.from_quantum_circuit(qc)).qasm()
+    assert re.findall(r"qreg .*;", qasm) == ["qreg second[3];", "qreg first[2];"]
+    assert "cx first[1], second[0];" in qasm
 
 
 if __name__ == "__main__":

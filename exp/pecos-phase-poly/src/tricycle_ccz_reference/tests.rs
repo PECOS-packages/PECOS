@@ -64,6 +64,7 @@ fn noisy_ccz_paper_noise_matches_reference_acceptance() {
     let code = c27();
     let protocol = NoisyCcz::new(
         &code,
+        &ExtractionSchedule::edge_coloring(&code).unwrap(),
         0.001,
         CczModel::PaperSurrogate,
         NoiseModel::Paper,
@@ -245,6 +246,8 @@ fn weight_two_undetected_logicals_depend_on_schedule() {
             .map(|c| c.configuration_probability)
             .sum::<f64>()
     };
+    let hook_safe = failure(&ExtractionSchedule::hook_safe(&code).unwrap());
+    assert_eq!(hook_safe.abs().to_bits(), 0.0_f64.to_bits());
     let paper = failure(&paper_schedule());
     let coloring = failure(&ExtractionSchedule::edge_coloring(&code).unwrap());
     assert_eq!(
@@ -311,4 +314,42 @@ fn extraction_schedule_validation() {
             .unwrap_err()
             .contains("more than once")
     );
+}
+
+fn hook_safe_full_catalog_distance(code: &BivariateTricycleCode, expected: usize) {
+    let schedule = ExtractionSchedule::hook_safe(code).unwrap();
+    let block_distance =
+        pecos_qec::connected_cluster_code_distance(code.hx(), code.logical_x(), code.num_qubits())
+            .unwrap()
+            .distance;
+    assert_eq!(block_distance, expected);
+    let catalog = paper_catalog(code, &schedule, 0.001).unwrap();
+    assert_eq!(
+        crate::tricycle_ccz_noisy::catalog_fault_distance(
+            &catalog,
+            3 * code.hx().num_checks(),
+            3 * code.logical_x().num_checks(),
+            block_distance
+        )
+        .unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn hook_safe_full_catalog_distance_c27() {
+    hook_safe_full_catalog_distance(&c27(), 3);
+}
+
+#[test]
+fn hook_safe_full_catalog_distance_c81() {
+    let code = BivariateTricycleCode::new(
+        3,
+        9,
+        &[(1, 3), (2, 1)],
+        &[(0, 0), (1, 8)],
+        &[(2, 4), (2, 6)],
+    )
+    .unwrap();
+    hook_safe_full_catalog_distance(&code, 5);
 }

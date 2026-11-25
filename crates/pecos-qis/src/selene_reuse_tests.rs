@@ -93,12 +93,7 @@ fn fixture_with_runtime(
         );
         return;
     }
-    let executable = std::env::current_exe().unwrap();
-    let plugin = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let plugin = crate::test_env::runtime_fixture();
     let library = unsafe { libloading::Library::new(&public.plugin_path).unwrap() };
     let mut descriptor =
         Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });

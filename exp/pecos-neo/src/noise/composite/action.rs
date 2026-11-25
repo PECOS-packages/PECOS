@@ -40,6 +40,14 @@ pub trait GateAction: Send + Sync {
         rng: &mut PecosRng,
     ) -> CompositeResponse;
 
+    /// Whether this action reads the event's operand list through the context.
+    ///
+    /// See [`super::primitive::Primitive::reads_operands`]. The blanket primitive
+    /// implementation forwards this capability for custom actions too.
+    fn reads_operands(&self) -> bool {
+        false
+    }
+
     /// Human-readable name for visualization.
     fn name(&self) -> &'static str;
 
@@ -119,7 +127,9 @@ impl GateAction for Leak {
     }
 }
 
-/// Mark qubit as unleaked (seeped back to computational basis).
+/// Clear the leakage flag only, preserving the qubit's simulator state.
+///
+/// Use [`seep()`](actions::seep) for physical seepage that also randomizes the state.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Unleak;
 
@@ -883,6 +893,10 @@ const EMIT_NO: usize = 0;
 const EMIT_YES: usize = 1;
 
 impl GateAction for TwoQubitEmissionWithPartnerDepolarize {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -977,6 +991,10 @@ impl IndependentEmissionWithPartnerDepolarize {
 }
 
 impl GateAction for IndependentEmissionWithPartnerDepolarize {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1090,6 +1108,10 @@ impl PartnerDepolarize {
 }
 
 impl GateAction for PartnerDepolarize {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         _qubit: QubitId,
@@ -1526,6 +1548,10 @@ impl ZZDephasing {
 }
 
 impl GateAction for ZZDephasing {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1588,6 +1614,10 @@ pub struct ZZDephasingRate {
 }
 
 impl GateAction for ZZDephasingRate {
+    fn reads_operands(&self) -> bool {
+        true
+    }
+
     fn apply(
         &self,
         qubit: QubitId,
@@ -1818,8 +1848,9 @@ impl GateAction for ErasureWithReplacement {
 /// - `Flip`: qubit flips to opposite value (X gate applied)
 /// - `Leak`: qubit transitions to leaked state
 ///
-/// This matches `GeneralNoiseModel`'s `p_meas_crosstalk_model` which uses
-/// state-dependent transition probabilities.
+/// The table has the same shape as `GeneralNoiseModel`'s `p_meas_crosstalk_model`.
+/// With no measurement outcome in context the state is drawn uniformly, because
+/// this action does not measure the qubit.
 #[derive(Debug, Clone)]
 pub struct CrosstalkAction {
     transitions: crate::noise::CrosstalkTransitions,
@@ -2057,7 +2088,7 @@ pub mod actions {
         RandomOutcome, SampleEmission, SampleEmissionWithProb, Seep, SkipGate, TwoQubitEmission,
         TwoQubitEmissionWithPartnerDepolarize, TwoQubitPauli, Unleak, ZZDephasing, ZZDephasingRate,
     };
-    use crate::noise::validation::ValidationResult;
+    use crate::noise::validation::{ValidationError, ValidationResult};
 
     /// No-op action.
     #[must_use]
@@ -2077,7 +2108,9 @@ pub mod actions {
         Leak
     }
 
-    /// Mark qubit as unleaked.
+    /// Clear the leakage flag only, preserving the qubit's simulator state.
+    ///
+    /// Use [`seep()`] for physical seepage that also randomizes the state.
     #[must_use]
     pub fn unleak() -> Unleak {
         Unleak
@@ -2512,9 +2545,10 @@ pub mod actions {
 
     /// Adapter that wraps a `NoiseChannel` to be used as a composite primitive.
     ///
-    /// This enables using traditional channel implementations as building blocks
-    /// within composite noise decision trees. The adapter reconstructs the noise event
-    /// from the current context and delegates to the wrapped channel.
+    /// Construction rejects channels that do not declare `AfterGate` support.
+    /// The adapter calls the wrapped channel's `apply` with a synthesized
+    /// `AfterGate` event for the operand group. See [`channel_action`] for group
+    /// leadership, sampling, guards and skip propagation.
     ///
     /// # Example
     ///
@@ -2525,17 +2559,10 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?))?,
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?)?)?,
     /// ];
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    ///
-    /// # Limitations
-    ///
-    /// - The adapter creates a synthetic event for the current qubit only
-    /// - For two-qubit channels, use with caution as the event may not have
-    ///   full partner qubit information depending on context
-    /// - The channel's `responds_to` filter is bypassed (assumed to match)
     pub struct ChannelAdapter {
         channel: Box<dyn crate::noise::NoiseChannel>,
         name: String,
@@ -2552,12 +2579,27 @@ pub mod actions {
 
     impl ChannelAdapter {
         /// Create a new channel adapter.
-        pub fn new<C: crate::noise::NoiseChannel + 'static>(channel: C) -> Self {
+        ///
+        /// # Errors
+        /// Returns an error naming the channel if it does not declare `AfterGate` support.
+        pub fn new<C: crate::noise::NoiseChannel + 'static>(channel: C) -> ValidationResult<Self> {
+            if !channel
+                .event_kinds()
+                .contains(crate::noise::NoiseEventKind::AfterGate)
+            {
+                return Err(ValidationError::new(
+                    "channel_action",
+                    format!(
+                        "channel '{}' must handle AfterGate: the adapter only runs wrapped channels on gate events",
+                        channel.name()
+                    ),
+                ));
+            }
             let name = channel.name().to_string();
-            Self {
+            Ok(Self {
                 channel: Box::new(channel),
                 name,
-            }
+            })
         }
 
         /// Get the name of the wrapped channel.
@@ -2576,6 +2618,10 @@ pub mod actions {
     }
 
     impl GateAction for ChannelAdapter {
+        fn reads_operands(&self) -> bool {
+            true
+        }
+
         fn apply(
             &self,
             qubit: QubitId,
@@ -2583,6 +2629,13 @@ pub mod actions {
             rng: &mut PecosRng,
         ) -> CompositeResponse {
             use crate::noise::NoiseEvent;
+
+            if ctx
+                .group_leader()
+                .is_some_and(|leader| ctx.current_qubit_index() != leader)
+            {
+                return CompositeResponse::None;
+            }
 
             // Get current gate info from context
             let gate_info = ctx.current_gate();
@@ -2596,18 +2649,39 @@ pub mod actions {
             };
 
             let angles: Vec<pecos_core::Angle64> =
-                gate_info.map(|g| g.angles.to_vec()).unwrap_or_default();
+                gate_info.map_or_else(Vec::new, |g| g.angles.to_vec());
 
             let gate_type = gate_info.map_or(GateType::I, |g| g.gate_type);
 
-            // Create the event using helper constructor
-            let event = NoiseEvent::after_gate(gate_type, &qubits, &angles);
+            // Preserve registered custom arity even when the gate type is I.
+            let event = NoiseEvent::AfterGate {
+                gate_type,
+                gate_id: Some(gate_type.to_gate_id()),
+                qubits: if ctx.is_current_gate_suppressed() {
+                    &[]
+                } else {
+                    &qubits
+                },
+                angles: &angles,
+                leaked_suppressed: if ctx.is_current_gate_suppressed() {
+                    &qubits
+                } else {
+                    &[]
+                },
+                group_size: std::num::NonZeroUsize::new(
+                    gate_info.map_or(qubits.len(), |g| g.num_qubits),
+                )
+                .expect("gate context has positive arity and adapter operands are nonempty"),
+            };
 
             // Apply the wrapped channel
             let response = self.channel.apply(&event, ctx, rng);
 
-            // Convert NoiseResponse to CompositeResponse
-            convert_noise_response(response, qubit)
+            if response.is_none() {
+                CompositeResponse::None
+            } else {
+                CompositeResponse::Channel(Box::new(response))
+            }
         }
 
         fn name(&self) -> &'static str {
@@ -2615,86 +2689,38 @@ pub mod actions {
         }
     }
 
-    /// Convert a `NoiseResponse` to a `CompositeResponse`.
-    ///
-    /// This handles the mapping between the two response types.
-    fn convert_noise_response(
-        response: crate::noise::NoiseResponse,
-        qubit: QubitId,
-    ) -> CompositeResponse {
-        use crate::noise::NoiseResponse;
-
-        match response {
-            NoiseResponse::None => CompositeResponse::None,
-            NoiseResponse::SkipGate(qs) => {
-                if qs.contains(&qubit) {
-                    CompositeResponse::SkipGate
-                } else {
-                    CompositeResponse::None
-                }
-            }
-            NoiseResponse::InjectGates(gates) => CompositeResponse::InjectGates(gates.to_vec()),
-            NoiseResponse::MarkLeaked(qs) => {
-                if qs.contains(&qubit) {
-                    CompositeResponse::Leak
-                } else {
-                    // Can't mark other qubits as leaked from here
-                    CompositeResponse::None
-                }
-            }
-            NoiseResponse::MarkUnleaked(qs) => {
-                if qs.contains(&qubit) {
-                    CompositeResponse::Unleak
-                } else {
-                    CompositeResponse::None
-                }
-            }
-            NoiseResponse::FlipOutcomes(qs) => {
-                if qs.contains(&qubit) {
-                    CompositeResponse::FlipOutcome
-                } else {
-                    CompositeResponse::None
-                }
-            }
-            NoiseResponse::LeakedMeasurement(qs) => {
-                if qs.contains(&qubit) {
-                    CompositeResponse::LeakedMeasurement
-                } else {
-                    CompositeResponse::None
-                }
-            }
-            NoiseResponse::ForceOutcomes(forced) => {
-                // Find if this qubit has a forced outcome
-                forced
-                    .iter()
-                    .find(|(q, _)| *q == qubit)
-                    .map_or(CompositeResponse::None, |(_, value)| {
-                        CompositeResponse::ForceOutcome(*value)
-                    })
-            }
-            NoiseResponse::Multiple(responses) => {
-                let converted: Vec<_> = responses
-                    .into_iter()
-                    .map(|r| convert_noise_response(r, qubit))
-                    .filter(|r| !matches!(r, CompositeResponse::None))
-                    .collect();
-
-                match converted.len() {
-                    0 => CompositeResponse::None,
-                    1 => converted
-                        .into_iter()
-                        .next()
-                        .expect("len is 1, so next() returns Some"),
-                    _ => CompositeResponse::Multiple(converted),
-                }
-            }
-        }
-    }
-
     /// Wrap a traditional `NoiseChannel` as a composite primitive action.
     ///
-    /// This allows using traditional channel implementations as building blocks
-    /// within composite noise decision trees.
+    /// Each invocation site runs at most once per operand group per stage, on the
+    /// leader: the first member eligible at the start of that stage (the first
+    /// leaked member for a suppressed group, otherwise member 0). The leader stays
+    /// fixed within the stage, and is chosen again for the next stage.
+    /// A probability around the
+    /// adapter, including channel-level sampling, selects the leader with that
+    /// probability; sampling another member does not run the channel. Any guard
+    /// around the adapter (`seq!`, `when`, `if_then`, partner or fired conditions,
+    /// including in two-stage primitives) is decided on the leader's invocation.
+    /// A guard true only on another member runs nothing for the group. Each
+    /// enclosing sequence remembers wrapped-channel skip targets at the step that
+    /// returned them. After evaluating that step on later members, it stops for
+    /// named qubits even if a guard bypasses the adapter or an inner sequence.
+    /// Unnamed members, including the leader, continue. Earlier steps and the
+    /// evaluated step retain their effects. Skip targets are emitted only once,
+    /// in the leader's response. Wrapped skips stop later steps of every enclosing
+    /// sequence for named members. Without an enclosing sequence, guard branches
+    /// are evaluated per member as usual, even for members named in a wrapped skip.
+    ///
+    /// Gate events use one gate group; non-gate events use all operands. With no
+    /// enclosing group installed, the adapter runs on every invocation.
+    /// It synthesizes an `AfterGate` with the current gate type (or `I`), angles and
+    /// complete operand group (or just the invoked qubit). Suppressed groups go in
+    /// `leaked_suppressed`. Registered group size is preserved. The adapter calls
+    /// the wrapped channel's `apply` with this synthesized `AfterGate` event for
+    /// the operand group, and its response retains every named qubit.
+    /// Construction rejects channels whose `event_kinds()` omit `AfterGate`.
+    ///
+    /// # Errors
+    /// Returns an error naming the channel if it does not declare `AfterGate` support.
     ///
     /// # Example
     ///
@@ -2705,12 +2731,13 @@ pub mod actions {
     /// // Use a traditional channel inside a composite decision tree
     /// let noise = seq![
     ///     skip_if_leaked(),
-    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?))?,
+    ///     prob(0.5, channel_action(SingleQubitChannel::depolarizing(1.0)?)?)?,
     /// ];
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    #[must_use]
-    pub fn channel_action<C: crate::noise::NoiseChannel + 'static>(channel: C) -> ChannelAdapter {
+    pub fn channel_action<C: crate::noise::NoiseChannel + 'static>(
+        channel: C,
+    ) -> ValidationResult<ChannelAdapter> {
         ChannelAdapter::new(channel)
     }
 
@@ -2719,16 +2746,28 @@ pub mod actions {
         use super::*;
 
         #[test]
-        fn test_convert_skip_only_for_current_qubit() {
-            let response = crate::noise::NoiseResponse::SkipGate(smallvec::smallvec![QubitId(0)]);
-            assert!(matches!(
-                convert_noise_response(response.clone(), QubitId(0)),
-                CompositeResponse::SkipGate
-            ));
-            assert!(matches!(
-                convert_noise_response(response, QubitId(1)),
-                CompositeResponse::None
-            ));
+        fn test_channel_skip_preserves_all_named_qubits() {
+            let adapter = channel_action(
+                crate::noise::composite::CompositeChannel::new("skip both", skip_gate())
+                    .with_filter(crate::noise::composite::CompositeEventFilter::AnyGate),
+            )
+            .unwrap();
+            let mut ctx = NoiseContext::new();
+            ctx.set_current_qubit_index(0, &[QubitId(0), QubitId(1)]);
+            let response = GateAction::apply(
+                &adapter,
+                QubitId(0),
+                &mut ctx,
+                &mut PecosRng::seed_from_u64(42),
+            );
+            assert!(response.skips_gate());
+            let CompositeResponse::Channel(response) = response else {
+                panic!("expected verbatim channel response");
+            };
+            assert_eq!(
+                response.skipped_qubits().as_slice(),
+                &[QubitId(0), QubitId(1)]
+            );
         }
     }
 }
@@ -2965,7 +3004,7 @@ mod tests {
         use pecos_core::Angle64;
         let apply = |angle| {
             let mut ctx = make_test_context();
-            ctx.set_current_gate(GateType::RZ, &[angle], 1);
+            ctx.set_current_gate(GateType::RZ, &[angle], std::num::NonZeroUsize::MIN);
             OverRotation::rz(0.01)
                 .unwrap()
                 .apply(QubitId(0), &mut ctx, &mut PecosRng::seed_from_u64(42))
@@ -2998,7 +3037,7 @@ mod tests {
     fn over_rotation_preserves_full_precision_angle() {
         let mut ctx = make_test_context();
         let angle = pecos_core::radians!(-0.73);
-        ctx.set_current_gate(GateType::RZ, &[angle], 1);
+        ctx.set_current_gate(GateType::RZ, &[angle], std::num::NonZeroUsize::MIN);
         let response = OverRotation::rz(1.0).unwrap().apply(
             QubitId(0),
             &mut ctx,

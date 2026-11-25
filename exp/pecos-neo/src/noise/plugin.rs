@@ -190,6 +190,7 @@ pub trait ContextObserver: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::GateType;
 
     #[derive(Clone, Copy)]
     struct TestHandler;
@@ -200,7 +201,7 @@ mod tests {
         }
 
         fn handle(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext) {
-            if let NoiseEvent::AfterPreparation { qubits } = event {
+            if let NoiseEvent::AfterPreparation { qubits, .. } = event {
                 for &qubit in *qubits {
                     ctx.mark_prepared(qubit);
                 }
@@ -241,7 +242,10 @@ mod tests {
     fn test_event_handler() {
         let handler = TestHandler;
         let qubits = [QubitId(0)];
-        let event = NoiseEvent::AfterPreparation { qubits: &qubits };
+        let event = NoiseEvent::AfterPreparation {
+            gate_type: GateType::PZ,
+            qubits: &qubits,
+        };
 
         assert!(handler.handles(&event));
 

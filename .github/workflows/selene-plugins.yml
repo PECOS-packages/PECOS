@@ -8,6 +8,7 @@ env:
   RUSTFLAGS: -C debuginfo=0
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
+  CARGO_NET_RETRY: "10"
 
 on:
   # Merges into the main branches always run, whatever they touch.
@@ -66,12 +67,16 @@ jobs:
         run: |
           run="$(bash scripts/ci/pr-lane-should-run.sh ci:selene-plugins \
             python/selene-plugins/ \
+            crates/pecos-wasm/ \
+            crates/pecos-wasm-runtime/ \
+            examples/guppy_wasm/ \
             python/pecos-rslib/src/sim.rs \
             python/pecos-rslib/src/engine_builders.rs \
             python/quantum-pecos/src/pecos/_sim.py \
             crates/pecos-engines/src/noise/ \
             crates/pecos-selene-general-noise-adapter/ \
             crates/pecos-qis/ \
+            crates/pecos-selene-runtime/ \
             .github/workflows/selene-plugins.yml \
             scripts/ci/smoke_selene_wheel.py \
             Cargo.toml Cargo.lock uv.lock)"
@@ -92,7 +97,10 @@ jobs:
     # Linux also builds the PECOS packages for the cross-runtime parity tests
     # (about 14 min cold), and non-PR Linux runs add the extended semantic suite
     # (about 6 min); a cold non-PR run measured about 24 min.
-    timeout-minutes: ${{ matrix.os != 'ubuntu-latest' && 30 || github.event_name != 'pull_request' && 75 || 60 }}
+    # Other runners also build cold whenever no Rust cache is available:
+    # macos-15-intel measured 22-29 min cold, and a slower run was cancelled at
+    # the former 30 min limit (2026-11-23).
+    timeout-minutes: ${{ matrix.os != 'ubuntu-latest' && 45 || github.event_name != 'pull_request' && 75 || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -125,7 +133,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           cache-bin: false
           # One cache per runner OS/arch, shared with build-wheels. Per-plugin caches
@@ -147,6 +155,14 @@ jobs:
 
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
+        env:
+          # The plugin libraries are built together and staged in _dist/lib here.
+          # pecos-selene-wasm's hatch hook would build its crate again on its own,
+          # and building one package alone resolves shared dependencies (serde,
+          # syn, hashbrown, ...) with different features than the combined build,
+          # so Cargo recompiled wasmtime and its stack a second time (over 7 min
+          # on macos-15-intel). Wheel builds below keep the hook.
+          HATCH_BUILD_NO_HOOKS: "true"
         run: |
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             EXT="dylib"
@@ -174,6 +190,9 @@ jobs:
       - name: Build and install Selene plugins (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        # See the Unix step: the libraries are already staged, so skip the rebuild.
+        env:
+          HATCH_BUILD_NO_HOOKS: "true"
         run: |
           $plugins = Get-ChildItem -Directory python/selene-plugins/pecos-selene-* | Select-Object -ExpandProperty Name
           $cargoArgs = $plugins | ForEach-Object { "-p"; $_ }
@@ -199,12 +218,19 @@ jobs:
           tool: just@1.59.0
           fallback: none
 
+      - name: Identify the runner image for the LLVM cache key
+        # The managed LLVM is built for one OS release; ImageOS (for example ubuntu24
+        # or ubuntu26) keeps a copy from one image from being restored onto another.
+        id: runner-image
+        shell: bash
+        run: echo "id=${ImageOS:?ImageOS is not set on this runner}" >> "$GITHUB_OUTPUT"
+
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         if: runner.os == 'Linux'
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-21.1
-          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ steps.runner-image.outputs.id }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         if: runner.os == 'Linux'
@@ -224,6 +250,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo test --locked --release -p pecos-selene-general-noise-adapter --test library
+
+      - name: Test WASM runtime lifecycle
+        run: cargo test --locked --release -p pecos-wasm-runtime
 
       - name: Run tests
         if: runner.os == 'Linux'
@@ -284,7 +313,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        uses: Swatinem/rust-cache@eedcf2fb1c22f010a0eb66b92f378c110977f266 # v2
         with:
           cache-bin: false
           # Restore the test job's release build of every plugin; only that job saves.

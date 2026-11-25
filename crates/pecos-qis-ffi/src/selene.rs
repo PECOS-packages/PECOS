@@ -738,6 +738,20 @@ unsafe fn native_read(future: u64, boolean: bool) -> SeleneU64Result {
             "selene future read",
         )
     };
+    if response.error_code == 0 && boolean && response.value > 1 {
+        // Validate at the typed boundary for every host, including custom
+        // runtimes. Integer/leakage futures retain their full-width values.
+        unsafe {
+            ffi::fatal_ffi_input(
+                "selene future read",
+                "Boolean response must be 0 or 1".into(),
+            );
+        };
+        return SeleneU64Result {
+            error_code: 1,
+            value: 0,
+        };
+    }
     if response.error_code == 0
         && let Err(reason) = record_native_read(future)
     {
@@ -758,12 +772,7 @@ fn record_native_read(future: u64) -> Result<(), String> {
     if source.is_none() {
         ctx.native_provenance_unknown.store(true, Ordering::SeqCst);
     }
-    // A custom-created future is readable, but has no observed source
-    // measurement. Audited DEM binding rejects this reserved provenance ID.
-    ctx.pending_result_reads
-        .lock()
-        .map_err(|_| "poisoned result provenance")?
-        .push(source.unwrap_or(RUNTIME_REQUEST_RESULT_ID));
+    ctx.stash_result_source(source);
     Ok(())
 }
 
@@ -773,7 +782,13 @@ fn queue_runtime_request(request: Result<RuntimeRequest, String>) -> Result<Opti
     if ffi::cancellation_requested() {
         return Ok(None);
     }
-    let request = request?;
+    let mut request = request?;
+    if let RuntimeRequest::Decode { observed_reads, .. } = &mut request {
+        let reads = crate::decoder_reads::take_interval()?;
+        if observed_reads.is_some() {
+            *observed_reads = Some(reads);
+        }
+    }
     let dynamic = crate::is_dynamic_mode_active();
     if !dynamic
         && matches!(
@@ -1221,6 +1236,7 @@ pub unsafe extern "C-unwind" fn pecos_runtime_decode(
             instance_id,
             syndrome,
             context: None,
+            observed_reads: None,
         })
     }));
     unsafe { finish_runtime_request(queued, "pecos_runtime_decode") }.value
@@ -1241,30 +1257,137 @@ pub unsafe extern "C-unwind" fn pecos_runtime_decode_v1(
     context: *const u8,
     context_length: u64,
 ) -> u64 {
-    let input = (|| {
-        if length > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS as u64 {
-            return Err("runtime decoder detector limit exceeded".into());
-        }
-        if context_length == 0
-            || context_length > pecos_qis_ffi_types::MAX_RUNTIME_DECODE_CONTEXT as u64
-        {
-            return Err("runtime decoder context length must be 1..65536".into());
-        }
-        let syndrome = unsafe { copy_input(syndrome, length) }?;
-        if syndrome.iter().any(|&bit| bit > 1) {
-            return Err("decoder syndrome must contain only zero or one".into());
-        }
-        let context = unsafe { copy_input(context, context_length) }?;
-        std::str::from_utf8(&context).map_err(|_| "decoder context must be UTF-8".to_string())?;
-        Ok(RuntimeRequest::Decode {
+    let input = unsafe {
+        decoder_request_v1(
             window_id,
             instance_id,
             syndrome,
-            context: Some(context),
-        })
-    })();
+            length,
+            context,
+            context_length,
+            false,
+        )
+    };
     let queued = queue_runtime_request(input);
     unsafe { finish_runtime_request(queued, "pecos_runtime_decode_v1") }.value
+}
+
+/// Decode with the v1 context and runtime-owned observations from named reads.
+///
+/// # Safety
+/// Both buffers must address their declared readable lengths. The non-nested
+/// guard and recovery discipline of the Selene entry points applies.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_runtime_decode_observed_v1(
+    window_id: u64,
+    instance_id: u64,
+    syndrome: *const u8,
+    length: u64,
+    context: *const u8,
+    context_length: u64,
+) -> u64 {
+    let input = unsafe {
+        decoder_request_v1(
+            window_id,
+            instance_id,
+            syndrome,
+            length,
+            context,
+            context_length,
+            true,
+        )
+    };
+    let queued = queue_runtime_request(input);
+    unsafe { finish_runtime_request(queued, "pecos_runtime_decode_observed_v1") }.value
+}
+
+unsafe fn decoder_request_v1(
+    window_id: u64,
+    instance_id: u64,
+    syndrome: *const u8,
+    length: u64,
+    context: *const u8,
+    context_length: u64,
+    observed: bool,
+) -> Result<RuntimeRequest, String> {
+    if length > pecos_qis_ffi_types::MAX_RUNTIME_DETECTORS as u64 {
+        return Err("runtime decoder detector limit exceeded".into());
+    }
+    if context_length == 0
+        || context_length > pecos_qis_ffi_types::MAX_RUNTIME_DECODE_CONTEXT as u64
+    {
+        return Err("runtime decoder context length must be 1..65536".into());
+    }
+    let syndrome = unsafe { copy_input(syndrome, length) }?;
+    if syndrome.iter().any(|&bit| bit > 1) {
+        return Err("decoder syndrome must contain only zero or one".into());
+    }
+    let context = unsafe { copy_input(context, context_length) }?;
+    std::str::from_utf8(&context).map_err(|_| "decoder context must be UTF-8".to_string())?;
+    Ok(RuntimeRequest::Decode {
+        window_id,
+        instance_id,
+        syndrome,
+        context: Some(context),
+        observed_reads: observed.then(Vec::new),
+    })
+}
+
+/// Read a native Boolean future and retain its measurement provenance for decoding.
+/// Occurrences are assigned per name within the current decode interval.
+///
+/// # Safety
+/// Name must point to `name_length` readable UTF-8 bytes. The native future must
+/// obey the runtime lifetime rules. Non-nested guarded execution is required.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_runtime_read_bool_v1(
+    name: *const u8,
+    name_length: u64,
+    future: u64,
+) -> bool {
+    if unsafe { ffi::cancellation_checkpoint() } {
+        return false;
+    }
+    // Move all allocations into context-owned state before the getter can
+    // suspend or transfer to the C recovery guard. Only scalars survive here.
+    let prepared = unsafe { prepare_decoder_read(name, name_length, future) };
+    if let Err(reason) = prepared {
+        unsafe { ffi::fatal_ffi_input("pecos_runtime_read_bool_v1", reason) };
+        return false;
+    }
+    let response = unsafe { native_read(future, true) };
+    if response.error_code != 0 {
+        unsafe { ffi::fatal_ffi_input("pecos_runtime_read_bool_v1", "native read failed".into()) };
+        return false;
+    }
+    let committed = crate::decoder_reads::commit_read(response.value);
+    if let Err(reason) = committed {
+        unsafe { ffi::fatal_ffi_input("pecos_runtime_read_bool_v1", reason) };
+        return false;
+    }
+    response.value != 0
+}
+
+unsafe fn prepare_decoder_read(name: *const u8, length: u64, future: u64) -> Result<(), String> {
+    if !crate::is_dynamic_mode_active() || !crate::uses_native_selene_handles() {
+        return Err("observed decoder reads require dynamic native execution".into());
+    }
+    if length == 0 || length > pecos_qis_ffi_types::MAX_RUNTIME_READ_NAME_BYTES as u64 {
+        return Err("decoder read name length must be 1..256".into());
+    }
+    let bytes = unsafe { copy_input(name, length) }?;
+    let name =
+        String::from_utf8(bytes).map_err(|_| "decoder read name must be UTF-8".to_string())?;
+    let ctx = crate::get_execution_context().ok_or("no execution context")?;
+    let ctx = unsafe { &*ctx };
+    let source = ctx
+        .native_future_sources
+        .lock()
+        .map_err(|_| "poisoned native future provenance")?
+        .get(&future)
+        .copied()
+        .ok_or("decoder read has unknown measurement provenance")?;
+    crate::decoder_reads::prepare_read(name, source as u64)
 }
 
 fn invalidate_native_future_provenance() -> Result<(), String> {
@@ -1278,8 +1401,8 @@ fn invalidate_native_future_provenance() -> Result<(), String> {
 }
 
 unsafe extern "C-unwind" {
-    fn pecos_guard_qmain_with_setjmp(qmain: unsafe extern "C" fn(u64) -> u64) -> u64;
-    fn pecos_guard_void_main_with_setjmp(main: unsafe extern "C" fn()) -> u64;
+    fn pecos_guard_qmain_with_setjmp(qmain: unsafe extern "C-unwind" fn(u64) -> u64) -> u64;
+    fn pecos_guard_void_main_with_setjmp(main: unsafe extern "C-unwind" fn()) -> u64;
 }
 
 /// Run a program with the C recovery guard and shot lifecycle.
@@ -1287,9 +1410,11 @@ unsafe extern "C-unwind" {
 /// # Safety
 /// The entry point must be valid and obey the recovery discipline. Nested
 /// guards and re-entrant calls holding context locks are unsupported.
+/// Rust program entries must permit unwinding for Windows longjmp; they must
+/// still have no live destructors across recovery on any platform.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_call_qmain_with_setjmp(
-    qmain: unsafe extern "C" fn(u64) -> u64,
+    qmain: unsafe extern "C-unwind" fn(u64) -> u64,
 ) -> u64 {
     // This frame is outside the setjmp/transfer interval. The C-unwind import
     // lets an escaping program panic reach this C boundary, where it aborts.
@@ -1301,8 +1426,12 @@ pub unsafe extern "C" fn pecos_call_qmain_with_setjmp(
 /// # Safety
 /// The entry point must be valid and obey the recovery discipline. Nested
 /// guards and re-entrant calls holding context locks are unsupported.
+/// Rust program entries must permit unwinding for Windows longjmp; they must
+/// still have no live destructors across recovery on any platform.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_call_void_main_with_setjmp(main: unsafe extern "C" fn()) -> u64 {
+pub unsafe extern "C" fn pecos_call_void_main_with_setjmp(
+    main: unsafe extern "C-unwind" fn(),
+) -> u64 {
     // This frame is outside the setjmp/transfer interval. The C-unwind import
     // lets an escaping program panic reach this C boundary, where it aborts.
     unsafe { pecos_guard_void_main_with_setjmp(main) }
@@ -1482,7 +1611,7 @@ mod tests {
         assert!(ctx.0.measurement_results.lock().unwrap().is_empty());
         queue_runtime_request(Ok(RuntimeRequest::GlobalBarrier { sleep_ns: 0 })).unwrap();
         assert_eq!(*ctx.0.runtime_response.lock().unwrap(), None);
-        assert_eq!(ctx.0.pending_result_reads.lock().unwrap().len(), 0);
+        assert!(ctx.0.shadows.lock().unwrap().seed.is_none());
     }
 
     #[test]
@@ -1531,5 +1660,36 @@ mod tests {
         layout!(SeleneString, 24, 8, data, 0);
         assert_eq!(offset_of!(SeleneString, length), 8);
         assert_eq!(offset_of!(SeleneString, owned), 16);
+    }
+}
+
+/// Compiler-generated scalar control event. This queues no physical operation.
+/// # Safety
+/// Must execute under the same nonnested execution guard as native QIS imports.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn pecos_runtime_control_v1(site: u64, value: u64) {
+    if unsafe { ffi::cancellation_checkpoint() } {
+        return;
+    }
+    let queued = crate::with_interface(|interface| {
+        if interface.operations.len() >= 4096 {
+            return false;
+        }
+        interface.queue_operation(Operation::TraceMetadata {
+            metadata: std::collections::BTreeMap::from([(
+                "__pecos_control_v1__".into(),
+                format!("{site}:{value}"),
+            )]),
+            qubit: None,
+        });
+        true
+    });
+    if !queued {
+        unsafe {
+            ffi::fatal_ffi_input(
+                "pecos_runtime_control_v1",
+                "control event pending queue limit exceeded".into(),
+            );
+        };
     }
 }

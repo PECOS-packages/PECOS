@@ -6,17 +6,19 @@
 use pecos_phase_poly::PhasePoly;
 use pecos_phase_poly::runner::Program;
 use pecos_phase_poly::tricycle_ccz::magic_state_circuit;
-use pecos_phase_poly::tricycle_ccz_noisy::{CczModel, MetaChecks, NoiseModel, NoisyCcz};
+use pecos_phase_poly::tricycle_ccz_noisy::{
+    CczModel, ExtractionSchedule, MetaChecks, NoiseModel, NoisyCcz,
+};
 use pecos_qec::BivariateTricycleCode;
 use pecos_random::PecosRng;
 use std::error::Error;
 use std::time::Instant;
 
-const USAGE: &str = "usage: tricycle_ccz <27|81> <p> <shots> <seed> <output.json> [exact|surrogate] [complete|paper]";
+const USAGE: &str = "usage: tricycle_ccz <27|81> <p> <shots> <seed> <output.json> [exact|surrogate] [complete|paper] [hook-safe|coloring] (noisy schedule defaults to hook-safe)";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if !(5..=7).contains(&args.len()) {
+    if !(5..=8).contains(&args.len()) {
         return Err(USAGE.into());
     }
     // The [[27,3,3]] and [[81,3,5]] codes of arXiv:2510.07269.
@@ -52,7 +54,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             "paper" => MetaChecks::Paper,
             _ => return Err(USAGE.into()),
         };
-        let summary = noisy_summary(&code, p, shots, seed, model, meta_checks)?;
+        let schedule_mode = args.get(7).map_or("hook-safe", String::as_str);
+        let schedule = match schedule_mode {
+            "hook-safe" => ExtractionSchedule::hook_safe(&code)?,
+            "coloring" => ExtractionSchedule::edge_coloring(&code)?,
+            _ => return Err(USAGE.into()),
+        };
+        let mut summary = noisy_summary(&code, &schedule, p, shots, seed, model, meta_checks)?;
+        summary["schedule"] = schedule_mode.into();
         std::fs::write(
             &args[4],
             format!("{}\n", serde_json::to_string_pretty(&summary)?),
@@ -100,13 +109,21 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn noisy_summary(
     code: &BivariateTricycleCode,
+    schedule: &ExtractionSchedule,
     p: f64,
     shots: u32,
     seed: u64,
     model: CczModel,
     meta_checks: MetaChecks,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
-    let protocol = NoisyCcz::new(code, p, model, NoiseModel::CircuitLevel, meta_checks)?;
+    let protocol = NoisyCcz::new(
+        code,
+        schedule,
+        p,
+        model,
+        NoiseModel::CircuitLevel,
+        meta_checks,
+    )?;
     let (build_time, compile_time) = protocol.construction_times();
     let started = Instant::now();
     let counts = protocol.run_counts(shots as usize, seed)?;

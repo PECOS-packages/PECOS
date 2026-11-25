@@ -35,6 +35,7 @@ pub mod graph_state_repr;
 pub mod measurement_sampler;
 pub mod measurement_stress_test_utils;
 pub mod pauli_prop;
+pub mod stab_tn;
 pub mod stab_vec;
 // pub mod paulis;
 pub mod prelude;
@@ -88,10 +89,12 @@ pub use gpu_stab_opt::GpuStabOpt;
 pub use gpu_stab_parallel::GpuStabParallel;
 pub use graph_state::GraphStateSim;
 pub use graph_state_repr::{GraphState, GraphStateRenderer};
+pub use stab_tn::stab_mps::StabMps;
+pub use stab_tn::stab_mps::mast::Mast;
 pub use stab_vec::ch_form::{CHForm, CHFormGeneric};
 pub use stab_vec::exact_scalar::ExactScalar;
 pub use stab_vec::sparse_binary_matrix::SparseBinaryMatrix;
-pub use stab_vec::{StabVec, StabVecBuilder, StabVecGeneric};
+pub use stab_vec::{InvalidPruningThreshold, StabVec, StabVecBuilder, StabVecGeneric};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
@@ -107,9 +110,9 @@ pub use qudit::{
 };
 pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{
-    MeasurementRule, MeasurementWork, SparseStab, SparseStabBitSet, SparseStabGeneric,
-    SparseStabHybrid, SparseStabSet, SparseStabSortedVecSet, SparseStabUnsortedVecSet,
-    SparseStabVecSet,
+    MeasurementBatchOrder, MeasurementRule, MeasurementWork, SparseStab, SparseStabBitSet,
+    SparseStabGeneric, SparseStabHybrid, SparseStabSet, SparseStabSortedVecSet,
+    SparseStabUnsortedVecSet, SparseStabVecSet,
 };
 pub use sparse_stab_y::{
     SparseStabY, SparseStabYBitSet, SparseStabYGeneric, SparseStabYUnsortedVecSet,

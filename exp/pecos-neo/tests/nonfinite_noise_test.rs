@@ -188,7 +188,11 @@ fn runtime_angle_products_at_bound_accept_maximum_duration() {
     let fraction = f64::MAX / std::f64::consts::TAU;
     let mut ctx = NoiseContext::new();
     ctx.set_current_idle(duration);
-    ctx.set_current_gate(GateType::RZ, &[Angle64::new(u64::MAX)], 1);
+    ctx.set_current_gate(
+        GateType::RZ,
+        &[Angle64::new(u64::MAX)],
+        std::num::NonZeroUsize::MIN,
+    );
     let mut rng = PecosRng::seed_from_u64(42);
     GateAction::apply(
         &InjectCoherentRZ::new(rate).unwrap(),

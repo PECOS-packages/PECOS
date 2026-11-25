@@ -75,6 +75,7 @@ pub use pecos_ldpc_decoders::{
     UnionFindBuilder,
     UnionFindDecoder,
     WeightedUnionFindDecoder,
+    bp_lsd_defaults,
 };
 
 // Re-export MWPF decoder when feature is enabled

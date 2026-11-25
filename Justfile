@@ -319,6 +319,11 @@ rslib-rust-test:
       LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       cargo test --locked -p pecos-rslib --lib
 
+# Inspector DOM checks (install npm dependencies as described in the test README).
+[group('test')]
+test-inspector:
+    npm test --prefix crates/pecos-quantum/tests/inspector
+
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:
@@ -326,7 +331,7 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
-# One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
+# One shard of `pytest-ci-core`, shared by PR, trunk, and nightly CI. The four shards
 # partition the lane: `qec-surface-harvest` owns one file, `qec-surface` the
 # rest of that directory, `qec-guppy` the rest of qec/ plus guppy/, and `rest`
 # is everything else, ignoring exactly the paths the other shards own. Keep
@@ -356,8 +361,8 @@ pytest-ci-core-shard shard:
       rest)
         # pecos-rslib's own Rust unit tests ride this shard: it is a required
         # check that runs on pull requests and has already built the crate, so
-        # the marginal cost is the test run. `python-ci-core` runs them again
-        # post-merge; its heavy step skips on a pull request.
+        # the marginal cost is the test run. Trunk and nightly CI use this
+        # same shard, so they retain these tests too.
         just rslib-rust-test
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
         uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
@@ -1106,8 +1111,8 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
-# The python-ci-sync* recipes install the pure-Python side of the workspace
-# only. The native packages are listed with `--package` so their dependencies
+# The python-ci-sync* recipes install the Python packages and the small standard
+# runtime plugin. The main native bindings are listed with `--package` so their dependencies
 # land in the environment, but are excluded from installation with
 # `--no-install-package`: otherwise uv builds release wheels of each one
 # (~20 min on a 4-core runner) that the following `pecos python build`
@@ -1123,6 +1128,8 @@ python-ci-sync-test:
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
       --package quantum-pecos \
+      --package pecos-selene-wasm \
+      --package pecos-selene-runtime-plugin \
       --no-install-package pecos-rslib \
       --no-install-package pecos-rslib-exp \
       --no-install-package pecos-rslib-llvm
@@ -1201,7 +1208,7 @@ build-selene profile="release":
             NEEDS_BUILD=true
             break
         fi
-        NEWER=$(find "crates/" "$DIR" -name "*.rs" -newer "$LIB" 2>/dev/null | head -1 || true)
+        NEWER=$(find "crates/" "exp/pecos-stab-active/" "$DIR" -name "*.rs" -newer "$LIB" 2>/dev/null | head -1 || true)
         if [ -n "$NEWER" ]; then
             NEEDS_BUILD=true
             break

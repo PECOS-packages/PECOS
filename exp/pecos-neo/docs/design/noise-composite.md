@@ -140,6 +140,11 @@ Prep
         └── 1-leak_ratio ──▶ X gate
 ```
 
+Composite seepage has marginal rate `p * emission_ratio * p_seep`, where `p`
+includes angle scaling. `leakage_scale` does not scale seepage. Composite draws
+are per qubit; two-qubit engine/channel outer fault and emission draws are shared
+per pair, so both-leaked joint rates differ.
+
 ### Single-Qubit Gate Noise
 
 ```
@@ -157,7 +162,7 @@ let sq_noise = seq([
     prob(p1,
         when(leaked,
             // Leaked: seepage opportunity
-            prob(p_seep, seep()).unwrap(),
+            prob(emission_ratio * p_seep, seep()).unwrap(),
             // Not leaked: emission vs pauli
             sample([
                 (emission_ratio, emission_noise),
@@ -180,7 +185,7 @@ SingleQubitGate
         │
         └─▶ when(leaked)
             │
-            ├─ YES ──▶ prob(p_seep) ──▶ seep()
+            ├─ YES ──▶ prob(emission_ratio * p_seep) ──▶ seep()
             │
             └─ NO ──▶ sample
                       ├── emission_ratio ──▶ emission
@@ -203,7 +208,7 @@ let tq_noise = seq([
     skip_if_any(leaked),
     prob_fn(|gate| p2_angle_error_rate(gate.angle()),
         when(any_leaked,
-            per_qubit(prob(p_seep, seep()).unwrap()),
+            per_qubit(prob(emission_ratio * p_seep, seep()).unwrap()),
             sample([
                 (emission_ratio, tq_emission_noise),
                 (1.0 - emission_ratio, tq_pauli(weights)),
@@ -685,7 +690,7 @@ fn test_sq_noise_expression() {
         SkipIf::new(Leaked),
         Prob::new(p1,
             When::new(Leaked,
-                Prob::new(p_seep, Seep)?,
+                Prob::new(emission_ratio * p_seep, Seep)?,
                 Sample::new(vec![
                     (emission_ratio, EmissionNoise::new(...)),
                     (1.0 - emission_ratio, Pauli::uniform()),

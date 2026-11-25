@@ -18,8 +18,8 @@
 
 use anyhow::{Result, anyhow, bail};
 use pecos_core::{Angle64, QubitId};
+use pecos_simulators::stab_tn::stab_mps::StabMps;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
-use pecos_stab_tn::stab_mps::StabMps;
 use selene_core::error_model::BatchResult;
 use selene_core::export_simulator_plugin;
 use selene_core::operation::{BatchOperation, Operation};
@@ -294,7 +294,7 @@ export_simulator_plugin!(crate::StabMpsSimulatorFactory);
 #[cfg(test)]
 mod tests {
     use super::{StabMpsSimulator, StabMpsSimulatorFactory};
-    use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
+    use pecos_simulators::stab_tn::stab_mps::{MeasurementMode, StabMps};
     use selene_core::simulator::conformance_testing::run_basic_tests;
     use std::sync::Arc;
 

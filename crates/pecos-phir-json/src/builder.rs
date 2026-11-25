@@ -34,8 +34,9 @@ impl PhirJsonEngineProgram {
     /// Returns an error if version detection fails
     pub fn from_json(json: &str) -> Result<Self, PecosError> {
         let version = detect_version(json)?;
-        let program: serde_json::Value =
+        let mut program: serde_json::Value =
             serde_json::from_str(json).map_err(|e| PecosError::Input(e.to_string()))?;
+        crate::v0_1::ast::canonicalize_measurement_qops(&mut program);
         crate::v0_1::classical_validation::validate_classical_inputs(&program)?;
         if let Some(ops) = program.get("ops").and_then(serde_json::Value::as_array) {
             crate::v0_1::declarations::validate_json_operations(ops)?;

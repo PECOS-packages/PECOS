@@ -1764,15 +1764,9 @@ class LogicalCircuitBuilder:
         analyzer = DagFaultAnalyzer(dc)
         influence_map = analyzer.build_influence_map()
 
-        det_json = tc.get_meta("detectors")
-        obs_json = tc.get_meta("observables")
-        num_meas = int(tc.get_meta("num_measurements"))
-
         dem_builder = DemBuilder(influence_map)
         dem_builder = dem_builder.with_noise(p1, p2, p_meas, p_prep)
-        dem_builder = dem_builder.with_detectors_json(det_json)
-        dem_builder = dem_builder.with_observables_json(obs_json)
-        dem_builder = dem_builder.with_num_measurements(num_meas)
+        dem_builder = dem_builder.with_circuit_metadata(tc)
 
         return dem_builder.build(), influence_map, dc
 

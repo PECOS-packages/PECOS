@@ -40,8 +40,8 @@ def test_qasm_static_for_matches_unrolled_and_stim(bounds) -> None:
     """Compare exact QASM and deterministic outcomes using independent simulators."""
     q, c = QReg("q", 2), CReg("c", 2)
     body = (qb.X(q[0]), qb.CX(q[0], q[1]))
-    program = Main(q, c, For("i", *bounds).Do(*body), qb.Measure(q) > c)
-    explicit = Main(q, c, *(body * len(range(*bounds))), qb.Measure(q) > c)
+    program = Main(q, c, For("i", *bounds).Do(*body), qb.MeasureZ(q) > c)
+    explicit = Main(q, c, *(body * len(range(*bounds))), qb.MeasureZ(q) > c)
     qasm = SlrConverter(program).qasm()
     assert qasm == SlrConverter(explicit).qasm()
     records = SlrConverter(program).stim().compile_sampler(seed=7).sample(shots=4)
@@ -118,7 +118,7 @@ def test_qir_barrier_in_for(named) -> None:
 def test_qir_unknown_barrier_rejected() -> None:
     """A misspelled barrier allocator must not disappear."""
     program = replace(slr_to_ast(Main(QReg("q", 1))), body=(BarrierOp(allocators=("missing",)),))
-    with pytest.raises(NotImplementedError, match=r"Barrier.*missing"):
+    with pytest.raises(ValueError, match=r"Barrier.*missing"):
         generate(program, "qir")
 
 
@@ -129,8 +129,8 @@ def test_qir_child_allocator_barrier() -> None:
         program,
         declarations=(
             *program.declarations,
-            AllocatorDecl(name="padding", capacity=1, parent="q"),
-            AllocatorDecl(name="child", capacity=2, parent="q"),
+            AllocatorDecl(name="padding", capacity=1, parent="q", offset=0),
+            AllocatorDecl(name="child", capacity=2, parent="q", offset=1),
         ),
         body=(BarrierOp(allocators=("child",)),),
     )
@@ -226,7 +226,7 @@ def test_qasm_for_permute_preparation_uses_current_mapping() -> None:
         c,
         qb.X(q),
         For("i", 0, 3).Do(Permute([q[0], q[1]], [q[1], q[0]]), qb.PZ(q[0])),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
     )
     qasm = SlrConverter(program).qasm()
     assert [line for line in qasm.splitlines() if line.startswith("reset ")] == [

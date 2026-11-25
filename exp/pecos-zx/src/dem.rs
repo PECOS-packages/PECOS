@@ -293,7 +293,7 @@ impl Dem {
                 targets.push(format!("L{o}"));
             }
             let target_str = targets.join(" ");
-            lines.push(format!("error({:.6}) {target_str}", error.probability));
+            lines.push(format!("error({}) {target_str}", error.probability));
         }
 
         lines.join("\n")
@@ -362,8 +362,8 @@ mod tests {
         assert!(s.contains("detector D0"));
         assert!(s.contains("detector D1"));
         assert!(s.contains("logical_observable L0"));
-        assert!(s.contains("error(0.001000) D0"));
-        assert!(s.contains("error(0.002000) D0 D1 L0"));
+        assert!(s.contains("error(0.001) D0"));
+        assert!(s.contains("error(0.002) D0 D1 L0"));
     }
 
     #[test]

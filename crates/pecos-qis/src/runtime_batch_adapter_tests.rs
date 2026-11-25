@@ -299,3 +299,23 @@ fn normalized_batches_still_reject_cross_batch_overlap() {
             .contains("starts before its previous operation ended")
     );
 }
+
+#[test]
+fn decoder_batch_capture_retains_normalized_order_without_opaque_payloads() {
+    let mut runtime = runtime();
+    runtime.enable_decoder_batch_capture().unwrap();
+    runtime.convert_runtime_batch(batch(100)).unwrap();
+    let captured = runtime.take_decoder_batches().unwrap();
+    let first = &captured.batches[0];
+    assert!(first.normalization_applied);
+    assert_eq!((first.start_time_nanos, first.duration_nanos), (100, 20));
+    assert_eq!(
+        first.operations,
+        [
+            QuantumOp::Idle(100e-9, 0),
+            QuantumOp::RZ(std::f64::consts::PI, 0),
+            QuantumOp::RXY(0.5, 0.0, 0),
+        ]
+    );
+    assert!(!serde_json::to_string(&captured).unwrap().contains("7301"));
+}

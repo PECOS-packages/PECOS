@@ -944,8 +944,8 @@ impl PyMatchingDecoder {
             // Unpack the obs_mask from the result
             if !result.observables.is_empty() {
                 let mut obs_mask = 0u64;
-                for i in 0..8.min(result.observables.len()) {
-                    obs_mask |= u64::from(result.observables[i]) << (i * BITS_PER_BYTE);
+                for (i, &observable) in result.observables.iter().enumerate().take(8) {
+                    obs_mask |= u64::from(observable) << (i * BITS_PER_BYTE);
                 }
 
                 for (i, obs) in observables[..num_obs].iter_mut().enumerate() {

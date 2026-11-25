@@ -56,6 +56,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: pecos_neo::noise::gate_group_size(
+                GateType::H.quantum_arity(),
+                qubits.len(),
+            ),
+            leaked_suppressed: &[],
         };
         let response = noise.emit(&event, &mut rng);
         black_box(response);
@@ -82,6 +87,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             qubits: &qubits,
             angles: &angles,
             gate_id: None,
+            group_size: pecos_neo::noise::gate_group_size(
+                GateType::H.quantum_arity(),
+                qubits.len(),
+            ),
+            leaked_suppressed: &[],
         };
         let response = noise.emit(&event, &mut rng);
         black_box(response);

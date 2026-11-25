@@ -463,7 +463,7 @@ impl ScheduledExecutor {
                         }
                         ids.push(m.program_result);
                         if m.leakage_aware {
-                            builder.measure_leakages(&targets);
+                            builder.measure_z_leaked(&targets);
                         } else {
                             builder.mz(&targets);
                         }

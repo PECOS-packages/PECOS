@@ -3208,6 +3208,12 @@ def tick_circuit_to_stim(
     This makes TickCircuit the source of truth for circuit structure,
     with Stim circuit being derived from it for DEM generation.
 
+    Inline Pauli channels on one or two qubits are exported from their actual
+    categorical payloads, without approximation. Extra nonzero gate/readout noise
+    is rejected for inline circuits, including explicitly marked zero-noise ones.
+    Other channel types raise ValueError. TICKs retain execution-step boundaries;
+    they do not imply additional physical time. Affine constants use MPAD.
+
     Args:
         tc: TickCircuit instance with detector/observable metadata
         p1: Single-qubit error rate
@@ -3229,6 +3235,13 @@ def tick_circuit_to_stim(
     import math
 
     from pecos_rslib import is_supported_noop_or_metadata_gate
+
+    from pecos.qec._stim_channels import channel_to_stim, has_inline_noise
+    from pecos.qec.dem_spec import parity_constants
+
+    if has_inline_noise(tc) and any(rate != 0 for rate in (p1, p2, p_meas, p_prep, *(p1_gate_rates or {}).values())):
+        msg = "Inline channels cannot be combined with external gate/readout noise during Stim export"
+        raise ValueError(msg)
 
     lines = []
 
@@ -3295,17 +3308,21 @@ def tick_circuit_to_stim(
         if gate_name == "Fdg":
             return [("H", qubits), ("S", qubits)], "single"
 
-        if gate_name == "RZZ":
+        if gate_name in ("RXX", "RYY", "RZZ"):
             if not gate.angles:
                 return [], None
             angle = float(gate.angles[0])
+            axis = gate_name[-1]
             if _is_close_turn(angle, 0.0):
-                return [], None
+                return [("I", qubits)], "two"
+            if _is_close_turn(angle, math.pi):
+                # The ideal action factors, but this was one physical 2q gate.
+                return [(axis, qubits)], "two"
             if _is_close_turn(angle, math.pi / 2):
-                return [("SQRT_ZZ", qubits)], "two"
+                return [(f"SQRT_{axis}{axis}", qubits)], "two"
             if _is_close_turn(angle, 3 * math.pi / 2):
-                return [("SQRT_ZZ_DAG", qubits)], "two"
-            msg = f"Unsupported traced Clifford RZZ angle: {angle!r}"
+                return [(f"SQRT_{axis}{axis}_DAG", qubits)], "two"
+            msg = f"Unsupported traced Clifford {gate_name} angle: {angle!r}"
             raise ValueError(msg)
 
         if gate_name == "RXY1Q":
@@ -3363,6 +3380,9 @@ def tick_circuit_to_stim(
             msg = f"Unsupported traced Clifford RXYXY2Q angles: theta={theta!r}, phi={phi!r}"
             raise ValueError(msg)
 
+        if gate.gate_type.is_detection():
+            msg = f"{gate_name} has no Stim form; remove it"
+            raise ValueError(msg)
         if is_supported_noop_or_metadata_gate(gate.gate_type):
             return [], None
         msg = f"Unsupported gate for Stim export: {gate_name}"
@@ -3371,6 +3391,15 @@ def tick_circuit_to_stim(
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
         for gate in tick.gate_batches():
+            if gate.is_channel():
+                try:
+                    instruction = channel_to_stim(gate)
+                except ValueError as error:
+                    msg = f"Unsupported inline channel at tick {tick_idx}: {error}"
+                    raise ValueError(msg) from error
+                if instruction is not None:
+                    lines.append(instruction)
+                continue
             instructions, noise_kind = _gate_to_stim(gate)
             if not instructions:
                 continue
@@ -3399,15 +3428,23 @@ def tick_circuit_to_stim(
 
     definitions = tc.circuit_definitions()
     num_measurements = definitions["num_measurements"]
+    constants = {key: parity_constants(tc.get_meta(key), key[:-1]) for key in ("detectors", "observables")}
+    if any(value for group in constants.values() for value in group.values()):
+        lines.append("MPAD 1")
+        num_measurements += 1
     for det in definitions["detectors"]:
         coords = det["coords"]
-        coord_str = "" if coords is None else "(" + ", ".join(str(c) for c in coords) + ")"
+        coord_str = "" if not coords else "(" + ", ".join(str(c) for c in coords) + ")"
         record_str = " ".join(f"rec[{position - num_measurements}]" for position in det["measurements"])
+        if constants["detectors"].get(det["id"], 0):
+            record_str += " rec[-1]"
         lines.append(f"DETECTOR{coord_str} {record_str}")
 
     for obs in definitions["observables"]:
         obs_id = obs["id"]
         record_str = " ".join(f"rec[{position - num_measurements}]" for position in obs["measurements"])
+        if constants["observables"].get(obs_id, 0):
+            record_str += " rec[-1]"
         lines.append(f"OBSERVABLE_INCLUDE({obs_id}) {record_str}")
 
     return "\n".join(lines)
@@ -3756,7 +3793,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
             det_str = " ".join(f"D{d}" for d in sorted(dets))
             obs_str = " ".join(f"L{o}" for o in sorted(obs))
             targets = f"{det_str} {obs_str}".strip()
-            lines.append(f"error({prob:.6g}) {targets}")
+            lines.append(f"error({prob}) {targets}")
 
     return "\n".join(lines)
 
@@ -3764,11 +3801,11 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
 def generate_dem_from_tick_circuit_via_stim(
     tc: TickCircuit,
     *,
-    p1: float = 0.01,
+    p1: float | None = None,
     p1_gate_rates: Mapping[str, float] | None = None,
-    p2: float = 0.01,
-    p_meas: float = 0.01,
-    p_prep: float = 0.01,
+    p2: float | None = None,
+    p_meas: float | None = None,
+    p_prep: float | None = None,
     decompose_errors: bool = True,
     maximal_decomposition: bool = False,
 ) -> str:
@@ -3777,6 +3814,10 @@ def generate_dem_from_tick_circuit_via_stim(
     This uses TickCircuit as the source of truth for circuit structure,
     converts to Stim format, and uses Stim's DEM generator for full
     circuit-level noise analysis.
+
+    Omitted rates are zero for inline-noise circuits and retain the legacy 0.01
+    defaults for ideal circuits. Stim may reject categorical channels that it
+    cannot convert to a DEM exactly; no disjoint-error approximation is enabled.
 
     Args:
         tc: TickCircuit with detector/observable metadata
@@ -3807,6 +3848,10 @@ def generate_dem_from_tick_circuit_via_stim(
         msg = "Stim is required for this function. Install with: pip install stim"
         raise ImportError(msg) from e
 
+    from pecos.qec._stim_channels import has_inline_noise
+
+    default = 0.0 if has_inline_noise(tc) else 0.01
+    p1, p2, p_meas, p_prep = (default if p is None else p for p in (p1, p2, p_meas, p_prep))
     stim_str = tick_circuit_to_stim(
         tc,
         p1=p1,
@@ -4011,13 +4056,13 @@ def generate_dem_from_tick_circuit(
 
     # Get detector and observable metadata
     detectors_json = tc.get_meta("detectors")
-    observables_json = tc.get_meta("observables")
 
-    if not detectors_json:
-        msg = "TickCircuit must have detector metadata for DEM generation"
+    if not detectors_json or (isinstance(detectors_json, str) and not detectors_json.strip()):
+        msg = (
+            "TickCircuit must have detector metadata for DEM generation; "
+            "use DetectorErrorModel.from_circuit for a circuit defined by annotations"
+        )
         raise ValueError(msg)
-
-    num_measurements = int(tc.get_meta("num_measurements") or "0")
 
     # Convert TickCircuit to DagCircuit and build influence map
     dag = tc.to_dag_circuit()
@@ -4050,10 +4095,7 @@ def generate_dem_from_tick_circuit(
     )
     if hasattr(builder, "with_exact_branch_replay_circuit"):
         builder = builder.with_exact_branch_replay_circuit(dag)
-    builder.with_num_measurements(num_measurements)
-    builder.with_detectors_json(detectors_json)
-    if observables_json:
-        builder.with_observables_json(observables_json)
+    builder.with_circuit_metadata(tc)
 
     dem = builder.build_with_source_tracking()
 
@@ -4211,6 +4253,6 @@ def generate_dem_from_tick_circuit_via_autodetection(
             det_str = " ".join(f"D{d}" for d in sorted(dets))
             dem_output_str = " ".join(f"L{idx}" for idx in sorted(dem_outputs))
             targets = f"{det_str} {dem_output_str}".strip()
-            lines.append(f"error({prob:.6g}) {targets}")
+            lines.append(f"error({prob}) {targets}")
 
     return "\n".join(lines)

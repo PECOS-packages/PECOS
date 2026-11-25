@@ -1,5 +1,9 @@
 """Test HUGR to LLVM lowering at the PECOS Python boundary."""
 
+import sys
+
+import pytest
+
 
 def test_hugr_to_llvm_compilation() -> None:
     """Test actual HUGR to LLVM compilation through Selene."""
@@ -100,6 +104,10 @@ def test_runtime_barrier_pair_helper_uses_public_symbol() -> None:
         cx(q0, q1)
         return measure(q0).read(), measure(q1).read()
 
+    if sys.platform == "win32":
+        with pytest.raises(ValueError, match="Windows aggregate-return ABI adapter"):
+            compile_hugr_to_qis(barrier_pair_probe.compile().to_bytes())
+        return
     llvm_ir = compile_hugr_to_qis(barrier_pair_probe.compile().to_bytes())
 
     assert "@pecos_qis_runtime_barrier_qubits2_hugr" in llvm_ir

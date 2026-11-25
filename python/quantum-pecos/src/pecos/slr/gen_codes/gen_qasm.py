@@ -15,6 +15,7 @@ import re
 import warnings
 
 import pecos as pc
+from pecos.slr._literals import is_bool_literal
 from pecos.slr._qubit_args import gate_target_groups
 from pecos.slr.gen_codes._permutation import iter_permutes, reject_permute_in_region
 from pecos.slr.gen_codes.generator import Generator
@@ -32,6 +33,8 @@ def _param_qasm(p: object) -> str:
 
     if isinstance(p, Angle):
         return str(p.value.to_radians_signed())
+    if is_bool_literal(p):
+        return "1" if p else "0"
     return str(p)
 
 
@@ -92,18 +95,20 @@ class QASMGenerator(Generator):
                 self.write('include "qelib1.inc";')
             if self.add_versions:
                 self.write(f"// Generated using: PECOS version {pc.__version__}")
-            for var in block.vars:
+            # QASM allows one declaration per register name.
+            declared: dict[str, str] = {}
+            op_vars = [var for op in block.ops if type(op).__name__ == "Vars" for var in op.vars]
+            for var in [*block.vars, *op_vars]:
                 var_def = self.process_var_def(var)
-                if var_def:
+                if not var_def:
+                    continue
+                previous = declared.get(var.sym)
+                if previous is None:
+                    declared[var.sym] = var_def
                     self.write(var_def)
-
-            for op in block.ops:
-                op_name = type(op).__name__
-                if op_name == "Vars":
-                    for var in op.vars:
-                        var_def = self.process_var_def(var)
-                        if var_def:
-                            self.write(var_def)
+                elif previous != var_def:
+                    msg = f"Register {var.sym!r} is declared as both {previous!r} and {var_def!r}; rename one."
+                    raise ValueError(msg)
         return previous_scope
 
     def process_var_def(self, var) -> str:
@@ -386,7 +391,7 @@ class QASMGenerator(Generator):
 
                     # Move each element's value to its predecessor in the cycle
                     for i in range(len(cycle) - 1):
-                        self.write(f"{cycle[i]} = {cycle[i+1]};")
+                        self.write(f"{cycle[i]} = {cycle[i + 1]};")
 
                     # Assign the temporary bit to the last element
                     self.write(f"{cycle[-1]} = {temp_var}[0];")
@@ -508,6 +513,9 @@ class QASMGenerator(Generator):
         elif op_name in {"Bit", "Qubit"}:
             op_str = f"{op.reg.sym}[{op.index}]"
 
+        elif is_bool_literal(op):
+            op_str = "1" if op else "0"
+
         elif isinstance(op, int):
             op_str = str(op)
 
@@ -522,7 +530,7 @@ class QASMGenerator(Generator):
             stat = True
             op_str = op.qasm()
 
-        elif op_name == "Measure":
+        elif op_name == "MeasureZ":
             # Check if this is a register-wide measurement (QReg > CReg)
             if (
                 len(op.qargs) == 1
@@ -649,7 +657,7 @@ class QASMGenerator(Generator):
 
         else:
             match sym:
-                case "Measure":
+                case "MeasureZ":
                     measurements = []
                     for q, c in zip(op.qargs, op.cout, strict=True):
                         # Apply permutation to the qubit
@@ -816,7 +824,7 @@ class QASMGenerator(Generator):
         return f"({left_qasm} {op.symbol} {right_qasm})"
 
     def process_general_unary_op(self, op):
-        right_qasm = op.value.qasm() if hasattr(op.value, "qasm") else self.generate_op(op.vale)
+        right_qasm = op.value.qasm() if hasattr(op.value, "qasm") else self.generate_op(op.value)
         return f"({op.symbol}{right_qasm})"
 
     def get_output(self):

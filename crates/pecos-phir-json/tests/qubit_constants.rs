@@ -24,7 +24,8 @@ fn large_register_defines_only_resolved_qubits() {
                 {"data": "qvar_define", "variable": "q", "size": size},
                 {"qop": "X", "args": [["q", last]], "returns": [["q", last]]},
                 {"qop": "CX", "args": [["q", last], ["q", 7]], "returns": []},
-                {"qop": "Measure", "args": [["q", 7]], "returns": []}
+                {"data":"cvar_define","data_type":"u32","variable":"m","size":1},
+                {"qop": "Measure", "args": [["q", 7]], "returns": [["m", 0]]}
             ]
         });
         let module = phir_json_to_module(&program.to_string()).unwrap();
@@ -32,17 +33,27 @@ fn large_register_defines_only_resolved_qubits() {
         let constants: Vec<_> = instructions
             .iter()
             .filter(|instruction| {
-                matches!(
-                    instruction.operation,
-                    Operation::Classical(ClassicalOp::ConstInt(_))
-                )
+                instruction
+                    .results
+                    .first()
+                    .is_some_and(|result| result.id < size)
+                    && matches!(
+                        instruction.operation,
+                        Operation::Classical(ClassicalOp::ConstInt(_))
+                    )
             })
             .cloned()
             .collect();
         let expected = vec![qubit_constant(7), qubit_constant(last)];
         assert_eq!(constants, expected);
         assert_eq!(instructions[..2], expected);
-        assert_eq!(instructions.len(), 6);
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|op| matches!(op.operation, Operation::Quantum(_)))
+                .count(),
+            3
+        );
         // Constants reuse reserved ids; the register definition keeps the first free id.
         assert_eq!(instructions[2].results[0].id, size);
     }

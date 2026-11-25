@@ -173,6 +173,12 @@ impl PyPauliProp {
         PyPauliProp { inner, track_sign }
     }
 
+    /// Fixed register capacity, or None for a growable simulator.
+    #[getter]
+    fn gate_capacity(&self) -> Option<usize> {
+        self.inner.qubit_capacity()
+    }
+
     /// Get `track_sign` setting (for backwards compatibility)
     #[getter]
     pub fn track_sign(&self) -> bool {
@@ -756,7 +762,8 @@ impl PyPauliProp {
     }
 
     #[staticmethod]
-    fn _from_pickle(
+    #[pyo3(name = "_from_pickle")]
+    fn from_pickle(
         track_sign: bool,
         faults: &Bound<'_, PyDict>,
         sign: bool,

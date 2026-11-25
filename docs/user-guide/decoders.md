@@ -91,6 +91,7 @@ The Rust API provides access to a broader set of decoders:
 - PyMatching MWPM (feature: `pymatching`)
 - Tesseract (feature: `tesseract`)
 - Chromobius color code decoder (feature: `chromobius`)
+- Native Relay-BP and min-sum BP (feature: `relay-bp`)
 
 ## Installation and Setup
 
@@ -173,6 +174,43 @@ let pcm = SparseMatrix::from_coo(2, 4, rows, cols)?;
 
 ### LDPC Decoders
 
+DEM-built Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind handle
+probability-0 and probability-1 mechanisms exactly: impossible mechanisms are
+removed, and certain mechanisms contribute fixed syndrome and observable biases.
+Reduction follows any uniform `error_rate` override and duplicate merging
+(BeliefFind does not merge duplicates). Detector and observable indices stay the
+same. Construction fails if no uncertain error mechanism remains after support
+reduction, including with `error_rate=0`. A biased syndrome that fires a
+detector that no uncertain error mechanism can flip raises an error naming the
+lowest such index and the number that fired. This includes declared-but-unused
+detectors and aborts batch decoding. Syndrome lengths and binary values are
+checked before applying biases.
+
+In Python, `DemAwareDecoder` (including convenience `from_dem` constructors)
+raises `ValueError` for empty reduced support, fired dead detectors, wrong
+lengths, and non-binary syndromes. `StructuredDemDecoder.decode_syndrome` raises
+`ValueError` for fired dead detectors and non-binary input, but `RuntimeError`
+for wrong lengths. On spec-built paths, empty reduced support raises
+`RuntimeError` when the decoder is built (for the logical-subgraph,
+logical-algorithm and logical-circuit decoders, in their constructors).
+`SampleBatch.decode`, `DemSampler` decoding and the logical decoders'
+`decode`/`decode_count` raise `RuntimeError` for fired dead detectors, which
+aborts the batch; `SampleBatch.compare_decoders` instead counts them as
+decode-error outcomes for those shots.
+
+Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders require finite
+priors strictly in `(0, 1)`. MBP requires a finite error rate in `(0, 1)` and
+positive XYZ weights whose normalized Pauli probabilities have finite `(1-p)/p`
+ratios. For pure dephasing, use small positive X/Y weights satisfying this rule.
+MBP performs message passing and rejects NaN log ratios before making decisions.
+The other raw LDPC kernels' product-sum check update bounds saturated tanh
+products to the closest double below one in magnitude, keeping check-to-bit
+messages finite; other products are unchanged.
+`belief_matching`, experimental BP-trellis, and the `pecos_uf` `bp` and
+`bp_serial` presets retain native ±30 saturation. Perturbed ensemble members
+retain their probability clamp, so only the anchor member receives the exact
+original bias.
+
 #### BP-OSD Decoder
 
 Combines belief propagation with ordered statistics decoding post-processing.
@@ -200,6 +238,27 @@ println!("Converged: {}", result.converged);
 
 Localized version of OSD for better scaling with large codes.
 
+BP+LSD builders, specs and DEM constructors default to minimum-sum BP, scaling
+factor 0.625, at most 30 iterations, parallel scheduling, one bit per growth step,
+and order 0. `lsd_order`: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+The raw Rust builder permits explicit reprocessing methods. Both the builder
+and `BpLsdDecoder::new` reject `Off` at every order, because LSD always runs, and
+reject `Osd0` with a positive order. At order 0 every accepted method (`Osd0`,
+`OsdCs`, `OsdE`) runs LSD-0.
+
+Cluster growth ranks BP log-probability ratios in ascending order, choosing more
+likely errors first. `bits_per_step=0` grows all candidate bits each step; their
+insertion order still affects pivots and the solution.
+
+Python `BpLsdBuilder` exposes `.bp_method(...)`, `.ms_scaling_factor(...)`,
+`.bits_per_step(...)` and `.lsd_order(...)`. `BpLsdDecoder.from_dem`, the `bp_lsd`
+spec factory and `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` accept
+these settings as keywords. Scaling defaults to 0.625; explicit `None` selects
+product-sum. An explicit `bp_method="product_sum"` (alias `"ps"`) ignores scaling;
+`bp_method="minimum_sum"` (alias `"ms"`) with `None` uses 0.625. These rules also
+apply to the Python builder. Rust specs use `ms_scaling_factor: None` to select
+product-sum.
+
 ```rust
 use pecos_decoders::BpLsdDecoder;
 
@@ -208,6 +267,8 @@ let mut decoder = BpLsdDecoder::builder(&pcm)
     .bits_per_step(1)
     .lsd_order(10)
     .build()?;
+
+assert_eq!(decoder.lsd_method(), pecos_decoders::OsdMethod::OsdCs);
 
 let result = decoder.decode(&syndrome.view())?;
 ```
@@ -327,6 +388,57 @@ match decoder.decode(&syndrome.view()) {
     }
 }
 ```
+
+## Native Relay-BP
+
+For exact endpoint handling when built from a DEM, see [LDPC Decoders](#ldpc-decoders).
+
+`relay_bp`, `RelayBpBuilder`, and `RelayBpDecoder` use PECOS's native Relay-BP
+kernel (`pecos-bp`), implementing Müller et al., [arXiv:2506.01779](https://arxiv.org/abs/2506.01779).
+
+Native Relay-BP and min-sum flip a bit when its posterior log-likelihood ratio
+is `<= 0`, including either exact zero, matching relay-bp and ldpc. PECOS always
+floors the stored prior that seeds messages and memory at magnitude `4e-5`,
+as relay-bp does when `min_log_prior_ratio` is set (its default is `None`).
+The sign is preserved except that exact zero becomes `+4e-5`, so priors of
+exactly one half no longer start at a tie. Nothing downstream is floored again.
+Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
+The existing saturation at ±30 is unchanged. Decoding results can change.
+
+For a fixed configuration, decoding is a deterministic function of `(seed, syndrome)`.
+Decode order, batch splitting and worker count cannot change a result; serial and
+parallel batch decoding are supported.
+
+The default leg-zero memory strength is `gamma0=0.35`, defined by
+`pecos_relay_bp::DEFAULT_GAMMA0`. In PECOS sweeps at p = 0.005 it was the best
+or tied-best of the values tried on surface, color and gross codes: significantly
+better on surface d5 (Z), color d5 and gross X, tied on gross Z. The paper used
+0.125 for gross and 0.35 for surface; set `gamma0` explicitly to reproduce the
+paper. The default `gamma_dist_interval=(-0.24, 0.66)` is the paper's gross-code
+interval.
+
+Use `pre_iter` for leg zero and `set_max_iter` for each of the `num_sets` relay
+legs. Relay has no `max_iter` option, including `RelayBpDecoder.from_dem`;
+the generic `DemAwareDecoder.from_dem` rejects explicit `max_iter` for Relay.
+`gamma0=None` disables memory in leg zero only; relay legs keep their sampled
+memory. The Rust and Python `RelayBpBuilder` can construct a `RelayBpDecoder`
+with `num_sets=0` for a single leg (then `pre_iter` must be positive). The
+`relay_bp` spec factory requires positive `num_sets`.
+`alpha=None` means unit scaling, while `alpha=0.0` selects dynamic scaling;
+`alpha_iteration_scaling_factor` must always be finite and greater than zero.
+Stopping targets must be positive, so `stopping("n_conv_0")` is rejected.
+
+Python `RelayBpBuilder.explicit_gammas(rows)` sets one memory strength per bit:
+row 0 serves relay leg 1, and rows cycle; `None` restores sampling from
+`gamma_dist_interval(low, high)`. Both builder-created Python decoders provide
+`decode_batch(detection_events, num_shots)`, decoding sequentially with the GIL
+released. Pass `num_shots * check_count` row-major 0/1 bytes (for example,
+`numpy_array.astype(numpy.uint8).tobytes()`); the result is
+`num_shots * bit_count` row-major correction bytes.
+
+`MinSumBpBuilder` uses a single native memory-BP leg, keeps a positive `max_iter`,
+and has no memory when `gamma0=None`. Both families require binary matrices and
+syndromes and one finite probability in `[0, 1]` per matrix column.
 
 ## Performance Considerations
 
@@ -654,6 +766,44 @@ reject v2 files. `loaded.format_version` reports the version actually loaded.
 Both results expose `.projection`. It is `None` when no projection was needed or
 when a composition without a shared policy projects inside its members and has
 no shared report. Text input has no fault-sector labels.
+
+Circuits can supply the string attribute `measurement_classes`: a JSON list with
+one entry per absolute measurement record in emission order. Each entry is `null`
+(unclassed), or an object with required `block`, `family`, and `round` keys.
+`block` is a non-empty opaque code-block name; `family` is a non-empty opaque base
+check-family name or `null` (classified but untyped); `round` is an integer global
+epoch and may be negative. Unknown object keys are ignored. For example:
+`[{"block":"memory","family":"X","round":-1}, null]`.
+The base family identifies the stabilizer register before logical frame changes:
+after a transversal H the register keeps its family although its physical
+measurement basis flips. Block and round are currently validated only.
+
+With classes present, `circuit_definitions()` and DEM construction resolve each
+detector's references to absolute records, cancel even multiplicities, and derive
+the common family of the remaining records. Empty support, an unclassed or
+untyped remaining record, or differing families gives `None`. Cancelled records
+do not contribute.
+An explicit non-null detector `fault_sector` must equal the derived label,
+including when derivation gives `None`; disagreement is an error. An absent or
+null explicit label takes the derived value. Without classes, explicit labels
+pass through unchanged. Empty explicit labels remain invalid.
+The Rust and Python `DemBuilder.with_measurement_classes_json` manual route takes
+classes in influence-map record order, which need not be stamped measurement-ID
+order. The final measurement count must match the list length.
+
+The normal manual Python route is `DemBuilder(map).with_circuit_metadata(circuit)`:
+it copies detectors, observables, classes and the measurement count together.
+It copies attributes only, after checking them against the circuit: ids must be
+unique, references must resolve, and attributes must agree with any annotations on
+ids, measurements and labels. The influence map must hold the measurement records
+of `circuit.to_dag_circuit()`, so build it from that DAG. Use
+`DetectorErrorModel.from_circuit` for circuits defined by annotation alone.
+Resolved `circuit_definitions()` detector dictionaries carry the effective labels,
+including derived labels when explicit metadata is absent or null; disagreement
+fails during definition resolution. A caller passing only
+`with_detectors_json(circuit.get_meta("detectors"))` for a circuit whose labels
+come from classes gets a DEM with no labels and no error. Pass the circuit metadata
+instead, or supply the classes separately in the influence map's record order.
 
 The default `irreducible="refuse"` rejects faults that cannot be decomposed and
 reports their count and input indices. To remove those faults from the decoder's

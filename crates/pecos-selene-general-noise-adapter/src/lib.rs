@@ -83,6 +83,12 @@ impl GeneralNoiseErrorModel {
                 .build()
                 .context("invalid general-noise configuration")?,
         );
+        if model.has_loss() {
+            bail!("Selene does not support qubit loss; remove the loss section");
+        }
+        if model.has_configured_readout() {
+            bail!("Selene does not support readout matrices; remove measurement.readout");
+        }
         for group in local_groups {
             if let Some(qubit) = group.iter().find(|qubit| **qubit >= n_qubits) {
                 bail!(
@@ -291,7 +297,7 @@ impl GeneralNoiseErrorModel {
                 } => {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(&mut builder, qubit, start, &mut touched)?;
-                    builder.measure_leakages(&[qubit]);
+                    builder.measure_z_leaked(&[qubit]);
                     if !result_ids.insert(result_id) {
                         bail!("duplicate user measurement result ID {result_id}");
                     }
@@ -444,6 +450,66 @@ mod tests {
 
     use super::{GeneralNoiseErrorModel, PluginConfig};
     use crate::simulator::SeleneSimulator;
+
+    #[test]
+    fn simulator_rejects_detection() {
+        for gate in [
+            GateType::DetectLeaked,
+            GateType::DetectLost,
+            GateType::DetectLeakedLost,
+        ] {
+            let mut builder = ByteMessage::quantum_operations_builder();
+            builder.add_gate_command(&pecos_core::Gate::simple(gate, vec![0.into()]));
+            let error = SeleneSimulator::process(&mut ZeroSimulator, &builder.build())
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(error.contains(&format!("{gate} is a non-collapsing detect gate")));
+        }
+    }
+
+    #[test]
+    fn simulator_measures_new_heralds() {
+        for gate in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+            let mut builder = ByteMessage::quantum_operations_builder();
+            builder.add_gate_command(&pecos_core::Gate::simple(gate, vec![0.into()]));
+            assert_eq!(
+                SeleneSimulator::process(&mut ZeroSimulator, &builder.build())
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                [0]
+            );
+        }
+    }
+
+    #[test]
+    fn t20_qubit_loss_is_rejected() {
+        let error =
+            GeneralNoiseErrorModel::from_plugin_json(1, r#"{"model":{"loss":{"enabled":true}}}"#)
+                .err()
+                .unwrap()
+                .to_string();
+        assert!(
+            error.contains("qubit loss") && error.contains("remove the loss section"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn configured_readout_is_rejected() {
+        let error = GeneralNoiseErrorModel::from_plugin_json(
+            1,
+            r#"{"model":{"measurement":{"readout":{"MZ":{"0":{"0":1.0}}}}}}"#,
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            error.contains("readout matrices") && error.contains("remove measurement.readout"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn all_runtime_rotation_parameters_reject_nonfinite_values() {
@@ -722,7 +788,7 @@ mod tests {
                 } => {
                     let qubit = usize::try_from(*qubit_id).unwrap();
                     idle_before(qubit);
-                    builder.measure_leakages(&[qubit]);
+                    builder.measure_z_leaked(&[qubit]);
                     expected.push((*result_id, true));
                 }
                 Operation::Reset { qubit_id } => {

@@ -545,12 +545,7 @@ fn emitted_custom_events_require_default_acknowledgement_on_every_route() {
         }
         0
     }
-    let executable = std::env::current_exe().unwrap();
-    let source = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let source = crate::test_env::runtime_fixture();
     // Isolate the fixture's descriptor slot from other parallel descriptor tests.
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join(source.file_name().unwrap());
@@ -950,12 +945,7 @@ fn scheduled_release_polls_between_native_submissions_without_barriers() {
         let original = ORIGINAL.get().unwrap();
         unsafe { (original.global_barrier_fn)(instance, delay) }
     }
-    let executable = std::env::current_exe().unwrap();
-    let source = crate::selene_runtimes::find_library_in_dir(
-        executable.parent().unwrap(),
-        pecos_qis_test_runtime::LIBRARY_NAME,
-    )
-    .unwrap();
+    let source = crate::test_env::runtime_fixture();
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join(source.file_name().unwrap());
     std::fs::copy(source, &plugin).unwrap();
@@ -1349,7 +1339,6 @@ mod measurement_followups {
     #[test]
     fn engine_reads_runtime_values_and_processes_end_feedback() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         for mode in [0, 1, 2, 3] {
             with_descriptor(|mut runtime| {
                 runtime.reset().unwrap();
@@ -1747,27 +1736,42 @@ mod measurement_followups {
     #[test]
     fn engine_waits_for_custom_request_feedback_before_resuming_program() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         with_descriptor(|mut runtime| {
             runtime.reset().unwrap();
             RELEASE.set(0);
             REQUIRE_FEEDBACK.set(true);
-            let source = r#"
+            let source = format!(
+                r#"
                 @payload = private constant [3 x i8] c"\00\FF\07"
                 @label = private constant [8 x i8] c"observed"
                 declare i32 @__quantum__qis__m__body(i64, i64)
-                declare { i32, i64 } @selene_custom_runtime_call(ptr, i64, ptr, i64)
+                {declare_selene_custom_runtime_call}
                 declare void @print_uint_selene(ptr, i64, i64)
-                define i64 @qmain(i64 %shot) {
+                define i64 @qmain(i64 %shot) {{
                     %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
                     %n = call i32 @__quantum__qis__m__body(i64 0, i64 1)
-                    %a = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 42, ptr @payload, i64 3)
-                    %b = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 88, ptr @payload, i64 3)
-                    %value = extractvalue { i32, i64 } %b, 1
+                    {call_a}
+                    {call_b}
+                    %value = extractvalue {{ i32, i64 }} %b, 1
                     call void @print_uint_selene(ptr @label, i64 8, i64 %value)
                     ret i64 0
-                }
-            "#;
+                }}
+            "#,
+                declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                    "selene_custom_runtime_call",
+                    "ptr, i64, ptr, i64"
+                ),
+                call_a = crate::selene_test_ir::call(
+                    "a",
+                    "selene_custom_runtime_call",
+                    "ptr null, i64 42, ptr @payload, i64 3"
+                ),
+                call_b = crate::selene_test_ir::call(
+                    "b",
+                    "selene_custom_runtime_call",
+                    "ptr null, i64 88, ptr @payload, i64 3"
+                ),
+            );
             let mut engine = crate::QisEngine::new(
                 Box::new(crate::QisHeliosInterface::new()),
                 Box::new(runtime),
@@ -1804,30 +1808,40 @@ mod measurement_followups {
     #[test]
     fn engine_waits_for_refcount_feedback_before_resuming_program() {
         use pecos_engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, StateVecEngine};
-        let _lock = crate::test_env::ENV_MUTEX.lock().unwrap();
         with_descriptor(|mut runtime| {
             runtime.reset().unwrap();
             RELEASE.set(0);
             REQUIRE_FEEDBACK.set(true);
-            let source = r#"
+            let source = format!(
+                r#"
                 @payload = private constant [3 x i8] c"\00\FF\07"
                 @label = private constant [8 x i8] c"observed"
                 declare i64 @___lazy_measure(i64)
-                declare { i32, i64 } @selene_custom_runtime_call(ptr, i64, ptr, i64)
+                {declare_selene_custom_runtime_call}
                 declare void @___inc_future_refcount(i64)
                 declare void @___dec_future_refcount(i64)
                 declare void @print_uint_selene(ptr, i64, i64)
-                define i64 @qmain(i64 %shot) {
+                define i64 @qmain(i64 %shot) {{
                     %m = call i64 @___lazy_measure(i64 0)
                     %n = call i64 @___lazy_measure(i64 0)
                     call void @___inc_future_refcount(i64 %m)
                     call void @___dec_future_refcount(i64 %n)
-                    %b = call { i32, i64 } @selene_custom_runtime_call(ptr null, i64 88, ptr @payload, i64 3)
-                    %value = extractvalue { i32, i64 } %b, 1
+                    {call_b}
+                    %value = extractvalue {{ i32, i64 }} %b, 1
                     call void @print_uint_selene(ptr @label, i64 8, i64 %value)
                     ret i64 0
-                }
-            "#;
+                }}
+            "#,
+                declare_selene_custom_runtime_call = crate::selene_test_ir::declaration(
+                    "selene_custom_runtime_call",
+                    "ptr, i64, ptr, i64"
+                ),
+                call_b = crate::selene_test_ir::call(
+                    "b",
+                    "selene_custom_runtime_call",
+                    "ptr null, i64 88, ptr @payload, i64 3"
+                ),
+            );
             let mut engine = crate::QisEngine::new(
                 Box::new(crate::QisHeliosInterface::new()),
                 Box::new(runtime),
@@ -1866,12 +1880,10 @@ mod measurement_followups {
     }
 
     fn with_descriptor(run: impl FnOnce(SeleneRuntime)) {
-        let executable = std::env::current_exe().unwrap();
-        let source = crate::selene_runtimes::find_library_in_dir(
-            executable.parent().unwrap(),
-            pecos_qis_test_runtime::LIBRARY_NAME,
-        )
-        .unwrap();
+        let lock = crate::test_env::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let source = crate::test_env::runtime_fixture_locked(&lock);
         let directory = tempfile::tempdir().unwrap();
         let plugin = directory.path().join(source.file_name().unwrap());
         std::fs::copy(source, &plugin).unwrap();
@@ -2030,7 +2042,7 @@ mod measurement_followups {
                                 expected,
                                 "{route:?}, deferred={deferred}"
                             );
-                            assert!(runtime.emitted_measurements[&7].is_empty());
+                            assert!(runtime.emitted_measurements.slots[&7].is_empty());
                         });
                     }
                 }

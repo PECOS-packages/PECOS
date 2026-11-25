@@ -260,15 +260,16 @@ def test_qis_operation_trace_can_be_replayed_or_captured_as_a_tick_circuit(
     assert replayed.get_meta("qis_source_measurement_ids") == "[7]"
 
 
-def test_leakage_measurement_replays_as_accepted_path_mz() -> None:
+@pytest.mark.parametrize("gate_type", ["MeasureLeaked", "MeasureZLeaked"])
+def test_leakage_measurement_replays_as_accepted_path_mz(gate_type: str) -> None:
     trace = _completed_trace()
     trace[0]["operations"][-1] = {"Quantum": {"MeasureLeaked": [0, 7]}}
-    trace[0]["lowered_quantum_ops"][-1]["gate_type"] = "MeasureLeaked"
+    trace[0]["lowered_quantum_ops"][-1]["gate_type"] = gate_type
 
     replayed = pecos.qis_operation_trace_to_tick_circuit(trace)
 
     assert "MZ" in _gate_names(replayed)
-    assert "MeasureLeaked" not in _gate_names(replayed)
+    assert not {"MeasureLeaked", "MeasureZLeaked"}.intersection(_gate_names(replayed))
     assert replayed.get_meta("qis_source_measurement_ids") == "[7]"
 
 
@@ -554,7 +555,15 @@ def test_mixed_result_namespaces_preserve_values_and_audited_provenance(*, nativ
     qir_source, native_source = (1, 0) if native_first else (0, 1)
     expected_sources = [qir_source, 2, native_source] if reuse else [qir_source, native_source]
     records = named_result_traces_from_operation_trace(trace)
-    assert records == [{"name": "out", "values": [bool(v) for v in expected_values], "result_ids": expected_sources}]
+    assert records == [
+        {
+            "name": "out",
+            "values": [bool(v) for v in expected_values],
+            "result_ids": expected_sources,
+            "provenance": [{"class": "measurement", "id": source} for source in expected_sources],
+            "control_dependent": False,
+        },
+    ]
     circuit = pecos.qis_operation_trace_to_tick_circuit(trace)
     assert json.loads(circuit.get_meta("qis_source_measurement_ids")) == list(range(3 if reuse else 2))
     assert trace[-1]["stage"] == "trace_complete"

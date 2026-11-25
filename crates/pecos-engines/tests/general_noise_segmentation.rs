@@ -13,7 +13,7 @@ fn program(ops: &str) -> ByteMessage {
                 b.mz(&[0]);
             }
             'L' => {
-                b.measure_leakages(&[0]);
+                b.measure_z_leaked(&[0]);
             }
             'P' => {
                 b.pz(&[0]);

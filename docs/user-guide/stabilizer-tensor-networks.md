@@ -149,7 +149,7 @@ Rust reads do not auto-flush. Call `flush()` before state reads when lazy measur
 ```rust
 use pecos_core::{Angle64, QubitId};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
-use pecos_stab_tn::stab_mps::StabMps;
+use pecos_simulators::stab_tn::stab_mps::StabMps;
 
 fn main() {
     let mut sim = StabMps::builder(2).seed(7).build();

@@ -79,7 +79,7 @@ def test_slr_converter_optimization_preserves_semantics() -> None:
                 qb.CX(q[2], q[3]),
             ),
         ),
-        qb.Measure(q) > c,
+        qb.MeasureZ(q) > c,
     )
 
     # Generate both versions

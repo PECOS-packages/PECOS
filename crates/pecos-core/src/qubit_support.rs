@@ -41,7 +41,27 @@ pub(crate) fn overlapping_qubits(
 
 /// Returns the sorted, distinct qubit indices that occur more than once.
 pub fn duplicate_qubits(qubits: impl IntoIterator<Item = usize>) -> Vec<usize> {
-    let mut qubits: Vec<usize> = qubits.into_iter().collect();
+    // Most gate validations have at most two operands; avoid a scratch allocation.
+    let mut qubits = qubits.into_iter();
+    let mut qubits: Vec<usize> = if qubits.size_hint().1.is_none_or(|upper| upper > 2) {
+        // Preserve collection specialization, including owned-vector reuse.
+        qubits.collect()
+    } else {
+        let Some(first) = qubits.next() else {
+            return Vec::new();
+        };
+        let Some(second) = qubits.next() else {
+            return Vec::new();
+        };
+        let Some(third) = qubits.next() else {
+            return if first == second {
+                vec![first]
+            } else {
+                Vec::new()
+            };
+        };
+        [first, second, third].into_iter().chain(qubits).collect()
+    };
     qubits.sort_unstable();
 
     let mut duplicates = Vec::new();
@@ -73,6 +93,57 @@ mod tests {
     #[test]
     fn duplicate_qubits_returns_sorted_deduplicated_repeats() {
         assert_eq!(duplicate_qubits([5, 1, 5, 2, 2, 2]), vec![2, 5]);
+    }
+
+    #[test]
+    fn duplicate_qubits_matches_frequency_oracle_for_short_inputs() {
+        for len in 0..=7 {
+            for mut encoded in 0..4_usize.pow(len) {
+                let mut counts = [0; 4];
+                let input: Vec<_> = (0..len)
+                    .map(|_| {
+                        let qubit = encoded % 4;
+                        encoded /= 4;
+                        counts[qubit] += 1;
+                        qubit
+                    })
+                    .collect();
+                let expected: Vec<_> = (0..4).filter(|&q| counts[q] > 1).collect();
+                assert_eq!(
+                    duplicate_qubits(input.iter().copied().filter(|_| true)),
+                    expected
+                );
+                assert_eq!(duplicate_qubits(input), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_qubits_stops_at_first_exhaustion() {
+        let mut calls = 0;
+        let input = std::iter::from_fn(|| {
+            calls += 1;
+            match calls {
+                1 => Some(usize::MAX),
+                2 => None,
+                _ => panic!("iterator polled after exhaustion"),
+            }
+        });
+        assert_eq!(duplicate_qubits(input), [] as [usize; 0]);
+        assert_eq!(calls, 2);
+        assert_eq!(duplicate_qubits([usize::MAX, usize::MAX]), [usize::MAX]);
+    }
+
+    #[test]
+    fn duplicate_qubits_bounded_iterator_stops_at_first_exhaustion() {
+        let mut calls = 0;
+        let input = [0, 1].into_iter().scan((), |(), _| {
+            calls += 1;
+            assert_eq!(calls, 1);
+            None::<usize>
+        });
+        assert_eq!(duplicate_qubits(input), [] as [usize; 0]);
+        assert_eq!(calls, 1);
     }
 
     #[test]

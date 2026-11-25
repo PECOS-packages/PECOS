@@ -28,7 +28,7 @@
 //!
 //! Exposes `StabMps` (stabilizer + MPS hybrid), `Mast` (magic state
 //! injection), and `StabMpsCompile` (compile-only tractability analysis)
-//! from `pecos-stab-tn`, plus the Frontier and BP-trellis decoders,
+//! from `pecos-simulators`, plus the Frontier and BP-trellis decoders,
 //! via `PyO3`.
 
 mod bp_trellis_bindings;
@@ -43,7 +43,7 @@ mod stab_mps_bindings;
 pub mod stabmps_builder;
 
 use pecos_core::Angle64;
-use pecos_stab_tn::stab_mps::{MeasurementMode, StabMpsStats};
+use pecos_simulators::stab_tn::stab_mps::{MeasurementMode, StabMpsStats};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 

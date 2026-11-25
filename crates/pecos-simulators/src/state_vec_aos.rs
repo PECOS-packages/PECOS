@@ -449,7 +449,7 @@ where
         // Use a temporary buffer to avoid overwriting data during updates
         let mut new_state = vec![Complex64::new(0.0, 0.0); size];
 
-        for i in 0..size {
+        for (i, &amplitude) in self.state.iter().enumerate().take(size) {
             // Extract qubit1 and qubit2 bits
             let control_bit = (i >> qubit1) & 1;
             let target_bit = (i >> qubit2) & 1;
@@ -464,7 +464,7 @@ where
                     | ((j & 1) << qubit2);
 
                 // Apply the matrix to the relevant amplitudes
-                new_state[flipped_i] += row[basis_idx] * self.state[i];
+                new_state[flipped_i] += row[basis_idx] * amplitude;
             }
         }
 
@@ -1372,8 +1372,8 @@ mod tests {
         // Verify the initial state is correctly set to |0>
         let q = StateVecAoS::new(2);
         assert_eq!(q.state[0], Complex64::new(1.0, 0.0));
-        for i in 1..4 {
-            assert_eq!(q.state[i], Complex64::new(0.0, 0.0));
+        for &amplitude in q.state.iter().take(4).skip(1) {
+            assert_eq!(amplitude, Complex64::new(0.0, 0.0));
         }
     }
 
@@ -1385,8 +1385,8 @@ mod tests {
         state_vec.reset(); // Reset to |00⟩
 
         assert!((state_vec.probability(0) - 1.0).abs() < 1e-10);
-        for i in 1..state_vec.state.len() {
-            assert!(state_vec.state[i].norm() < 1e-10);
+        for amplitude in state_vec.state.iter().skip(1) {
+            assert!(amplitude.norm() < 1e-10);
         }
     }
 
@@ -1411,11 +1411,11 @@ mod tests {
 
         for basis_state in 0..(1 << num_qubits) {
             state_vec.prepare_computational_basis(basis_state);
-            for i in 0..state_vec.state.len() {
+            for (i, amplitude) in state_vec.state.iter().enumerate() {
                 if i == basis_state {
-                    assert!((state_vec.state[i].norm() - 1.0).abs() < 1e-10);
+                    assert!((amplitude.norm() - 1.0).abs() < 1e-10);
                 } else {
-                    assert!(state_vec.state[i].norm() < 1e-10);
+                    assert!(amplitude.norm() < 1e-10);
                 }
             }
         }

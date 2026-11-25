@@ -97,6 +97,37 @@ pub trait QisInterface: Send + Sync {
     /// Returns an error if the program execution fails.
     fn collect_operations(&mut self) -> Result<OperationCollector, InterfaceError>;
 
+    /// Whether this interface can service requests synchronously on the caller.
+    fn supports_scoped_execution(&self) -> bool {
+        false
+    }
+
+    /// Execute on the caller's stack, servicing each outstanding request before
+    /// continuing the program. Dynamic mode and the response handle must already
+    /// be configured. Before entry, acquire `get_sync_handle`; each callback must
+    /// drain its pending operations, process the emitted work and all feedback,
+    /// store the requested outcome, and signal readiness before returning `Ok`.
+    /// Pending operations are not part of the terminal collector returned here.
+    /// Keep the handle exclusive to this invocation, except for cancellation.
+    /// A failed scope requires reset and a fresh dynamic context before reuse.
+    ///
+    /// The callback cannot escape this invocation. Implementations
+    /// must catch callback panics before crossing a foreign ABI and may resume
+    /// them only after the program and registration guards have returned.
+    ///
+    /// This mode cannot detach an unresponsive program.
+    ///
+    /// # Errors
+    /// Returns an error if unsupported, execution fails, or a request fails.
+    fn collect_operations_scoped(
+        &mut self,
+        _request: &mut dyn FnMut(u64) -> Result<(), InterfaceError>,
+    ) -> Result<OperationCollector, InterfaceError> {
+        Err(InterfaceError::Other(
+            "Scoped execution is not supported".into(),
+        ))
+    }
+
     /// Execute with measurement results
     ///
     /// This runs the program with specific measurement results to handle

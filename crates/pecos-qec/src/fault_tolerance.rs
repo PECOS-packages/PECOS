@@ -144,10 +144,7 @@ impl SpacetimeLocation {
     /// Returns true if this is a measurement location.
     #[must_use]
     pub fn is_measurement(&self) -> bool {
-        matches!(
-            self.gate_type,
-            GateType::MZ | GateType::MeasureFree | GateType::MPZ
-        )
+        propagator::gate_noise_kind(self.gate_type) == propagator::GateNoiseKind::Measurement
     }
 }
 
@@ -601,6 +598,19 @@ impl FaultCheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spacetime_measurements_include_x_and_recordless_z() {
+        for gate_type in [
+            GateType::MX,
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let loc = SpacetimeLocation::new(0, vec![QubitId(0)], true, gate_type, 0);
+            assert!(loc.is_measurement(), "{gate_type:?}");
+        }
+    }
 
     #[test]
     fn test_spacetime_location() {

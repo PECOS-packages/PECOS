@@ -156,14 +156,7 @@ def dem_builder_rates(tc, noise_kw, shots, seed, num_dets):
     dag = tc.to_dag_circuit()
     analyzer = DagFaultAnalyzer(dag)
     influence = analyzer.build_influence_map()
-    dem = (
-        DemBuilder(influence)
-        .with_noise(**full_noise_kw(noise_kw))
-        .with_detectors_json(tc.get_meta("detectors"))
-        .with_observables_json(tc.get_meta("observables"))
-        .with_num_measurements(int(tc.get_meta("num_measurements")))
-        .build()
-    )
+    dem = DemBuilder(influence).with_noise(**full_noise_kw(noise_kw)).with_circuit_metadata(tc).build()
     sampler = dem.to_sampler()
     batch = sampler.sample_batch(num_shots=shots, seed=seed)
     rates = [0.0] * num_dets

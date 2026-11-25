@@ -43,6 +43,17 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   - `LossDecoder` decodes with any `DecoderSpec` and compares against a loss-blind baseline.
   - On a d=3 surface-code memory with loss as the dominant noise, loss-aware decoding cut the
     logical error rate from 8.15% to 0.30%.
+- **Added:** Opt-in `incremental_score` for Trellis, Frontier and BpTrellis decoders
+  (`incremental_score` on the config in Rust, `incremental_score=True` on the Python
+  detailed decoders; default off). Each retained state carries its pruning score and
+  updates it per column instead of re-summing it over every active detector. Measured
+  single-core decode time dropped about 3.4x on a Gross-code memory model at `k=512`
+  and 1.2x to 1.4x on a distance-7 surface code; it is slightly slower on narrow
+  models such as distance 3. Scores match the default up to floating-point rounding,
+  so pruned results can differ at near-ties; unpruned results are unchanged. Requires
+  the binary float kernel: the integer metric, N-ary factor models and fixed-lag
+  streaming reject it. Rust code that builds `TrellisConfig`, `FrontierConfig` or
+  `BpTrellisConfig` with a full struct literal must add the new field.
 
 - **Breaking:** Trellis, Frontier and BpTrellis results no longer report
   `dropped_log_mass` by default, and float metrics no longer pay to accumulate it.

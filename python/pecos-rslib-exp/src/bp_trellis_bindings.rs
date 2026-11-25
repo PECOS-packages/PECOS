@@ -82,9 +82,11 @@ fn parse_dem_and_config(
     escalation_ks: Option<Vec<usize>>,
     escalation: Option<Vec<(usize, f64)>>,
     dropped_mass: bool,
+    incremental_score: bool,
 ) -> PyResult<(SparseDem, RustBpTrellisConfig)> {
     let config = RustBpTrellisConfig {
         dropped_mass,
+        incremental_score,
         k,
         delta,
         score_alpha,
@@ -442,12 +444,16 @@ pub struct PyBpTrellisDecoder {
 #[pymethods]
 impl PyBpTrellisDecoder {
     /// Construct a PECOS BP-guided trellis decoder from a Stim-format DEM.
+    /// incremental_score=True carries suffix scores faster on wide boundaries; rounding
+    /// can change near-tie pruning, outside snapshot/reference guarantees; unpruned results are unchanged.
+    /// With it enabled, construction fails for non-finite static suffix values when BP scoring
+    /// is off, and decoding can be slower on narrow models with few active detectors.
     /// dropped_mass=True enables the discarded-prefix-mass diagnostic at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None, escalation=None, dropped_mass=false),
-        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None, escalation=None, dropped_mass=False)"
+        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None, escalation=None, dropped_mass=false, incremental_score=false),
+        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None, escalation=None, dropped_mass=False, incremental_score=False)"
     )]
     fn from_dem(
         dem: &str,
@@ -460,6 +466,7 @@ impl PyBpTrellisDecoder {
         escalation_ks: Option<Vec<usize>>,
         escalation: Option<Vec<(usize, f64)>>,
         dropped_mass: bool,
+        incremental_score: bool,
     ) -> PyResult<Self> {
         let (dem, config) = parse_dem_and_config(
             dem,
@@ -472,6 +479,7 @@ impl PyBpTrellisDecoder {
             escalation_ks,
             escalation,
             dropped_mass,
+            incremental_score,
         )?;
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;

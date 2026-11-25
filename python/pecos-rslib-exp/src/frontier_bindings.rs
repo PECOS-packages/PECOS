@@ -132,9 +132,11 @@ fn parse_dem_and_config(
     metric_mode: &str,
     int_metric_scale: i32,
     dropped_mass: bool,
+    incremental_score: bool,
 ) -> PyResult<(SparseDem, RustFrontierConfig)> {
     let mut config = RustFrontierConfig {
         dropped_mass,
+        incremental_score,
         k,
         delta,
         score_alpha,
@@ -720,13 +722,17 @@ pub struct PyFrontierDecoder {
 #[pymethods]
 impl PyFrontierDecoder {
     /// Construct a native Frontier decoder from a Stim-format DEM string.
+    /// incremental_score=True carries suffix scores faster on wide boundaries; rounding
+    /// can change near-tie pruning, outside snapshot/reference guarantees; unpruned results are unchanged.
+    /// With it enabled, construction fails for non-finite static suffix values when BP scoring
+    /// is off, and decoding can be slower on narrow models with few active detectors.
     /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
     /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, fallback=None, dropped_mass=false),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, fallback=None, dropped_mass=False)"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, fallback=None, dropped_mass=false, incremental_score=false),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, fallback=None, dropped_mass=False, incremental_score=False)"
     )]
     fn from_dem(
         dem: &str,
@@ -740,6 +746,7 @@ impl PyFrontierDecoder {
         int_metric_scale: i32,
         fallback: Option<&str>,
         dropped_mass: bool,
+        incremental_score: bool,
     ) -> PyResult<Self> {
         let (dem, config) = parse_dem_and_config(
             dem,
@@ -752,6 +759,7 @@ impl PyFrontierDecoder {
             metric_mode,
             int_metric_scale,
             dropped_mass,
+            incremental_score,
         )?;
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;
@@ -765,13 +773,17 @@ impl PyFrontierDecoder {
     }
 
     /// Construct a native Frontier decoder from a multi-outcome factor model.
+    /// incremental_score=True carries suffix scores faster on wide boundaries; rounding
+    /// can change near-tie pruning, outside snapshot/reference guarantees; unpruned results are unchanged.
+    /// With it enabled, construction fails for non-finite static suffix values when BP scoring
+    /// is off, and decoding can be slower on narrow models with few active detectors.
     /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
     /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
     #[staticmethod]
     #[pyo3(
-        signature = (factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, fallback=None, dropped_mass=false),
-        text_signature = "(factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, fallback=None, dropped_mass=False)"
+        signature = (factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, fallback=None, dropped_mass=false, incremental_score=false),
+        text_signature = "(factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, fallback=None, dropped_mass=False, incremental_score=False)"
     )]
     fn from_factors(
         factors: FactorModelArgument,
@@ -787,10 +799,12 @@ impl PyFrontierDecoder {
         int_metric_scale: i32,
         fallback: Option<&str>,
         dropped_mass: bool,
+        incremental_score: bool,
     ) -> PyResult<Self> {
         let metric_mode = parse_metric_mode(metric_mode)?;
         let mut config = RustFrontierConfig {
             dropped_mass,
+            incremental_score,
             k,
             delta,
             score_alpha,
@@ -937,13 +951,17 @@ pub struct PyFrontierCommitteeDecoder {
 #[pymethods]
 impl PyFrontierCommitteeDecoder {
     /// Construct a native forward/backward committee from a Stim-format DEM.
+    /// incremental_score=True carries suffix scores faster on wide boundaries; rounding
+    /// can change near-tie pruning, outside snapshot/reference guarantees; unpruned results are unchanged.
+    /// With it enabled, construction fails for non-finite static suffix values when BP scoring
+    /// is off, and decoding can be slower on narrow models with few active detectors.
     /// dropped_mass=True reports the discarded-prefix-mass diagnostic; float metrics
     /// accumulate it at extra pruning cost.
     /// It defaults to False and never changes predictions or other result fields.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, dropped_mass=false),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, dropped_mass=False)"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024, dropped_mass=false, incremental_score=false),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024, dropped_mass=False, incremental_score=False)"
     )]
     fn from_dem(
         dem: &str,
@@ -956,6 +974,7 @@ impl PyFrontierCommitteeDecoder {
         metric_mode: &str,
         int_metric_scale: i32,
         dropped_mass: bool,
+        incremental_score: bool,
     ) -> PyResult<Self> {
         let (dem, config) = parse_dem_and_config(
             dem,
@@ -968,6 +987,7 @@ impl PyFrontierCommitteeDecoder {
             metric_mode,
             int_metric_scale,
             dropped_mass,
+            incremental_score,
         )?;
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;

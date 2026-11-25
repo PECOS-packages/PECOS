@@ -104,6 +104,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
         &dem,
         TrellisConfig {
             dropped_mass: true,
+            incremental_score: false,
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
@@ -119,6 +120,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
         &dem,
         TrellisConfig {
             dropped_mass: true,
+            incremental_score: false,
             k: 8,
             delta: 100.0,
             score_alpha: 0.8,
@@ -196,6 +198,7 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
                 ordering,
                 escalation: Vec::new(),
                 dropped_mass: false,
+                incremental_score: false,
             },
         )
         .unwrap();
@@ -211,6 +214,7 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
                 metric_mode: pecos_trellis::MetricMode::default(),
                 int_metric_scale: 1024,
                 dropped_mass: false,
+                incremental_score: false,
             },
         )
         .unwrap();
@@ -292,6 +296,7 @@ fn escalation_config(k: usize, escalation_ks: Vec<usize>) -> BpTrellisConfig {
             })
             .collect(),
         dropped_mass: false,
+        incremental_score: false,
     }
 }
 
@@ -400,6 +405,7 @@ fn ladder_rung_matches_a_hand_built_decoder_except_accumulated_work() {
             })
             .collect(),
         dropped_mass: false,
+        incremental_score: false,
     };
     let syndrome = [0, 0, 1];
     let mut ladder = BpTrellisDecoder::from_sparse_dem(&dem, config_for(2, vec![16])).unwrap();
@@ -447,6 +453,7 @@ fn parallel_batch_matches_bp_ladder_shot_for_shot() {
     let dem = sparse_dem(mechanisms, 6, 2);
     let config = BpTrellisConfig {
         dropped_mass: true,
+        incremental_score: false,
         k: 1,
         delta: f64::INFINITY,
         score_alpha: 0.01,

@@ -187,6 +187,7 @@ impl FrontierCommittee {
         }
         let FrontierConfig {
             dropped_mass,
+            incremental_score,
             k,
             delta,
             score_alpha,
@@ -201,6 +202,7 @@ impl FrontierCommittee {
             dem,
             FrontierConfig {
                 dropped_mass,
+                incremental_score,
                 k,
                 delta,
                 score_alpha,
@@ -214,6 +216,7 @@ impl FrontierCommittee {
         forward_order.reverse();
         let backward_config = FrontierConfig {
             dropped_mass,
+            incremental_score,
             k,
             delta,
             score_alpha,
@@ -873,6 +876,7 @@ mod tests {
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
                 dropped_mass: false,
+                incremental_score: false,
             },
         )
         .unwrap();
@@ -916,6 +920,7 @@ mod tests {
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
                 dropped_mass: false,
+                incremental_score: false,
             },
         )
         .unwrap();
@@ -973,6 +978,7 @@ mod tests {
                 metric_mode: MetricMode::default(),
                 int_metric_scale: 1024,
                 dropped_mass: false,
+                incremental_score: false,
             },
         )
         .unwrap();

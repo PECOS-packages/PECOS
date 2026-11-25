@@ -142,6 +142,7 @@ fn ordering_and_committee_match_upstream_fixtures() {
                 metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
                 dropped_mass: false,
+                incremental_score: false,
             },
         )
         .unwrap();

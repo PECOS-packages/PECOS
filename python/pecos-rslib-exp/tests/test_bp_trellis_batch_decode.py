@@ -256,3 +256,18 @@ def test_dropped_mass_is_opt_in():
     assert default.observable_flips.mask == enabled.observable_flips.mask
     assert default.logical_masses == enabled.logical_masses
     assert default.log_evidence == enabled.log_evidence
+
+
+def test_incremental_score_is_opt_in():
+    dem = "error(0.1) D0 L0\nerror(0.2) D0\n"
+    default = exp.BpTrellisDecoder.from_dem(dem, k=1).decode_syndrome([1])
+    enabled = exp.BpTrellisDecoder.from_dem(dem, k=1, incremental_score=True).decode_syndrome([1])
+    assert default.observable_flips.mask == enabled.observable_flips.mask
+    assert default.log_evidence == pytest.approx(enabled.log_evidence, abs=1e-6)
+
+
+def test_incremental_score_rejects_nonfinite_suffix():
+    dem = "error(0.1) D0 L0\nerror(1e-17) D0"
+    exp.BpTrellisDecoder.from_dem(dem, bp_score_iterations=0)
+    with pytest.raises(RuntimeError, match="incremental_score"):
+        exp.BpTrellisDecoder.from_dem(dem, bp_score_iterations=0, incremental_score=True)

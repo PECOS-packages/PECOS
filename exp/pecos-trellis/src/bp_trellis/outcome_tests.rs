@@ -22,6 +22,7 @@ fn config(k: usize, rungs: &[(usize, f64)]) -> BpTrellisConfig {
             .map(|&(k, delta)| EscalationRung { k, delta })
             .collect(),
         dropped_mass: false,
+        incremental_score: false,
     }
 }
 

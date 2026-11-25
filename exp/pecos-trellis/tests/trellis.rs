@@ -45,6 +45,7 @@ fn exact_config() -> TrellisConfig {
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
         dropped_mass: false,
+        incremental_score: false,
     }
 }
 
@@ -444,6 +445,7 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
         dropped_mass: false,
+        incremental_score: false,
     };
     let mut merged = TrellisDecoder::from_sparse_dem(&dem, pruning).unwrap();
     let mut hand_built = TrellisDecoder::from_sparse_dem(
@@ -458,6 +460,7 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -473,6 +476,7 @@ fn merging_keeps_first_ordered_occurrence_and_deletes_later_copy() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -812,6 +816,7 @@ fn overpruning_can_remove_the_only_eventually_feasible_prefix() {
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
         dropped_mass: false,
+        incremental_score: false,
     };
     let mut overpruned = TrellisDecoder::from_sparse_dem(&dem, tight).unwrap();
     assert!(overpruned.decode(&[0, 1]).is_err());
@@ -850,6 +855,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -867,6 +873,7 @@ fn width_and_delta_pruning_can_change_the_logical_answer() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -913,6 +920,7 @@ fn width_pruning_accounts_for_the_discarded_state_and_mass() {
         &dem,
         TrellisConfig {
             dropped_mass: true,
+            incremental_score: false,
             k: 1,
             delta: f64::INFINITY,
             score_alpha: 0.0,
@@ -1100,6 +1108,7 @@ fn delta_pruning_reports_its_status_flag() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -1134,6 +1143,7 @@ fn one_prune_call_can_trigger_both_pruning_flags() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -1171,6 +1181,7 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -1186,6 +1197,7 @@ fn suffix_compatibility_changes_the_greedy_survivor() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -1419,6 +1431,7 @@ fn bp_scores_change_the_greedy_survivor_without_changing_its_mass() {
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
         dropped_mass: false,
+        incremental_score: false,
     };
     let mut bp_scored = TrellisDecoder::from_sparse_dem(&dem, bp_config.clone()).unwrap();
     let mut dem_scored = TrellisDecoder::from_sparse_dem(
@@ -1498,6 +1511,7 @@ fn bp_scoring_is_bitwise_deterministic_across_reuse_and_fresh_construction() {
     );
     let config = TrellisConfig {
         dropped_mass: true,
+        incremental_score: false,
         k: 1,
         delta: f64::INFINITY,
         score_alpha: 0.8,
@@ -1536,6 +1550,7 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
     );
     let off_config = TrellisConfig {
         dropped_mass: true,
+        incremental_score: false,
         k: usize::MAX,
         delta: f64::INFINITY,
         score_alpha: 0.8,
@@ -1600,6 +1615,7 @@ fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -1615,6 +1631,7 @@ fn subnormal_priors_decode_with_bp_scoring_instead_of_reporting_no_path() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();
@@ -1652,6 +1669,7 @@ fn non_finite_bp_posteriors_are_an_engine_fault_not_a_no_path() {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         },
     )
     .unwrap();

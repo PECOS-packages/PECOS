@@ -12,7 +12,7 @@
 
 //! Reproducible Frontier throughput probe for a public flattened Stim DEM.
 //!
-//! Usage: `public_dem_benchmark <model.dem> [shots] [repeats] [seed]`.
+//! Usage: `public_dem_benchmark <model.dem> [shots] [repeats] [seed] [k] [delta] [incremental_score]`.
 
 use pecos_decoder_core::dem::SparseDem;
 use pecos_frontier::{FrontierConfig, FrontierDecoder};
@@ -21,11 +21,11 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use std::hash::{DefaultHasher, Hasher};
 use std::time::Instant;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let path = args
         .next()
-        .expect("usage: public_dem_benchmark <model.dem> [shots] [repeats] [seed]");
+        .expect("usage: public_dem_benchmark <model.dem> [shots] [repeats] [seed] [k] [delta] [incremental_score]");
     let shots: usize = args
         .next()
         .map_or(Ok(256), |raw| raw.parse())
@@ -38,6 +38,9 @@ fn main() {
         .next()
         .map_or(Ok(0x5eed_u64), |raw| raw.parse())
         .expect("seed must be an integer");
+    let k = args.next().map_or(Ok(64), |raw| raw.parse())?;
+    let delta = args.next().map_or(Ok(50.0), |raw| raw.parse())?;
+    let incremental_score = args.next().map_or(Ok(false), |raw| raw.parse())?;
     assert!(
         shots > 0 && repeats > 0,
         "shots and repeats must be positive"
@@ -58,8 +61,16 @@ fn main() {
     }
 
     let build_started = Instant::now();
-    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, FrontierConfig::default())
-        .expect("construct Frontier decoder");
+    let mut decoder = FrontierDecoder::from_sparse_dem(
+        &dem,
+        FrontierConfig {
+            k,
+            delta,
+            incremental_score,
+            ..FrontierConfig::default()
+        },
+    )
+    .expect("construct Frontier decoder");
     let build_seconds = build_started.elapsed().as_secs_f64();
     for syndrome in syndromes.iter().take(shots.min(32)) {
         let _ = decoder.decode(syndrome);
@@ -86,7 +97,7 @@ fn main() {
     let decoded = u32::try_from(decoded).expect("decode count exceeds u32");
     let microseconds_per_shot = decode_seconds * 1_000_000.0 / f64::from(decoded);
     println!(
-        "model={path} detectors={} mechanisms={} shots={shots} repeats={repeats} seed={seed} \
+        "model={path} detectors={} mechanisms={} shots={shots} repeats={repeats} seed={seed} k={k} delta={delta} incremental_score={incremental_score} \
          build_ms={:.3} decode_us_per_shot={microseconds_per_shot:.3} failures={failures} \
          checksum={:016x}",
         dem.num_detectors,
@@ -94,4 +105,5 @@ fn main() {
         build_seconds * 1_000.0,
         checksum.finish(),
     );
+    Ok(())
 }

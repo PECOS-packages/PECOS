@@ -96,6 +96,7 @@ fn main() {
     };
     let config = FrontierConfig {
         dropped_mass: false,
+        incremental_score: false,
         k,
         delta,
         score_alpha,

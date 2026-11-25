@@ -23,6 +23,8 @@ maximum.
 `dropped_log_mass` is `Option<f64>` in Rust and `float | None` in Python.
 The flag applies to every entry point and never changes predictions, retained
 logical masses, evidence, or other result fields.
+Opt-in `incremental_score` carries suffix scores for binary float decoding, speeding up wide boundaries; rounding can change near-tie pruning outside snapshot/reference guarantees, while unpruned results are unchanged.
+With incremental scoring enabled, construction fails for non-finite static suffix values when BP scoring is off; fixed-lag streaming rejects this option, and it can be slower on narrow models with few active detectors.
 
 Deterministic ordering and tie-breaking are bitwise reproducible, and the
 engine's `libm` transcendentals make outputs bit-identical across platforms.

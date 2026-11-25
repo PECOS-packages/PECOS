@@ -34,6 +34,8 @@ pub mod factor;
 pub mod streaming;
 
 #[cfg(test)]
+mod incremental_score_tests;
+#[cfg(test)]
 mod prune_wide_delta_tests;
 
 pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
@@ -167,6 +169,19 @@ pub struct TrellisConfig {
     /// at extra pruning cost; the integer metric always keeps its cheap running maximum.
     /// Defaults to false; never changes predictions or any other result field.
     pub dropped_mass: bool,
+    /// Carry the suffix score per state and update it per column instead of
+    /// re-summing it; faster on wide boundaries. Defaults to false.
+    /// Scores agree up to floating-point rounding, so pruned results can differ
+    /// at near-ties and are not covered by bitwise snapshots or reference fixtures.
+    /// Unpruned results are unaffected. Requires the binary float kernel.
+    /// With incremental scoring enabled, construction fails for non-finite static suffix values
+    /// when BP scoring is off;
+    /// fixed-lag streaming rejects this option, and it can be slower on narrow models
+    /// with few active detectors.
+    /// With BP, a NaN posterior makes the carried sum NaN for that state and
+    /// its descendants; existing pruning drops these scores (an empty frontier
+    /// surfaces as `UnusableScores`).
+    pub incremental_score: bool,
 }
 
 /// Pruning parameters for one attempt, validated against its decoder's model.
@@ -222,6 +237,11 @@ impl TrellisConfig {
     ///
     /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or metric options.
     pub fn validate(&self) -> Result<(), DecoderError> {
+        if self.incremental_score && self.metric_mode == MetricMode::MaxLogInt {
+            return Err(DecoderError::InvalidConfiguration(
+                "incremental_score requires LogSumExpFloat; disable incremental_score or use the float metric".into(),
+            ));
+        }
         PruneParams {
             k: self.k,
             delta: self.delta,
@@ -270,6 +290,7 @@ impl Default for TrellisConfig {
             metric_mode: MetricMode::LogSumExpFloat,
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         }
     }
 }
@@ -510,7 +531,9 @@ impl CompactColumn {
 impl Column {
     // Check both branches together, but append untoggled then toggled exactly
     // as before. Mass arithmetic is performed by the unchanged caller.
-    fn emit_compact_pair(
+    // Specialize with the walk so each mode retains one inlinable emission site.
+    #[inline]
+    fn emit_compact_pair<const CARRY: bool>(
         &self,
         destination: &mut StateBuffer<f64>,
         parent: &[u64],
@@ -519,6 +542,11 @@ impl Column {
         toggled_mass: f64,
         transitions: &mut u64,
     ) {
+        debug_assert_eq!(
+            destination.suffix_sums.len(),
+            if CARRY { destination.masses.len() } else { 0 },
+            "each previously emitted child has a sum iff carrying"
+        );
         *transitions += 2;
         let plan = &self.compact;
         debug_assert_eq!(parent.len(), plan.parent_words + self.logical_toggle.len());
@@ -712,6 +740,7 @@ impl SuffixValues {
 struct SuffixCompatibility<'a> {
     rows: &'a [SuffixRow],
     values: &'a SuffixValues,
+    incremental: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -752,6 +781,7 @@ struct PruneResult<M> {
 struct StateBuffer<M> {
     words: Vec<u64>,
     masses: Vec<M>,
+    suffix_sums: Vec<f64>,
 }
 
 impl<M: Copy> StateBuffer<M> {
@@ -759,6 +789,7 @@ impl<M: Copy> StateBuffer<M> {
         debug_assert_eq!(self.words.len(), self.masses.len() * stride);
         self.words.clear();
         self.masses.clear();
+        self.suffix_sums.clear();
     }
 
     fn key(&self, index: usize, stride: usize) -> &[u64] {
@@ -766,10 +797,27 @@ impl<M: Copy> StateBuffer<M> {
         &self.words[index * stride..(index + 1) * stride]
     }
 
+    #[cfg(any(test, feature = "runtime-checks"))]
     fn copy_state(&mut self, source: &Self, index: usize, stride: usize) {
+        if source.suffix_sums.is_empty() {
+            self.copy_state_with_score::<false>(source, index, stride);
+        } else {
+            self.copy_state_with_score::<true>(source, index, stride);
+        }
+    }
+
+    fn copy_state_with_score<const CARRY: bool>(
+        &mut self,
+        source: &Self,
+        index: usize,
+        stride: usize,
+    ) {
         debug_assert_eq!(self.words.len(), self.masses.len() * stride);
         self.words.extend_from_slice(source.key(index, stride));
         self.masses.push(source.masses[index]);
+        if CARRY {
+            self.suffix_sums.push(source.suffix_sums[index]);
+        }
         debug_assert_eq!(self.words.len(), self.masses.len() * stride);
     }
 }
@@ -791,7 +839,7 @@ fn append_merged_key(destination: &mut Vec<u64>, key: &[u64]) {
 /// original left-to-right fold. All omitted words are zero in every branch.
 /// Wide keys using only a comparison prefix must use the full-key fallback.
 #[inline]
-fn merge_sorted_records<K: Eq, M: Copy>(
+fn merge_sorted_records<const CARRY: bool, K: Eq, M: Copy>(
     parent: &mut StateBuffer<M>,
     branches: &StateBuffer<M>,
     records: impl IntoIterator<Item = (K, usize)>,
@@ -809,6 +857,9 @@ fn merge_sorted_records<K: Eq, M: Copy>(
         } else {
             append_merged_key(&mut parent.words, branches.key(first, stride));
             parent.masses.push(mass);
+            if CARRY {
+                parent.suffix_sums.push(branches.suffix_sums[first]);
+            }
             key = next_key;
             first = index;
             mass = branches.masses[index];
@@ -816,6 +867,9 @@ fn merge_sorted_records<K: Eq, M: Copy>(
     }
     append_merged_key(&mut parent.words, branches.key(first, stride));
     parent.masses.push(mass);
+    if CARRY {
+        parent.suffix_sums.push(branches.suffix_sums[first]);
+    }
 }
 
 // Expansion interleaves records whose parity subsequences can have different
@@ -920,6 +974,7 @@ fn narrow_parity_sort_matches_full_integer_order() {
 fn lazy_eligible_indices_match_original_pruning() {
     let values = SuffixValues::new(0, None);
     let compatibility = SuffixCompatibility {
+        incremental: false,
         rows: &[],
         values: &values,
     };
@@ -1059,6 +1114,7 @@ fn final_score_group_matches_reference() {
                     p.one = pair.1;
                 }
                 let compatibility = SuffixCompatibility {
+                    incremental: false,
                     rows: &rows,
                     values: &values,
                 };
@@ -1186,6 +1242,21 @@ impl<M: Copy> FrontierScratch<M> {
         );
     }
 
+    fn merge(&mut self, fold: impl Fn(M, M) -> M) {
+        self.sort_merge_indices();
+        if self.branches.suffix_sums.is_empty() {
+            self.merge_sorted::<false>(fold);
+        } else {
+            self.merge_carried(fold);
+        }
+    }
+
+    // Keep carried merging out of the default merge's register allocation.
+    #[inline(never)]
+    fn merge_carried(&mut self, fold: impl Fn(M, M) -> M) {
+        self.merge_sorted::<true>(fold);
+    }
+
     /// Sorting preserves arrival order within each equal-key run. The
     /// first arrival is installed verbatim, then each subsequent arrival applies
     /// `fold(accumulated, next)` in arrival order.
@@ -1193,14 +1264,13 @@ impl<M: Copy> FrontierScratch<M> {
         clippy::cast_possible_truncation,
         reason = "Packed arrival indices are masked to at most ten bits and fit both 32-bit and 64-bit usize"
     )]
-    fn merge(&mut self, fold: impl Fn(M, M) -> M) {
-        self.sort_merge_indices();
+    fn merge_sorted<const CARRY: bool>(&mut self, fold: impl Fn(M, M) -> M) {
         self.parent.clear(self.stride);
         // Packed records hold a complete key above the original arrival index.
         let arrival_bits = self.merge_record_arrival_bits;
         let arrival_mask = (1_u64 << arrival_bits) - 1;
         if self.use_narrow_merge_records {
-            merge_sorted_records(
+            merge_sorted_records::<CARRY, _, _>(
                 &mut self.parent,
                 &self.branches,
                 self.narrow_merge_records
@@ -1212,7 +1282,7 @@ impl<M: Copy> FrontierScratch<M> {
             return;
         }
         if self.use_compact_merge_records {
-            merge_sorted_records(
+            merge_sorted_records::<CARRY, _, _>(
                 &mut self.parent,
                 &self.branches,
                 self.compact_merge_records.iter().map(|&record| {
@@ -1233,28 +1303,28 @@ impl<M: Copy> FrontierScratch<M> {
             self.merge_word_indices.len()
         };
         match record_width {
-            0 | 1 => merge_sorted_records(
+            0 | 1 => merge_sorted_records::<CARRY, _, _>(
                 &mut self.parent,
                 &self.branches,
                 self.merge_keys_one.iter().copied(),
                 self.stride,
                 fold,
             ),
-            2 => merge_sorted_records(
+            2 => merge_sorted_records::<CARRY, _, _>(
                 &mut self.parent,
                 &self.branches,
                 self.merge_keys_two.iter().copied(),
                 self.stride,
                 fold,
             ),
-            3 => merge_sorted_records(
+            3 => merge_sorted_records::<CARRY, _, _>(
                 &mut self.parent,
                 &self.branches,
                 self.merge_keys_three.iter().copied(),
                 self.stride,
                 fold,
             ),
-            4 => merge_sorted_records(
+            4 => merge_sorted_records::<CARRY, _, _>(
                 &mut self.parent,
                 &self.branches,
                 self.merge_keys.iter().copied(),
@@ -1272,7 +1342,11 @@ impl<M: Copy> FrontierScratch<M> {
                         self.parent.masses[count - 1] =
                             fold(self.parent.masses[count - 1], self.branches.masses[index]);
                     } else {
-                        self.parent.copy_state(&self.branches, index, self.stride);
+                        self.parent.copy_state_with_score::<CARRY>(
+                            &self.branches,
+                            index,
+                            self.stride,
+                        );
                     }
                 }
             }
@@ -1838,17 +1912,32 @@ impl<M: Copy> FrontierScratch<M> {
         }
         self.parent.words.truncate(destination * self.stride);
         self.parent.masses.truncate(destination);
+        if !self.parent.suffix_sums.is_empty() {
+            let mut retained = self.retained.iter();
+            self.parent
+                .suffix_sums
+                .retain(|_| *retained.next().expect("one retention flag per state"));
+        }
     }
 
     /// Copy in merged key order, never score order, for the next expansion.
     fn retain(&mut self) {
         self.branches.clear(self.stride);
-        for (index, &keep) in self.retained.iter().enumerate() {
-            if keep {
-                self.branches.copy_state(&self.parent, index, self.stride);
-            }
+        if self.parent.suffix_sums.is_empty() {
+            self.retain_copy::<false>();
+        } else {
+            self.retain_copy::<true>();
         }
         std::mem::swap(&mut self.parent, &mut self.branches);
+    }
+
+    fn retain_copy<const CARRY: bool>(&mut self) {
+        for (index, &keep) in self.retained.iter().enumerate() {
+            if keep {
+                self.branches
+                    .copy_state_with_score::<CARRY>(&self.parent, index, self.stride);
+            }
+        }
     }
 }
 
@@ -2110,13 +2199,16 @@ impl Default for BinaryProgress {
 }
 
 impl BinaryProgress {
-    fn reset(&mut self, model: &TrellisModel) {
+    fn reset(&mut self, model: &TrellisModel, params: PruneParams) {
         self.frontier.reset(
             &model.forced_syndrome,
             &model.forced_logical,
             &model.touched_detectors,
             0.0,
         );
+        if model.carries_score(params) {
+            self.frontier.parent.suffix_sums.push(0.0);
+        }
         self.transitions = 0;
         self.dropped_states = 0;
         self.dropped_log_mass = f64::NEG_INFINITY;
@@ -2148,6 +2240,7 @@ struct TrellisModel {
     bp_graph: Option<BpGraph>,
     config: TrellisConfig,
     kernel: Kernel,
+    score_updates: Vec<ScoreUpdates>,
     num_detectors: usize,
     detector_words: usize,
     logical_words: usize,
@@ -2171,7 +2264,9 @@ impl TrellisDecoder {
     /// # Errors
     ///
     /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning
-    /// parameters, probabilities, indices, column order, or suffix-record widths.
+    /// parameters, probabilities, indices, column order, or suffix-record widths,
+    /// or when `incremental_score` is combined with the integer metric or a
+    /// non-finite static suffix value with BP scoring off.
     ///
     /// # Panics
     ///
@@ -2365,9 +2460,15 @@ impl TrellisDecoder {
         );
 
         debug_assert_model_invariants(&columns, &touched_detectors);
+        let score_updates = if config.incremental_score {
+            build_score_updates(&columns, &suffix_values, config.bp_score_iterations == 0)?
+        } else {
+            Vec::new()
+        };
         let mut model = TrellisModel {
             config,
             kernel: Kernel::Binary(columns),
+            score_updates,
             num_detectors: dem.num_detectors,
             detector_words,
             logical_words,
@@ -2401,7 +2502,8 @@ impl TrellisDecoder {
     /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or
     /// ordering configuration, or when binary-only BP scoring or mechanism
     /// merging is requested for a genuinely N-ary model, or if suffix-record
-    /// widths exceed their limits.
+    /// widths exceed their limits; `incremental_score` also rejects N-ary models,
+    /// the integer metric, and non-finite static suffix values with BP scoring off.
     pub fn from_factor_model(
         model: &FactorModel,
         config: TrellisConfig,
@@ -2432,6 +2534,11 @@ impl TrellisDecoder {
             return Self::from_sparse_dem(&dem, config);
         }
 
+        if config.incremental_score {
+            return Err(DecoderError::InvalidConfiguration(
+                "incremental_score requires a binary model; disable incremental_score for N-ary factors".into(),
+            ));
+        }
         if config.bp_score_iterations > 0 && !(config.k == usize::MAX && config.delta.is_infinite())
         {
             return Err(DecoderError::InvalidConfiguration(
@@ -2568,6 +2675,7 @@ impl TrellisDecoder {
         let mut model = TrellisModel {
             config,
             kernel: Kernel::Nary(columns),
+            score_updates: Vec::new(),
             num_detectors: model.num_detectors(),
             detector_words,
             logical_words,
@@ -2835,7 +2943,7 @@ impl TrellisResumableDecoder {
                         self.decoder
                             .scratch
                             .float_progress
-                            .reset(&self.decoder.model);
+                            .reset(&self.decoder.model, self.decoder.prune_params());
                         None
                     }
                     Err(error) => Some(TrellisDecodeAttempt::Error(error)),
@@ -2984,6 +3092,12 @@ struct BinaryRangeOptions {
 }
 
 impl TrellisModel {
+    fn carries_score(&self, params: PruneParams) -> bool {
+        self.config.incremental_score
+            && self.config.score_alpha != 0.0
+            && !(params.k == usize::MAX && params.delta.is_infinite())
+    }
+
     fn decode_mode(&self) -> DecodeMode {
         if self.config.dropped_mass {
             DecodeMode::Full
@@ -3023,7 +3137,7 @@ impl TrellisModel {
         let observed = &scratch.observed;
         let bp_seconds = scratch.prepared.expect("prepared shot").1;
         let progress = &mut scratch.float_progress;
-        progress.reset(self);
+        progress.reset(self, params);
         let Kernel::Binary(columns) = &self.kernel else {
             unreachable!("binary decode called with N-ary kernel");
         };
@@ -3065,10 +3179,9 @@ impl TrellisModel {
         params: PruneParams,
         options: BinaryRangeOptions,
     ) -> Result<(), BinaryFailure> {
-        self.process_binary_range_with_prefixes(
+        self.dispatch_binary_range_with_prefixes(
             progress,
-            observed,
-            suffix_values,
+            (observed, suffix_values),
             range,
             params,
             options,
@@ -3076,12 +3189,57 @@ impl TrellisModel {
         )
     }
 
+    fn dispatch_binary_range_with_prefixes(
+        &self,
+        progress: &mut BinaryProgress,
+        scoring: (&[u64], &SuffixValues),
+        range: std::ops::Range<usize>,
+        params: PruneParams,
+        options: BinaryRangeOptions,
+        prefix_ends: Option<&[usize]>,
+    ) -> Result<(), BinaryFailure> {
+        let (observed, suffix_values) = scoring;
+        let carry = self.carries_score(params);
+        // Only FixedLag supplies masked rows; its public setter rejects this mode.
+        assert!(
+            !self.config.incremental_score
+                || (options.known_count.is_none() && prefix_ends.is_none()),
+            "incremental_score requires unmasked rows; use DependencyDriven streaming"
+        );
+        assert_eq!(
+            !progress.frontier.parent.suffix_sums.is_empty(),
+            carry,
+            "carried scoring cannot change within a frontier"
+        );
+        if carry {
+            self.process_binary_range_with_prefixes::<true>(
+                progress,
+                observed,
+                suffix_values,
+                range,
+                params,
+                options,
+                prefix_ends,
+            )
+        } else {
+            self.process_binary_range_with_prefixes::<false>(
+                progress,
+                observed,
+                suffix_values,
+                range,
+                params,
+                options,
+                prefix_ends,
+            )
+        }
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "Keep the shared column walk and optional scoring plan explicit"
     )]
     #[inline(never)]
-    fn process_binary_range_with_prefixes(
+    fn process_binary_range_with_prefixes<const CARRY: bool>(
         &self,
         progress: &mut BinaryProgress,
         observed: &[u64],
@@ -3107,6 +3265,8 @@ impl TrellisModel {
         if let Some(ends) = prefix_ends {
             assert_eq!(ends.len(), range.len());
         }
+        let updates = &self.score_updates;
+        let start = range.start;
         for (offset, column) in columns[range].iter().enumerate() {
             debug_assert!((1..frontier.parent.masses.len()).all(|index| {
                 compare_state_words(
@@ -3118,10 +3278,20 @@ impl TrellisModel {
             frontier.branches.clear(frontier.stride);
             #[cfg(any(test, feature = "runtime-checks"))]
             let before_transitions = *transitions;
+            let updates = if CARRY {
+                Some(&updates[start + offset])
+            } else {
+                None
+            };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
                 let branch_base = log_mass + column.log_one_minus_probability;
-                column.emit_compact_pair(
+                let first_child = if CARRY {
+                    frontier.branches.masses.len()
+                } else {
+                    0
+                };
+                column.emit_compact_pair::<CARRY>(
                     &mut frontier.branches,
                     state,
                     observed,
@@ -3129,6 +3299,35 @@ impl TrellisModel {
                     branch_base + column.log_odds,
                     transitions,
                 );
+                if CARRY {
+                    let updates = updates.expect("carried scoring has column updates");
+                    let mut base = frontier.parent.suffix_sums[index];
+                    for row in &updates.before {
+                        base -= suffix_row_value(
+                            row,
+                            state,
+                            frontier.detector_word_offset,
+                            observed,
+                            suffix_values,
+                        );
+                    }
+                    let child_stride =
+                        column.compact.output.len() + frontier.stride - frontier.detector_words;
+                    for child in first_child..frontier.branches.masses.len() {
+                        let key = frontier.branches.key(child, child_stride);
+                        let mut sum = base;
+                        for row in &updates.after {
+                            sum += suffix_row_value(
+                                row,
+                                key,
+                                column.compact.first_word,
+                                observed,
+                                suffix_values,
+                            );
+                        }
+                        frontier.branches.suffix_sums.push(sum);
+                    }
+                }
             }
             #[cfg(any(test, feature = "runtime-checks"))]
             {
@@ -3193,11 +3392,25 @@ impl TrellisModel {
                         .eq(merge_reference.parent.masses.iter().map(|x| x.to_bits())),
                     "merged mass bits and fold order"
                 );
+                assert!(
+                    frontier
+                        .parent
+                        .suffix_sums
+                        .iter()
+                        .map(|x| x.to_bits())
+                        .eq(merge_reference
+                            .parent
+                            .suffix_sums
+                            .iter()
+                            .map(|x| x.to_bits())),
+                    "suffix sum bits"
+                );
             }
             if frontier.parent.masses.is_empty() {
                 return Err(BinaryFailure::NoPath);
             }
             let suffix_compatibility = SuffixCompatibility {
+                incremental: CARRY,
                 // Rows are sorted by detector index. Taking a prefix masks
                 // unknown outcomes without copying or losing vectorized scoring.
                 rows: &column.suffix_compatibility[..prefix_ends.map_or_else(
@@ -3417,6 +3630,19 @@ impl TrellisModel {
                         .eq(merge_reference.parent.masses.iter().map(|x| x.to_bits())),
                     "merged mass bits and fold order"
                 );
+                assert!(
+                    frontier
+                        .parent
+                        .suffix_sums
+                        .iter()
+                        .map(|x| x.to_bits())
+                        .eq(merge_reference
+                            .parent
+                            .suffix_sums
+                            .iter()
+                            .map(|x| x.to_bits())),
+                    "suffix sum bits"
+                );
             }
             if frontier.parent.masses.is_empty() {
                 return TrellisDecodeAttempt::NoPath {
@@ -3432,6 +3658,7 @@ impl TrellisModel {
                 params.delta,
                 self.config.score_alpha,
                 SuffixCompatibility {
+                    incremental: false,
                     rows: &column.suffix_compatibility,
                     values: &self.suffix_values,
                 },
@@ -3587,6 +3814,7 @@ impl TrellisModel {
                 };
             }
             let suffix_compatibility = SuffixCompatibility {
+                incremental: false,
                 rows: &column.suffix_compatibility,
                 values: suffix_values,
             };
@@ -3697,6 +3925,7 @@ impl TrellisModel {
                 alpha_int,
                 scale,
                 SuffixCompatibility {
+                    incremental: false,
                     rows: &column.suffix_compatibility,
                     values: &self.suffix_values,
                 },
@@ -4108,6 +4337,61 @@ fn score_int_metric(log_mass: i64, parity: i64, alpha_int: i64, scale: i32) -> i
     )
 }
 
+fn suffix_row_value(
+    row: &SuffixRow,
+    key: &[u64],
+    detector_word_offset: usize,
+    observed: &[u64],
+    values: &SuffixValues,
+) -> f64 {
+    let pair = &values.probabilities[row.epoch as usize];
+    let bit = (key[row.word as usize - detector_word_offset] ^ observed[row.word as usize])
+        & (1_u64 << row.bit);
+    if bit == 0 { pair.zero } else { pair.one }
+}
+
+fn score_prune_candidates(
+    frontier: &mut FrontierScratch<f64>,
+    score_alpha: f64,
+    compatibility: SuffixCompatibility<'_>,
+    observed: &[u64],
+) {
+    if !compatibility.incremental {
+        score_candidates(frontier, score_alpha, compatibility, observed);
+        return;
+    }
+    assert_eq!(
+        frontier.parent.masses.len(),
+        frontier.parent.suffix_sums.len()
+    );
+    frontier.scores.clear();
+    frontier.scores.extend(
+        frontier
+            .parent
+            .masses
+            .iter()
+            .zip(&frontier.parent.suffix_sums)
+            .map(|(&mass, &sum)| mass + score_alpha * sum),
+    );
+    #[cfg(any(test, feature = "runtime-checks"))]
+    {
+        let mut reference = frontier.clone();
+        score_candidates(&mut reference, score_alpha, compatibility, observed);
+        for (&carried, &summed) in frontier.scores.iter().zip(&reference.scores) {
+            assert!(
+                if carried.is_finite() && summed.is_finite() {
+                    (carried - summed).abs() <= 1e-9 * (1.0 + summed.abs())
+                } else {
+                    // A NaN BP posterior makes both scores NaN (payloads may differ);
+                    // pruning then drops them.
+                    (carried.is_nan() && summed.is_nan()) || carried.to_bits() == summed.to_bits()
+                },
+                "incremental_score disagrees with summed score: carried={carried}, summed={summed}"
+            );
+        }
+    }
+}
+
 /// One suffix row as seen by every candidate: its transposed detector word,
 /// bit mask, and the probability selected for a candidate bit of zero or one.
 #[derive(Clone, Copy)]
@@ -4392,6 +4676,15 @@ fn prune(
         );
         assert!(
             frontier
+                .parent
+                .suffix_sums
+                .iter()
+                .map(|x| x.to_bits())
+                .eq(reference.parent.suffix_sums.iter().map(|x| x.to_bits())),
+            "suffix sum bits"
+        );
+        assert!(
+            frontier
                 .scores
                 .iter()
                 .map(|x| x.to_bits())
@@ -4448,6 +4741,9 @@ fn retention_equivalence_self_test() {
                     a.parent
                         .masses
                         .extend((0..count).map(|_| f64::from_bits(random())));
+                    a.parent
+                        .suffix_sums
+                        .extend((0..count).map(|_| f64::from_bits(random())));
                     a.retained.extend((0..count).map(|i| match pattern {
                         0 => false,
                         1 => true,
@@ -4464,6 +4760,13 @@ fn retention_equivalence_self_test() {
                         a.parent.masses.iter().map(|x| x.to_bits()).eq(b
                             .parent
                             .masses
+                            .iter()
+                            .map(|x| x.to_bits()))
+                    );
+                    assert!(
+                        a.parent.suffix_sums.iter().map(|x| x.to_bits()).eq(b
+                            .parent
+                            .suffix_sums
                             .iter()
                             .map(|x| x.to_bits()))
                     );
@@ -4493,7 +4796,7 @@ fn prune_reference(
         };
     }
 
-    score_candidates(frontier, score_alpha, suffix_compatibility, observed);
+    score_prune_candidates(frontier, score_alpha, suffix_compatibility, observed);
     let better = |&left: &usize, &right: &usize| {
         frontier.scores[right]
             .total_cmp(&frontier.scores[left])
@@ -4592,7 +4895,7 @@ fn prune_impl(
         };
     }
 
-    score_candidates(frontier, score_alpha, suffix_compatibility, observed);
+    score_prune_candidates(frontier, score_alpha, suffix_compatibility, observed);
     let better = |&left: &usize, &right: &usize| {
         frontier.scores[right]
             .total_cmp(&frontier.scores[left])
@@ -4737,6 +5040,54 @@ fn prune_maxlog(
         k_capped,
         delta_pruned,
     }
+}
+
+#[derive(Clone, Debug)]
+struct ScoreUpdates {
+    before: Vec<SuffixRow>,
+    after: Vec<SuffixRow>,
+}
+
+fn build_score_updates(
+    columns: &[Column],
+    values: &SuffixValues,
+    check_finite: bool,
+) -> Result<Vec<ScoreUpdates>, DecoderError> {
+    let mut tables = Vec::with_capacity(columns.len());
+    for (index, column) in columns.iter().enumerate() {
+        let toggled =
+            |row: &&SuffixRow| column.detector_toggle[row.word as usize] & (1_u64 << row.bit) != 0;
+        let before = if index == 0 {
+            Vec::new()
+        } else {
+            columns[index - 1]
+                .suffix_compatibility
+                .iter()
+                .filter(toggled)
+                .cloned()
+                .collect()
+        };
+        let after = column
+            .suffix_compatibility
+            .iter()
+            .filter(|row| index == 0 || toggled(row))
+            .cloned()
+            .collect();
+        let updates = ScoreUpdates { before, after };
+        if check_finite {
+            for row in updates.before.iter().chain(&updates.after) {
+                let pair = &values.probabilities[row.epoch as usize];
+                if !pair.zero.is_finite() || !pair.one.is_finite() {
+                    let detector = row.word as usize * WORD_BITS + usize::from(row.bit);
+                    return Err(DecoderError::InvalidConfiguration(format!(
+                        "incremental_score has a non-finite suffix score at detector {detector}: a mechanism probability so small that 1 - 2p rounds to 1 makes the suffix score -inf; leave incremental_score off for this model"
+                    )));
+                }
+            }
+        }
+        tables.push(updates);
+    }
+    Ok(tables)
 }
 
 fn build_suffix_epochs<'a>(
@@ -6185,6 +6536,19 @@ mod tests {
                             .eq(merge_reference.parent.masses.iter().map(|x| x.to_bits())),
                         "merged mass bits and fold order"
                     );
+                    assert!(
+                        frontier
+                            .parent
+                            .suffix_sums
+                            .iter()
+                            .map(|x| x.to_bits())
+                            .eq(merge_reference
+                                .parent
+                                .suffix_sums
+                                .iter()
+                                .map(|x| x.to_bits())),
+                        "suffix sum bits"
+                    );
                 }
                 assert_eq!(frontier.indices, indices);
                 assert_eq!(frontier.parent.words, expected.words);
@@ -6339,6 +6703,16 @@ mod tests {
                                     .eq(merge_reference.parent.masses.iter().map(|x| x.to_bits())),
                                 "merged mass bits and fold order"
                             );
+                            assert!(
+                                frontier.parent.suffix_sums.iter().map(|x| x.to_bits()).eq(
+                                    merge_reference
+                                        .parent
+                                        .suffix_sums
+                                        .iter()
+                                        .map(|x| x.to_bits())
+                                ),
+                                "suffix sum bits"
+                            );
                         }
                         assert_eq!(frontier.indices, expected);
                         let mut merged_keys: Vec<Vec<u64>> = Vec::new();
@@ -6458,6 +6832,7 @@ mod tests {
                         .map(|&mass| quantize_metric(mass, 1024))
                         .collect();
                     let compatibility = super::SuffixCompatibility {
+                        incremental: false,
                         rows: &column.suffix_compatibility,
                         values: &decoder.model.suffix_values,
                     };
@@ -6825,6 +7200,7 @@ mod tests {
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
             dropped_mass: false,
+            incremental_score: false,
         };
         let first = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
         let second = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();
@@ -6978,7 +7354,7 @@ mod bulk_emission_tests {
                             .collect();
                         let zero_mass = f64::from_bits(rng.random());
                         let one_mass = f64::from_bits(rng.random());
-                        column.emit_compact_pair(
+                        column.emit_compact_pair::<false>(
                             &mut actual,
                             &parent,
                             &observed,

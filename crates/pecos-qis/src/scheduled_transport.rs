@@ -1,5 +1,5 @@
 //! Admission of extracted native operations before mandatory transport encoding.
-use crate::scheduled::{RuntimeScheduledOp as Op, ScheduledBatch};
+use crate::scheduled::{RuntimeScheduledOp as Op, ScheduledBatch, ScheduledMeasurement};
 use pecos_core::{Angle64, errors::PecosError};
 use pecos_engines::scheduled_events::{
     ScheduledEventBatch, ScheduledEventOp, ScheduledResult, encode_event_batches,
@@ -154,17 +154,17 @@ struct MeasurementAdmission {
     native: BTreeSet<u64>,
 }
 fn measurement_mappings(
-    batch: &ScheduledBatch,
+    measurements: &[ScheduledMeasurement],
+    operation_count: usize,
+    runtime_shot_id: u64,
     shot: u64,
-) -> Result<BTreeMap<usize, &crate::scheduled::ScheduledMeasurement>, PecosError> {
-    if batch.runtime_shot_id != shot {
+) -> Result<BTreeMap<usize, &ScheduledMeasurement>, PecosError> {
+    if runtime_shot_id != shot {
         return Err(error("scheduled runtime shot mismatch"));
     }
     let mut mappings = BTreeMap::new();
-    for m in &batch.measurements {
-        if m.operation_index >= batch.operations.len()
-            || mappings.insert(m.operation_index, m).is_some()
-        {
+    for m in measurements {
+        if m.operation_index >= operation_count || mappings.insert(m.operation_index, m).is_some() {
             return Err(error("invalid scheduled measurement position"));
         }
     }
@@ -219,7 +219,7 @@ impl MeasurementAdmission {
                 }
                 self.ids.push(m.program_result);
                 if m.leakage_aware {
-                    Gate::measure_leaked(&[q(*qubit_id)?])
+                    Gate::measure_z_leaked(&[q(*qubit_id)?])
                 } else {
                     Gate::mz(&[q(*qubit_id)?])
                 }
@@ -239,7 +239,12 @@ fn encode_v6(
     let mut admission = MeasurementAdmission::default();
     let mut wire = Vec::new();
     for batch in batches {
-        let mut mappings = measurement_mappings(&batch, shot)?;
+        let mut mappings = measurement_mappings(
+            &batch.measurements,
+            batch.operations.len(),
+            batch.runtime_shot_id,
+            shot,
+        )?;
         let mut gates = Vec::new();
         for (index, op) in batch.operations.iter().enumerate() {
             gates.push(admission.gate(op, index, &mut mappings)?);
@@ -265,18 +270,23 @@ fn encode_v7(
     let mut admission = MeasurementAdmission::default();
     let mut wire = Vec::new();
     for batch in batches {
-        let mut mappings = measurement_mappings(&batch, shot)?;
+        let mut mappings = measurement_mappings(
+            &batch.measurements,
+            batch.operations.len(),
+            batch.runtime_shot_id,
+            shot,
+        )?;
         let mut operations = Vec::new();
         let mut measurements = Vec::new();
-        for (index, op) in batch.operations.iter().enumerate() {
+        for (index, op) in batch.operations.into_iter().enumerate() {
             if let Op::Custom { tag, data } = op {
                 operations.push(ScheduledEventOp::Custom {
-                    tag: *tag as u64,
-                    payload: data.clone(),
+                    tag: tag as u64,
+                    payload: data,
                 });
             } else {
                 let mapping = mappings.get(&index).copied();
-                let gate = admission.gate(op, index, &mut mappings)?;
+                let gate = admission.gate(&op, index, &mut mappings)?;
                 if let Some(m) = mapping {
                     // A mapping on a non-measurement remains in the map and rejects below.
                     measurements.push(ScheduledResult {
@@ -514,6 +524,90 @@ mod tests {
         }
     }
     #[test]
+    fn v7_mixed_batches_keep_exact_wire_bytes_and_reused_program_ids() {
+        let mut first = measured();
+        first.start_time_nanos = 13;
+        first.duration_nanos = 17;
+        first.operations = vec![
+            Op::Custom {
+                tag: 42,
+                data: vec![0, 255, 1],
+            },
+            Op::Reset { qubit_id: 0 },
+            Op::Measure {
+                qubit_id: 0,
+                result_id: 23,
+            },
+            Op::Custom {
+                tag: 43,
+                data: vec![],
+            },
+        ];
+        first.measurements[0].operation_index = 2;
+        let mut second = measured();
+        second.batch_index = 1;
+        second.start_time_nanos = 30;
+        second.operations = vec![
+            Op::MeasureLeaked {
+                qubit_id: 1,
+                result_id: 24,
+            },
+            Op::Custom {
+                tag: 44,
+                data: vec![7; 257],
+            },
+        ];
+        second.measurements[0].runtime_result = 24;
+        second.measurements[0].leakage_aware = true;
+        let expected = encode_event_batches(&[
+            ScheduledEventBatch {
+                runtime_shot_id: 7,
+                batch_index: 0,
+                start_nanos: 13,
+                duration_nanos: 17,
+                operations: vec![
+                    ScheduledEventOp::Custom {
+                        tag: 42,
+                        payload: vec![0, 255, 1],
+                    },
+                    ScheduledEventOp::Gate(Box::new(Gate::pz(&[0]))),
+                    ScheduledEventOp::Gate(Box::new(Gate::mz(&[0]))),
+                    ScheduledEventOp::Custom {
+                        tag: 43,
+                        payload: vec![],
+                    },
+                ],
+                measurements: vec![ScheduledResult {
+                    operation_index: 2,
+                    runtime_result: 23,
+                    program_result: 91,
+                }],
+            },
+            ScheduledEventBatch {
+                runtime_shot_id: 7,
+                batch_index: 1,
+                start_nanos: 30,
+                duration_nanos: 0,
+                operations: vec![
+                    ScheduledEventOp::Gate(Box::new(Gate::measure_z_leaked(&[1]))),
+                    ScheduledEventOp::Custom {
+                        tag: 44,
+                        payload: vec![7; 257],
+                    },
+                ],
+                measurements: vec![ScheduledResult {
+                    operation_index: 0,
+                    runtime_result: 24,
+                    program_result: 91,
+                }],
+            },
+        ])
+        .unwrap();
+        let (actual, ids) = encode_v7(vec![first, second], 7).unwrap();
+        assert_eq!(actual.as_bytes(), expected.as_bytes());
+        assert_eq!(ids, [91, 91]);
+    }
+    #[test]
     fn event_transport_retains_positions_and_executes_in_quantum_owner() {
         use pecos_engines::noise::IntoNoiseModel;
         use pecos_engines::runtime_frame::ShotContext;
@@ -586,34 +680,37 @@ mod tests {
 
     #[test]
     fn maps_distinct_namespaces_and_rejects_ambiguous_measurements() {
-        assert_eq!(encode(vec![measured()], 7).unwrap().1, vec![91]);
-        for case in 0..6 {
-            let mut b = measured();
-            match case {
-                0 => b.measurements.clear(),
-                1 => b.measurements[0].operation_index = 1,
-                2 => b.measurements[0].runtime_result = 24,
-                3 => b.measurements.push(b.measurements[0].clone()),
-                4 => b.operations[0] = Op::Reset { qubit_id: 0 },
-                _ => {
-                    b.operations[0] = Op::MeasureLeaked {
-                        qubit_id: 0,
-                        result_id: 23,
+        for mode in [ScheduledTransport::V6, ScheduledTransport::V7] {
+            let encode = |batches, shot| encode_mode(batches, shot, mode);
+            assert_eq!(encode(vec![measured()], 7).unwrap().1, vec![91]);
+            for case in 0..6 {
+                let mut b = measured();
+                match case {
+                    0 => b.measurements.clear(),
+                    1 => b.measurements[0].operation_index = 1,
+                    2 => b.measurements[0].runtime_result = 24,
+                    3 => b.measurements.push(b.measurements[0].clone()),
+                    4 => b.operations[0] = Op::Reset { qubit_id: 0 },
+                    _ => {
+                        b.operations[0] = Op::MeasureLeaked {
+                            qubit_id: 0,
+                            result_id: 23,
+                        }
                     }
                 }
+                assert!(encode(vec![b], 7).is_err());
             }
-            assert!(encode(vec![b], 7).is_err());
+            let a = measured();
+            let mut b = measured();
+            b.batch_index = 1;
+            assert!(encode(vec![a.clone(), b.clone()], 7).is_err());
+            b.operations[0] = Op::Measure {
+                qubit_id: 0,
+                result_id: 24,
+            };
+            b.measurements[0].runtime_result = 24;
+            assert_eq!(encode(vec![a, b], 7).unwrap().1, [91, 91]);
         }
-        let a = measured();
-        let mut b = measured();
-        b.batch_index = 1;
-        assert!(encode(vec![a.clone(), b.clone()], 7).is_err());
-        b.operations[0] = Op::Measure {
-            qubit_id: 0,
-            result_id: 24,
-        };
-        b.measurements[0].runtime_result = 24;
-        assert_eq!(encode(vec![a, b], 7).unwrap().1, [91, 91]);
     }
     #[test]
     fn rejects_opaque_events_wrong_shots_and_nonfinite_angles() {

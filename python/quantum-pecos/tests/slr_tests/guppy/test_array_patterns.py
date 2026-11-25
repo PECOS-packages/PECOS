@@ -11,7 +11,7 @@ non-Guppy fallthrough behavior on the legacy IR path.
 import pytest
 from pecos.slr import Block, CReg, Main, Permute, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
 
@@ -41,9 +41,9 @@ class TestArrayUnpacking:
             q := QReg("q", 2),
             q_0 := QReg("q_0", 1),  # Same name as the q[0] slot-local would default to.
             c := CReg("c", 3),
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
-            Measure(q_0[0]) > c[2],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
+            MeasureZ(q_0[0]) > c[2],
             Return(c),
         )
 
@@ -74,8 +74,8 @@ class TestArraySwapPatterns:
             qubit.H(q1[0]),
             qubit.X(q2[0]),
             Permute(q1, q2),
-            Measure(q1) > c[0:2],
-            Measure(q2) > c[2:4],
+            MeasureZ(q1) > c[0:2],
+            MeasureZ(q2) > c[2:4],
             Return(c),
         )
         assert_ast_guppy_compiles(prog)
@@ -104,7 +104,7 @@ class TestComplexArrayPatterns:
             ProcessPair(q[2:4]),
             ProcessPair(q[4:6]),
             # Measure all
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
 
@@ -120,7 +120,7 @@ class TestComplexArrayPatterns:
             q := QReg("q", 4),  # Fixed size
             c := CReg("c", 4),
             # All current operations use fixed indices
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
 

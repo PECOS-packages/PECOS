@@ -23,7 +23,7 @@ import pytest
 from pecos.slr import CReg, If, Main, QReg, Repeat, SlrConverter
 from pecos.slr.gen_codes.gen_qasm import QASMGenerator
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 from pecos_rslib import Qasm, sim, state_vector
 
 SHOTS = 32
@@ -45,7 +45,7 @@ def _run(qasm: str) -> dict[str, list[int]]:
 
 def _random_flag(q: QReg, f: CReg) -> tuple:
     """Put a uniformly random bit in f[0]."""
-    return (qb.H(q[0]), Measure(q[0]) > f[0])
+    return (qb.H(q[0]), MeasureZ(q[0]) > f[0])
 
 
 COMPARISONS = [operator.eq, operator.ne, operator.lt, operator.le, operator.gt, operator.ge]
@@ -62,8 +62,8 @@ def test_else_branch_runs_exactly_when_the_condition_is_false(compare: Callable,
         c,
         *_random_flag(q, f),
         If(compare(f, value)).Then(qb.X(q[1])).Else(qb.X(q[2])),
-        Measure(q[1]) > c[0],
-        Measure(q[2]) > c[1],
+        MeasureZ(q[1]) > c[0],
+        MeasureZ(q[2]) > c[1],
     )
     results = _run(_ast_qasm(program))
 
@@ -82,7 +82,7 @@ def test_else_branch_on_a_bit_condition() -> None:
         c,
         *_random_flag(q, f),
         If(f[0] == 1).Then(qb.X(q[1])).Else(qb.X(q[1])),
-        Measure(q[1]) > c[0],
+        MeasureZ(q[1]) > c[0],
     )
     results = _run(_ast_qasm(program))
 
@@ -125,7 +125,7 @@ def test_legacy_generator_rejects_else() -> None:
 
 def _set_flag(q: QReg, f: CReg) -> tuple:
     """Make f[0] = 1 on every shot."""
-    return (qb.X(q[0]), Measure(q[0]) > f[0])
+    return (qb.X(q[0]), MeasureZ(q[0]) > f[0])
 
 
 @pytest.mark.parametrize("generate", [_ast_qasm, _legacy_qasm], ids=["ast", "legacy"])
@@ -137,8 +137,8 @@ def test_writing_the_condition_last_is_allowed(generate: Callable) -> None:
         f,
         c,
         *_set_flag(q, f),
-        If(f[0] == 1).Then(qb.X(q[1]), Measure(q[2]) > f[0]),
-        Measure(q[1]) > c[0],
+        If(f[0] == 1).Then(qb.X(q[1]), MeasureZ(q[2]) > f[0]),
+        MeasureZ(q[1]) > c[0],
     )
     results = _run(generate(program))
 
@@ -154,20 +154,20 @@ def test_writing_another_bit_of_the_condition_register_is_allowed(generate: Call
         f,
         c,
         *_set_flag(q, f),
-        If(f[0] == 1).Then(Measure(q[2]) > f[1], qb.X(q[1])),
-        Measure(q[1]) > c[0],
+        If(f[0] == 1).Then(MeasureZ(q[2]) > f[1], qb.X(q[1])),
+        MeasureZ(q[1]) > c[0],
     )
     assert _run(generate(program))["c"] == [1] * SHOTS
 
 
 # Ifs that write a bit their condition reads and then guard another operation.
 WRITE_THEN_MORE: dict[str, Callable[[QReg, CReg], If]] = {
-    "measure-into-condition-bit": lambda q, f: If(f[0] == 1).Then(Measure(q[2]) > f[0], qb.X(q[1])),
-    "measure-into-condition-register": lambda q, f: If(f == 1).Then(Measure(q[2]) > f[1], qb.X(q[1])),
+    "measure-into-condition-bit": lambda q, f: If(f[0] == 1).Then(MeasureZ(q[2]) > f[0], qb.X(q[1])),
+    "measure-into-condition-register": lambda q, f: If(f == 1).Then(MeasureZ(q[2]) > f[1], qb.X(q[1])),
     "assign-condition-bit": lambda q, f: If(f[0] == 1).Then(f[0].set(0), qb.X(q[1])),
     "assign-condition-register": lambda q, f: If(f == 1).Then(f.set(0), qb.X(q[1])),
     "assign-register-of-condition-bit": lambda q, f: If(f[0] == 1).Then(f.set(0), qb.X(q[1])),
-    "multi-measure-writes-first": lambda q, f: If(f[0] == 1).Then(Measure(q[1], q[2]) > (f[0], f[1])),
+    "multi-measure-writes-first": lambda q, f: If(f[0] == 1).Then(MeasureZ(q[1], q[2]) > (f[0], f[1])),
 }
 
 
@@ -195,8 +195,8 @@ def test_then_branch_writing_the_condition_last_runs_after_the_else_branch() -> 
         f,
         c,
         *_random_flag(q, f),
-        If(f[0] == 1).Then(Measure(q[2]) > f[0]).Else(qb.X(q[1])),
-        Measure(q[1]) > c[0],
+        If(f[0] == 1).Then(MeasureZ(q[2]) > f[0]).Else(qb.X(q[1])),
+        MeasureZ(q[1]) > c[0],
     )
     qasm = _ast_qasm(program)
     assert qasm.index("if(f[0] != 1) x q[1];") < qasm.index("if(f[0] == 1) measure q[2] -> f[0];")
@@ -209,7 +209,7 @@ def test_then_branch_writing_the_condition_last_runs_after_the_else_branch() -> 
 
 def test_both_branches_writing_the_condition_is_rejected() -> None:
     q, f = QReg("q", 2), CReg("f", 1)
-    program = Main(q, f, If(f[0] == 1).Then(Measure(q[0]) > f[0]).Else(Measure(q[1]) > f[0]))
+    program = Main(q, f, If(f[0] == 1).Then(MeasureZ(q[0]) > f[0]).Else(MeasureZ(q[1]) > f[0]))
     with pytest.raises(NotImplementedError, match="both branches"):
         _ast_qasm(program)
 
@@ -223,8 +223,8 @@ def test_a_condition_write_does_not_carry_into_the_next_if(generate: Callable) -
         f,
         c,
         *_set_flag(q, f),
-        If(f[0] == 1).Then(Measure(q[2]) > f[0]),
+        If(f[0] == 1).Then(MeasureZ(q[2]) > f[0]),
         If(f[0] == 0).Then(qb.X(q[1])),
-        Measure(q[1]) > c[0],
+        MeasureZ(q[1]) > c[0],
     )
     assert _run(generate(program))["c"] == [1] * SHOTS

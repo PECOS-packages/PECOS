@@ -123,7 +123,7 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
 
         // Measurement and preparation
         CoreGateType::MZ => NeoGateType::MZ,
-        CoreGateType::MeasureLeaked => NeoGateType::MeasureLeaked,
+        CoreGateType::MeasureZLeaked => NeoGateType::MeasureLeaked,
         CoreGateType::MeasureFree => NeoGateType::MeasureFree,
         CoreGateType::PZ => NeoGateType::PZ,
         CoreGateType::QAlloc => NeoGateType::QAlloc,
@@ -139,6 +139,12 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
 
 /// Convert a pecos-core `Gate` to a pecos-neo `GateCommand`.
 fn convert_gate(gate: &Gate) -> Result<GateCommand, pecos_core::errors::PecosError> {
+    if gate.gate_type.is_detection() {
+        return Err(pecos_core::errors::PecosError::Input(format!(
+            "neo has no detect gate; remove {}",
+            gate.gate_type
+        )));
+    }
     convert_gate_type(gate.gate_type).ok_or_else(|| {
         pecos_core::errors::PecosError::Input(format!(
             "pecos-neo adapter does not support gate type {:?}",
@@ -491,6 +497,24 @@ pub fn command_queue_to_gates(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::command::GateCommandError;
+    use crate::program::StaticProgram;
+    use pecos_core::Angle64;
+
+    #[test]
+    fn detection_is_rejected_by_name() {
+        for kind in [
+            CoreGateType::DetectLeaked,
+            CoreGateType::DetectLost,
+            CoreGateType::DetectLeakedLost,
+        ] {
+            let gate = Gate::simple(kind, vec![0.into()]);
+            let error = super::convert_gate(&gate).unwrap_err().to_string();
+            assert!(error.contains(&format!("neo has no detect gate; remove {kind}")));
+        }
+    }
+
     #[test]
     fn rxyxy2q_core_command_preserves_angles_and_pairs() {
         let gate = pecos_core::Gate::rxyxy2q(
@@ -504,10 +528,17 @@ mod tests {
         assert_eq!(command.angles(), gate.angles.as_slice());
     }
 
-    use super::*;
-    use crate::command::GateCommandError;
-    use crate::program::StaticProgram;
-    use pecos_core::Angle64;
+    #[test]
+    fn new_heralds_are_rejected_by_name() {
+        for gate_type in [CoreGateType::MeasureZLost, CoreGateType::MeasureZLeakedLost] {
+            let mut message = pecos_engines::ByteMessage::quantum_operations_builder();
+            message.add_gate_command(&Gate::simple(gate_type, vec![0.into()]));
+            let error = byte_message_to_command_queue(&message.build())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&gate_type.to_string()), "{error}");
+        }
+    }
 
     #[test]
     fn test_gate_type_conversion_roundtrip() {

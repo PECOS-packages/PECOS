@@ -91,9 +91,9 @@ fn metadata_matches_ordinary_execution_across_inputs_leakage_idle_and_readout() 
     let inputs = [
         vec![Gate::pz(&[0])], // persist leakage to a second input
         vec![
-            Gate::measure_leaked(&[0]),
+            Gate::measure_z_leaked(&[0]),
             Gate::pz(&[0]),
-            Gate::measure_leaked(&[0]),
+            Gate::measure_z_leaked(&[0]),
         ],
         vec![
             Gate::idle(1.0, vec![QubitId(1)]),
@@ -615,9 +615,9 @@ fn measurement_time_leakage_and_unsplit_nonlinear_idle_match_legacy() {
         legacy.process(message(&idle)).unwrap();
         let next = if axis == "L" {
             vec![
-                Gate::measure_leaked(&[0]),
+                Gate::measure_z_leaked(&[0]),
                 Gate::pz(&[0]),
-                Gate::measure_leaked(&[0]),
+                Gate::measure_z_leaked(&[0]),
             ]
         } else {
             vec![Gate::mz(&[0])]
@@ -1256,11 +1256,11 @@ fn crosstalk_resumes_before_frame_measurements_resets_and_later_payloads() {
         let gates = [
             Gate::pz(&[0]),
             payload.clone(),
-            Gate::measure_leaked(&[0]),
+            Gate::measure_z_leaked(&[0]),
             Gate::pz(&[0]),
-            Gate::measure_leaked(&[0]),
+            Gate::measure_z_leaked(&[0]),
             payload,
-            Gate::measure_leaked(&[0]),
+            Gate::measure_z_leaked(&[0]),
         ];
         let mut framed = setup(builder.clone(), 17);
         let mut legacy =
@@ -1373,7 +1373,7 @@ fn stochastic_crosstalk_metadata_preserves_results_and_both_rngs() {
         Gate::mz(&[0]),
         payload.clone(),
         Gate::h(&[0]),
-        Gate::measure_leaked(&[0]),
+        Gate::measure_z_leaked(&[0]),
         Gate::pz(&[0]),
         payload,
         Gate::mz(&[0]),
@@ -1539,7 +1539,7 @@ fn leakage_only_hooks_preserve_runtime_frame_compatibility_without_yields() {
             Gate::z(&[0]),
             Gate::mz(&[0]),
             Gate::h(&[0]),
-            Gate::measure_leaked(&[0]),
+            Gate::measure_z_leaked(&[0]),
         ]],
     );
 }

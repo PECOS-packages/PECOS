@@ -71,6 +71,7 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
+from pecos._value_provenance import known_provenance_traces
 from pecos.qec._idle_noise import _translate_structured_idle_noise
 from pecos.qec.measurement_layout import abstract_result_refs
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
@@ -745,18 +746,18 @@ def generate_repetition_code_dem(
     # Spacelike edges (data qubit errors)
     for r in range(num_rounds):
         # First boundary
-        lines.append(f"error({p_data:.6f}) D{det_id(r, 0)} L0")
+        lines.append(f"error({p_data}) D{det_id(r, 0)} L0")
 
         # Internal edges
-        lines.extend(f"error({p_data:.6f}) D{det_id(r, c)} D{det_id(r, c + 1)}" for c in range(num_checks - 1))
+        lines.extend(f"error({p_data}) D{det_id(r, c)} D{det_id(r, c + 1)}" for c in range(num_checks - 1))
 
         # Last boundary
-        lines.append(f"error({p_data:.6f}) D{det_id(r, num_checks - 1)} L0")
+        lines.append(f"error({p_data}) D{det_id(r, num_checks - 1)} L0")
 
     # Timelike edges (measurement errors)
     if num_rounds > 1:
         lines.extend(
-            f"error({p_meas:.6f}) D{det_id(r, c)} D{det_id(r + 1, c)}"
+            f"error({p_meas}) D{det_id(r, c)} D{det_id(r + 1, c)}"
             for r in range(num_rounds - 1)
             for c in range(num_checks)
         )
@@ -855,19 +856,19 @@ def generate_surface_code_dem(
                 # Boundary data qubit - edge to boundary
                 stab_idx = stab_indices[0]
                 if affects_logical:
-                    lines.append(f"error({p_data:.6f}) D{det_id(r, stab_idx)} L0")
+                    lines.append(f"error({p_data}) D{det_id(r, stab_idx)} L0")
                 else:
-                    lines.append(f"error({p_data:.6f}) D{det_id(r, stab_idx)}")
+                    lines.append(f"error({p_data}) D{det_id(r, stab_idx)}")
             elif len(stab_indices) == 2:
                 # Internal data qubit - edge between two stabilizers
                 s1, s2 = stab_indices
                 if affects_logical:
                     lines.append(
-                        f"error({p_data:.6f}) D{det_id(r, s1)} D{det_id(r, s2)} L0",
+                        f"error({p_data}) D{det_id(r, s1)} D{det_id(r, s2)} L0",
                     )
                 else:
                     lines.append(
-                        f"error({p_data:.6f}) D{det_id(r, s1)} D{det_id(r, s2)}",
+                        f"error({p_data}) D{det_id(r, s1)} D{det_id(r, s2)}",
                     )
 
     # Timelike edges (measurement errors)
@@ -875,13 +876,13 @@ def generate_surface_code_dem(
     # For single-round: measurement errors are boundary edges (flip one detector)
     if num_rounds > 1:
         lines.extend(
-            f"error({p_meas:.6f}) D{det_id(r, stab.index)} D{det_id(r + 1, stab.index)}"
+            f"error({p_meas}) D{det_id(r, stab.index)} D{det_id(r + 1, stab.index)}"
             for r in range(num_rounds - 1)
             for stab in stabilizers
         )
     else:
         # Single round: measurement errors are boundary edges
-        lines.extend(f"error({p_meas:.6f}) D{det_id(0, stab.index)}" for stab in stabilizers)
+        lines.extend(f"error({p_meas}) D{det_id(0, stab.index)}" for stab in stabilizers)
 
     # Detector coordinates (x, y, t)
     # Use stabilizer index as spatial coordinate
@@ -1063,7 +1064,7 @@ def _validate_surface_array_slot_provenance(
 ) -> None:
     """Compare collected-array IDs against any emitted per-element evidence."""
     unbound_final_slots: set[int] = set()
-    for trace in result_traces:
+    for trace in known_provenance_traces(result_traces):
         name = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")
@@ -1110,7 +1111,7 @@ def _index_surface_result_trace_ids(
     """Index runtime named-result provenance by tag name."""
     scalar_trace_ids: dict[str, list[int]] = {}
     array_trace_ids: dict[str, list[list[int]]] = {}
-    for trace in result_traces:
+    for trace in known_provenance_traces(result_traces):
         name = trace.get("name")
         values = trace.get("values")
         result_ids = trace.get("result_ids")
@@ -1123,9 +1124,8 @@ def _index_surface_result_trace_ids(
                 # The aggregate tag below is validated against source order.
                 continue
             if not result_ids and name in {"init_synx", "init_synz", "synx", "synz"}:
-                # Per-measurement scalar tags are the authoritative syndrome
-                # provenance. The aggregate array is intentionally unbound
-                # when those scalar reads have already been consumed.
+                # Legacy traces may omit aggregate syndrome IDs. Their
+                # per-measurement scalar sidebands still supply the binding.
                 continue
             msg = (
                 f"runtime result tag {name!r} has {len(values)} value(s) but "

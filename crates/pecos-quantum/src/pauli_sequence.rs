@@ -355,10 +355,10 @@ impl F2Matrix {
         let p = other.num_cols;
         let mut result = Self::zeros(m, p);
         let other_t = other.transpose();
-        for i in 0..m {
+        for (i, row) in self.rows.iter().enumerate().take(m) {
             for j in 0..p {
                 let mut parity = 0u32;
-                for (a, b) in self.rows[i].iter().zip(other_t.row_words(j)) {
+                for (a, b) in row.iter().zip(other_t.row_words(j)) {
                     parity ^= (a & b).count_ones() & 1;
                 }
                 if parity != 0 {

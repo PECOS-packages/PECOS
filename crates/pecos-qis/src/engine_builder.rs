@@ -14,6 +14,7 @@ pub struct QisEngineBuilder {
     decoder_batch_capture: bool,
     decoder_control_capture: bool,
     scheduled_transport: ScheduledTransport,
+    scoped_execution: bool,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
@@ -28,6 +29,7 @@ impl Clone for QisEngineBuilder {
             decoder_batch_capture: self.decoder_batch_capture,
             decoder_control_capture: self.decoder_control_capture,
             scheduled_transport: self.scheduled_transport,
+            scoped_execution: self.scoped_execution,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
             // Clone the interface builder if present
@@ -52,6 +54,7 @@ impl QisEngineBuilder {
             decoder_batch_capture: false,
             decoder_control_capture: false,
             scheduled_transport: ScheduledTransport::Off,
+            scoped_execution: false,
             interface: None,
             interface_builder: None,
             program_source: None,
@@ -292,6 +295,19 @@ impl QisEngineBuilder {
         Ok(self)
     }
 
+    /// Run the program synchronously on its Monte Carlo worker through the
+    /// existing noise/quantum engine feedback loop. Staged execution is the default.
+    ///
+    /// Requires an interface supporting scoped execution (checked at build time).
+    /// Scoped execution cannot detach an unresponsive native program; it requires
+    /// cooperative cancellation checkpoints. Direct `start`/`continue_processing`
+    /// driving is unavailable in this mode. Runtime scheduling is unchanged.
+    #[must_use]
+    pub fn scoped_execution(mut self, enabled: bool) -> Self {
+        self.scoped_execution = enabled;
+        self
+    }
+
     /// Preserve original native batches in mandatory transport. Requires the
     /// matching scheduled noise capability and an admitted state-vector or stabilizer simulator.
     /// Enabling preserves v7 if selected; disabling turns all scheduled transport off.
@@ -391,13 +407,12 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
                 "Creating dynamic interface from program source ({} bytes)",
                 program_source.len()
             );
-            let (compiled_source, manifest) = if self.decoder_control_capture {
-                let (source, manifest) = crate::control_provenance::instrument(program_source)
-                    .map_err(|error| PecosError::Input(error.to_string()))?;
-                (source, Some(manifest))
-            } else {
-                (program_source.clone(), None)
-            };
+            let (compiled_source, manifest) = prepare_program(
+                program_source,
+                self.decoder_control_capture,
+                self.operation_trace_collector.is_some() || self.operation_trace_dir.is_some(),
+            )
+            .map_err(|error| PecosError::Input(error.to_string()))?;
             let qis_prog = pecos_programs::Qis::from_string(&compiled_source);
             let dynamic_interface = builder.create_dynamic_interface_from_qis(qis_prog)?;
             log::debug!("Dynamic interface created successfully");
@@ -420,6 +435,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
 
             // Store the builder and program source so clones can recreate their interfaces
             engine.set_dynamic_config(dyn_clone::clone_box(&**builder), &compiled_source);
+            engine.set_scoped_execution(self.scoped_execution)?;
 
             log::debug!(
                 "Dynamic engine created, interface present: {}",
@@ -470,6 +486,25 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
     }
 }
 
+pub(crate) fn prepare_program(
+    original: &str,
+    control: bool,
+    trace: bool,
+) -> Result<(String, Option<crate::control_provenance::ControlManifest>), crate::InterfaceError> {
+    let (source, manifest) = if control {
+        let (source, manifest) = crate::control_provenance::instrument(original)?;
+        (source, Some(manifest))
+    } else {
+        (original.to_string(), None)
+    };
+    let source = if trace {
+        crate::measurement_provenance::instrument(&source)?
+    } else {
+        source
+    };
+    Ok((source, manifest))
+}
+
 /// Convenience function to create a `QisEngineBuilder`
 ///
 /// Creates a builder that requires you to specify both a runtime and a program.
@@ -498,6 +533,35 @@ mod tests {
     fn test_builder_creation() {
         // Basic builder creation - doesn't require a runtime
         let _builder = qis_engine();
+    }
+
+    #[test]
+    #[cfg(feature = "selene")]
+    fn attaching_dynamic_program_does_not_execute_feedback_with_placeholder_results() {
+        let program = pecos_programs::Qis::from_string(include_str!(
+            "../../pecos-selene-runtime/tests/fixtures/feedback.ll"
+        ));
+        let builder = qis_engine()
+            .interface(crate::helios_interface_builder())
+            .runtime(crate::selene_runtimes::pecos_test_runtime(&[]))
+            .try_program(program)
+            .unwrap();
+        assert!(builder.interface.is_none());
+        builder.build().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "selene")]
+    fn attaching_dynamic_program_still_rejects_invalid_ir() {
+        let error = qis_engine()
+            .interface(crate::helios_interface_builder())
+            .runtime(crate::selene_runtimes::pecos_test_runtime(&[]))
+            .try_program(pecos_programs::Qis::from_string("not LLVM IR"))
+            .unwrap()
+            .build()
+            .err()
+            .expect("building must validate IR before execution");
+        assert!(error.to_string().contains("Failed to load QIS program"));
     }
 
     #[test]

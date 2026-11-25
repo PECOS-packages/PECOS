@@ -1,0 +1,21 @@
+(module
+  (memory 1)
+  (global $count (mut i64) (i64.const 0))
+  ;; Function definitions deliberately differ from the export order.
+  (func $hidden (result i64) i64.const 999)
+  (func $product (param i64 i64) (result i64)
+    local.get 0 local.get 1 i64.mul)
+  (func $sum (param i64 i64) (result i64)
+    local.get 0 local.get 1 i64.add)
+  (func $affine (param f64 i64) (result f64)
+    local.get 0 local.get 1 f64.convert_i64_s f64.add)
+  (func $clear i64.const 0 global.set $count)
+  (func $increment (result i64)
+    global.get $count i64.const 1 i64.add global.set $count
+    global.get $count)
+  (export "memory" (memory 0))
+  (export "sum" (func $sum))
+  (export "product" (func $product))
+  (export "affine" (func $affine))
+  (export "clear" (func $clear))
+  (export "increment" (func $increment)))

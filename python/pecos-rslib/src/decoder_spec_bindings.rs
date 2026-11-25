@@ -112,6 +112,16 @@ fn non_negative(parameter: &str, value: f64) -> PyResult<f64> {
     }
 }
 
+fn positive(parameter: &str, value: f64) -> PyResult<f64> {
+    if value.is_finite() && value > 0.0 {
+        Ok(value)
+    } else {
+        Err(PyValueError::new_err(format!(
+            "{parameter} must be finite and > 0, got {value}"
+        )))
+    }
+}
+
 fn optional_non_negative(parameter: &str, value: Option<f64>) -> PyResult<Option<f64>> {
     value
         .map(|value| non_negative(parameter, value))
@@ -421,25 +431,55 @@ fn bp_osd(
     )))
 }
 
+/// BP+LSD paper defaults. None scaling selects product-sum unless bp_method is set.
+/// Explicit minimum-sum with None uses 0.625; product-sum ignores scaling.
+/// `lsd_order`: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
 #[pyfunction]
-#[pyo3(signature = (*, error_rate=None, max_iter=100, bp_schedule="parallel", ms_scaling_factor=None, lsd_order=0, bits_per_step=0, random_schedule_seed=None))]
+#[pyo3(signature = (*, error_rate=None, max_iter=None, bp_schedule=None, ms_scaling_factor=Some(pecos_decoders::bp_lsd_defaults::MS_SCALING_FACTOR), lsd_order=None, bits_per_step=None, random_schedule_seed=None, bp_method=None))]
+#[pyo3(
+    text_signature = "(*, error_rate=None, max_iter=None, bp_schedule=None, ms_scaling_factor=0.625, lsd_order=None, bits_per_step=None, random_schedule_seed=None, bp_method=None)"
+)]
 fn bp_lsd(
     error_rate: Option<f64>,
-    max_iter: i64,
-    bp_schedule: &str,
+    max_iter: Option<i64>,
+    bp_schedule: Option<&str>,
+    #[pyo3(from_py_with = crate::decoder_bindings::optional_bp_lsd_factor)]
     ms_scaling_factor: Option<f64>,
-    lsd_order: i64,
-    bits_per_step: i64,
+    lsd_order: Option<&Bound<'_, PyAny>>,
+    bits_per_step: Option<&Bound<'_, PyAny>>,
     random_schedule_seed: Option<i64>,
+    bp_method: Option<&str>,
 ) -> PyResult<PyDecoderSpec> {
+    use pecos_decoders::bp_lsd_defaults as defaults;
+    let factor = crate::decoder_bindings::resolve_bp_lsd_scaling(
+        bp_method
+            .map(crate::decoder_bindings::parse_bp_method)
+            .transpose()?,
+        ms_scaling_factor,
+    );
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::BpLsd(
         BpLsdConfig {
             error_rate: optional_probability("error_rate", error_rate)?,
-            max_iter: usize_value("max_iter", max_iter, false)?,
-            bp_schedule: self::bp_schedule(bp_schedule)?,
-            ms_scaling_factor: optional_non_negative("ms_scaling_factor", ms_scaling_factor)?,
-            lsd_order: usize_value("lsd_order", lsd_order, true)?,
-            bits_per_step: usize_value("bits_per_step", bits_per_step, true)?,
+            max_iter: max_iter
+                .map(|value| usize_value("max_iter", value, false))
+                .transpose()?
+                .unwrap_or(defaults::MAX_ITER),
+            bp_schedule: bp_schedule.map(self::bp_schedule).transpose()?.unwrap_or(
+                match defaults::BP_SCHEDULE {
+                    pecos_decoders::BpSchedule::Parallel => BpSchedule::Parallel,
+                    pecos_decoders::BpSchedule::Serial => BpSchedule::Serial,
+                    pecos_decoders::BpSchedule::SerialRelative => BpSchedule::SerialRelative,
+                },
+            ),
+            ms_scaling_factor: factor,
+            lsd_order: lsd_order
+                .map(|value| crate::decoder_bindings::non_negative_integer(value, "lsd_order"))
+                .transpose()?
+                .unwrap_or(defaults::LSD_ORDER),
+            bits_per_step: bits_per_step
+                .map(|value| crate::decoder_bindings::non_negative_integer(value, "bits_per_step"))
+                .transpose()?
+                .unwrap_or(defaults::BITS_PER_STEP),
             random_schedule_seed: optional_i32("random_schedule_seed", random_schedule_seed)?,
         },
     )))
@@ -457,14 +497,14 @@ fn fusion_blossom(correlated: bool, solver: &str, irreducible: &str) -> PyResult
     ))
 }
 
+/// Construct Relay-BP. Leg-zero memory defaults to 0.35; pass None to disable it.
 #[pyfunction]
 #[pyo3(
-    signature = (*, error_rate=None, max_iter=200, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=0.65, pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion=PyRelayStoppingCriterion::default(), seed=0),
-    text_signature = "(*, error_rate=None, max_iter=200, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=0.65, pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion='first_convergence', seed=0)"
+    signature = (*, error_rate=None, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=Some(pecos_decoders::RELAY_BP_DEFAULT_GAMMA0), pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion=PyRelayStoppingCriterion::default(), seed=0),
+    text_signature = "(*, error_rate=None, alpha=None, alpha_iteration_scaling_factor=1.0, gamma0=0.35, pre_iter=80, num_sets=300, set_max_iter=60, gamma_dist_interval=(-0.24, 0.66), stopping_criterion='first_convergence', seed=0)"
 )]
 fn relay_bp(
     error_rate: Option<f64>,
-    max_iter: i64,
     alpha: Option<f64>,
     alpha_iteration_scaling_factor: f64,
     gamma0: Option<f64>,
@@ -486,9 +526,8 @@ fn relay_bp(
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::RelayBp(
         RelayBpConfig {
             error_rate: optional_probability("error_rate", error_rate)?,
-            max_iter: usize_value("max_iter", max_iter, false)?,
             alpha: optional_non_negative("alpha", alpha)?,
-            alpha_iteration_scaling_factor: non_negative(
+            alpha_iteration_scaling_factor: positive(
                 "alpha_iteration_scaling_factor",
                 alpha_iteration_scaling_factor,
             )?,
@@ -958,7 +997,12 @@ fn bp_lsd_repr(config: &BpLsdConfig) -> String {
             bp_schedule_name(config.bp_schedule)
         ));
     }
-    push_option(&mut args, "ms_scaling_factor", config.ms_scaling_factor);
+    if config.ms_scaling_factor != default.ms_scaling_factor {
+        match config.ms_scaling_factor {
+            Some(value) => args.push(format!("ms_scaling_factor={value:?}")),
+            None => args.push("ms_scaling_factor=None".to_string()),
+        }
+    }
     if config.lsd_order != default.lsd_order {
         args.push(format!("lsd_order={}", config.lsd_order));
     }
@@ -977,9 +1021,6 @@ fn relay_bp_repr(config: &RelayBpConfig) -> String {
     let default = RelayBpConfig::default();
     let mut args = Vec::new();
     push_option(&mut args, "error_rate", config.error_rate);
-    if config.max_iter != default.max_iter {
-        args.push(format!("max_iter={}", config.max_iter));
-    }
     push_option(&mut args, "alpha", config.alpha);
     if config.alpha_iteration_scaling_factor.to_bits()
         != default.alpha_iteration_scaling_factor.to_bits()
@@ -1170,4 +1211,66 @@ pub fn register_decoder_specs(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(belief_find, module)?)?;
     module.add_function(wrap_pyfunction!(perturbed_fb_corr, module)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod bp_lsd_tests {
+    use super::*;
+
+    #[test]
+    fn bp_lsd_factory_resolves_none_and_method_aliases() {
+        Python::initialize();
+        Python::attach(|py| {
+            let factory = wrap_pyfunction!(bp_lsd, py).unwrap();
+            for (method, factor, expected) in [
+                (None, None, Some(0.625_f64)),
+                (None, Some(None), None),
+                (None, Some(Some(0.5)), Some(0.5)),
+                (Some("ps"), Some(Some(0.5)), None),
+                (Some("ms"), Some(None), Some(0.625)),
+                (Some("product_sum"), None, None),
+                (Some("minimum_sum"), Some(None), Some(0.625)),
+            ] {
+                let kwargs = pyo3::types::PyDict::new(py);
+                if let Some(method) = method {
+                    kwargs.set_item("bp_method", method).unwrap();
+                }
+                if let Some(factor) = factor {
+                    kwargs.set_item("ms_scaling_factor", factor).unwrap();
+                }
+                let spec = factory.call((), Some(&kwargs)).unwrap();
+                let spec = spec.extract::<PyRef<'_, PyDecoderSpec>>().unwrap();
+                let pecos_decoders::DecoderSpec::BpLsd(config) = &spec.inner else {
+                    panic!("expected BP+LSD spec");
+                };
+                assert_eq!(
+                    config.ms_scaling_factor.map(f64::to_bits),
+                    expected.map(f64::to_bits)
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn bp_lsd_factory_preserves_growth_options() {
+        Python::initialize();
+        Python::attach(|py| {
+            let factory = wrap_pyfunction!(bp_lsd, py).unwrap();
+            for order in [0, 2] {
+                for bits in [0, 2] {
+                    let kwargs = pyo3::types::PyDict::new(py);
+                    kwargs.set_item("lsd_order", order).unwrap();
+                    kwargs.set_item("bits_per_step", bits).unwrap();
+                    let spec = factory.call((), Some(&kwargs)).unwrap();
+                    let spec = spec.extract::<PyRef<'_, PyDecoderSpec>>().unwrap();
+                    let pecos_decoders::DecoderSpec::BpLsd(config) = &spec.inner else {
+                        panic!("expected BP+LSD spec");
+                    };
+                    // The native half is checked by bp_lsd_spec_growth_options_reach_inner_decoder.
+                    assert_eq!(config.lsd_order, order);
+                    assert_eq!(config.bits_per_step, bits);
+                }
+            }
+        });
+    }
 }

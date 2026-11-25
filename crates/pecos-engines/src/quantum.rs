@@ -144,6 +144,9 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
         validate_dispatch_gate(cmd)?;
         check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
+            gate if gate.is_detection() => {
+                measurements.extend(std::iter::repeat_n(0, cmd.qubits.len()));
+            }
             // Single-qubit Clifford gates
             GateType::X => {
                 sim.x(&cmd.qubits);
@@ -234,13 +237,19 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 }
             }
             // Batch consecutive MZ commands
-            GateType::MZ | GateType::MeasureLeaked => {
+            GateType::MZ
+            | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost => {
                 mz_qubits.clear();
                 mz_qubits.extend_from_slice(&cmd.qubits);
                 while cmd_idx + 1 < batch.len()
                     && matches!(
                         batch[cmd_idx + 1].gate_type,
-                        GateType::MZ | GateType::MeasureLeaked
+                        GateType::MZ
+                            | GateType::MeasureZLeaked
+                            | GateType::MeasureZLost
+                            | GateType::MeasureZLeakedLost
                     )
                 {
                     cmd_idx += 1;
@@ -396,6 +405,9 @@ fn process_general_message<
         validate_dispatch_gate(cmd)?;
         check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
+            GateType::DetectLeaked | GateType::DetectLost | GateType::DetectLeakedLost => {
+                measurements.extend(std::iter::repeat_n(0, cmd.qubits.len()));
+            }
             // Single-qubit Clifford gates
             GateType::X => {
                 sim.x(&cmd.qubits);
@@ -599,13 +611,19 @@ fn process_general_message<
                 }
             }
             // Batch consecutive MZ commands into one simulator call
-            GateType::MZ | GateType::MeasureLeaked => {
+            GateType::MZ
+            | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost => {
                 mz_qubits.clear();
                 mz_qubits.extend_from_slice(&cmd.qubits);
                 while cmd_idx + 1 < batch.len()
                     && matches!(
                         batch[cmd_idx + 1].gate_type,
-                        GateType::MZ | GateType::MeasureLeaked
+                        GateType::MZ
+                            | GateType::MeasureZLeaked
+                            | GateType::MeasureZLost
+                            | GateType::MeasureZLeakedLost
                     )
                 {
                     cmd_idx += 1;
@@ -714,13 +732,22 @@ impl ScheduledBackend {
         for gate in gates {
             gate.validate().map_err(PecosError::Input)?;
             check_qubit_capacity(gate.gate_type, &gate.qubits, self.capacity)?;
+            if matches!(
+                gate.gate_type,
+                GateType::MeasureZLost | GateType::MeasureZLeakedLost
+            ) || gate.gate_type.is_detection()
+            {
+                return Err(crate::scheduled_frame::unsupported_scheduled_gate(
+                    gate.gate_type,
+                ));
+            }
             if !self.clifford {
                 continue;
             }
             let admitted = match gate.gate_type {
                 GateType::PZ
                 | GateType::MZ
-                | GateType::MeasureLeaked
+                | GateType::MeasureZLeaked
                 | GateType::X
                 | GateType::Y
                 | GateType::Z
@@ -907,6 +934,9 @@ where
             validate_dispatch_gate(cmd)?;
             check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
+                GateType::DetectLeaked | GateType::DetectLost | GateType::DetectLeakedLost => {
+                    measurements.extend(std::iter::repeat_n(0, cmd.qubits.len()));
+                }
                 GateType::X => {
                     debug!("Processing X gate on qubits {:?}", cmd.qubits);
                     self.simulator.x(&cmd.qubits);
@@ -1208,13 +1238,19 @@ where
                 }
                 // Batch consecutive MZ commands into one simulator call.
                 // This enables joint-sampling optimizations (fewer state vector passes).
-                GateType::MZ | GateType::MeasureLeaked => {
-                    // Collect qubits from consecutive MZ/MeasureLeaked commands
+                GateType::MZ
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost => {
+                    // Collect qubits from consecutive MZ or Z-herald commands
                     let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
                     while cmd_idx + 1 < batch.len()
                         && matches!(
                             batch[cmd_idx + 1].gate_type,
-                            GateType::MZ | GateType::MeasureLeaked
+                            GateType::MZ
+                                | GateType::MeasureZLeaked
+                                | GateType::MeasureZLost
+                                | GateType::MeasureZLeakedLost
                         )
                     {
                         cmd_idx += 1;
@@ -1774,8 +1810,16 @@ impl Engine for CoinTossEngine {
         for cmd in &batch {
             check_qubit_capacity(cmd.gate_type, &cmd.qubits, self.simulator.num_qubits())?;
             match cmd.gate_type {
+                gate if gate.is_detection() => {
+                    measurements.extend(std::iter::repeat_n(0, cmd.qubits.len()));
+                }
                 // All gates are no-ops for CoinToss - only measurements matter
-                GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree | GateType::MPZ => {
+                GateType::MZ
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost
+                | GateType::MeasureFree
+                | GateType::MPZ => {
                     for q in &cmd.qubits {
                         debug!("CoinToss: Processing measurement on qubit {q:?}");
                         let meas_ids = self.simulator.mz(&[*q]);
@@ -1901,6 +1945,58 @@ mod tests {
     use super::*;
     use crate::byte_message::ByteMessageBuilder;
     use std::f64::consts::FRAC_1_SQRT_2;
+
+    #[test]
+    fn scheduled_backend_rejects_detection_after_validation() {
+        for clifford in [false, true] {
+            for kind in [
+                GateType::DetectLeaked,
+                GateType::DetectLost,
+                GateType::DetectLeakedLost,
+            ] {
+                let backend = ScheduledBackend {
+                    capacity: 1,
+                    clifford,
+                };
+                let error = backend
+                    .validate(&[Gate::simple(kind, vec![0.into()])], false)
+                    .unwrap_err()
+                    .to_string();
+                assert!(error.contains(&format!("{kind} is a non-collapsing detect gate")));
+                let error = backend
+                    .validate(&[Gate::simple(kind, vec![1.into()])], false)
+                    .unwrap_err()
+                    .to_string();
+                assert!(!error.contains("is a non-collapsing detect gate"));
+            }
+        }
+    }
+
+    #[test]
+    fn scheduled_backend_rejects_unencoded_heralds() {
+        for clifford in [false, true] {
+            let backend = ScheduledBackend {
+                capacity: 1,
+                clifford,
+            };
+            backend
+                .validate(&[Gate::measure_z_leaked(&[0])], false)
+                .unwrap();
+            for flavor in [GateType::MeasureZLost, GateType::MeasureZLeakedLost] {
+                let error = backend
+                    .validate(&[Gate::simple(flavor, vec![0.into()])], false)
+                    .expect_err("scheduled wire has no opcode for this herald")
+                    .to_string();
+                assert!(error.contains(&flavor.to_string()), "{error}");
+                assert!(
+                    error.contains(
+                        "use MeasureZLeaked (which cannot herald loss) or a non-scheduled engine"
+                    ),
+                    "{error}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn diagonal_gates_are_exact_in_both_engine_dispatchers() {

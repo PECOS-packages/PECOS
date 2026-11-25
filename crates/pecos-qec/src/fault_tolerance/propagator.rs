@@ -141,15 +141,16 @@ pub fn is_supported_prep_gate(gate_type: GateType) -> bool {
 #[inline]
 #[must_use]
 pub fn is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::QFree
-            | GateType::I
-            | GateType::Idle
-            | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload
-            | GateType::TrackedPauliMeta
-    )
+    gate_type.is_detection()
+        || matches!(
+            gate_type,
+            GateType::QFree
+                | GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::TrackedPauliMeta
+        )
 }
 
 /// Gate classification for compiling gate-triggered quantum noise.
@@ -180,10 +181,8 @@ pub fn gate_noise_kind(gate_type: GateType) -> GateNoiseKind {
         // Custom has placeholder arity 1, not a known single-qubit operation.
         GateType::Custom => GateNoiseKind::Error,
         gate if is_supported_prep_gate(gate) => GateNoiseKind::Prep,
-        // consumes_measurement_record excludes MeasureLeaked, which still collapses
-        // the qubit. A complete measurement predicate belongs in pecos_core::GateType,
-        // alongside consumes_measurement_record (see also Gate::validate).
-        gate if gate.consumes_measurement_record() || gate == GateType::MeasureLeaked => {
+        // Record-less Z heralds still collapse the qubit.
+        gate if gate.consumes_measurement_record() || gate.is_recordless_z_measurement() => {
             GateNoiseKind::Measurement
         }
         // Identity and idle operations retain their physical single-qubit noise.
@@ -975,7 +974,8 @@ mod tests {
                 continue;
             };
             let prep = is_supported_prep_gate(gate);
-            let measurement = gate.consumes_measurement_record() || gate == GateType::MeasureLeaked;
+            let measurement =
+                gate.consumes_measurement_record() || gate.is_recordless_z_measurement();
             let transparent = (is_supported_noop_or_metadata_gate(gate)
                 && !matches!(gate, GateType::I | GateType::Idle))
                 || gate == GateType::Channel;

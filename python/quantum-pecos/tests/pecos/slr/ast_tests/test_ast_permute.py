@@ -245,7 +245,7 @@ class TestPermuteWithOperations:
             c := CReg("c", 2),
             qb.H(a[0]),
             Permute(a, b),
-            qb.Measure(a[0]) > c[0],
+            qb.MeasureZ(a[0]) > c[0],
         )
         ast = slr_to_ast(prog)
 

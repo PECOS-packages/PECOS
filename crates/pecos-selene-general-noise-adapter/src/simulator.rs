@@ -153,7 +153,10 @@ impl SeleneSimulator {
                         theta: -PI / 4.0,
                     }));
                 }
-                GateType::MZ | GateType::MeasureLeaked => {
+                GateType::MZ
+                | GateType::MeasureZLeaked
+                | GateType::MeasureZLost
+                | GateType::MeasureZLeakedLost => {
                     for qubit_id in qubits {
                         let result_id = u64::try_from(measurement_count)
                             .map_err(|error| Self::error("measurement ID conversion", error))?;
@@ -170,6 +173,11 @@ impl SeleneSimulator {
                 GateType::Idle
                 | GateType::MeasCrosstalkGlobalPayload
                 | GateType::MeasCrosstalkLocalPayload => {}
+                gate if gate.is_detection() => {
+                    return Err(PecosError::Input(
+                        pecos_engines::scheduled_frame::unsupported_detection_message(gate),
+                    ));
+                }
                 unsupported => {
                     return Err(PecosError::Generic(format!(
                         "PECOS general-noise bridge produced unsupported gate {unsupported}"

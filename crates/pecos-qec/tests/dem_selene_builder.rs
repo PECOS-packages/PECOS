@@ -56,7 +56,7 @@ fn qis_inference_matches_explicit_definitions() {
     }
     assert_eq!(
         inferred.circuit.get_meta("dem_raw_measurement_binding"),
-        Some(&Attribute::String("probe_correlated_result_ids".into()))
+        Some(&Attribute::String("runtime_result_ids".into()))
     );
 }
 
@@ -395,9 +395,8 @@ fn complete_named_results_are_isolated_per_shot() {
 }
 
 #[test]
-fn integer_outputs_bind_raw_ids_by_probe_correlation() {
-    // The program reads every future before emitting raw outputs, so the
-    // runtime cannot attach direct IDs; correlation recovers them.
+fn integer_outputs_keep_direct_raw_bool_ids() {
+    // The raw bool array retains its IDs even when reads precede integer outputs.
     let build = DetectorErrorModel::builder()
         .with_program(program(include_str!(
             "fixtures/dem_programs/integer_outputs.ll"
@@ -408,7 +407,7 @@ fn integer_outputs_bind_raw_ids_by_probe_correlation() {
         .unwrap();
     assert_eq!(
         build.circuit.get_meta("dem_raw_measurement_binding"),
-        Some(&Attribute::String("probe_correlated_result_ids".into()))
+        Some(&Attribute::String("runtime_result_ids".into()))
     );
 }
 

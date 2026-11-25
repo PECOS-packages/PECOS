@@ -27,6 +27,7 @@ on:
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-llvm/**'
       - 'python/quantum-pecos/**'
+      - 'python/selene-plugins/**'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -779,14 +780,88 @@ jobs:
           path: python/quantum-pecos/dist/*.whl
           if-no-files-found: error
 
+  build_selene_release_wheels:
+    needs: resolve_release_mode
+    if: needs.resolve_release_mode.outputs.full_release == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: manylinux_2_28_x86_64
+          - os: macos-15
+            platform: macosx_13_0_arm64
+          - os: macos-15-intel
+            platform: macosx_13_0_x86_64
+          - os: windows-2022
+            platform: win_amd64
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version-file: ".github/uv.toml"
+          enable-cache: false
+
+      - name: Build manylinux Selene wheels
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm \
+            --volume "$PWD:/project" --workdir /project \
+            quay.io/pypa/manylinux_2_28_x86_64:2026.01.04-1@sha256:4d62ce9d1ca259171e7cde403686e538e6f8fdc517660a557a66e102577d67d3 \
+            bash scripts/ci/build-selene-manylinux.sh
+
+      - name: Set up Rust
+        if: runner.os != 'Linux'
+        run: rustup show
+
+      - name: Build host Selene wheels
+        if: runner.os != 'Linux'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}
+        run: |
+          python -m pip install build
+          python scripts/ci/release_selene_wheels.py build
+
+      - name: Verify and smoke-test Selene release wheels
+        env:
+          EXPECTED_PLATFORM: ${{ matrix.platform }}
+        run: python scripts/ci/release_selene_wheels.py verify --platform "$EXPECTED_PLATFORM"
+
+      - name: Upload Selene release wheels
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: selene-release-wheels-${{ matrix.os }}
+          path: selene-release-wheels/*.whl
+          if-no-files-found: error
+
   collect_artifacts:
     needs:
+      - build_selene_release_wheels
       - build_wheelspecos_rslib
       - build_sdist_quantum_pecos
       - build_wheels_quantum_pecos
       - test_abi3_wheels
       - test_manylinux_2_28_wheels
     if: |
+      needs.build_selene_release_wheels.result == 'success' &&
       needs.build_wheelspecos_rslib.result == 'success' &&
       needs.build_sdist_quantum_pecos.result == 'success' &&
       needs.build_wheels_quantum_pecos.result == 'success' &&
@@ -799,6 +874,17 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Check out release selection and collector
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.sha || github.sha }}
+          sparse-checkout: |
+            python/selene-plugins/release-plugins.txt
+            scripts/ci/release_selene_wheels.py
+            scripts/ci/check_wheel_platform_tags.py
+          sparse-checkout-cone-mode: false
+
       - name: Create distribution directories
         run: |
           mkdir -p dist/pecos-rslib
@@ -810,6 +896,9 @@ jobs:
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: temp-artifacts/
+
+      - name: Collect complete Selene release wheel set
+        run: python3 scripts/ci/release_selene_wheels.py collect --output dist
 
       - name: Organize distribution files
         run: |
@@ -899,6 +988,7 @@ jobs:
           echo "=== quantum-pecos artifacts ==="
           ls -la dist/quantum-pecos/
           echo ""
+          python3 scripts/ci/release_selene_wheels.py summary --output dist
           echo "=== Summary ==="
           echo "pecos-rslib wheels: $(ls -1 dist/pecos-rslib/*.whl 2>/dev/null | wc -l)"
           echo "pecos-rslib-llvm wheels: $(ls -1 dist/pecos-rslib-llvm/*.whl 2>/dev/null | wc -l)"

@@ -457,8 +457,7 @@ impl NoisyMeasurementHistory {
         let n = self.measurements.len();
         let mut flattened = Vec::with_capacity(n);
 
-        for meas_idx in 0..n {
-            let meas = &self.measurements[meas_idx];
+        for (meas_idx, meas) in self.measurements.iter().enumerate() {
             let mut random_deps = BitSet::new();
             let mut fault_deps = meas.fault_deps.clone();
             let mut flip = meas.flip;
@@ -689,10 +688,7 @@ impl NoisyMeasurementHistoryBuilder {
             };
 
             // Track measurement positions
-            if matches!(
-                noise,
-                NoiseClass::Measurement | NoiseClass::MeasurementAndPreparation
-            ) {
+            if gate.gate_type.consumes_measurement_record() {
                 measurement_positions.insert(gate_locations.len(), measurement_count);
                 measurement_count += 1;
             }
@@ -1369,6 +1365,28 @@ impl std::fmt::Display for NoisyMeasurementHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heralds_do_not_shift_noisy_measurement_positions() {
+        for gate in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut circuit = DagCircuit::new();
+            circuit.add_gate_auto_wire(pecos_core::Gate::simple(gate, vec![0.into()]));
+            circuit.mz(&[0]);
+            let mut sim = pecos_simulators::SymbolicSparseStab::new(1);
+            crate::execute_circuit_symbolic(&mut sim, &circuit).unwrap();
+            let history = NoisyMeasurementHistoryBuilder::new()
+                .with_noise_model(DepolarizingNoiseModel::new(0.0, 0.0, 1.0, 0.0))
+                .build_from_circuit(&circuit, sim.measurement_history())
+                .unwrap();
+            assert_eq!(history.num_measurements(), 1);
+            assert_eq!(history.num_faults(), 1);
+            assert_eq!(history.measurements()[0].fault_deps.len(), 1);
+        }
+    }
 
     #[test]
     fn test_noise_model_default() {

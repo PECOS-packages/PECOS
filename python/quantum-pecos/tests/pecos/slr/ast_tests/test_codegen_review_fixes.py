@@ -76,7 +76,7 @@ def test_permute_rejects_cross_kind_pairs(backend, whole) -> None:
     permute = Permute(q, c) if whole else Permute([q[0], c[0]], [c[0], q[0]])
     error = GuppyCodegenError if backend == "guppy" else NotImplementedError
     with pytest.raises(error, match="Permute"):
-        getattr(SlrConverter(Main(q, c, permute, qb.X(q[0]), qb.Measure(q) > c)), backend)()
+        getattr(SlrConverter(Main(q, c, permute, qb.X(q[0]), qb.MeasureZ(q) > c)), backend)()
 
 
 @pytest.mark.parametrize("classical_first", [False, True])
@@ -210,3 +210,17 @@ def test_barrier_block_inputs_resolve_before_widening(nested) -> None:
         2 if nested else 1
     )
     assert "barrier6__body" in SlrConverter(program).qir()
+
+
+def test_legacy_qasm_declares_each_register_once() -> None:
+    """The legacy generator emits one declaration per name, which the QASM parser requires."""
+    q = QReg("q", 1)
+    generator = QASMGenerator(_internal=True)
+    generator.generate_block(Main(q, q, QReg("q", 1), CReg("c", 1)))
+    qasm = generator.get_output()
+    assert qasm.count("qreg q[1];") == 1
+    sim(Qasm.from_string(qasm)).quantum(state_vector()).run(1)
+
+    for program in (Main(QReg("x", 1), CReg("x", 1)), Main(QReg("x", 1), QReg("x", 2))):
+        with pytest.raises(ValueError, match=r"Register 'x' is declared as both .*; rename one\."):
+            QASMGenerator(_internal=True).generate_block(program)

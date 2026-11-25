@@ -8,6 +8,7 @@
 mod named_results;
 mod observed_reads;
 mod operations;
+pub mod provenance;
 pub use observed_reads::{
     MAX_RUNTIME_READ_NAME_BYTES, MAX_RUNTIME_READ_TOTAL_NAME_BYTES, MAX_RUNTIME_READS,
     RuntimeObservedRead, validate_observed_reads,
@@ -17,13 +18,13 @@ pub use named_results::{NamedResult, ProgramError};
 
 pub use operations::{
     LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, RuntimeRequest, SeleneRequest,
-    TraceMetadata,
+    TraceMetadata, ValueProvenance,
 };
 
 /// Version of the ownership-transferring Rust data interface between the host
 /// and dynamically loaded QIS FFI library. Bump when shared types or exported
 /// function contracts change incompatibly; both artifacts must be rebuilt.
-pub const QIS_FFI_ABI_VERSION: u64 = 7;
+pub const QIS_FFI_ABI_VERSION: u64 = 8;
 
 /// Maximum copied detector bytes in one embedded decoder request.
 pub const MAX_RUNTIME_DETECTORS: usize = 1 << 20;
@@ -47,6 +48,17 @@ pub struct MeasurementLayout {
     pub qir_slots: std::collections::BTreeMap<usize, usize>,
     pub native_sources: std::collections::BTreeSet<usize>,
 }
+
+/// Conservative build identity for the Rust types exchanged with the QIS cdylib.
+///
+/// Both sides must come from matching sources, compiler, target, configuration,
+/// and profile. This detects stale builds; it is not a stable Rust ABI guarantee
+/// and does not certify custom allocator compatibility.
+mod abi_fingerprint {
+    include!(concat!(env!("OUT_DIR"), "/abi_fingerprint.rs"));
+}
+
+pub use abi_fingerprint::QIS_FFI_ABI_FINGERPRINT;
 
 const DEFAULT_OPERATION_CAPACITY: usize = 1024;
 const DEFAULT_MEASUREMENT_CAPACITY: usize = 256;

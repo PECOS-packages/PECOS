@@ -1598,7 +1598,7 @@ for factory, arguments in (
         except ValueError as error:
             assert str(error).startswith(
                 "GuppyDemBuilder requires a statically straight-line Guppy program "
-                "unless it carries a trusted generator-owned measurement layout"
+                "unless it carries a generator-owned measurement-layout certificate"
             )
         else:
             raise AssertionError(f"{factory} unexpectedly accepted for a traced DEM")

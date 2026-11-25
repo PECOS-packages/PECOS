@@ -13,7 +13,7 @@
 //! Syndrome preprocessor for real-system QEC decoding.
 //!
 //! Sits between the hardware readout and the decoder. Responsibilities:
-//! - Convert leakage flags (from PECOS's `MeasureLeaked` simulation or
+//! - Convert leakage flags (from PECOS's `MeasureZLeaked` simulation or
 //!   neutral atom loss detection) into erasure edge indices for the decoder
 //! - Detect syndrome anomalies (excessive weight, all-ones, etc.)
 //! - Validate syndrome dimensions

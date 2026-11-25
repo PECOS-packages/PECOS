@@ -34,8 +34,8 @@
 use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, DemOutputMetadata};
 use super::propagator::types::{DetectorId, MeasurementId};
 use super::propagator::{
-    DagPropagator, Direction, Pauli, apply_gate_unchecked, is_supported_noop_or_metadata_gate,
-    is_supported_prep_gate,
+    DagPropagator, Direction, GateNoiseKind, Pauli, apply_gate_unchecked, gate_noise_kind,
+    is_supported_noop_or_metadata_gate, is_supported_prep_gate,
 };
 use super::propagator::{UnsupportedGateError, UnsupportedGateLocation};
 use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
@@ -519,7 +519,7 @@ impl<'a> InfluenceBuilder<'a> {
                         meas_idx += 1;
                     }
                     // A record-less collapse preserves the node-to-record map.
-                    pecos_quantum::GateType::MeasureLeaked => sim.mz_unrecorded(&qubits),
+                    gate if gate.is_recordless_z_measurement() => sim.mz_unrecorded(&qubits),
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
                     gate_type if is_supported_prep_gate(gate_type) => {
@@ -697,13 +697,7 @@ impl<'a> InfluenceBuilder<'a> {
 
                 let qubits: Vec<QubitId> = gate.qubits.to_vec();
 
-                let is_measurement = matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::MX
-                        | pecos_quantum::GateType::MZ
-                        | pecos_quantum::GateType::MeasureFree
-                        | pecos_quantum::GateType::MPZ
-                );
+                let is_measurement = gate_noise_kind(gate.gate_type) == GateNoiseKind::Measurement;
 
                 // Standard circuit noise model: one fault location per gate.
                 //   Measurement: before. All others: after.
@@ -1006,13 +1000,7 @@ impl<'a> InfluenceBuilder<'a> {
                     continue;
                 }
 
-                let is_measurement = matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::MX
-                        | pecos_quantum::GateType::MZ
-                        | pecos_quantum::GateType::MeasureFree
-                        | pecos_quantum::GateType::MPZ
-                );
+                let is_measurement = gate_noise_kind(gate.gate_type) == GateNoiseKind::Measurement;
 
                 let before = is_measurement;
                 let location_qubits: Vec<QubitId> =
@@ -1714,20 +1702,26 @@ mod tests {
     /// and the MZ deterministic.
     #[test]
     fn a_leaked_measurement_keeps_records_aligned_without_phantom_detectors() {
-        let mut dag = DagCircuit::new();
-        dag.pz(&[0]);
-        dag.h(&[0]);
-        dag.add_gate_auto_wire(pecos_quantum::Gate::measure_leaked(&[0usize]));
-        dag.h(&[0]);
-        dag.mz(&[0]);
+        for flavor in [
+            pecos_core::gate_type::GateType::MeasureZLeaked,
+            pecos_core::gate_type::GateType::MeasureZLost,
+            pecos_core::gate_type::GateType::MeasureZLeakedLost,
+        ] {
+            let mut dag = DagCircuit::new();
+            dag.pz(&[0]);
+            dag.h(&[0]);
+            dag.add_gate_auto_wire(pecos_quantum::Gate::simple(flavor, vec![0.into()]));
+            dag.h(&[0]);
+            dag.mz(&[0]);
 
-        let builder = InfluenceBuilder::new(&dag).unwrap();
-        let info = builder.run_symbolic_simulation().unwrap();
-        assert_eq!(info.history.len(), 1);
-        assert!(!info.history.get(0).unwrap().is_deterministic);
-        let map = builder.build().unwrap();
-        assert_eq!(map.measurements.len(), 1);
-        assert_eq!(map.detectors.as_slice(), []);
+            let builder = InfluenceBuilder::new(&dag).unwrap();
+            let info = builder.run_symbolic_simulation().unwrap();
+            assert_eq!(info.history.len(), 1);
+            assert!(!info.history.get(0).unwrap().is_deterministic);
+            let map = builder.build().unwrap();
+            assert_eq!(map.measurements.len(), 1);
+            assert_eq!(map.detectors.as_slice(), []);
+        }
     }
 
     /// A mid-circuit reset must reach the simulator: skipping it treated a
@@ -1802,7 +1796,7 @@ mod tests {
     fn an_observable_ref_to_a_record_less_measurement_is_an_error() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1]);
-        let mut leaked = pecos_core::Gate::measure_leaked(&[0usize]);
+        let mut leaked = pecos_core::Gate::measure_z_leaked(&[0usize]);
         leaked.meas_ids = smallvec::smallvec![pecos_core::MeasId::from_raw(7)];
         dag.try_add_gate(leaked).expect("gate is valid");
         dag.mz(&[1]);
@@ -1817,7 +1811,7 @@ mod tests {
             .unwrap()
             .with_circuit_annotations()
         else {
-            panic!("MeasureLeaked consumes no record, so ingest must fail");
+            panic!("MeasureZLeaked consumes no record, so ingest must fail");
         };
         assert!(matches!(
             err,

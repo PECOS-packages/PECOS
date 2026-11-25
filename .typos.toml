@@ -20,6 +20,8 @@ fle = "fle"
 Fle = "Fle"
 # QuEST v4.1.0 uses "calcExpec" (not "calcExpect") in function names
 Expec = "Expec"
+# Vendored ldpc mbp.hpp spells "demoninator"; build_ldpc.rs patches must match it exactly
+demoninator = "demoninator"
 # NumPy uses "arange" (array range), not "arrange"
 arange = "arange"
 # Common variable name prefix for ndarray

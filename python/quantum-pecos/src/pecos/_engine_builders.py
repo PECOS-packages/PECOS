@@ -235,6 +235,16 @@ class QisEngineBuilder:
         self._builder = self._builder.interface(builder)
         return self
 
+    def scoped_execution(self, *, enabled: bool = True) -> Self:
+        """Run synchronously on the Monte Carlo worker with noise/quantum feedback.
+
+        Staged execution remains the default. Requires a supporting interface
+        at build time. Cannot detach an unresponsive native program; cancellation
+        requires cooperative checkpoints. Runtime scheduling is unchanged.
+        """
+        self._builder = self._builder.scoped_execution(enabled)
+        return self
+
     def scheduled_batches(self, *, enabled: bool = True) -> Self:
         """Select scheduled transport, paired with a scheduled noise profile."""
         self._builder = self._builder.scheduled_batches(enabled)
@@ -336,6 +346,16 @@ def _known_runtime_name(runtime: object) -> str | None:
     package = type(runtime).__module__.partition(".")[0]
     name = package.removesuffix("_plugin")
     return name if name != package and name in _KNOWN_RUNTIME_NATIVE_GATES else None
+
+
+def _runtime_native_gates(runtime: object | None) -> object | None:
+    """Resolve plugin declarations and known-package defaults in one place."""
+    gates = getattr(runtime, "native_gates", None)
+    if gates is None and runtime is not None and not isinstance(runtime, (str, PathLike)):
+        known_name = _known_runtime_name(runtime)
+        if known_name is not None:
+            gates = _KNOWN_RUNTIME_NATIVE_GATES[known_name]
+    return gates
 
 
 def _configure_selene_runtime(

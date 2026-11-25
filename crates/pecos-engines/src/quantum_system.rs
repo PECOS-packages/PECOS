@@ -317,7 +317,7 @@ impl QuantumSystem {
                 .filter(|g| {
                     matches!(
                         g.gate_type,
-                        crate::GateType::MZ | crate::GateType::MeasureLeaked
+                        crate::GateType::MZ | crate::GateType::MeasureZLeaked
                     )
                 })
                 .map(|g| g.qubits.len())

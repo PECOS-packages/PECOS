@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 
 import pecos as pc
 from pecos._traced_circuit import measurement_ids_in_execution_order
+from pecos._value_provenance import known_provenance_traces
 from pecos.qec._replay import _replay_tick_circuit
 from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
@@ -349,7 +350,7 @@ def measurement_partition_from_trace(
     ``pecos.tracing._trace_program_to_tick_circuit_with_result_traces`` returns
     the circuit and named-result records from one traced execution. Each scoped
     scalar must certify exactly one result ID; final arrays require one per value.
-    Aggregate syndrome values have no authoritative provenance and are ignored.
+    Aggregate syndrome arrays duplicate the scalar sidebands and are ignored.
     A repeated physical label starts the next round for its scope, independent
     of family order. The swapped marker maps physical labels to current families.
     ``measurement_ids_in_execution_order`` reads the circuit's ``Gate.meas_ids``
@@ -361,19 +362,34 @@ def measurement_partition_from_trace(
         msg = "Trace must supply one unique result ID per measurement"
         raise ValueError(msg)
     ordinal_by_id = {result_id: ordinal for ordinal, result_id in enumerate(measurement_ids)}
+    scalar_tag = re.compile(r"([^:]+):(?:(swapped):)?s([xz])([0-9]+):(init:)?meas:[0-9]+")
+    # Aggregate syndrome outputs can now carry IDs too. Ignore a duplicate
+    # aggregate only when scoped scalar/final records already certify its IDs.
+    scoped_ids = {
+        result_id
+        for record in records
+        if isinstance(record.get("name"), str)
+        and (scalar_tag.fullmatch(record["name"]) or record["name"].startswith("final_"))
+        and isinstance(record.get("result_ids"), list)
+        for result_id in record["result_ids"]
+        if type(result_id) is int
+    }
     groups: dict[tuple[str, str, int], list[int]] = defaultdict(list)
     rounds: dict[str, int] = defaultdict(int)
     seen_labels: dict[str, set[tuple[str, int]]] = defaultdict(set)
-    for record in records:
-        # Records without measurement provenance are skipped: aggregate syndrome
-        # arrays and classical derivations such as sz_correction and t_correction.
+    for record in known_provenance_traces(records):
+        # Classical derivations such as sz_correction and t_correction have no IDs.
         if record.get("result_ids") == []:
             continue
         name = record.get("name")
         if not isinstance(name, str):
             msg = f"Invalid measurement tag: {name!r}"
             raise TypeError(msg)
-        scalar = re.fullmatch(r"([^:]+):(?:(swapped):)?s([xz])([0-9]+):(init:)?meas:[0-9]+", name)
+        scalar = scalar_tag.fullmatch(name)
+        if not scalar and not name.startswith("final_"):
+            ids = record.get("result_ids")
+            if isinstance(ids, list) and len(ids) > 1 and all(type(mid) is int and mid in scoped_ids for mid in ids):
+                continue
         if scalar:
             scope, swapped, physical_family, physical_index, init = scalar.groups()
             if init:

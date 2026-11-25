@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "platform_machine == 'x86_64' and sys_platform == 'darwin'",
@@ -710,6 +710,7 @@ requires-dist = [
     { name = "networkx", specifier = ">=2.1.0" },
     { name = "pecos-rslib", editable = "../../python/pecos-rslib" },
     { name = "pecos-rslib-llvm", editable = "../../python/pecos-rslib-llvm" },
+    { name = "pecos-selene-wasm", marker = "extra == 'wasm'", editable = "../../python/selene-plugins/pecos-selene-wasm" },
     { name = "phir", specifier = ">=0.3.3" },
     { name = "plotly", marker = "extra == 'visualization'", specifier = "~=5.9.0" },
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11' and extra == 'cuda12'", specifier = ">=0.12.0" },
@@ -721,7 +722,7 @@ requires-dist = [
     { name = "stim", marker = "extra == 'stim'", specifier = ">=1.15.0" },
     { name = "tket", specifier = "~=0.15.9" },
 ]
-provides-extras = ["stim", "visualization", "all", "cuda13", "cuda12"]
+provides-extras = ["wasm", "stim", "visualization", "all", "cuda13", "cuda12"]
 
 [[package]]
 name = "qwasm"

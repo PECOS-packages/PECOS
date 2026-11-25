@@ -101,11 +101,21 @@ pub enum GateType {
     // MZ = 104
     MZ = 104,
     // MnZ = 105
-    MeasureLeaked = 105,
+    MeasureZLeaked = 105,
     /// Measure and free the qubit (destructive measurement)
     MeasureFree = 106,
     /// Measure +Z, then prepare |0> (measure-and-prepare; the MP* family)
     MPZ = 107,
+    /// Measure Z with alphabet {0, 1, 3}, where 3 means lost.
+    MeasureZLost = 108,
+    /// Measure Z with alphabet {0, 1, 2, 3}, where 2 means leaked and 3 means lost.
+    MeasureZLeakedLost = 109,
+    /// Non-collapsing leakage detection with alphabet {0, 2}.
+    DetectLeaked = 110,
+    /// Non-collapsing loss detection with alphabet {0, 3}.
+    DetectLost = 111,
+    /// Non-collapsing leakage/loss detection with alphabet {0, 2, 3}.
+    DetectLeakedLost = 112,
     // TODO: MPauli instead of the other variants?
     /// Prepare the +1 eigenstate of X.
     PX = 130,
@@ -477,9 +487,14 @@ impl TryFrom<u8> for GateType {
             91 => GateType::CCZ,
             100 => GateType::MX,
             104 => GateType::MZ,
-            105 => GateType::MeasureLeaked,
+            105 => GateType::MeasureZLeaked,
             106 => GateType::MeasureFree,
             107 => GateType::MPZ,
+            108 => GateType::MeasureZLost,
+            109 => GateType::MeasureZLeakedLost,
+            110 => GateType::DetectLeaked,
+            111 => GateType::DetectLost,
+            112 => GateType::DetectLeakedLost,
             130 => GateType::PX,
             134 => GateType::PZ,
             135 => GateType::QAlloc,
@@ -497,6 +512,13 @@ impl TryFrom<u8> for GateType {
 }
 
 impl GateType {
+    /// Deprecated spelling of [`GateType::MeasureZLeaked`].
+    ///
+    /// This associated const works in values and patterns, but cannot be `use`-imported.
+    #[deprecated(note = "renamed to GateType::MeasureZLeaked")]
+    #[allow(non_upper_case_globals)]
+    pub const MeasureLeaked: GateType = GateType::MeasureZLeaked;
+
     /// Returns the canonical phase-fixed matrix for a named single-qubit gate.
     ///
     /// Matrices are row-major `(real, imaginary)` pairs in the order described
@@ -578,7 +600,7 @@ impl GateType {
         matches!(self, GateType::TrackedPauliMeta)
     }
 
-    /// Returns true if this gate consumes a measurement record.
+    /// Returns true if this gate consumes a Boolean circuit-analysis record.
     ///
     /// A measurement record is a slot in the classical result stream, named by a
     /// [`MeasId`](crate::MeasId). Every site that allocates, counts, or resolves
@@ -586,16 +608,39 @@ impl GateType {
     /// end up sharing a record. Use this predicate rather than spelling the gate
     /// types out, so there is one place to change.
     ///
-    /// `MeasureLeaked` is a measurement to `Gate::validate` and collapses the
-    /// qubit, but it produces no classical result and so consumes no record.
-    /// Record-producing gates and their bases are defined by [`Self::measured_pauli`].
+    /// This is circuit bookkeeping, not a classification of runtime outcomes.
+    /// `MeasureZLeaked`, `MeasureZLost`, and `MeasureZLeakedLost` can return
+    /// herald values through the engines/noise model and carry explicit result
+    /// IDs, but are excluded from this Boolean allocator and annotation policy.
     #[must_use]
     pub const fn consumes_measurement_record(self) -> bool {
         self.measured_pauli().is_some()
     }
 
+    /// Whether this gate collapses in Z without consuming a measurement record.
+    #[must_use]
+    pub const fn is_recordless_z_measurement(self) -> bool {
+        matches!(
+            self,
+            Self::MeasureZLeaked | Self::MeasureZLost | Self::MeasureZLeakedLost
+        )
+    }
+
+    /// Non-collapsing loss/leakage detection: one outcome per operand, no
+    /// measurement record, and identity on the quantum state. Despite that
+    /// identity action, it is not convertible to a unitary; unitary conversions
+    /// retain their invariant panic for detection gates.
+    #[must_use]
+    pub const fn is_detection(self) -> bool {
+        matches!(
+            self,
+            Self::DetectLeaked | Self::DetectLost | Self::DetectLeakedLost
+        )
+    }
+
     /// Returns the Pauli basis of a gate that produces a measurement record.
-    /// Record-less gates, including `MeasureLeaked`, return `None`.
+    /// Record-less gates, including `MeasureZLeaked`, `MeasureZLost`, and
+    /// `MeasureZLeakedLost`, return `None`.
     #[must_use]
     pub const fn measured_pauli(self) -> Option<crate::Pauli> {
         match self {
@@ -646,7 +691,12 @@ impl GateType {
             | GateType::CCZ
             | GateType::MX
             | GateType::MZ
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
+            | GateType::DetectLeaked
+            | GateType::DetectLost
+            | GateType::DetectLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::MeasCrosstalkGlobalPayload
@@ -712,7 +762,12 @@ impl GateType {
             | GateType::U
             | GateType::MX
             | GateType::MZ
-            | GateType::MeasureLeaked
+            | GateType::MeasureZLeaked
+            | GateType::MeasureZLost
+            | GateType::MeasureZLeakedLost
+            | GateType::DetectLeaked
+            | GateType::DetectLost
+            | GateType::DetectLeakedLost
             | GateType::MeasureFree
             | GateType::MPZ
             | GateType::PX
@@ -874,7 +929,12 @@ impl fmt::Display for GateType {
             GateType::CCX => write!(f, "CCX"),
             GateType::MX => write!(f, "MX"),
             GateType::MZ => write!(f, "MZ"),
-            GateType::MeasureLeaked => write!(f, "MeasureLeaked"),
+            GateType::MeasureZLeaked => write!(f, "MeasureZLeaked"),
+            GateType::DetectLeaked => write!(f, "DetectLeaked"),
+            GateType::MeasureZLost => write!(f, "MeasureZLost"),
+            GateType::DetectLost => write!(f, "DetectLost"),
+            GateType::MeasureZLeakedLost => write!(f, "MeasureZLeakedLost"),
+            GateType::DetectLeakedLost => write!(f, "DetectLeakedLost"),
             GateType::MeasureFree => write!(f, "MeasureFree"),
             GateType::MPZ => write!(f, "MPZ"),
             GateType::PX => write!(f, "PX"),
@@ -949,9 +1009,14 @@ impl std::str::FromStr for GateType {
             "CCX" | "TOFFOLI" => Ok(GateType::CCX),
             "SWAP" => Ok(GateType::SWAP),
             "MX" | "MEASURE X" => Ok(GateType::MX),
-            "MEASURE" | "MZ" | "MEASURE Z" => Ok(GateType::MZ),
+            "MEASURE" | "MEASUREZ" | "MZ" | "MEASURE Z" => Ok(GateType::MZ),
             "MEASUREFREE" | "MZFREE" => Ok(GateType::MeasureFree),
-            "MEASURELEAKED" => Ok(GateType::MeasureLeaked),
+            "MEASUREZLEAKED" | "MEASURELEAKED" => Ok(GateType::MeasureZLeaked),
+            "DETECTLEAKED" => Ok(GateType::DetectLeaked),
+            "MEASUREZLOST" => Ok(GateType::MeasureZLost),
+            "DETECTLOST" => Ok(GateType::DetectLost),
+            "MEASUREZLEAKEDLOST" => Ok(GateType::MeasureZLeakedLost),
+            "DETECTLEAKEDLOST" => Ok(GateType::DetectLeakedLost),
             "MPZ" => Ok(GateType::MPZ),
             "PX" | "INIT |+>" => Ok(GateType::PX),
             "PREP" | "PZ" | "INIT" | "INIT |0>" | "RESET" => Ok(GateType::PZ),
@@ -974,6 +1039,22 @@ impl std::str::FromStr for GateType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recordless_z_measurements_have_exact_membership() {
+        for value in u8::MIN..=u8::MAX {
+            if let Ok(gate) = GateType::try_from(value) {
+                assert_eq!(
+                    gate.is_recordless_z_measurement(),
+                    [105, 108, 109].contains(&value)
+                );
+                if gate.is_recordless_z_measurement() {
+                    assert!(!gate.consumes_measurement_record());
+                    assert_eq!(gate.measured_pauli(), None);
+                }
+            }
+        }
+    }
 
     #[test]
     fn measurement_bases_match_record_gates() {
@@ -1510,7 +1591,7 @@ mod tests {
         assert_eq!(GateType::RZ as u8, 32);
         assert_eq!(GateType::RXY1Q as u8, 36);
         assert_eq!(GateType::MZ as u8, 104);
-        assert_eq!(GateType::MeasureLeaked as u8, 105);
+        assert_eq!(GateType::MeasureZLeaked as u8, 105);
         assert_eq!(GateType::MeasureFree as u8, 106);
         assert_eq!(GateType::PZ as u8, 134);
         assert_eq!(GateType::QAlloc as u8, 135);
@@ -1537,7 +1618,7 @@ mod tests {
         assert_eq!(GateType::try_from(32u8), Ok(GateType::RZ));
         assert_eq!(GateType::try_from(36u8), Ok(GateType::RXY1Q));
         assert_eq!(GateType::try_from(104u8), Ok(GateType::MZ));
-        assert_eq!(GateType::try_from(105u8), Ok(GateType::MeasureLeaked));
+        assert_eq!(GateType::try_from(105u8), Ok(GateType::MeasureZLeaked));
         assert_eq!(GateType::try_from(106u8), Ok(GateType::MeasureFree));
         assert_eq!(GateType::try_from(134u8), Ok(GateType::PZ));
         assert_eq!(GateType::try_from(135u8), Ok(GateType::QAlloc));
@@ -1633,7 +1714,7 @@ mod tests {
         assert_eq!(GateType::SZZ.classical_arity(), 0);
         assert_eq!(GateType::SZZdg.classical_arity(), 0);
         assert_eq!(GateType::MZ.classical_arity(), 0);
-        assert_eq!(GateType::MeasureLeaked.classical_arity(), 0);
+        assert_eq!(GateType::MeasureZLeaked.classical_arity(), 0);
         assert_eq!(GateType::MeasureFree.classical_arity(), 0);
         assert_eq!(GateType::MeasCrosstalkGlobalPayload.classical_arity(), 0);
         assert_eq!(GateType::MeasCrosstalkLocalPayload.classical_arity(), 0);
@@ -1666,7 +1747,7 @@ mod tests {
         assert_eq!(GateType::RXY1Q.quantum_arity(), 1);
         assert_eq!(GateType::U.quantum_arity(), 1);
         assert_eq!(GateType::MZ.quantum_arity(), 1);
-        assert_eq!(GateType::MeasureLeaked.quantum_arity(), 1);
+        assert_eq!(GateType::MeasureZLeaked.quantum_arity(), 1);
         assert_eq!(GateType::MeasureFree.quantum_arity(), 1);
         assert_eq!(GateType::PZ.quantum_arity(), 1);
         assert_eq!(GateType::QAlloc.quantum_arity(), 1);
@@ -1730,7 +1811,7 @@ mod tests {
         assert!(!GateType::SZZ.is_parameterized());
         assert!(!GateType::SZZdg.is_parameterized());
         assert!(!GateType::MZ.is_parameterized());
-        assert!(!GateType::MeasureLeaked.is_parameterized());
+        assert!(!GateType::MeasureZLeaked.is_parameterized());
         assert!(!GateType::MeasureFree.is_parameterized());
         assert!(!GateType::MeasCrosstalkGlobalPayload.is_parameterized());
         assert!(!GateType::MeasCrosstalkLocalPayload.is_parameterized());
@@ -1758,7 +1839,7 @@ mod tests {
         assert!(GateType::RXY1Q.is_single_qubit());
         assert!(GateType::U.is_single_qubit());
         assert!(GateType::MZ.is_single_qubit());
-        assert!(GateType::MeasureLeaked.is_single_qubit());
+        assert!(GateType::MeasureZLeaked.is_single_qubit());
         assert!(GateType::MeasureFree.is_single_qubit());
         assert!(GateType::PZ.is_single_qubit());
         assert!(GateType::QAlloc.is_single_qubit());
@@ -1786,7 +1867,7 @@ mod tests {
         assert!(!GateType::RXY1Q.is_two_qubit());
         assert!(!GateType::U.is_two_qubit());
         assert!(!GateType::MZ.is_two_qubit());
-        assert!(!GateType::MeasureLeaked.is_two_qubit());
+        assert!(!GateType::MeasureZLeaked.is_two_qubit());
         assert!(!GateType::MeasureFree.is_two_qubit());
         assert!(!GateType::PZ.is_two_qubit());
         assert!(!GateType::QAlloc.is_two_qubit());
@@ -1832,5 +1913,60 @@ mod tests {
 
         // Validate qubit count
         assert_eq!(qubits.len(), gate_type.quantum_arity());
+    }
+}
+
+#[cfg(test)]
+mod detection_tests {
+    use super::GateType;
+    use crate::{Gate, MeasId};
+
+    #[test]
+    fn detection_wire_names_record_policy_and_arity() {
+        for byte in u8::MIN..=u8::MAX {
+            if let Ok(kind) = GateType::try_from(byte) {
+                assert_eq!(kind.is_detection(), (110..=112).contains(&byte));
+            }
+        }
+        for (byte, name, gate) in [
+            (110, "DetectLeaked", Gate::detect_leaked(&[2, 0])),
+            (111, "DetectLost", Gate::detect_lost(&[2, 0])),
+            (112, "DetectLeakedLost", Gate::detect_leaked_lost(&[2, 0])),
+        ] {
+            let kind = GateType::try_from(byte).unwrap();
+            assert_eq!(kind as u8, byte);
+            assert_eq!(kind.to_string(), name);
+            assert_eq!(name.parse::<GateType>().unwrap(), kind);
+            assert_eq!(name.to_lowercase().parse::<GateType>().unwrap(), kind);
+            assert!(!kind.consumes_measurement_record());
+            assert!(!kind.is_recordless_z_measurement());
+            assert!(!kind.is_meta());
+            assert_eq!(kind.measured_pauli(), None);
+            assert_eq!(kind.quantum_arity(), 1);
+            assert_eq!(kind.classical_arity(), 0);
+            let error = crate::unitary_rep::Unitary::try_named(kind)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(name));
+            let panic =
+                std::panic::catch_unwind(|| crate::unitary_rep::Unitary::named(kind)).unwrap_err();
+            assert!(panic.downcast_ref::<String>().unwrap().contains(name));
+            assert_eq!(gate.gate_type, kind);
+            gate.validate().unwrap();
+            let mut explicit = gate;
+            explicit
+                .meas_ids
+                .extend([MeasId::from_raw(9), MeasId::from_raw(4)]);
+            explicit.validate().unwrap();
+            explicit.meas_ids.pop();
+            assert!(
+                explicit
+                    .validate()
+                    .unwrap_err()
+                    .contains("measurement-id count")
+            );
+            Gate::simple(kind, vec![]).validate().unwrap();
+        }
+        assert!("DL".parse::<GateType>().is_err());
     }
 }

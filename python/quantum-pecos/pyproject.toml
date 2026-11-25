@@ -58,6 +58,9 @@ documentation = "https://quantum-pecos.readthedocs.io"
 repository = "https://github.com/PECOS-packages/PECOS"
 
 [project.optional-dependencies]
+wasm = [
+    "pecos-selene-wasm==0.11.0.dev0",
+]
 stim = [
     "stim>=1.15.0",  # For Stim circuit conversion and interoperability
 ]
@@ -101,6 +104,7 @@ conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }]]
 [tool.uv.sources]
 pecos-rslib = { workspace = true }
 pecos-rslib-llvm = { workspace = true }
+pecos-selene-wasm = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pecos"]
@@ -112,6 +116,8 @@ packages = ["src/pecos"]
 line-length = 120
 # See top-level pyproject.toml's [tool.black] for why this is pinned to py312.
 target-version = ["py312"]
+# Keep published reference sources identical to their recorded provenance hashes.
+force-exclude = '/qec/color/_(shutty488|shutty_torus488|shutty_torus488_cz)/'
 
 [tool.pytest.ini_options]
 markers = [

@@ -63,7 +63,7 @@ def _condition_program(condition=lambda i: i == 0, stop=2):
     i = LoopVar("i")
     q, c = QReg("q", 1), CReg("c", 1)
     body = For(i, 0, stop).Do(If(condition(i)).Then(qb.X(q[0])))
-    return Main(q, c, body, qb.Measure(q[0]) > c[0], Return(c))
+    return Main(q, c, body, qb.MeasureZ(q[0]) > c[0], Return(c))
 
 
 def test_loopvar_condition_reaches_the_ast() -> None:
@@ -130,7 +130,7 @@ def test_string_loop_label_variable_survives_the_parallel_optimizer(optimize_par
     q, c = QReg("q", 1), CReg("c", 1)
     loop = For("k", 0, 3)
     loop.Do(If(loop.var == 0).Then(qb.X(q[0])))
-    program = Main(q, c, loop, qb.Measure(q[0]) > c[0], Return(c))
+    program = Main(q, c, loop, qb.MeasureZ(q[0]) > c[0], Return(c))
     assert "if (k == 0):" in SlrConverter(program, optimize_parallel=optimize_parallel).guppy()
 
 

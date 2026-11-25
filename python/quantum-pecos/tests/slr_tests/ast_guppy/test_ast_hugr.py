@@ -6,7 +6,7 @@ import pytest
 from pecos.slr import CReg, For, LoopVar, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 
 def test_hugr_compiles_via_ast_guppy_path() -> None:
@@ -15,7 +15,7 @@ def test_hugr_compiles_via_ast_guppy_path() -> None:
         c := CReg("c", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -30,7 +30,7 @@ def test_hugr_rejects_while_before_parallel_optimizer_erases_it() -> None:
         c := CReg("c", 1),
         While(c[0] == 0).Do(
             qb.H(q[0]),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
         ),
         Return(c),
     )
@@ -70,7 +70,7 @@ def test_hugr_rejects_symbolic_loopvar_indexing_cleanly() -> None:
 def test_parallel_symbolic_measurement_rejected_cleanly(target: str) -> None:
     i = LoopVar("i")
     q, c = QReg("q", 2), CReg("c", 2)
-    program = Main(q, c, For(i, 0, 2).Do(Parallel(qb.H(q[i]), Measure(q[i]) > c[i])))
+    program = Main(q, c, For(i, 0, 2).Do(Parallel(qb.H(q[i]), MeasureZ(q[i]) > c[i])))
     with pytest.raises(GuppyCodegenError, match="does not support symbolic LoopVar indexing"):
         getattr(SlrConverter(program), target)()
 
@@ -145,7 +145,7 @@ def test_hugr_accepts_inline_measure_creg_result() -> None:
     final = CReg("final", 2)
     prog = Main(
         q := QReg("q", 2),
-        Measure(q) > final,
+        MeasureZ(q) > final,
         Return(final),
     )
 
@@ -170,7 +170,7 @@ def test_hugr_returns_no_arg_entrypoint_runnable_via_hugr_adapter() -> None:
         c := CReg("c", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        Measure(q) > c,
+        MeasureZ(q) > c,
         Return(c),
     )
 
@@ -216,7 +216,7 @@ def test_hugr_inline_measure_creg_round_trips_through_selene() -> None:
         q := QReg("qi", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        Measure(q) > final,
+        MeasureZ(q) > final,
         Return(final),
     )
 
@@ -244,7 +244,7 @@ def test_hugr_inline_measure_creg_inside_nested_repeat() -> None:
         q := QReg("q", 1),
         Repeat(2).block(
             qb.X(q[0]),
-            Measure(q[0]) > flag[0],
+            MeasureZ(q[0]) > flag[0],
             qb.PZ(q[0]),
         ),
         Return(flag),
@@ -271,7 +271,7 @@ def test_hugr_explicit_return_of_declared_creg() -> None:
         q := QReg("q", 1),
         c := CReg("c", 1),
         qb.PZ(q[0]),
-        Measure(q[0]) > c[0],
+        MeasureZ(q[0]) > c[0],
         Return(c),
     )
 

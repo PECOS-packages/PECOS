@@ -1050,14 +1050,17 @@ class Stabilizer:
     def num_qubits(self) -> int: ...
 
 class StabVec:
-    """Rust Clifford+RZ simulator (stabilizer sum / StabVec)."""
+    """Rust Clifford+RZ simulator (stabilizer sum / StabVec).
+
+    pruning_threshold must be finite and satisfy 0.0 <= threshold < 1.0.
+    Invalid values raise ValueError.
+    """
 
     def __init__(
         self,
         num_qubits: int,
         seed: int | None = None,
         pruning_threshold: float | None = None,
-        mc_threshold: int | None = 2048,
     ) -> None: ...
     @property
     def gate_capacity(self) -> int | None: ...
@@ -1133,6 +1136,7 @@ class QisEngineBuilder:
         """Configure a zero-argument factory returning a fresh shot-local decoder session."""
         ...
 
+    def scoped_execution(self, enabled: bool = True) -> QisEngineBuilder: ...
     def scheduled_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def scheduled_event_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def selene_runtime(
@@ -2079,6 +2083,7 @@ class GateType:
     CCX: GateType
     MeasureX: GateType
     Measure: GateType
+    MeasureZ: GateType
     MeasureFree: GateType
     PrepX: GateType
     Prep: GateType
@@ -2091,6 +2096,7 @@ class GateType:
 
     @property
     def name(self) -> str: ...
+    def is_detection(self) -> bool: ...
 
 class Gate:
     """Quantum gate or stored TickCircuit gate batch."""
@@ -2158,6 +2164,39 @@ def resolve_result_tags_for_guppy(
 class DagCircuit:
     """Directed acyclic graph circuit representation."""
 
+    def render(
+        self,
+        format: str = "svg",
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        title: str | None = None,
+        show_measurement_ids: bool = False,
+    ) -> str:
+        """Render as ascii, unicode, svg, tikz, or dot; angles use radians or turns."""
+        ...
+
+    def inspect(
+        self,
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        show_measurement_ids: bool = False,
+        include_html: bool = False,
+    ) -> dict[str, Any]:
+        """Owned SVG and stored-batch records; include_html adds standalone HTML."""
+        ...
+
+    def to_ascii(self) -> str: ...
+    def to_unicode(self) -> str: ...
+    def to_svg(self) -> str: ...
+    def to_tikz(self) -> str: ...
+    def to_dot(self) -> str: ...
+    def _repr_svg_(self) -> str: ...
     def __init__(self) -> None: ...
     def gate_count(self) -> int: ...
     def gate(self, node: int) -> Gate | None: ...
@@ -2218,6 +2257,9 @@ class Tick:
 class TickHandle:
     """Handle for adding gates to a tick."""
 
+    def x_error(self, probability: float, qubit: int) -> TickHandle: ...
+    def depolarize1(self, probability: float, qubit: int) -> TickHandle: ...
+    def depolarize2(self, probability: float, pair: tuple[int, int]) -> TickHandle: ...
     def index(self) -> int: ...
     def gate_on_qubit(self, qubit: int) -> int | None: ...
     def get_gate(self, index: int) -> Gate | None: ...
@@ -2284,6 +2326,36 @@ class TickHandle:
         qubits: Sequence[int],
         meas_ids: Sequence[int],
     ) -> list[tuple[int, int, int]]: ...
+    def detect_leaked_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def detect_lost_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def detect_leaked_lost_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def measure_leaked_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def measure_lost_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
+    def measure_leaked_lost_with_ids(
+        self,
+        qubits: Sequence[int],
+        meas_ids: Sequence[int],
+    ) -> TickHandle: ...
     def mz_free(self, qubits: Sequence[int]) -> list[tuple[int, int, int]]: ...
     def qalloc(self, qubits: Sequence[int]) -> TickHandle: ...
     def qfree(self, qubits: Sequence[int]) -> TickHandle: ...
@@ -2304,6 +2376,39 @@ class TickMeasureHandle:
 class TickCircuit:
     """Tick-based quantum circuit representation."""
 
+    def render(
+        self,
+        format: str = "svg",
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        title: str | None = None,
+        show_measurement_ids: bool = False,
+    ) -> str:
+        """Render as ascii, unicode, svg, tikz, or dot; angles use radians or turns."""
+        ...
+
+    def inspect(
+        self,
+        *,
+        color: bool = True,
+        angle_unit: str = "radians",
+        start: int | None = None,
+        stop: int | None = None,
+        show_measurement_ids: bool = False,
+        include_html: bool = False,
+    ) -> dict[str, Any]:
+        """Owned SVG and stored-batch records; include_html adds standalone HTML."""
+        ...
+
+    def to_ascii(self) -> str: ...
+    def to_unicode(self) -> str: ...
+    def to_svg(self) -> str: ...
+    def to_tikz(self) -> str: ...
+    def to_dot(self) -> str: ...
+    def _repr_svg_(self) -> str: ...
     def __init__(self) -> None: ...
     @staticmethod
     def gate_locations(name: str, qubits: Sequence[int]) -> list[list[int]]: ...
@@ -2912,12 +3017,21 @@ class qec:
 
     class DetectorErrorModel:
         @staticmethod
+        def from_independent_mechanisms(
+            mechanisms: Sequence[tuple[float, Sequence[int], Sequence[int]]],
+            *,
+            num_detectors: int,
+            num_observables: int,
+            detector_coordinates: Sequence[Sequence[float] | None] | None = None,
+        ) -> qec.DetectorErrorModel: ...
+        def independent_mechanisms(self) -> list[tuple[float, list[int], list[int]]]: ...
+        @staticmethod
         def from_circuit(
             circuit: DagCircuit | TickCircuit,
-            p1: float = ...,
-            p2: float = ...,
-            p_meas: float = ...,
-            p_prep: float = ...,
+            p1: float | None = None,
+            p2: float | None = None,
+            p_meas: float | None = None,
+            p_prep: float | None = None,
             **noise_options: Any,
         ) -> qec.DetectorErrorModel: ...
         @staticmethod
@@ -3223,10 +3337,10 @@ class qec:
         @staticmethod
         def from_circuit(
             circuit: DagCircuit | TickCircuit,
-            p1: float = ...,
-            p2: float = ...,
-            p_meas: float = ...,
-            p_prep: float = ...,
+            p1: float | None = None,
+            p2: float | None = None,
+            p_meas: float | None = None,
+            p_prep: float | None = None,
             **noise_options: Any,
         ) -> qec.DemSampler: ...
         @staticmethod
@@ -3602,13 +3716,23 @@ class decoders:
     def bp_lsd(
         *,
         error_rate: float | None = ...,
-        max_iter: int = ...,
-        bp_schedule: str = ...,
-        ms_scaling_factor: float | None = ...,
-        lsd_order: int = ...,
-        bits_per_step: int = ...,
+        max_iter: int | None = ...,
+        bp_schedule: str | None = ...,
+        ms_scaling_factor: float | None = 0.625,
+        lsd_order: int | None = ...,
+        bits_per_step: int | None = ...,
         random_schedule_seed: int | None = ...,
-    ) -> decoders.DecoderSpec: ...
+        bp_method: str | None = ...,
+    ) -> decoders.DecoderSpec:
+        """Paper defaults; ms_scaling_factor=None selects product-sum.
+
+        Explicit bp_method overrides that selection; minimum_sum with None uses 0.625.
+        Product-sum ignores scaling.
+        lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+        bits_per_step=0 grows all candidates.
+        """
+        ...
+
     @staticmethod
     def fusion_blossom(
         *, correlated: bool = ..., solver: str = ..., irreducible: Literal["refuse", "drop"] = "refuse"
@@ -3617,17 +3741,26 @@ class decoders:
     def relay_bp(
         *,
         error_rate: float | None = ...,
-        max_iter: int = ...,
         alpha: float | None = ...,
         alpha_iteration_scaling_factor: float = ...,
-        gamma0: float | None = ...,
+        gamma0: float | None = 0.35,
         pre_iter: int = ...,
         num_sets: int = ...,
         set_max_iter: int = ...,
         gamma_dist_interval: tuple[float, float] = ...,
         stopping_criterion: str | int = ...,
         seed: int = ...,
-    ) -> decoders.DecoderSpec: ...
+    ) -> decoders.DecoderSpec:
+        """Native Relay-BP, deterministic per (seed, syndrome).
+
+        gamma0 defaults to 0.35.
+        gamma0=None makes leg zero memoryless; relay legs retain memory.
+        alpha=0.0 selects dynamic scaling; None means unit scaling.
+        alpha_iteration_scaling_factor must be finite and > 0.
+        Use pre_iter and set_max_iter for iteration limits.
+        """
+        ...
+
     @staticmethod
     def min_sum_bp(
         *, error_rate: float | None = ..., max_iter: int = ..., alpha: float | None = ...
@@ -3833,7 +3966,8 @@ class decoders:
         Args:
             pcm: Sparse parity check matrix.
             error_rate: Channel error probability: a single float applied to every column,
-                or one probability per column.
+                or one probability per column. Raw LDPC priors must be finite and strictly
+                in (0, 1); DEM-built decoders handle endpoints exactly.
 
         Example:
             >>> from pecos_rslib.decoders import BpOsdBuilder, SparseMatrix
@@ -3893,7 +4027,12 @@ class decoders:
 
             Args:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
-                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                error_rate: Uniform probability per original DEM error line, before merging
+                    identical detector and observable sets. A group of k lines receives the
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
                 ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
@@ -3914,7 +4053,8 @@ class decoders:
         Args:
             pcm: Sparse parity check matrix.
             error_rate: Channel error probability: a single float applied to every column,
-                or one probability per column.
+                or one probability per column. Raw LDPC priors must be finite and strictly
+                in (0, 1); DEM-built decoders handle endpoints exactly.
 
         Example:
             >>> from pecos_rslib.decoders import BpLsdBuilder, SparseMatrix
@@ -3929,11 +4069,18 @@ class decoders:
             error_rate: float | Sequence[float],
         ) -> None: ...
         def max_iter(self, val: int) -> decoders.BpLsdBuilder:
-            """Set maximum BP iterations (default: 100)."""
+            """Set maximum BP iterations (default: 30)."""
             ...
 
         def bp_method(self, val: str) -> decoders.BpLsdBuilder:
-            """Set BP algorithm: "product_sum" or "minimum_sum" (default: "product_sum")."""
+            """Set BP algorithm: "product_sum" or "minimum_sum" (default: "minimum_sum")."""
+            ...
+
+        def ms_scaling_factor(self, val: float | None) -> decoders.BpLsdBuilder:
+            """Set scaling (default: 0.625); None selects product-sum.
+
+            Explicit bp_method overrides this; minimum_sum with None uses 0.625.
+            """
             ...
 
         def schedule(self, val: str) -> decoders.BpLsdBuilder:
@@ -3941,12 +4088,11 @@ class decoders:
             ...
 
         def lsd_order(self, val: int) -> decoders.BpLsdBuilder:
-            """Set LSD order parameter (default: 0)."""
+            """Set LSD order (default: 0): 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order."""
             ...
 
         def bits_per_step(self, val: int) -> decoders.BpLsdBuilder:
-            """Set bits added per cluster-growth step (default: 0 = grow all
-            candidate bits each step)."""
+            """Bits grown per step (default: 1); 0 grows all candidates."""
             ...
 
         def build(self) -> decoders.BpLsdDecoder:
@@ -3967,18 +4113,30 @@ class decoders:
             error_rate: float | None = ...,
             max_iter: int | None = ...,
             bp_schedule: str | None = ...,
-            ms_scaling_factor: float | None = ...,
+            ms_scaling_factor: float | None = 0.625,
             random_schedule_seed: int | None = ...,
+            *,
+            bp_method: str | None = ...,
+            bits_per_step: int | None = ...,
+            lsd_order: int | None = ...,
         ) -> decoders.DemAwareDecoder:
             """Build BP+LSD from a detector error model.
 
             Args:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
-                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                error_rate: Uniform probability per original DEM error line, before merging
+                    identical detector and observable sets. A group of k lines receives the
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 bp_schedule: Update order; serial may converge sooner while parallel favors throughput.
-                ms_scaling_factor: Selects minimum-sum BP and sets its correction factor; tuning can improve
-                    accuracy at negligible runtime cost. ``None`` preserves product-sum BP.
+                bp_method: "minimum_sum" (default) or "product_sum".
+                ms_scaling_factor: Default 0.625; None selects product-sum. Explicit bp_method
+                    overrides this; minimum_sum with None uses 0.625, product_sum ignores scaling.
+                bits_per_step: Bits grown per step (default: 1); 0 grows all candidates.
+                lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
                 random_schedule_seed: Makes randomized scheduling reproducible without changing its runtime bound.
             """
             ...
@@ -4161,15 +4319,47 @@ class decoders:
         def __repr__(self) -> str: ...
 
     class DemAwareDecoder:
-        """DEM-aware wrapper over a check-matrix decoder."""
+        """DEM-aware wrapper over a check-matrix decoder.
+
+        Relay-BP, min-sum BP, BP-OSD and BP-LSD reduce probability-0/1
+        mechanisms exactly after overrides and merging, keeping original counts
+        in num_mechanisms and repr. Empty reduced support raises ValueError.
+        decode_syndrome validates length and binary values, applies both biases,
+        and raises ValueError naming the lowest fired dead detector and count.
+        Declared-but-unused detectors are included. Union-find does not reduce.
+        """
 
         @staticmethod
         def from_dem(
             dem: str,
             decoder_type: str = ...,
             error_rate: float | None = ...,
-            max_iter: int = ...,
-        ) -> decoders.DemAwareDecoder: ...
+            max_iter: int | None = ...,
+            *,
+            bp_method: str | None = ...,
+            ms_scaling_factor: float | None = 0.625,
+            bits_per_step: int | None = ...,
+            lsd_order: int | None = ...,
+        ) -> decoders.DemAwareDecoder:
+            """Build a DEM decoder. None uses 30 iterations for BP+LSD, 100 for BP-OSD/min-sum.
+
+            BP+LSD options: bp_method="minimum_sum", ms_scaling_factor=0.625,
+            bits_per_step=1 (0 grows all candidates).
+            lsd_order: 0 = LSD-0, no reprocessing; > 0 = combination-sweep (OSD-CS) reprocessing of that order.
+            None scaling selects product-sum; explicit bp_method overrides it.
+            minimum_sum with None uses 0.625; product_sum ignores scaling.
+            These keywords require decoder_type="bp_lsd".
+
+            Relay-BP and union_find reject explicit max_iter. For Relay-BP,
+            use pre_iter / set_max_iter through its builder or spec factory.
+
+            error_rate is a uniform probability per original DEM error line; None uses
+            DEM probabilities. For relay_bp, min_sum_bp, bp_osd and bp_lsd, it applies before merging
+            identical detector and observable sets. A group of k lines receives the
+            k-fold independent XOR of the rate.
+            """
+            ...
+
         def decode_syndrome(self, syndrome: list[int]) -> decoders.DemAwareResult: ...
         def __repr__(self) -> str: ...
 
@@ -4177,7 +4367,7 @@ class decoders:
         """Builder for Relay BP ensemble decoder.
 
         Configures and constructs a RelayBpDecoder for qLDPC codes. Uses an
-        ensemble of min-sum BP decoders with randomized damping parameters
+        ensemble of min-sum BP decoders with randomized memory strengths
         (relay strategy) to improve convergence on codes where standard BP fails.
 
         Args:
@@ -4194,21 +4384,26 @@ class decoders:
         """
 
         def __init__(self, check_matrix: list[list[int]], error_priors: list[float]) -> None: ...
-        def max_iter(self, val: int) -> decoders.RelayBpBuilder:
-            """Set maximum BP iterations (default: 200)."""
-            ...
-
         def alpha(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Set min-sum scaling factor (None = no scaling)."""
+            """Set min-sum scaling factor (None = unit scaling; 0.0 = dynamic scaling)."""
             ...
 
         def gamma0(self, val: float | None) -> decoders.RelayBpBuilder:
-            """Enable memory-BP for the relay ensemble (default: 0.65).
+            """Set leg-zero memory strength (default: 0.35).
 
-            The pre-relay leg uses this directly and relay legs draw per-leg strengths
-            only when it is set; None disables memory entirely and makes relay
-            ensembling ineffective.
+            None makes leg zero memoryless; relay legs retain their sampled memory.
             """
+            ...
+
+        def explicit_gammas(self, rows: list[list[float]] | None) -> decoders.RelayBpBuilder:
+            """Set per-bit memory rows: row 0 serves relay leg 1, and rows cycle.
+
+            None restores sampled gammas. Invalid rows raise ValueError on build.
+            """
+            ...
+
+        def gamma_dist_interval(self, low: float, high: float) -> decoders.RelayBpBuilder:
+            """Set sampled gamma bounds; invalid bounds raise ValueError on build."""
             ...
 
         def pre_iter(self, val: int) -> decoders.RelayBpBuilder:
@@ -4226,9 +4421,8 @@ class decoders:
         def seed(self, val: int) -> decoders.RelayBpBuilder:
             """Set the run-level random seed for relay strengths (default: 0).
 
-            The RNG advances across decodes, so reused-decoder outcomes depend on
-            decode history. Equal seeds reproduce only the same full shot sequence,
-            not an individual syndrome independently.
+            Results are deterministic per (seed, syndrome), independent of decode
+            order, batch splitting and worker count.
             """
             ...
 
@@ -4246,16 +4440,15 @@ class decoders:
         """Relay BP ensemble decoder for qLDPC codes.
 
         Created via ``RelayBpBuilder(...).build()``.
-        Its relay RNG advances across decodes, so a reused decoder's per-shot outcomes
-        depend on decode history. A seed reproduces the same full shot sequence, not
-        each syndrome independently.
+        Results are deterministic per (seed, syndrome), independent of decode
+        order, batch splitting and worker count.
         """
 
         @staticmethod
         def from_dem(
             dem: str,
+            *,
             error_rate: float | None = ...,
-            max_iter: int | None = ...,
             alpha: float | None = ...,
             seed: int | None = ...,
         ) -> decoders.DemAwareDecoder:
@@ -4263,8 +4456,12 @@ class decoders:
 
             Args:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
-                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
-                max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
+                error_rate: Uniform probability per original DEM error line, before merging
+                    identical detector and observable sets. A group of k lines receives the
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
                 seed: Makes relay sampling reproducible without increasing its runtime bound.
             """
@@ -4278,6 +4475,16 @@ class decoders:
 
             Returns:
                 BpResult with decoding, convergence status, and iteration count.
+            """
+            ...
+
+        def decode_batch(self, detection_events: bytes, num_shots: int) -> bytes:
+            """Decode sequentially with the GIL released.
+
+            Input is num_shots * check_count row-major 0/1 bytes, e.g.
+            numpy_array.astype(numpy.uint8).tobytes(). Output contains
+            num_shots * bit_count row-major correction bytes.
+            Invalid length or non-binary entries raise ValueError.
             """
             ...
 
@@ -4319,11 +4526,11 @@ class decoders:
             ...
 
         def alpha(self, val: float | None) -> decoders.MinSumBpBuilder:
-            """Set min-sum scaling factor (None = no scaling)."""
+            """Set min-sum scaling factor (None = unit scaling; 0.0 = dynamic scaling)."""
             ...
 
         def gamma0(self, val: float | None) -> decoders.MinSumBpBuilder:
-            """Set initial damping factor (None = disabled)."""
+            """Set memory strength (None = plain min-sum without memory)."""
             ...
 
         def build(self) -> decoders.MinSumBpDecoder:
@@ -4341,6 +4548,7 @@ class decoders:
         @staticmethod
         def from_dem(
             dem: str,
+            *,
             error_rate: float | None = ...,
             max_iter: int | None = ...,
             alpha: float | None = ...,
@@ -4349,7 +4557,12 @@ class decoders:
 
             Args:
                 dem: Detector error model text; check-matrix dimensions are derived from it.
-                error_rate: Uniform prior override; mismatch can reduce accuracy with little runtime effect.
+                error_rate: Uniform probability per original DEM error line, before merging
+                    identical detector and observable sets. A group of k lines receives the
+                    k-fold independent XOR of this rate.
+                    None keeps each line's DEM probability, merged the same way.
+                    Endpoint mechanisms are handled exactly; empty reduced support
+                    and fired dead detectors raise ValueError (see DemAwareDecoder).
                 max_iter: BP iteration cap; larger values may improve convergence but increase runtime.
                 alpha: Min-sum scaling factor; tuning can improve accuracy at negligible runtime cost.
             """
@@ -4363,6 +4576,16 @@ class decoders:
 
             Returns:
                 BpResult with decoding, convergence status, and iteration count.
+            """
+            ...
+
+        def decode_batch(self, detection_events: bytes, num_shots: int) -> bytes:
+            """Decode sequentially with the GIL released.
+
+            Input is num_shots * check_count row-major 0/1 bytes, e.g.
+            numpy_array.astype(numpy.uint8).tobytes(). Output contains
+            num_shots * bit_count row-major correction bytes.
+            Invalid length or non-binary entries raise ValueError.
             """
             ...
 
@@ -4505,6 +4728,22 @@ def scheduled_event_idle_noise(
     profile: ScheduledIdleNoise,
     adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
 ) -> ScheduledEventIdleNoise: ...
+def scheduled_native_adapter(
+    profile: ScheduledIdleZ | ScheduledIdleNoise | ScheduledLocalNoise,
+    library_path: str | os.PathLike[str],
+    *,
+    config: bytes | None = None,
+) -> ScheduledEventIdleNoise:
+    """Attach an experimental native normalizer from an explicitly trusted library.
+
+    The library must implement pecos_scheduled_adapter.h and obey its ownership,
+    threading and no-unwind contract. Native code is not sandboxed. Config bytes
+    are copied; None is equivalent to empty bytes. Only checked scheduled profiles
+    are accepted. Use with QIS/HUGR on the engines stack without operation tracing.
+    This uses the existing MonteCarlo/noise/quantum path with no per-batch Python
+    callbacks. It does not enable the Python worker-context optimization implicitly.
+    """
+    ...
 
 class ScheduledLocalNoise:
     """Checked gate Pauli/emission/seepage, preparation and readout faults."""

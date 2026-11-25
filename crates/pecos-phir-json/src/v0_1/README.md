@@ -130,3 +130,9 @@ Machine operations can be combined with quantum and classical operations in PHIR
 - Machine operations are processed in the order they appear in the program.
 - Timing operations may be treated as no-ops on hardware that doesn't support them.
 - The effect of machine operations depends on the capabilities of the target hardware.
+
+## Quantum Operations
+
+Z-basis measurement qops accept both `"Measure"` and `"MeasureZ"`. Parsing
+canonicalizes `"MeasureZ"` to the PHIR specification's `"Measure"`; execution,
+noise classification, and PHIR re-emission continue to use `"Measure"`.

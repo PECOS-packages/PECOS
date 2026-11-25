@@ -28,7 +28,7 @@ use pecos_engines::noise::{
 };
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyBool;
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -38,6 +38,60 @@ use crate::shot_results_bindings::PyShotVec;
 
 // Import the unified SimBuilder from sim.rs
 use crate::sim::{PySimBuilder, SimBuilderInner};
+
+// Strict recursive conversion: Python's permissive numeric extraction must not
+// accept tuples, numpy scalars, bool-as-number, or integers outside i64.
+fn loss_json_value(value: &Bound<'_, PyAny>, path: &str) -> PyResult<serde_json::Value> {
+    use pyo3::exceptions::PyValueError;
+    use serde_json::Value;
+    let invalid = || {
+        PyValueError::new_err(format!(
+            "{path} = {value}: use dict, list, str, bool, i64 int or finite float"
+        ))
+    };
+    if value.is_exact_instance_of::<PyBool>() {
+        return Ok(Value::Bool(value.extract()?));
+    }
+    if value.is_exact_instance_of::<PyInt>() {
+        return value
+            .extract::<i64>()
+            .map(Value::from)
+            .map_err(|_| invalid());
+    }
+    if value.is_exact_instance_of::<PyFloat>() {
+        return serde_json::Number::from_f64(value.extract()?)
+            .map(Value::Number)
+            .ok_or_else(invalid);
+    }
+    if value.is_exact_instance_of::<PyString>() {
+        return Ok(Value::String(value.extract()?));
+    }
+    if value.is_exact_instance_of::<PyList>() {
+        let list = value.cast::<PyList>()?;
+        return list
+            .iter()
+            .enumerate()
+            .map(|(index, v)| loss_json_value(&v, &format!("{path}[{index}]")))
+            .collect::<PyResult<Vec<_>>>()
+            .map(Value::Array);
+    }
+    if value.is_exact_instance_of::<PyDict>() {
+        let dict = value.cast::<PyDict>()?;
+        let mut object = serde_json::Map::new();
+        for (key, v) in dict {
+            if !key.is_exact_instance_of::<PyString>() {
+                return Err(PyValueError::new_err(format!(
+                    "{path}[{key}] = {key}: use str keys"
+                )));
+            }
+            let key: String = key.extract()?;
+            let value = loss_json_value(&v, &format!("{path}.{key}"))?;
+            object.insert(key, value);
+        }
+        return Ok(Value::Object(object));
+    }
+    Err(invalid())
+}
 
 fn runtime_native_gate_set(names: Vec<String>) -> PyResult<pecos_qis::RuntimeNativeGateSet> {
     use pecos_qis::{RuntimeNativeGate, RuntimeNativeGateSet};
@@ -188,6 +242,16 @@ impl PyQisEngineBuilder {
             .decoder_batch_capture(capture_batches)
             .decoder_control_capture(capture_control_flow);
         Ok(self.clone())
+    }
+
+    /// Execute synchronously on the Monte Carlo worker through the existing
+    /// noise/quantum feedback loop. Staged execution remains the default.
+    /// Requires a supporting interface at build time. Cannot detach an unresponsive
+    /// native program; cancellation requires cooperative checkpoints.
+    #[pyo3(signature = (enabled = true))]
+    fn scoped_execution(&mut self, enabled: bool) -> Self {
+        self.inner = self.inner.clone().scoped_execution(enabled);
+        self.clone()
     }
 
     /// Opt into mandatory scheduled transport; pair with scheduled_idle_z(),
@@ -1871,6 +1935,64 @@ impl PyGeneralNoiseModelBuilder {
     /// Set measurement error probability (asymmetric)
     fn with_measurement_probability(&self, p0: f64, p1: f64) -> PyResult<Self> {
         Self::from_setter(self.inner.clone().with_p_meas_0(p0).with_p_meas_1(p1))
+    }
+
+    /// Configure independent atom loss with the JSON loss-section schema.
+    fn with_loss(&self, loss: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let value = loss_json_value(loss, "loss")?;
+        let loss = pecos_engines::noise::QubitLoss::from_json_value(&value)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Self::from_setter(match loss {
+            Some(loss) => self.inner.clone().with_loss(loss),
+            None => self.inner.clone().without_loss(),
+        })
+    }
+
+    /// Configure conditional readout rows for one Z-measurement flavor.
+    fn with_readout(&self, gate_name: &str, rows: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let gate_type = pecos_engines::noise::ReadoutMatrix::parse_flavor(gate_name)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let rows = rows.cast::<PyDict>().map_err(|error| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "readout {gate_name}: invalid value {rows}; use a dict of rows: {error}"
+            ))
+        })?;
+        let mut probabilities = BTreeMap::new();
+        for (row_key, columns) in rows.iter() {
+            let row = row_key.extract::<String>().map_err(|error| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "readout {gate_name} row {row_key}: invalid row key {row_key}; use a str key: {error}"
+                ))
+            })?;
+            let columns = columns.cast::<PyDict>().map_err(|error| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "readout {gate_name} row {row:?}: invalid value {columns}; use a dict of outcomes: {error}"
+                ))
+            })?;
+            let mut weights = BTreeMap::new();
+            for (column_key, value) in columns.iter() {
+                let column = column_key.extract::<String>().map_err(|error| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "readout {gate_name} row {row:?}: invalid column key {column_key}; use a str key: {error}"
+                    ))
+                })?;
+                if value.is_instance_of::<PyBool>() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "readout {gate_name} row {row:?}: invalid value column {column:?} = {value}; use a numeric probability, not bool"
+                    )));
+                }
+                let probability = value.extract::<f64>().map_err(|error| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "readout {gate_name} row {row:?}: invalid value column {column:?} = {value}; use a numeric probability: {error}"
+                    ))
+                })?;
+                weights.insert(column, probability);
+            }
+            probabilities.insert(row, weights);
+        }
+        let matrix = pecos_engines::noise::ReadoutMatrix::new(gate_type, &probabilities)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Self::from_setter(self.inner.clone().with_readout(matrix))
     }
 
     /// Add a noiseless gate

@@ -37,7 +37,7 @@ fn batch(index: u64, operations: Vec<ScheduledEventOp>) -> ScheduledEventBatch {
             ScheduledEventOp::Gate(g)
                 if matches!(
                     g.gate_type,
-                    pecos_engines::GateType::MZ | pecos_engines::GateType::MeasureLeaked
+                    pecos_engines::GateType::MZ | pecos_engines::GateType::MeasureZLeaked
                 ) =>
             {
                 Some(ScheduledResult {
@@ -620,8 +620,8 @@ fn component_clones_cannot_restart_an_adapter_in_a_live_native_shot() {
 }
 
 #[test]
-fn changed_measurement_target_or_kind_rejects_and_poisons() {
-    struct Rewrite(Gate);
+fn changed_measurement_sequence_rejects_and_poisons() {
+    struct Rewrite(Vec<Gate>);
     impl ScheduledBatchAdapter for Rewrite {
         fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
             Ok(())
@@ -631,10 +631,20 @@ fn changed_measurement_target_or_kind_rejects_and_poisons() {
             _: &ScheduledEventBatch,
             out: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
-            out.push(self.0.clone())
+            for gate in &self.0 {
+                out.push(gate.clone())?;
+            }
+            Ok(())
         }
     }
-    for replacement in [Gate::mz(&[1]), Gate::measure_leaked(&[0])] {
+    for replacement in [
+        vec![Gate::mz(&[1]), Gate::mz(&[1])], // Target changed.
+        vec![Gate::measure_z_leaked(&[0]), Gate::mz(&[1])], // Kind changed.
+        vec![Gate::mz(&[1]), Gate::mz(&[0])], // Order changed.
+        vec![Gate::mz(&[0])],                 // Matching prefix, missing tail.
+        vec![Gate::mz(&[0]), Gate::mz(&[1]), Gate::mz(&[0])], // Extra tail.
+        vec![],                               // All measurements removed.
+    ] {
         let mut q = QuantumSystem::new(
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), move |_| {
                 Ok(Box::new(Rewrite(replacement.clone())))
@@ -645,7 +655,10 @@ fn changed_measurement_target_or_kind_rejects_and_poisons() {
         );
         begin(&mut q);
         let error = q
-            .process(encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap())
+            .process(
+                encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0])), gate(Gate::mz(&[1]))])])
+                    .unwrap(),
+            )
             .err()
             .expect("expected rejection");
         assert!(

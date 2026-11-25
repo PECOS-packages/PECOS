@@ -29,6 +29,7 @@ from pecos_rslib import (
 )
 
 from pecos._phir_declarations import validate_classical_inputs
+from pecos._phir_normalization import canonicalize_measurement_qops
 from pecos.reps.pyphir import PyPHIR, signed_data_types, unsigned_data_types
 from pecos.reps.pyphir import types as pt
 from pecos.typing import PhirModel
@@ -141,6 +142,7 @@ class PhirClassicalInterpreter:
             self.program = self.program.to_phir_dict()
 
         if isinstance(self.program, dict):
+            self.program = canonicalize_measurement_qops(self.program)
             validate_classical_inputs(self.program)
 
         # Assume PHIR dict format, validate PHIR

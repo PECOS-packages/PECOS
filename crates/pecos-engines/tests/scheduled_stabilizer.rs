@@ -62,7 +62,7 @@ fn message(batches: &[TimedBatch], events: bool) -> ByteMessage {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, g)| {
-                    matches!(g.gate_type, GateType::MZ | GateType::MeasureLeaked).then_some(
+                    matches!(g.gate_type, GateType::MZ | GateType::MeasureZLeaked).then_some(
                         ScheduledResult {
                             operation_index: i,
                             runtime_result: b.batch_index * 10 + i as u64,
@@ -362,7 +362,7 @@ fn leakage_readout_reset_and_clone_preserve_the_contract() {
             0,
             vec![
                 Gate::pz(&[64]),
-                Gate::simple(GateType::MeasureLeaked, vec![64.into()]),
+                Gate::simple(GateType::MeasureZLeaked, vec![64.into()]),
             ],
         )];
         assert_eq!(run(&mut s, &input, events), vec![2]);

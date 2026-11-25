@@ -122,7 +122,7 @@ class QAlloc:
         CNOT(data[0], data[1])
 
         # Measure transitions to unprepared
-        result = Measure(data[0])  # data[0] now unprepared
+        result = MeasureZ(data[0])  # data[0] now unprepared
 
         # Re-prepare for reuse
         data.prepare(0)

@@ -6,6 +6,423 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Added:** Non-collapsing `DetectLeaked`, `DetectLost`, and `DetectLeakedLost` gates,
+  with location-based readout matrices, no gate noise, and no Boolean measurement record.
+- **Fixed:** DAG-to-tick conversion preserves positional outcome order between Z
+  heralds and record-bearing measurements on different qubits.
+
+- **Breaking:** Trellis, Frontier and BpTrellis results no longer report
+  `dropped_log_mass` by default, and float metrics no longer pay to accumulate it.
+  The integer max-log metric still keeps its cheap running maximum. Set
+  `dropped_mass` on the config (Rust) or `dropped_mass=True` (Python detailed
+  decoders) to get it. The field is now `Option<f64>` / `float | None`. The Rust
+  methods that skipped it per call (`*_without_dropped_mass`,
+  `attempt_prediction_only`, `*_prediction_without_evidence`) are removed because
+  the default now skips.
+
+- **Fixed:** Validating a just-installed managed LLVM now waits out the "text file
+  busy" window left by extraction before running `llvm-config` and `clang`, instead
+  of occasionally reporting a good installation as failed.
+- **Fixed:** Union-find now rejects NaN weights instead of sorting them (undefined
+  behaviour), and BeliefFind reports a BP-produced NaN log-probability ratio as an error.
+- **Breaking:** MBP now updates stored edge messages and excludes the current
+  edge during message passing; it previously decoded from priors alone, so
+  results change. Product-sum and min-sum now floor denominators at `1e-12`. The
+  product-sum negative saturation guard also preserves the sign, but this branch
+  is unreachable through the public API: each factor is at least
+  `tanh(log(1e-12) / 2) > -1` (approximately `tanh(-13.8)`), so this defensive
+  correction has no observable decoding effect. NaN log ratios raise a decoder
+  error before the hard decision. MBP now requires a finite `error_rate` in `(0,
+  1)` and positive XYZ weights whose normalized Pauli probabilities are strictly
+  positive with finite `(1-p)/p` ratios. For pure dephasing use small positive
+  X/Y weights satisfying this condition. Build-time patches update the shared
+  dependency cache and affect other local checkouts.
+- **Fixed:** DEM text written by `generate_repetition_code_dem`,
+  `generate_surface_code_dem`, the surface circuit builder, the correlation
+  DEM export in `pecos-qec`, the experimental `pecos-eeg` and `pecos-zx` crates
+  and the DEM decomposition diagnostics example now uses the shortest exact
+  representation of each probability instead of fixed precision. Before,
+  `generate_*_code_dem` and `pecos-zx` wrote six decimal places, so priors at or
+  below about 5e-7 became `error(0.000000)`; the other writers kept six, seven or
+  eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
+
+- **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
+  and Python: measurement, preparation, idle and gate-event sources; recovery,
+  optional reload on prep, partner spreading and lost-state readout. Loss is rejected
+  by neo routing, runtime frames and the Selene general-noise adapter.
+- **Added:** Core `MeasureZLost` and `MeasureZLeakedLost` herald gates, with alphabets
+  `{0, 1, 3}` and `{0, 1, 2, 3}`, and per-flavor general-noise readout matrices
+  configurable from Rust, JSON, and Python. Lost rows require configured qubit loss.
+- **Changed:** Unsupported runtime-frame and scheduled gate errors now name the gate
+  after their existing error prefix. Scheduled Z-herald errors suggest
+  `MeasureZLeaked` (which cannot herald loss) or a non-scheduled engine.
+- **Fixed:** The QEC fault-injection runner now executes gates its preflight already
+  accepted but its simulator dispatch silently skipped: `QAlloc`, Z herald collapses,
+  and Clifford-angle rotations such as RX/RY/RZ/RXX/RYY/RZZ/U. This fixes incorrect
+  `FaultChecker` results on those circuits; unsupported gates were already rejected
+  by the preflight.
+- **Fixed:** Raw-measurement sampling no longer lets custom p1 Pauli weights scale
+  preparation or MZ measurement noise (or zero it with Z-only weights), and no longer
+  applies p1 noise at record-less Z heralds or transparent gates. Batched DAG nodes
+  apply p1 channels independently per qubit and p2 channels per pair; single-qubit
+  gates no longer use a two-qubit weight lookup just because a node contains two
+  qubits. Preparation and idle location batches are also split per
+  qubit, and idle residuals identify the correct instance's location.
+- **Fixed:** Influence-map samplers reject probability slices with the wrong length
+  with a configuration error instead of panicking or silently accepting extra entries.
+- **Fixed:** `LookupDecoder` selects custom Pauli weights by gate kind, preserving
+  preparation and measurement rates, and enumerates batched gate instances as
+  independent channels. Its shared rate computation no longer assigns p1 noise to
+  record-less Z heralds or transparent gates.
+- **Fixed:** `PerGateTypeNoise::to_neo_channel` returns an error naming an unmapped gate
+  instead of panicking. `GeneralNoiseConfig` JSON rejects duplicate object keys at any depth.
+- **Breaking:** DEM-built Relay-BP, min-sum BP, BP-OSD, BP-LSD and BeliefFind
+  now handle probability-0 and probability-1 mechanisms exactly by reducing
+  support and applying fixed syndrome/observable biases. Construction fails when
+  no uncertain error mechanism remains after support reduction (including
+  `error_rate=0`). A biased syndrome firing dead detectors, including
+  declared-but-unused detectors, raises `InvalidSyndrome`, naming the lowest
+  index and count; this aborts a batch. Python `DemAwareDecoder` raises
+  `ValueError` for empty reduced support and invalid syndromes.
+  `StructuredDemDecoder.decode_syndrome` raises `ValueError` for fired dead
+  detectors and non-binary input, but `RuntimeError` for wrong lengths. On
+  spec-built paths, empty reduced support raises `RuntimeError` when the decoder
+  is built (for the logical-subgraph, logical-algorithm and logical-circuit
+  decoders, in their constructors). `SampleBatch.decode`, `DemSampler` decoding
+  and the logical decoders' `decode`/`decode_count` raise `RuntimeError` for
+  fired dead detectors; `SampleBatch.compare_decoders` counts them as
+  decode-error outcomes for those shots. Wrappers validate syndrome
+  length and binary values before applying biases. Raw BP-OSD, BP-LSD,
+  soft-information BP and BeliefFind builders now reject endpoint priors and
+  require finite values in `(0, 1)`; see the MBP entry above for its prior rule.
+  Product-sum check updates bound saturated tanh products so check-to-bit
+  messages remain finite; all other products are unchanged. `belief_matching`, experimental BP-trellis, and
+  the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
+  perturbed ensemble members retain their existing prior clamp.
+- **Breaking:** Native Relay-BP and min-sum now flip bits whose posterior is
+  exactly zero (using `<= 0`, matching relay-bp and ldpc). PECOS always floors
+  the stored prior that seeds messages and memory at magnitude `4e-5`, as
+  relay-bp does when `min_log_prior_ratio` is set (its default is `None`).
+  The sign is preserved except that zero becomes positive, so priors of exactly
+  one half no longer sit at a tie. Nothing downstream is floored again.
+  Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
+  Native Relay-BP and min-sum decoding results can change.
+- **Breaking:** Relay-BP now defaults to `gamma0=0.35` instead of 0.65 across
+  the Rust (`pecos-relay-bp`, `DecoderSpec`) and Python construction paths.
+  Decoding results change with default settings; set `gamma0=0.65` explicitly to
+  retain the previous behavior. The low-level `pecos_bp::RelayConfig::default()`
+  keeps its paper operating point (gamma0 0.1).
+
+- **Fixed:** A PECOS-managed LLVM whose shared libraries no longer load, such as
+  a copy kept across an upgrade to Ubuntu 26.04 (its `libLLVM` needs
+  `libxml2.so.2`), is now reported as invalid. `pecos llvm ensure --managed`
+  reinstalls it, and `pecos install llvm` asks for `--force`. Validation now runs
+  the managed `clang`, because `llvm-config` does not load `libLLVM` and kept
+  reporting such a copy as ready.
+
+- **Fixed:** The BP+LSD decoder no longer writes past the end of an OSD candidate
+  vector when a cluster has fewer free columns than `lsd_order`. The vendored
+  `ldpc` dense OSD now limits its pair search to the cluster size, as PECOS
+  already did for the BP+OSD decoder; decoding results are unchanged. GCC 15
+  debug builds (Ubuntu 26.04) aborted on this out-of-bounds write.
+
+- **Breaking:** QIS and Selene development/test runtimes now use Cargo-reported
+  artifacts instead of implicit Cargo build-directory searches (including on
+  Rust 1.100). Use `just build-debug` for Python, `just rstest debug` for Rust,
+  or set `PECOS_QIS_FFI_PATH` and `PECOS_SELENE_DIR` to the directory printed by
+  `pecos qis-runtime --profile debug` (`--tests` includes the Rust fixture).
+  Staged files use canonical platform names regardless of the names Cargo reports.
+  `pecos run` and `pecos compile` require explicitly prepared libraries.
+  These override directories are searched only for the exact library file
+  name, never `deps/` or Cargo hash-suffixed files, and a set
+  `PECOS_SELENE_DIR` that lacks the library is now an error instead of falling
+  back to the bundled runtime.
+
+- **Deprecated:** Core `GateType::MeasureLeaked` is now `GateType::MeasureZLeaked`
+  (wire value 105 is unchanged); its deprecated associated-const alias works in
+  values and patterns but cannot be `use`-imported. The builders
+  `Gate::measure_leaked` and `ByteMessageBuilder::measure_leakages` are now
+  `measure_z_leaked`, with deprecated forwarding aliases. SLR's qubit `Measure`
+  is now `MeasureZ`; `Measure` remains a warning-emitting function alias, so
+  `isinstance(..., Measure)`, subclassing `Measure`, and class-attribute access
+  such as `Measure.csize` no longer work. Pickles referencing the old
+  `pecos.slr.qeclib.qubit.measures.Measure` class no longer load. The Steane
+  logical `Measure` block is unchanged.
+- **Changed:** Serialized trace `gate_type` strings and core gate Display/Debug
+  output now say `"MeasureZLeaked"`. Trace readers accept both `"MeasureLeaked"`
+  and `"MeasureZLeaked"` for compatibility with saved traces. Gate-symbol-based
+  SLR diagnostics (`QGate.sym`) now say `MeasureZ`, and the Print-ordering and
+  unused-SCRATCH call-syntax hints now say `MeasureZ(...)`.
+- PHIR JSON parsers accept `"MeasureZ"` and canonicalize it to `"Measure"`;
+  emitted PHIR and all other generated circuit formats remain unchanged.
+  GateType parsers also accept `MeasureZ` for `MZ`, and Python exposes
+  `GateType.MeasureZ` alongside `GateType.Measure`. QuantumCircuit gate symbols
+  are unchanged.
+
+- Added Python Relay-BP explicit gamma rows and sampling interval setters, plus
+  GIL-releasing flat-byte batch decoding for native Relay-BP and min-sum BP.
+
+- **Breaking:** BP+LSD now grows clusters from the most likely bits. The order
+  was inverted for every `bits_per_step`, including 0, because insertion order
+  fixes the column order, the pivots and the solution. Results change.
+- **Breaking:** Every BP+LSD construction path now defaults to the BP+LSD paper
+  settings: minimum-sum BP with scaling 0.625, at most 30 iterations, parallel
+  scheduling, one bit per growth step, and LSD-0 (`lsd_order=0`, no
+  reprocessing). A positive `lsd_order` selects OSD-CS reprocessing of that
+  order. The Python `BpLsdBuilder` previously grew clusters to the requested
+  positive order but solved them with OSD-0: order affected results without
+  reprocessing. The raw Rust builder infers the method unless one is set.
+  Both the builder and `BpLsdDecoder::new` reject `Off` at every order and
+  reject `Osd0` with a positive order.
+- **Breaking:** BP+LSD settings on the Python side: `BpLsdBuilder` gains
+  `ms_scaling_factor` (`build` previously used 1.0); `BpLsdDecoder.from_dem`
+  gains `bp_method`, `bits_per_step` and `lsd_order`;
+  `DemAwareDecoder.from_dem(..., decoder_type="bp_lsd")` gains those and
+  `ms_scaling_factor`. On every Python
+  BP+LSD path an explicit `ms_scaling_factor=None` selects product-sum, an
+  explicit `bp_method` overrides that (`"product_sum"`/`"ps"` ignores the
+  scaling, `"minimum_sum"`/`"ms"` with None uses 0.625), and `bits_per_step=0`
+  grows all candidates each step. Invalid `bp_method` or `schedule` values on
+  `BpLsdBuilder` now raise in the setter rather than in `build`, and a
+  non-numeric `ms_scaling_factor` in `from_dem` or the `bp_lsd` spec factory
+  raises `ValueError` instead of `TypeError`.
+  Non-integer or negative `lsd_order` and `bits_per_step` now raise `ValueError`
+  on the builder, DEM constructors and spec factory. Previously, builder
+  negatives raised `OverflowError`, non-integers raised `TypeError` on both
+  builder and spec factory, and spec negatives already raised `ValueError`.
+  The DEM constructors did not accept these keywords before.
+- **Breaking:** Named-result measurement identity now comes from a compile-time
+  shadow pass instead of read adjacency, so reordered reads and copied arrays
+  retain exact measurement IDs. `NamedResultTrace` gains `provenance` and
+  `control_dependent`. QIS FFI ABI advances from 7 to 8; rebuild both the host
+  and QIS FFI artifacts. DEM consumers reject outputs with unknown provenance,
+  and the native DEM builder accepts exact ID permutations while retaining
+  bijection and physical-outcome checks. Fixes SZZ final readout binding (#498).
+
+- **Breaking:** Relay-BP, min-sum, BP-OSD and BP-LSD decoders built from a DEM
+  merge mechanisms with identical detector and observable sets using
+  independent-XOR probabilities. This improves decoding of repeated symptoms,
+  such as stim's flattened multi-round DEMs; BP-OSD and BP-LSD results change on such DEMs, and their `max_iter=0`
+  ("one iteration per column") counts merged columns. `error_rate` applies to each
+  original line before merging. Union-find and other decoders are unchanged.
+- **Breaking:** BP-OSD, BP-LSD, soft-information BP, BeliefFind and MBP reject a
+  non-finite or out-of-[0, 1] error rate or channel probability (and MBP a
+  non-finite or negative XYZ bias): Python DEM constructors raise `ValueError`
+  naming `error_rate`, Rust `DecoderSpec` builds return `DecoderError::MatrixError`,
+  and the raw LDPC constructors return `LdpcError::InvalidInput` naming `error_rate`,
+  the `error_channel` entry or the `xyz_bias` entry (`ValueError` from the Python `BpOsdBuilder` /
+  `BpLsdBuilder`). They previously decoded with meaningless priors.
+- **Breaking:** The LDPC decoder classes in `pecos_rslib.decoders` (the raw
+  builders and decoders, and `DemAwareDecoder`) raise `ValueError` instead of
+  `RuntimeError` for input errors that the Rust layer detects
+  (`LdpcError::InvalidInput`), such as an invalid prior, a channel of the wrong
+  length, or a union-find syndrome of the wrong length. Errors raised by the C++
+  core remain `RuntimeError`; BP-OSD and BP-LSD check the syndrome length there.
+  Decoders built from a `DecoderSpec` keep their exception types.
+- **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
+  results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
+  of decode order, batch splitting and worker count, enabling parallel batches.
+  `gamma0=None` makes only leg zero memoryless; relay legs retain memory.
+  When no leg converges, the correction is the first executed leg's hard
+  decision (leg 0, or leg 1 when `pre_iter=0`). For `pre_iter >= 1` this matches the
+  original relay-bp crate, which returned a stale correction when `pre_iter=0`.
+- **Breaking:** The `relay_bp` spec factory, Python `RelayBpBuilder`, and
+  `RelayBpDecoder.from_dem` no longer accept `max_iter` (it never affected Relay
+  decoding). Rust `RelayBpBuilder::max_iter()` and `RelayBpDecoder::max_iter()`
+  are removed, as is the public `max_iter` field of
+  `pecos_decoders::RelayBpConfig`. Generic `DemAwareDecoder.from_dem` raises
+  `ValueError` for Relay or union-find with explicit `max_iter`; use `pre_iter`
+  and `set_max_iter` for Relay. Min-sum keeps `max_iter`.
+- **Breaking:** Python `RelayBpDecoder.from_dem` and `MinSumBpDecoder.from_dem`
+  require keyword arguments for every option after `dem`, preventing positional
+  arguments from silently changing meaning when options are removed.
+- **Breaking:** Python Relay/min-sum matrix, prior, configuration and syndrome
+  errors now raise `ValueError` instead of `RuntimeError`; internal decode failures
+  remain `RuntimeError`. Their DEM constructors reject non-finite `error_rate`
+  values or values outside `[0, 1]`, naming the parameter.
+- Fixed Relay/min-sum `CheckMatrixDecoder::from_sparse_matrix_with_config`:
+  mismatched coordinate counts or out-of-range indices return `MatrixError`
+  instead of silently truncating coordinates or panicking.
+- **Breaking:** Relay/min-sum require finite `alpha_iteration_scaling_factor > 0`.
+  `NConv { stop_after: 0 }`, `stopping("n_conv_0")`, Relay `pre_iter=0` with
+  `num_sets=0`, min-sum `max_iter=0`, and non-binary syndromes are rejected.
+  Builders now apply `BpGraph` validation: matrices must be binary and priors
+  must be finite probabilities in `[0, 1]`, one per column. Graph errors map to
+  `InvalidMatrix`; explicit-gamma and other configuration errors map to
+  `Configuration` (explicit-gamma errors previously used `InvalidMatrix`).
+- **Breaking:** Rust `StoppingCriterion` is PECOS-owned.
+  `RelayBpDecoder::new` takes `(check_matrix, error_priors, &RelayConfig)`;
+  `RelayConfig` gains `alpha`, `alpha_iteration_scaling_factor`, and `gamma0`.
+- Fixed Relay's stale correction with `pre_iter=0`: when no relay leg converged,
+  the external decoder could return the previous decode's correction.
+- Removed the external `relay-bp` crate, vendored `ndarray-npy` fork, associated
+  compatibility dependencies and six related advisory ignores.
+
+- **Breaking:** `pecos-bp` replaces `RelayConfig`'s convergence count and scalar
+  alpha with `StopRule` and `Alpha` enums, adding `PreIter` stopping and dynamic
+  alpha schedules. Relay-BP now permits `pre_iterations = 0` when relay legs run
+  and samples random gammas from one per-shot RNG stream in leg order, changing
+  seeded outcomes. `BpGraph::from_dense_check_matrix` validates dense binary
+  matrices and per-mechanism error probabilities.
+
+- Fixed generator-certified Guppy DEM builds binding measurements from layout
+  order when provenance was missing. Every layout slot now requires independent
+  runtime provenance or compiled scalar analysis, with agreement required when
+  both are available.
+
+- **Breaking:** Guppy code generation rejects `For` labels that shadow a register,
+  allocator, block input or generated temporary. Loop labels, registers,
+  allocators and block inputs are also rejected when the same generated function
+  both binds the name and calls it (including builtins such as `range`). This rule
+  is deliberately conservative: it rejects even when the call comes before the
+  binding, without flow analysis. Shadowing unused imports or helpers remains supported.
+  A nested `For` that reuses an enclosing loop variable is now rejected in Guppy:
+  Python leaves the variable at the inner loop's last value, silently changing
+  subsequent operations in the outer loop. Errors name the collision and ask
+  the user to rename the loop label, register, allocator or block input.
+  User names starting with the generated prefixes `_measurement_`, `_call_ret_`,
+  `_repeat_` or `_comprehension_` are now rejected.
+
+- Guppy entry wrappers avoid binding user allocator and return names, so names
+  such as `qubit`, `range`, `main`, `array` and `result` do not shadow wrapper calls.
+
+- Guppy `Repeat` counters and array-comprehension variables use reserved temporary
+  names, preserving user loop variables such as `_`.
+
+- **Breaking:** Guppy rejects invalid identifiers, Python keywords, `__debug__` and names that
+  are not NFKC-normalized when used as register, allocator, block input or loop
+  names. The code generation error names the binding and asks the user to rename it.
+
+- QASM code generation renders boolean literals as `1` and `0`, including
+  assignments and expressions in the deprecated QASM generator.
+
+- SLR conversion recognizes NumPy boolean scalars as boolean literals rather
+  than references to variables named `True` or `False`.
+
+- Guppy supports zero-width classical registers, including literal assignments,
+  copies and returns, by preserving the element type of empty bool arrays.
+
+- The deprecated QuantumCircuit generator handles empty `For` loops in both
+  range and start/stop forms and preserves outer iteration values after nested loops.
+
+- Guppy single-bit assignment errors name the SLR value and suggest a comparison,
+  bit index or valid bit value. Integer-to-bool errors suggest using `0` or `1`.
+
+- **Breaking:** pecos-neo `channel_action` now runs its wrapped channel once per
+  operand group per invocation site and stage (#1568). Each stage chooses its
+  first eligible member (first leaked member for suppressed groups); that leader
+  stays fixed within the stage. Rates change, not only seeds: on a k-member group,
+  a wrapped channel with rate p no longer fires at about `1 - (1 - p)^k`. This
+  includes wrapped single-qubit channels on multi-operand preparation, measurement
+  and idle events (one group of all operands), and nested composites.
+  `channel_action` and `ChannelAdapter::new` now return `ValidationResult` and
+  reject wrapped channels whose `event_kinds()` omit `AfterGate`, naming the
+  channel in the error: adapters only run wrapped channels on gate events.
+  Guards around an adapter are decided on the leader's invocation. A wrapped
+  skip is recorded by every enclosing sequence at the step that returned it.
+  After evaluating that step, the sequence stops only for named members, even if
+  their guard bypasses the adapter or an inner sequence; unnamed members, including
+  the leader, continue. Earlier steps and the evaluated step retain their effects.
+  Skip propagation emits no duplicate targets. `CompositeResponse::Channel(Box<NoiseResponse>)`
+  retains all response targets, `SkipGateAlreadyReported` propagates sequence
+  stopping without another runner effect, and `CompositeResponse::causes_unleak`
+  queries unleak effects. `CompositeResponse::skips_qubit` checks a skip against
+  the current member; `skips_gate` remains a qubit-independent query.
+  The new `Primitive::reads_operands`, `GateAction::reads_operands` and
+  `Condition::reads_operands` capabilities opt into full operand installation
+  before geometric single-pass non-gate sampling; undeclared readers see no
+  operands. Linear and two-pass paths always install operands, once per group,
+  and `CompositeChannel` and `BatchCompositeChannel` set member indices on their
+  linear, geometric and two-pass paths. Crosstalk's per-target loop keeps index 0.
+  Function conditions can opt in with
+  `FnCondition::with_operand_reads`; `FnCondition` now implements `Clone` when its
+  callback does, allowing it to be used in `when` and `skip_if`.
+  Nested `CompositeCrosstalkChannel` isolates event state so adapters act on each
+  crosstalk target. Consequently its primitives no longer see the enclosing
+  `current_gate()` or `is_current_gate_suppressed()`.
+
+- **Breaking:** classical registers must be declared with `creg` before their
+  first use, and bit indices must fit the declared width, anywhere a
+  classical value is read or written: conditions, assignments, operands,
+  function arguments and measurement targets. Before, the engine evaluated an
+  undeclared name as 0, so `if(i == 0) x q[0];` with no `creg i` ran the gate.
+  Errors name the register and explain the required declaration or width:
+  move a later declaration before the first reference, or declare it wider;
+  undeclared `JOB_shotnum` instead gets the unsupported-built-in error below.
+  A gate body referencing a name that is not one of its declared parameters
+  is also rejected, even if the gate is unused or a classical register has that
+  name. Gate and opaque formal parameters are unaffected.
+  `pecos_qasm::bitvec_expression::evaluate_expression_bitvec`
+  drops its unused width argument, and `pecos_qasm::dag_bridge::QasmBridgeError`
+  gains an `InvalidProgram` variant.
+
+- **Breaking:** a register may be declared only once with `qreg` or `creg`,
+  including across kinds. Previously a later declaration of the same kind
+  replaced the earlier one, and a `qreg` and a `creg` could share a name.
+  Declare each register once, or use a different name.
+  The deprecated SLR `QASMGenerator` now emits one declaration per register
+  name and raises `ValueError` when one name is declared with different kinds
+  or sizes.
+
+- **Breaking:** a QASM statement keyword must be followed by a non-identifier
+  character. Glued forms such as `cregc[1];`, previously read as `creg c[1];`,
+  are no longer read as keywords. Depending on the surrounding syntax, they
+  may instead be read as identifiers or rejected. The version header still
+  accepts `OPENQASM2.0;`.
+
+- The PECOS QASM parser recognizes `pi` only at a word boundary, so `pivot`,
+  `pi_2` and `pi2` can be used as identifiers in expressions.
+  Classical expressions support integer remainder (`%`) with the precedence
+  of multiplication and division, including PHIR-JSON export. Gate arguments
+  retain floating-point arithmetic for remainder, as they do for division.
+
+- **Breaking:** `pecos_qasm::ast::Operation::ClassicalAssignment` removes
+  `is_indexed`. Its `index: Option<usize>` is the sole assignment selector:
+  `None` writes the whole register and `Some(index)` writes that bit. Invalid
+  indexed assignments can no longer silently write bit 0 or skip the write.
+
+- The PECOS Rust QASM engine rejects an empty classical measurement target
+  as an unknown register instead of substituting `c`.
+
+- An undeclared classical reference to `JOB_shotnum` now reports that the PECOS
+  Rust QASM engine does not provide the shot-number built-in and says to remove
+  the reference, instead of advising a `creg` declaration. Quantum registers,
+  gate names and gate parameters named `JOB_shotnum` follow ordinary name
+  resolution. An explicitly declared `creg JOB_shotnum` remains an ordinary
+  writable register, initially zero.
+- **Breaking:** seeded StabVec results change for circuits with non-Clifford
+  rotations; `is_deterministic` may report false for a multi-term measurement
+  made deterministic only by interference. `set_rng` changes future draws only:
+  it preserves the sampled bitstring, so reseeding clones does not decorrelate
+  an already sampled branch.
+- **Breaking:** `StabVecBuilder::pruning_threshold` now returns `Result`,
+  accepting only finite values in `[0.0, 1.0)`; Python raises `ValueError` for
+  invalid thresholds. Pruning now uses strict `<`, so terms exactly at the
+  cutoff survive.
+- **Breaking:** removed StabVec's `mc_threshold` builder option in Rust and
+  constructor parameter in Python.
+- StabVec now uses exact gate-by-gate sampling for faster multi-term measurement,
+  eliminating pairwise Gram overlaps and Monte Carlo measurement approximation.
+- Added the `pecos-selene-stab-active` Selene plugin with current and peak active
+  width metrics, using the platform maximum width. `StabActive` exposes
+  `max_supported_active_width()` and the configured `max_active_width()`.
+  `HeisenbergProgram::compile` now accepts T/Tdg as exact +/-pi/4 Z rotations
+  (up to global phase).
+
+- `SamplingPlan::run_batch` and `par_run_batch` (StabActive) run many seeded shots
+  at once. Shots that agree on every rotation sign and projection value share one
+  amplitude vector, and each result is bit-identical to `SamplingPlan::run` for
+  its seed. An explicit `lane_budget_bytes` bounds amplitude memory per chunk.
+
+- `pecos-simulators` now contains the stabilizer tensor-network simulators (StabMps,
+  MAST) as `pecos_simulators::stab_tn`, formerly the unpublished `pecos-stab-tn`
+  crate; `rayon` is now always a dependency and `parallel` only selects parallel gate
+  execution.
+
+- The Selene plugins `pecos-selene-stabilizer`, `pecos-selene-statevec` and
+  `pecos-selene-stab-mps` are now built for PyPI release on the Python release
+  train, included in the distribution bundle and published manually.
+
 - **Breaking:** pecos-neo always suppresses gates on leaked operands in all three
   noise builders, including noiseless gates and models with no configured leak
   source (#1574, #1575). Noiseless operations suppress faults, including composite,
@@ -84,7 +501,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (`measurement_N` and `m`) have been removed.
 
 - **Breaking:** `QuantumCircuit.to_phir_json()` handles a measurement with no
-  destination (#1497), such as SLR `qb.Measure(q[1])` with no `> c`. It used to
+  destination (#1497), such as SLR `qb.MeasureZ(q[1])` with no `> c`. It used to
   emit a PHIR `Measure` without `returns`. PHIR validation and `HybridEngine`
   rejected that, and the native PHIR-JSON engine accepted it but reported the
   result under an internal `measurement_N` name, or wrote it into a user register
@@ -463,6 +880,24 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   refactor plus bit-reversed order is 1.18x slower than the default (geomean),
   so it stays opt-in.
 
+- Python: C4-Helix two-block transversal-CNOT circuits render to certified Guppy
+  programs with block-prefixed gadget functions and result tags, using 44 qubits.
+  `cnot_definitions` supplies typed parities for `build_dem_from_guppy`.
+
+- Python: C4-Helix two-block circuits apply a transversal CNOT between syndrome
+  rounds, with block-prefixed measurement labels and discovered detectors
+  (`cnot_circuit`, `cnot_definitions`); measured distance is 5 <= d <= 6.
+
+- Python: C4-Helix logic words render to certified Guppy programs with reusable
+  gate gadgets and data relabels. `logic_definitions` supplies typed detectors
+  and signed observable references for `build_dem_from_guppy`.
+
+- Python: C4-Helix logical gate gadgets flag all seven physical CZs and compile
+  signed two-qubit Cliffords with minimal S0S1 count. Logic circuits discover
+  detectors using pulled-back logical conjugates. Distance tests pin the
+  gate-only weight-six witness, full-noise Z bounds of 5 <= d <= 6, and the
+  owner-accepted full-noise X distance of four.
+
 - Python: `pecos.guppy_gen.helix` renders certified C4-Helix memory programs
   with scalar, round-free result tags and `mem_swap` swap-out gadgets.
   `pecos.qec.helix.memory_definitions` supplies typed detectors and observables
@@ -573,7 +1008,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   carry the reset's hidden random outcome, so a Bell partner measured later is
   random rather than reported deterministic. `symbolic_measurement_history`,
   `InfluenceBuilder`, the DEM builders and the samplers built on them give
-  correct determinism and detectors for such circuits. `MeasureLeaked` is now
+  correct determinism and detectors for such circuits. `MeasureZLeaked` is now
   supported in these record-aligned replays: its outcome stays hidden until a
   recorded measurement observes it. Breaking:
   `MeasurementHistoryError::LeakedMeasurementNotRepresentable` is removed, and

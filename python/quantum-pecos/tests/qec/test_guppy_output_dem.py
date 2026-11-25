@@ -98,7 +98,7 @@ def test_infers_computed_detector_and_observable_parities_and_builds_dem() -> No
     assert inferred.detector_supports == ((0, 1), (1, 2))
     assert inferred.observable_supports == ((0, 2),)
     assert inferred.observable_labels == (("obs", 0),)
-    assert inferred.raw_binding == "assumed_canonical_result_order"
+    assert inferred.raw_binding == "runtime_result_ids"
     assert json.loads(inferred.detectors_json) == [
         {"id": 0, "meas_ids": [0, 1], "inferred_from_result_tag": "DETECTOR"},
         {"id": 1, "meas_ids": [1, 2], "inferred_from_result_tag": "DETECTOR"},
@@ -110,7 +110,7 @@ def test_infers_computed_detector_and_observable_parities_and_builds_dem() -> No
     assert "D0" in dem.to_string()
 
 
-def test_computed_array_provenance_is_correlated_to_qis_result_ids() -> None:
+def test_computed_array_provenance_keeps_qis_result_ids() -> None:
     inferred = infer_guppy_dem_annotations(
         _computed_parity_outputs,
         num_qubits=3,
@@ -121,10 +121,10 @@ def test_computed_array_provenance_is_correlated_to_qis_result_ids() -> None:
     )
 
     assert inferred.raw_measurement_ids == (0, 1, 2)
-    assert inferred.raw_binding == "probe_correlated_result_ids"
+    assert inferred.raw_binding == "runtime_result_ids"
 
 
-def test_correlated_provenance_preserves_reordered_raw_identity() -> None:
+def test_direct_provenance_preserves_reordered_raw_identity() -> None:
     inferred = infer_guppy_dem_annotations(
         _reordered_raw_array,
         num_qubits=3,
@@ -137,7 +137,7 @@ def test_correlated_provenance_preserves_reordered_raw_identity() -> None:
     assert inferred.raw_measurement_ids == (2, 0, 1)
     assert inferred.detector_supports == ((2, 0),)
     assert inferred.observable_supports == ((1,),)
-    assert inferred.raw_binding == "probe_correlated_result_ids"
+    assert inferred.raw_binding == "runtime_result_ids"
 
 
 def test_direct_array_outputs_preserve_runtime_result_id_order() -> None:
@@ -159,20 +159,24 @@ def test_direct_array_outputs_preserve_runtime_result_id_order() -> None:
     assert inferred.raw_binding == "runtime_result_ids"
 
 
-def test_scalar_measurements_emitted_as_array_reject_reversed_runtime_ids() -> None:
-    """Keep the known Guppy-v1 array provenance reversal fail-loud."""
-    with pytest.raises(ValueError, match="certified source order"):
-        infer_guppy_dem_annotations(
-            _scalar_measurements_emitted_as_array,
-            num_qubits=3,
-            raw_tag="physical",
-            detector_tag="events",
-            observable_tags=("logical_z", "logical_x"),
-            probe_shots=32,
-            provenance_shots=16,
-            validation_rows=8,
-            seed=19,
-        )
+def test_scalar_measurements_emitted_as_array_keep_physical_identities() -> None:
+    """Regression for Guppy-v1 array provenance reversal: validate physical probes."""
+    inferred = infer_guppy_dem_annotations(
+        _scalar_measurements_emitted_as_array,
+        num_qubits=3,
+        raw_tag="physical",
+        detector_tag="events",
+        observable_tags=("logical_z", "logical_x"),
+        probe_shots=64,
+        provenance_shots=16,
+        validation_rows=8,
+        seed=19,
+    )
+    assert inferred.raw_measurement_ids == (0, 1, 2)
+    assert inferred.detector_supports == ((0, 1),)
+    assert inferred.observable_supports == ((0,), (1,), (2,))
+    assert inferred.raw_binding == "runtime_result_ids"
+    assert inferred.provenance_shots == 0
 
 
 def test_raw_tag_must_cover_canonical_qis_measurement_order() -> None:
@@ -260,16 +264,15 @@ def test_complete_named_results_reset_between_captured_shots() -> None:
     assert all(not chunk["named_results"] for chunk in chunks if chunk["stage"] != "named_results")
 
 
-def test_integer_outputs_bind_raw_ids_by_probe_correlation() -> None:
-    # The program reads every future before emitting raw outputs, so the
-    # runtime cannot attach direct IDs; correlation recovers them.
+def test_integer_outputs_keep_direct_raw_bool_ids() -> None:
+    # The raw bool array retains its IDs even when reads precede integer outputs.
     inferred = infer_guppy_dem_annotations(
         _integer_outputs,
         num_qubits=3,
         detector_outputs=[("checks", 0)],
         observable_outputs=[],
     )
-    assert inferred.raw_binding == "probe_correlated_result_ids"
+    assert inferred.raw_binding == "runtime_result_ids"
 
 
 @pytest.mark.parametrize("shape", [list, iter])

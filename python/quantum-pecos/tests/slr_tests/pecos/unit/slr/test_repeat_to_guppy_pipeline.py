@@ -1,4 +1,4 @@
-"""Test the Stim REPEAT -> SLR Repeat -> Guppy ``for _ in range(...)`` pipeline.
+"""Test the Stim REPEAT -> SLR Repeat -> Guppy ``for _repeat_N in range(...)`` pipeline.
 
 The legacy assertions on ``quantum.cx(`` were the buggy form and have
 been removed. The pipeline structure (Stim REPEAT -> SLR Repeat ->
@@ -8,6 +8,7 @@ program compile is verified via the v1 acceptance harness for the
 state-preserving cases.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -27,7 +28,7 @@ class TestRepeatToGuppyPipeline:
     """Test that Stim REPEAT blocks become Guppy for loops."""
 
     def test_simple_repeat_to_guppy_for_loop(self) -> None:
-        """Stim REPEAT 3 -> SLR Repeat -> Guppy ``for _ in range(3):``."""
+        """Stim REPEAT 3 -> SLR Repeat -> Guppy ``for _repeat_N in range(3):``."""
         stim_circuit = stim.Circuit(
             """
             REPEAT 3 {
@@ -52,13 +53,13 @@ class TestRepeatToGuppyPipeline:
         # Convert SLR -> Guppy and verify the loop survives
         converter = SlrConverter(slr_prog)
         guppy_code = converter.guppy()
-        assert "for _ in range(3):" in guppy_code
+        assert re.search(r"for _repeat_\d+ in range\(3\):", guppy_code)
 
         # Whole-program compile through the AST emitter
         assert_ast_guppy_compiles(slr_prog)
 
     def test_multiple_repeat_blocks(self) -> None:
-        """Two REPEAT blocks become two ``for _ in range(...)`` loops."""
+        """Two REPEAT blocks become two ``for _repeat_N in range(...)`` loops."""
         stim_circuit = stim.Circuit(
             """
             REPEAT 2 {
@@ -83,8 +84,8 @@ class TestRepeatToGuppyPipeline:
 
         # Check Guppy has both for loops
         guppy_code = SlrConverter(slr_prog).guppy()
-        assert "for _ in range(2):" in guppy_code, "Should have range(2) loop"
-        assert "for _ in range(3):" in guppy_code, "Should have range(3) loop"
+        assert re.search(r"for _repeat_\d+ in range\(2\):", guppy_code), "Should have range(2) loop"
+        assert re.search(r"for _repeat_\d+ in range\(3\):", guppy_code), "Should have range(3) loop"
 
         assert_ast_guppy_compiles(slr_prog)
 
@@ -115,7 +116,7 @@ class TestRepeatToGuppyPipeline:
 
         # Guppy should keep it as a loop
         guppy_code = converter.guppy()
-        assert "for _ in range(4):" in guppy_code, "Guppy should contain range(4) loop"
+        assert re.search(r"for _repeat_\d+ in range\(4\):", guppy_code), "Guppy should contain range(4) loop"
 
         assert_ast_guppy_compiles(slr_prog)
 

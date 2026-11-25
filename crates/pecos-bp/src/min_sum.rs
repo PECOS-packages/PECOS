@@ -17,6 +17,7 @@
 //! never corrections: deciding how to consume the soft information belongs to
 //! a decoder.
 
+use ndarray::ArrayView2;
 use pecos_decoder_core::dem::{DemCheckMatrix, SparseDem};
 use pecos_decoder_core::errors::DecoderError;
 
@@ -50,6 +51,69 @@ impl BpGraph {
         Self::from_connections(dcm.num_detectors, &dcm.error_priors, |check, mechanism| {
             dcm.check_matrix[[check, mechanism]] != 0
         })
+    }
+
+    /// Build a Tanner graph from a dense binary check matrix and probabilities.
+    ///
+    /// Probabilities zero and one are legal and produce saturated prior LLRs.
+    /// Non-contiguous matrix views are supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] for empty dimensions,
+    /// non-binary entries, a probability count different from the column count,
+    /// non-finite probabilities or probabilities outside `[0, 1]`, or check,
+    /// mechanism or edge counts exceeding `u32::MAX`.
+    pub fn from_dense_check_matrix(
+        mut check_matrix: ArrayView2<u8>,
+        error_probabilities: &[f64],
+    ) -> Result<Self, DecoderError> {
+        let (num_checks, num_vars) = check_matrix.dim();
+        for (count, kind) in [(num_checks, "row count"), (num_vars, "column count")] {
+            if count == 0 || u32::try_from(count).is_err() {
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "{kind} {count} must be in 1..={}",
+                    u32::MAX
+                )));
+            }
+        }
+        if error_probabilities.len() != num_vars {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "probability count {} must equal column count {num_vars}",
+                error_probabilities.len()
+            )));
+        }
+        // Validate and count before from_connections increments its u32 message
+        // index or allocates CSR arrays. Inspect each mechanism's column alongside
+        // its probability; swapping view axes changes metadata without copying data.
+        check_matrix.swap_axes(0, 1);
+        let mut edges = 0_u32;
+        for (mechanism, (column, &probability)) in check_matrix
+            .outer_iter()
+            .zip(error_probabilities)
+            .enumerate()
+        {
+            if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "mechanism {mechanism} probability must be finite and in [0, 1], got {probability}"
+                )));
+            }
+            for (check, &value) in column.iter().enumerate() {
+                if value > 1 {
+                    return Err(DecoderError::InvalidConfiguration(format!(
+                        "check_matrix[{check}, {mechanism}] must be in [0, 1], got {value}"
+                    )));
+                }
+                if value == 1 {
+                    edges = checked_graph_index(u64::from(edges) + 1, "edge count")?;
+                }
+            }
+        }
+        Ok(Self::from_connections(
+            num_checks,
+            error_probabilities,
+            move |check, mechanism| check_matrix[[mechanism, check]] == 1,
+        ))
     }
 
     /// Build a Tanner graph from a sparse detector error model.
@@ -273,9 +337,12 @@ fn index(value: usize) -> u32 {
     u32::try_from(value).expect("Tanner graph index exceeds the u32 index space")
 }
 
-fn checked_graph_index(value: usize, kind: &str) -> Result<u32, DecoderError> {
-    u32::try_from(value).map_err(|_| {
-        DecoderError::InvalidConfiguration(format!("{kind} {value} exceeds the u32 index space"))
+fn checked_graph_index(
+    value: impl TryInto<u32> + std::fmt::Display + Copy,
+    kind: &str,
+) -> Result<u32, DecoderError> {
+    value.try_into().map_err(|_| {
+        DecoderError::InvalidConfiguration(format!("{kind} {value} must be in 0..={}", u32::MAX))
     })
 }
 
@@ -547,6 +614,129 @@ mod tests {
     use pecos_decoder_core::errors::DecoderError;
     use pecos_random::PecosRng;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn dense_constructor_matches_dem_and_supports_strided_views() {
+        let dcm =
+            DemCheckMatrix::from_dem_str("error(0) D0 D1\nerror(1) D1\nerror(0.2) D0\n").unwrap();
+        let expected = BpGraph::from_dcm(&dcm);
+        let transposed_storage = ndarray::Array2::from_shape_fn(
+            (dcm.num_mechanisms, dcm.num_detectors),
+            |(variable, check)| dcm.check_matrix[[check, variable]],
+        );
+        let padded = ndarray::Array2::from_shape_fn(
+            (2 * dcm.num_detectors, 2 * dcm.num_mechanisms),
+            |(check, variable)| {
+                if check % 2 == 0 && variable % 2 == 0 {
+                    dcm.check_matrix[[check / 2, variable / 2]]
+                } else {
+                    255 // Off-view data must never be inspected.
+                }
+            },
+        );
+        for view in [
+            dcm.check_matrix.view(),
+            transposed_storage.t(),
+            padded.slice(ndarray::s![..;2, ..;2]),
+        ] {
+            let graph = BpGraph::from_dense_check_matrix(view, &dcm.error_priors).unwrap();
+            assert_eq!(graph.check_data, expected.check_data);
+            assert_eq!(graph.check_offset, expected.check_offset);
+            assert_eq!(graph.var_data, expected.var_data);
+            assert_eq!(graph.var_offset, expected.var_offset);
+            assert_eq!(graph.edge_count(), expected.edge_count());
+            assert_eq!(
+                graph.prior_llrs(),
+                &[LLR_SATURATION, -LLR_SATURATION, (4.0_f64).ln()]
+            );
+        }
+        // Isolated rows and columns remain legal.
+        let empty = ndarray::Array2::zeros((2, 3));
+        let graph = BpGraph::from_dense_check_matrix(empty.view(), &[0.1; 3]).unwrap();
+        assert_eq!(
+            (
+                graph.check_count(),
+                graph.mechanism_count(),
+                graph.edge_count()
+            ),
+            (2, 3, 0)
+        );
+    }
+
+    #[test]
+    fn dense_constructor_rejects_invalid_inputs() {
+        let invalid =
+            |matrix: ndarray::ArrayView2<u8>, priors: &[f64], field: &str, value: &str| {
+                assert!(matches!(
+                    BpGraph::from_dense_check_matrix(matrix, priors),
+                    Err(DecoderError::InvalidConfiguration(message))
+                        if message.contains(field) && message.contains(value)
+                ));
+            };
+        invalid(
+            ndarray::Array2::zeros((0, 1)).view(),
+            &[0.1],
+            "row count",
+            "0",
+        );
+        invalid(
+            ndarray::Array2::zeros((1, 0)).view(),
+            &[],
+            "column count",
+            "0",
+        );
+        invalid(
+            ndarray::arr2(&[[0, 2]]).view(),
+            &[0.1; 2],
+            "check_matrix[0, 1]",
+            "2",
+        );
+        invalid(
+            ndarray::arr2(&[[255]]).view(),
+            &[0.1],
+            "check_matrix[0, 0]",
+            "255",
+        );
+        invalid(ndarray::arr2(&[[1]]).view(), &[], "probability count", "0");
+        invalid(
+            ndarray::arr2(&[[1]]).view(),
+            &[0.1; 2],
+            "probability count",
+            "2",
+        );
+        for probability in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.1] {
+            invalid(
+                ndarray::arr2(&[[1, 0]]).view(),
+                &[0.1, probability],
+                "mechanism 1",
+                &probability.to_string(),
+            );
+        }
+    }
+
+    #[test]
+    fn dense_constructor_rejects_counts_beyond_u32_before_allocation() {
+        let Ok(oversized) = usize::try_from(u64::from(u32::MAX) + 1) else {
+            return;
+        };
+        let cell = ndarray::arr2(&[[0_u8]]);
+        for (shape, field) in [
+            ((oversized, 1), "row count"),
+            ((1, oversized), "column count"),
+        ] {
+            let view = cell.broadcast(shape).unwrap();
+            assert!(matches!(BpGraph::from_dense_check_matrix(view, &[]),
+                Err(DecoderError::InvalidConfiguration(message))
+                    if message == format!("{field} {oversized} must be in 1..={}", u32::MAX)));
+        }
+        for kind in ["row count", "column count", "edge count"] {
+            assert!(super::checked_graph_index(oversized, kind).is_err());
+            assert_eq!(
+                super::checked_graph_index(u32::MAX as usize, kind).unwrap(),
+                u32::MAX
+            );
+        }
+    }
 
     #[test]
     fn sparse_csr_builder_matches_dense_connection_ordering() {

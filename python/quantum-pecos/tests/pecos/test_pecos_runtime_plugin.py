@@ -169,3 +169,37 @@ def test_eager_measurements_retire_only_their_temporary_futures(
         assert results["measurement_0"] == [0] * shots
         for index in range(1, 9):
             assert results[f"measurement_{index}"] == [index % 2] * shots
+
+
+def test_schedule_comparison_retains_native_configuration_and_batching(runtime: PecosRuntimePlugin) -> None:
+    """Packing only saves time when the selected runtime can batch disjoint gates."""
+    import sys
+
+    from pecos.qec.generic import CircuitOp as Op
+    from pecos.qec.generic import ScheduledCircuit
+
+    if sys.platform == "win32":
+        pytest.skip("Native aggregate helper ABI adapter not implemented")
+    plan = ScheduledCircuit(
+        2,
+        (
+            (Op("R", (0,)), Op("R", (1,))),
+            (Op("X", (0,)),),
+            (Op("X", (1,)),),
+            (Op("X", (0,)),),
+            (Op("M", (0,)), Op("M", (1,))),
+        ),
+        (),
+        (),
+    )
+    timed = replace(runtime, duration_ns_reset=5, duration_ns_rxy=10, duration_ns_measure=20)
+    comparison = plan.compare_guppy_schedules(runtime=timed, seed=17)
+    report = comparison.to_dict()
+    assert report["runtime_profile"]["native_gates"] == ["rxy", "rz", "rzz"]
+    assert report["runtime_profile"]["native_future_protocol"]
+    # Serial: 2*5 reset + 3*10 X + 2*20 readout. With batch size 2,
+    # preparations share 5 ns; ASAP also packs two disjoint Xs into 10 ns.
+    ref, asap = (80, 80) if runtime.max_batch_size == 1 else (75, 65)
+    assert report["metrics"]["reported_span_ns"] == {"reference": ref, "candidate": asap, "delta": asap - ref}
+    assert report["metrics"]["source_moments"]["delta"] == -1
+    assert not report["noise_equivalence_verified"]

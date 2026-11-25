@@ -669,6 +669,14 @@ fn gate_batch_has_zero_physical_duration(gate: GateBatchRef<'_>) -> bool {
     }
 }
 
+// Runtime herald measurements emit outcomes too, even though they are not
+// automatically allocated Boolean analysis records. Preserve their ordering.
+pub(crate) fn is_measurement_for_scheduling(gate_type: GateType) -> bool {
+    gate_type.consumes_measurement_record()
+        || gate_type.is_recordless_z_measurement()
+        || gate_type.is_detection()
+}
+
 impl Tick {
     /// Create a new empty tick.
     #[must_use]
@@ -860,13 +868,10 @@ impl Tick {
         }
         // Appending records to any earlier batch would cross the records in
         // the last measurement batch. Non-measurement gates have no barrier.
-        let first_target = if self.gate_batches[gate_idx]
-            .gate_type
-            .consumes_measurement_record()
-        {
+        let first_target = if is_measurement_for_scheduling(self.gate_batches[gate_idx].gate_type) {
             self.gate_batches.as_slice()[..gate_idx]
                 .iter()
-                .rposition(|gate| gate.gate_type.consumes_measurement_record())
+                .rposition(|gate| is_measurement_for_scheduling(gate.gate_type))
                 .unwrap_or(0)
         } else {
             0
@@ -1914,15 +1919,81 @@ impl TickCircuit {
         style: &'a pecos_core::circuit_diagram::DiagramStyle,
     ) -> pecos_core::circuit_diagram::DiagramRenderer<'a> {
         let (header, layers) = self.diagram_parts();
-        let diagram = crate::circuit_display::build_diagram_or_empty(&layers, style.angle_unit);
+        let diagram = crate::circuit_display::build_diagram_or_empty(&layers, style, "t");
         pecos_core::circuit_diagram::DiagramRenderer::new(diagram, header, style)
     }
 
-    fn diagram_parts(&self) -> (String, Vec<Vec<&pecos_core::Gate>>) {
-        let layers: Vec<Vec<&pecos_core::Gate>> = self
+    /// Render a checked half-open range of explicit ticks.
+    ///
+    /// Every selected tick is labeled with its original index, and qubit rows
+    /// retain the full circuit's context. An empty interval renders only the
+    /// header. This does not change the circuit or its measurement metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::DiagramRangeError`] if `start > end` or `end` exceeds
+    /// the number of ticks. Bounds are never clamped.
+    pub fn render_range<'a>(
+        &self,
+        range: std::ops::Range<usize>,
+        style: &'a pecos_core::circuit_diagram::DiagramStyle,
+    ) -> Result<pecos_core::circuit_diagram::DiagramRenderer<'a>, crate::DiagramRangeError> {
+        crate::circuit_display::validate_diagram_range(&range, self.ticks.len())?;
+        let qubits: Vec<_> = self.all_qubits().into_iter().collect();
+        let layers: Vec<_> = self.ticks[range.clone()]
+            .iter()
+            .map(|tick| {
+                tick.iter_gate_batches()
+                    .map(|batch| {
+                        crate::circuit_display::DiagramGate::new(
+                            batch.as_gate(),
+                            batch.get_attr("_symbol"),
+                        )
+                        .with_operation_id(
+                            batch.get_attr(crate::circuit_inspection::OPERATION_ID_KEY),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let header = format!(
+            "TickCircuit: {} qubit{}, ticks {}..{} of {}",
+            qubits.len(),
+            if qubits.len() == 1 { "" } else { "s" },
+            range.start,
+            range.end,
+            self.ticks.len(),
+        );
+        let diagram = crate::circuit_display::build_diagram_with_context(
+            &layers,
+            &qubits,
+            style,
+            "t",
+            range.start,
+            true,
+        );
+        Ok(pecos_core::circuit_diagram::DiagramRenderer::new(
+            diagram, header, style,
+        ))
+    }
+
+    fn diagram_parts(&self) -> (String, Vec<Vec<crate::circuit_display::DiagramGate<'_>>>) {
+        let layers: Vec<_> = self
             .ticks
             .iter()
-            .map(|t| t.gate_batches().iter().collect())
+            .map(|t| {
+                t.iter_gate_batches()
+                    .map(|batch| {
+                        crate::circuit_display::DiagramGate::new(
+                            batch.as_gate(),
+                            batch.get_attr("_symbol"),
+                        )
+                        .with_operation_id(
+                            batch.get_attr(crate::circuit_inspection::OPERATION_ID_KEY),
+                        )
+                    })
+                    .collect()
+            })
             .collect();
         let num_qubits = self.all_qubits().len();
         let header = format!(
@@ -2711,7 +2782,10 @@ impl TickCircuit {
     /// wait operations with duration-dependent `p_idle` noise.
     ///
     /// Metadata-only ticks (all batches `GateType::is_meta`) are zero
-    /// physical duration and receive no idle gates.
+    /// physical duration and receive no idle gates. Ticks containing only detection,
+    /// metadata, or explicitly zero-duration batches also receive no idle gates.
+    /// Detection takes no physical time and must remain in separate ticks when
+    /// filling idles; scheduling passes do not isolate detection automatically.
     ///
     /// # Panics
     ///
@@ -2720,6 +2794,9 @@ impl TickCircuit {
     /// on meta-occupied qubits impossible, so the accounting would be
     /// silently wrong. Emit meta batches in their own tick (as
     /// `tracked_pauli` does).
+    /// Also panics if a tick mixes detection with physical gate batches, or
+    /// explicitly zero-duration batches with physical batches. Emit detect gates
+    /// in their own ticks, optionally with metadata or zero-duration batches.
     ///
     /// # Example
     ///
@@ -2740,6 +2817,20 @@ impl TickCircuit {
         }
 
         for tick in &mut self.ticks {
+            if tick
+                .iter_gate_batches()
+                .any(|gate| gate.gate_type.is_detection())
+            {
+                assert!(
+                    tick.iter_gate_batches().all(|gate| {
+                        gate.gate_type.is_detection()
+                            || gate.gate_type.is_meta()
+                            || gate_batch_has_zero_physical_duration(gate)
+                    }),
+                    "fill_idle_gates: tick mixes detect and physical gates; emit detect gates in their own tick"
+                );
+                continue;
+            }
             // Metadata-only and explicitly zero-duration ticks preserve
             // ordering but must not create physical idle periods.
             let batch_count = tick.gate_batches().len();
@@ -3847,8 +3938,8 @@ impl From<&DagCircuit> for TickCircuit {
                 let mut gate = gate.clone();
                 // Which gates get a record is `consumes_measurement_record`
                 // and nowhere else. Spelling the types out here let this site
-                // mint for `MeasureLeaked` while `DagCircuit` did not, so an
-                // id-less `MeasureLeaked` took the id a real measurement
+                // mint for `MeasureZLeaked` while `DagCircuit` did not, so an
+                // id-less `MeasureZLeaked` took the id a real measurement
                 // already held.
                 if gate.gate_type.consumes_measurement_record() {
                     if gate.meas_ids.is_empty() {
@@ -3872,7 +3963,7 @@ impl From<&DagCircuit> for TickCircuit {
                     )
                     .max()
                     .unwrap_or(0);
-                if gate.gate_type.consumes_measurement_record() {
+                if is_measurement_for_scheduling(gate.gate_type) {
                     target_idx = target_idx.max(last_measurement_tick);
                     last_measurement_tick = target_idx;
                 }
@@ -4114,34 +4205,40 @@ mod tests {
         );
     }
 
-    /// `MeasureLeaked` must not be minted a `MeasId` on the way to a
-    /// `TickCircuit` when `DagCircuit` does not mint one on the way in. It was,
-    /// so an id-less `MeasureLeaked` took the id a real measurement already
+    /// No Z herald may be minted a `MeasId` on the way to a `TickCircuit`
+    /// when `DagCircuit` does not mint one on the way in. Previously, an
+    /// id-less `MeasureZLeaked` took the id a real measurement already
     /// held, and converting back reported two measurements sharing an id.
     #[test]
     fn measure_leaked_survives_a_dag_tick_dag_round_trip() {
-        let mut dag = DagCircuit::new();
-        dag.pz(&[0, 1]);
-        dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
-        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
-        assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId::from_raw(0));
+        for flavor in [
+            GateType::MeasureZLeaked,
+            GateType::MeasureZLost,
+            GateType::MeasureZLeakedLost,
+        ] {
+            let mut dag = DagCircuit::new();
+            dag.pz(&[0, 1]);
+            dag.add_gate_auto_wire(Gate::simple(flavor, vec![0.into()]));
+            let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+            assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId::from_raw(0));
 
-        let tc = TickCircuit::from(&dag);
-        let ids: Vec<usize> = tc
-            .iter_gate_batches()
-            .flat_map(|batch| {
-                batch
-                    .as_gate()
-                    .meas_ids
-                    .iter()
-                    .map(|id| id.index())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        assert_eq!(ids, vec![0], "only the MZ carries an id");
+            let tc = TickCircuit::from(&dag);
+            let ids: Vec<usize> = tc
+                .iter_gate_batches()
+                .flat_map(|batch| {
+                    batch
+                        .as_gate()
+                        .meas_ids
+                        .iter()
+                        .map(|id| id.index())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert_eq!(ids, vec![0], "only the MZ carries an id");
 
-        let round_tripped = DagCircuit::try_from(&tc).expect("valid circuit");
-        assert_eq!(round_tripped.num_measurement_ids(), 1);
+            let round_tripped = DagCircuit::try_from(&tc).expect("valid circuit");
+            assert_eq!(round_tripped.num_measurement_ids(), 1);
+        }
     }
 
     #[test]
@@ -6740,6 +6837,88 @@ mod tests {
                     if with_attrs {
                         for batch in compacted.ticks[1].iter_gate_batches() {
                             assert_eq!(batch.attrs().count(), 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compaction_preserves_herald_measurement_order_and_ids() {
+        for kinds in [
+            [GateType::MZ, GateType::DetectLeaked, GateType::MZ],
+            [GateType::MZ, GateType::DetectLost, GateType::MZ],
+            [GateType::MZ, GateType::DetectLeakedLost, GateType::MZ],
+            [GateType::MZ, GateType::MeasureZLeaked, GateType::MZ],
+            [GateType::MZ, GateType::MeasureZLost, GateType::MZ],
+            [GateType::MZ, GateType::MeasureZLeakedLost, GateType::MZ],
+            [
+                GateType::MeasureZLost,
+                GateType::MZ,
+                GateType::MeasureZLeakedLost,
+            ],
+            [
+                GateType::MeasureZLeaked,
+                GateType::MZ,
+                GateType::MeasureZLeaked,
+            ],
+        ] {
+            for unequal_chains in [false, true] {
+                let mut circuit = TickCircuit::new();
+                if unequal_chains {
+                    circuit.tick().h(&[4]);
+                    circuit.tick().x(&[4]);
+                }
+                for ((kind, q), mid) in kinds.into_iter().zip([4, 1, 3]).zip([42, 7, 20]) {
+                    let mut gate = Gate::simple(kind, vec![QubitId(q)]);
+                    gate.meas_ids.push(MeasId::from_raw(mid));
+                    let idx = circuit.tick().index();
+                    let tick = circuit.get_tick_mut(idx).unwrap();
+                    tick.try_add_gate(gate).unwrap();
+                    tick.set_gate_attr(0, "round", Attribute::Int(2));
+                }
+                let outcomes = |c: &TickCircuit| -> Vec<_> {
+                    c.iter_gate_batches()
+                        .filter(|batch| {
+                            matches!(
+                                batch.gate_type,
+                                GateType::MZ
+                                    | GateType::MeasureZLeaked
+                                    | GateType::MeasureZLost
+                                    | GateType::MeasureZLeakedLost
+                                    | GateType::DetectLeaked
+                                    | GateType::DetectLost
+                                    | GateType::DetectLeakedLost
+                            )
+                        })
+                        .map(|batch| {
+                            let g = batch.as_gate();
+                            (g.gate_type, g.qubits.to_vec(), g.meas_ids.to_vec())
+                        })
+                        .collect()
+                };
+                let expected = outcomes(&circuit);
+                for compact in [TickCircuit::compact_ticks, crate::pass::compact_ticks] {
+                    let mut compacted = circuit.clone();
+                    for _ in 0..2 {
+                        compact(&mut compacted);
+                        assert_eq!(outcomes(&compacted), expected);
+                        for tick in compacted.ticks() {
+                            for batch in tick.iter_gate_batches().filter(|b| {
+                                matches!(
+                                    b.gate_type,
+                                    GateType::MZ
+                                        | GateType::MeasureZLeaked
+                                        | GateType::MeasureZLost
+                                        | GateType::MeasureZLeakedLost
+                                        | GateType::DetectLeaked
+                                        | GateType::DetectLost
+                                        | GateType::DetectLeakedLost
+                                )
+                            }) {
+                                assert_eq!(batch.attrs().count(), 1);
+                            }
                         }
                     }
                 }

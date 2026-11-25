@@ -73,6 +73,15 @@ def test_step_schedule() -> None:
         "data:01",
         "data:1\n",
         "other",
+        "C.c4x:0",
+        "A.",
+        "AA.c4x:0",
+        "a.c4x:0",
+        "A.data:20",
+        "A/c4x:0",
+        "Ac4x:0",
+        "A.B.c4x:0",
+        ".c4x:0",
     ],
 )
 def test_invalid_label(label: str) -> None:
@@ -80,6 +89,12 @@ def test_invalid_label(label: str) -> None:
     with pytest.raises(ValueError, match="label") as error:
         helix_result_refs(tc)
     assert repr(label) in str(error.value)
+
+
+def test_block_prefixed_labels() -> None:
+    steps = [CircuitStep(OpType.MEASURE, [0], "A.c4x:0"), CircuitStep(OpType.MEASURE, [1], "B.data:19")]
+    circuit = lower_steps(steps, 2).tick_circuit
+    assert helix_result_refs(circuit) == [("A.c4x:0", 0), ("B.data:19", 0)]
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])

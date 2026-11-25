@@ -432,7 +432,7 @@ def _convert_gate_set(gate_symbol, locations, q, cregs, destinations):
                 ops.append(qubit.SZdg(q[idx]))
             if basis in ["X", "Y"]:
                 ops.append(qubit.H(q[idx]))
-            measurement = qubit.Measure(q[idx])
+            measurement = qubit.MeasureZ(q[idx])
             if loc in destinations:
                 name, index = destinations[loc]
                 measurement = measurement > cregs[name][index]

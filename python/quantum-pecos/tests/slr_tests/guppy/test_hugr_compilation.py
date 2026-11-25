@@ -7,7 +7,7 @@ ensuring linearity constraints are satisfied.
 import pytest
 from pecos.slr import Block, CReg, If, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 
 
 class TestHugrCompilation:
@@ -20,7 +20,7 @@ class TestHugrCompilation:
             c := CReg("c", 3),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
 
@@ -41,7 +41,7 @@ class TestHugrCompilation:
                 self.syndrome = syndrome
                 self.ops = [
                     qubit.CX(data[0], ancilla[0]),
-                    Measure(ancilla) > syndrome,
+                    MeasureZ(ancilla) > syndrome,
                 ]
 
         prog = Main(
@@ -51,7 +51,7 @@ class TestHugrCompilation:
             result := CReg("result", 2),
             MeasureAncillas(data, ancilla, syndrome),
             qubit.H(data[0]),
-            Measure(data) > result,
+            MeasureZ(data) > result,
             Return(syndrome, result),
         )
 
@@ -64,10 +64,10 @@ class TestHugrCompilation:
             q := QReg("q", 4),
             c := CReg("c", 4),
             # Individual measurements
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
-            Measure(q[2]) > c[2],
-            Measure(q[3]) > c[3],
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[1]) > c[1],
+            MeasureZ(q[2]) > c[2],
+            MeasureZ(q[3]) > c[3],
             Return(c),
         )
 
@@ -91,7 +91,7 @@ class TestHugrCompilation:
             q := QReg("q", 2),
             c := CReg("c", 2),
             ProcessQubits(q),
-            Measure(q) > c,
+            MeasureZ(q) > c,
             Return(c),
         )
 
@@ -103,11 +103,11 @@ class TestHugrCompilation:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             If(c[0]).Then(
                 qubit.X(q[1]),
             ),
-            Measure(q[1]) > c[1],
+            MeasureZ(q[1]) > c[1],
             Return(c),
         )
 
@@ -123,7 +123,7 @@ class TestHugrCompilation:
                 self.q = q
                 self.c = c
                 self.ops = [
-                    Measure(q[0]) > c[0],
+                    MeasureZ(q[0]) > c[0],
                 ]
 
         class OuterBlock(Block):
@@ -135,7 +135,7 @@ class TestHugrCompilation:
                     qubit.H(q[0]),
                     InnerBlock(q, c),
                     qubit.H(q[1]),
-                    Measure(q[1]) > c[1],
+                    MeasureZ(q[1]) > c[1],
                 ]
 
         prog = Main(
@@ -158,8 +158,8 @@ class TestHugrCompilation:
             qubit.H(q1[0]),
             qubit.H(q2[0]),
             qubit.CX(q1[0], q2[0]),
-            Measure(q1) > c1,
-            Measure(q2) > c2,
+            MeasureZ(q1) > c1,
+            MeasureZ(q2) > c2,
             Return(c1, c2),
         )
 
@@ -196,8 +196,8 @@ class TestHugrCompilationFailures:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
-            Measure(q[0]) > c[0],
-            Measure(q[0]) > c[1],  # Error: q[0] already consumed
+            MeasureZ(q[0]) > c[0],
+            MeasureZ(q[0]) > c[1],  # Error: q[0] already consumed
             Return(c),
         )
 
@@ -225,7 +225,7 @@ class TestHugrCompilationFailures:
             c := CReg("c", 1),
             UseButDontReturn(q),
             # Try to use q after function that didn't return it
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
 
@@ -267,7 +267,7 @@ class TestQECPatternCompilation:
                     qubit.CX(ancilla[2], data[5]),
                     qubit.CX(ancilla[2], data[6]),
                     qubit.H(ancilla[2]),
-                    Measure(ancilla) > syndrome,
+                    MeasureZ(ancilla) > syndrome,
                 ]
 
         prog = Main(
@@ -281,7 +281,7 @@ class TestQECPatternCompilation:
             # Could apply corrections based on syndrome
             # For now just measure data
             result := CReg("result", 7),
-            Measure(data) > result,
+            MeasureZ(data) > result,
             Return(syndrome, result),
         )
 
@@ -303,7 +303,7 @@ class TestQECPatternCompilation:
                     qubit.CX(data[1], ancilla[0]),
                     qubit.CX(data[1], ancilla[1]),
                     qubit.CX(data[2], ancilla[1]),
-                    Measure(ancilla) > syndrome,
+                    MeasureZ(ancilla) > syndrome,
                 ]
 
         prog = Main(
@@ -322,7 +322,7 @@ class TestQECPatternCompilation:
             RepetitionRound(data, ancilla2, syndrome2),
             # Final measurement
             result := CReg("result", 3),
-            Measure(data) > result,
+            MeasureZ(data) > result,
             Return(syndrome, syndrome2, result),
         )
 

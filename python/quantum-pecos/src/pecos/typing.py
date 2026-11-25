@@ -78,6 +78,7 @@ from pydantic import model_validator
 
 from pecos._phir_declarations import validate_classical_inputs, validate_declaration_names
 from pecos._phir_exports import validate_declaration_placement, validate_measure_returns
+from pecos._phir_normalization import canonicalize_measurement_qops
 
 
 class _PecosCVarDefine(_CVarDefine):
@@ -219,6 +220,14 @@ class PhirModel(_PHIRModel):
     """
 
     ops: list[_PecosCmd]  # type: ignore[assignment]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _canonicalize_qops(cls, value: dict) -> dict:
+        """Normalize names before union selection, preserving serialized field order."""
+        if isinstance(value, dict):
+            return canonicalize_measurement_qops(value)
+        return value
 
     @model_validator(mode="after")
     def _check_declaration_names(self) -> PhirModel:

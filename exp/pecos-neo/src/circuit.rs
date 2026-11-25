@@ -87,7 +87,7 @@ impl GateType {
             CoreGT::RXYXY2Q => Self::RXYXY2Q,
             CoreGT::CCX => Self::CCX,
             CoreGT::MZ => Self::MZ,
-            CoreGT::MeasureLeaked => Self::MeasureLeaked,
+            CoreGT::MeasureZLeaked => Self::MeasureLeaked,
             CoreGT::MeasureFree => Self::MeasureFree,
             CoreGT::PZ => Self::PZ,
             CoreGT::QAlloc => Self::QAlloc,
@@ -100,6 +100,7 @@ impl GateType {
 
 impl From<CoreGateType> for GateType {
     fn from(gt: CoreGateType) -> Self {
+        assert!(!gt.is_detection(), "neo has no detect gate; remove {gt}");
         Self::try_from_core(gt).unwrap_or_else(|| {
             panic!("unsupported pecos-core gate type for pecos-neo conversion: {gt:?}")
         })
@@ -146,7 +147,7 @@ impl From<GateType> for pecos_core::gate_type::GateType {
             GateType::RXYXY2Q => CoreGT::RXYXY2Q,
             GateType::CCX => CoreGT::CCX,
             GateType::MZ => CoreGT::MZ,
-            GateType::MeasureLeaked => CoreGT::MeasureLeaked,
+            GateType::MeasureLeaked => CoreGT::MeasureZLeaked,
             GateType::MeasureFree => CoreGT::MeasureFree,
             GateType::PZ => CoreGT::PZ,
             GateType::QAlloc => CoreGT::QAlloc,
@@ -186,6 +187,9 @@ pub enum CircuitConversionError {
 impl fmt::Display for CircuitConversionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedGateType { gate_type } if gate_type.is_detection() => {
+                write!(f, "neo has no detect gate; remove {gate_type}")
+            }
             Self::UnsupportedGateType { gate_type } => {
                 write!(f, "pecos-neo does not support core gate type {gate_type:?}")
             }
@@ -400,6 +404,36 @@ mod tests {
     use super::*;
     use crate::command::GateCommandError;
     use pecos_core::Angle64;
+
+    #[test]
+    fn detection_is_rejected_by_name() {
+        for kind in [
+            CoreGateType::DetectLeaked,
+            CoreGateType::DetectLost,
+            CoreGateType::DetectLeakedLost,
+        ] {
+            let gate = Gate::simple(kind, vec![0.into()]);
+            let error = GateCommand::try_from(&gate).unwrap_err().to_string();
+            assert!(error.contains(&format!("neo has no detect gate; remove {kind}")));
+            let panic = std::panic::catch_unwind(|| GateType::from(kind)).unwrap_err();
+            assert!(
+                panic
+                    .downcast_ref::<String>()
+                    .unwrap()
+                    .contains(&format!("neo has no detect gate; remove {kind}"))
+            );
+        }
+    }
+
+    #[test]
+    fn new_heralds_are_rejected_by_core_conversion() {
+        for gate_type in [CoreGateType::MeasureZLost, CoreGateType::MeasureZLeakedLost] {
+            assert!(GateType::try_from_core(gate_type).is_none());
+            let gate = Gate::simple(gate_type, vec![0.into()]);
+            let error = GateCommand::try_from(&gate).unwrap_err().to_string();
+            assert!(error.contains(&gate_type.to_string()), "{error}");
+        }
+    }
 
     #[test]
     fn test_gate_type_conversion_roundtrip() {

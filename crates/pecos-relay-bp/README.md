@@ -4,7 +4,7 @@ Relay BP decoder for PECOS.
 
 ## Purpose
 
-Wraps the Relay BP decoder for quantum low-density parity-check (qLDPC) code decoding. Relay BP enhances standard min-sum belief propagation with disordered memory strengths, ensembling, and relaying for improved convergence on codes like bivariate bicycle codes.
+Provides PECOS native Relay BP decoding for quantum low-density parity-check (qLDPC) codes. Relay BP enhances standard min-sum belief propagation with disordered memory strengths, ensembling, and relaying for improved convergence on codes like bivariate bicycle codes.
 
 ## Key Types
 
@@ -20,9 +20,19 @@ sets. Configure the latter with `RelayConfig::explicit_gammas` or
 each set has one finite value per check-matrix column, and rows are reused
 cyclically when necessary.
 
+Results are a deterministic function of `(seed, syndrome)`: decode order,
+batch splitting and worker count cannot change a result. `gamma0=None` makes
+leg zero memoryless; relay legs retain sampled or explicit memory strengths.
+Use `pre_iter` and `set_max_iter` for Relay iteration limits. Min-sum retains
+`max_iter`, runs one native memory-BP leg, and is plain BP when `gamma0=None`.
+`alpha=None` means unit scaling; `alpha=Some(0.0)` enables dynamic alpha with
+a finite, strictly positive `alpha_iteration_scaling_factor`.
+
 ## Acknowledgements
 
-This crate wraps [relay-bp](https://github.com/trmue/relay), a Relay BP decoder developed by Tristan Mueller, Thomas Alexander, Michael E. Beverland, Markus Buehler, Blake R. Johnson, Thilo Maurer, and Drew Vandeth.
+This crate is a thin facade over `pecos-bp`, implementing the Relay-BP algorithm of Müller et al.
+
+The frozen parity fixtures were generated with the Apache-2.0 reference implementation [trmue/relay](https://github.com/trmue/relay).
 
 **Paper:**
-- Mueller, T., Alexander, T., Beverland, M. E., Buehler, M., Johnson, B. R., Maurer, T., & Vandeth, D. (2025). "Improved Belief Propagation Is Sufficient for Real-Time Decoding of Quantum Memory." [arXiv:2506.01779](https://arxiv.org/abs/2506.01779)
+- Müller, T., Alexander, T., Beverland, M. E., Buehler, M., Johnson, B. R., Maurer, T., & Vandeth, D. (2025). "Improved Belief Propagation Is Sufficient for Real-Time Decoding of Quantum Memory." [arXiv:2506.01779](https://arxiv.org/abs/2506.01779)

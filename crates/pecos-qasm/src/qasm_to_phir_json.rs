@@ -63,6 +63,9 @@ fn classical_register_dtype(size: usize) -> Result<&'static str, String> {
 /// Returns an error if the program contains unsupported operations or a
 /// classical register is too large for a 64-bit backing type.
 pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
+    program
+        .validate_classical_references()
+        .map_err(|e| format!("QASM validation error: {e}"))?;
     let mut ops: Vec<Value> = Vec::new();
 
     // 1) Quantum register definitions
@@ -245,13 +248,12 @@ fn convert_op(
 
         Operation::ClassicalAssignment {
             target,
-            is_indexed,
             index,
             expression,
         } => {
             let expr = convert_expr(expression)?;
-            let returns = if *is_indexed {
-                json!([[target, index.unwrap_or(0)]])
+            let returns = if let Some(index) = index {
+                json!([[target, index]])
             } else {
                 json!([target])
             };

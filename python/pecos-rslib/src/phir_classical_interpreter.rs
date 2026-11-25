@@ -1201,11 +1201,12 @@ pub fn validate_phir_result_counts(args: usize, returns: usize) -> PyResult<()> 
 /// Validate classical JSON input before optional Python schema validation.
 #[pyfunction]
 pub fn validate_phir_classical_inputs(program_json: &str) -> PyResult<()> {
-    let value: serde_json::Value = serde_json::from_str(program_json).map_err(|error| {
+    let mut value: serde_json::Value = serde_json::from_str(program_json).map_err(|error| {
         pyo3::exceptions::PyValueError::new_err(format!(
             "Invalid PHIR JSON: {error}; supply a JSON program"
         ))
     })?;
+    pecos_phir_json::v0_1::ast::canonicalize_measurement_qops(&mut value);
     pecos_phir_json::v0_1::classical_validation::validate_classical_inputs(&value)
         .map_err(pecos_error_to_pyerr)
 }

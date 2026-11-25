@@ -117,8 +117,8 @@ def test_permutation_with_bell_circuit_qir() -> None:
         Permute([m[0], n[0]], [n[0], m[0]]),
         qubit.H(a[0]),
         qubit.CX(a[0], a[1]),
-        qubit.Measure(a[0]) > m[0],
-        qubit.Measure(a[1]) > m[1],
+        qubit.MeasureZ(a[0]) > m[0],
+        qubit.MeasureZ(a[1]) > m[1],
     )
 
     qir = SlrConverter(prog).qir()
@@ -166,8 +166,8 @@ def test_comprehensive_qir_verification() -> None:
         qubit.Y(a[1]),  # -> b[1] = q3
         qubit.Z(b[1]),  # -> a[1] = q1
         qubit.CX(a[0], b[1]),  # a[0]->b[0]=q2, b[1]->a[1]=q1
-        qubit.Measure(a[0]) > m[0],  # a[0]->b[0]=q2
-        qubit.Measure(b[1]) > n[0],  # b[1]->a[1]=q1
+        qubit.MeasureZ(a[0]) > m[0],  # a[0]->b[0]=q2
+        qubit.MeasureZ(b[1]) > n[0],  # b[1]->a[1]=q1
     )
 
     qir = SlrConverter(prog).qir()

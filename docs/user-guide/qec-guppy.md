@@ -2,6 +2,12 @@
 
 This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy_gen`), which generates executable Guppy quantum programs directly from QEC geometry.
 
+For the cited planar 4.8.8 and triangular 6.6.6 constructions, including
+SWAP-superdense extraction and selectable schedules, see
+[Paper color-code constructions](paper-color-codes.md).
+For reusable gadgets with named roles and outcomes, see
+[Authoring and inspecting QEC gadgets](named-qec-gadgets.md).
+
 ## What You'll Learn
 
 - Generating surface code memory experiments
@@ -213,8 +219,11 @@ raw measurements in runtime execution order, use
 `build.evaluate_runtime_record(values)` instead. Both methods produce the
 detector order and packed observable mask expected by the DEM.
 
-Built-in generators may supply a trusted, program-bound named-measurement layout
-certificate. `make_surface_code(...)` does this automatically, so its scalar
+Built-in generators may supply a program-bound named-measurement layout
+certificate. Every layout slot is checked against independent runtime provenance
+or compiled scalar analysis; missing evidence or disagreement rejects the build.
+The certificate still admits the generator's static schedule.
+`make_surface_code(...)` does this automatically, so its scalar
 sidebands work with `evaluate_results(...)` and
 `evaluate_result_columns(...)` even though its round loop is not statically
 unrolled in the HUGR. Use the public typed specification helper rather than
@@ -240,8 +249,9 @@ surface_build = build_dem_from_guppy(
 
 ### Current soundness boundary
 
-- DEM construction supports straight-line static schedules and trusted built-in
-  generator certificates. Generic branching and looping Guppy programs are
+- DEM construction supports straight-line static schedules and built-in
+  generator certificates, whose layouts are checked against independent
+  evidence. Generic branching and looping Guppy programs are
   rejected because one trace cannot certify all quantum-operation paths.
 - Scalar `result(tag, measure(q).read())` provenance is the certified generic tag
   path. Repeated tags use `occurrence=...`.
@@ -636,7 +646,7 @@ prog = Main(
         qb.CX(q[0], q[1]),
         # ... more operations
     ),
-    qb.Measure(q) > c,
+    qb.MeasureZ(q) > c,
 )
 
 # Convert to QASM

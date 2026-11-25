@@ -48,9 +48,10 @@ pub mod engines {
 #[cfg(feature = "quantum")]
 pub mod quantum {
     pub use pecos_quantum::{
-        Attribute, Circuit, CircuitMut, CustomGateError, DagCircuit, DagGateError, DagWireError,
-        DagWouldCycleError, Gate, GateHandle, GateType, GateView, QubitId, Tick, TickCircuit,
-        TickGateError,
+        AngleUnit, Attribute, Circuit, CircuitInspection, CircuitMut, CustomGateError, DagCircuit,
+        DagGateError, DagWireError, DagWouldCycleError, DiagramRangeError, DiagramRenderer,
+        DiagramStyle, Gate, GateHandle, GateType, GateView, InspectionOperation, InspectionSource,
+        QubitId, Tick, TickCircuit, TickGateError,
     };
     pub use pecos_quantum::{F2Matrix, PauliSequence, PauliSet, PauliStabilizerGroup};
 }
@@ -79,9 +80,9 @@ pub mod noise {
         BiasedDepolarizingNoiseModelBuilder, ChannelValidationError, DepolarizingNoiseModel,
         DepolarizingNoiseModelBuilder, GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel,
         P2PauliLeakageStep, P2TransitionStep, PassThroughNoiseModel, PauliLeakageChannel,
-        PauliLeakageDict, PauliLeakageEvent, QubitTransitionState, StateTransitionChannel,
-        TransitionDict, TwoQubitPauliLeakageChannel, TwoQubitStateTransitionChannel,
-        general::GeneralNoiseModel,
+        PauliLeakageDict, PauliLeakageEvent, QubitTransitionState, ReadoutMatrix,
+        StateTransitionChannel, TransitionDict, TwoQubitPauliLeakageChannel,
+        TwoQubitStateTransitionChannel, general::GeneralNoiseModel,
     };
     pub use pecos_engines::{BiasedDepolarizingNoise, DepolarizingNoise, PassThroughNoise};
 }

@@ -56,8 +56,10 @@ terminal flush fails closed), and the runtime's `shot_end` finalization hook
 with its error propagated and latched. A plugin that only detects an invalid
 final schedule at shot end therefore fails the shot rather than receiving a
 certified trace. Named shot conversion accepts compiler-certified direct
-scalar `result()` provenance from the executed lowered QIS and trusted built-in
-generator layouts whose digest binds both the HUGR and layout. Aggregate arrays
+scalar `result()` provenance from the executed lowered QIS and built-in
+generator layouts checked against independent runtime provenance or compiled
+scalar analysis. Both sources must agree when available, and every layout slot
+requires evidence. The certificate digest binds both the HUGR and layout. Aggregate arrays
 and transformed booleans must not be treated as generic measurement identity
 until the compiler exposes an explicit element-level provenance ABI.
 
@@ -67,12 +69,14 @@ runtime branch cannot certify a static DEM; built-in surface generators
 their program-bound static-layout certificate.
 
 The certificate is an integrity mechanism, not an authentication mechanism.
-Its digest binds a layout to the exact compiled HUGR, so a stale, permuted,
-or accidentally re-attached layout fails closed. It does not defend against
+Its digest binds a layout to the exact compiled HUGR and detects changes to
+either without a matching digest update. Measurement identity is checked
+separately against independent evidence for every slot, even when the digest
+has been recomputed for a permuted layout. It does not defend against
 deliberate in-process forgery: any Python code that can set the attribute can
 also recompute the public digest (or monkeypatch the checker), and no
-in-process scheme changes that. The trust statement is "this layout was
-computed for exactly this program", nothing more.
+in-process scheme changes that. The digest alone does not prove that the
+compiled program measures in layout order.
 
 Generic scalar tags now derive their measurement ordinals from the exact lowered
 QIS text used for execution. CFG dominance and cycle checks certify measurement

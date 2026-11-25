@@ -9,11 +9,11 @@ fn test_measure_leaked_basic_functionality() {
     let engine = Box::new(StateVecEngine::new(2));
     let mut system = QuantumSystem::new_without_noise(engine);
 
-    // Test 1: MeasureLeaked behaves like Measure without leakage
+    // Test 1: MeasureZLeaked behaves like Measure without leakage
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.h(&[0]); // Create superposition
-    builder.measure_leakages(&[0, 1]); // MeasureLeaked on both qubits
+    builder.measure_z_leaked(&[0, 1]); // MeasureZLeaked on both qubits
 
     let circuit = builder.build();
     let result = system.process(circuit).unwrap();
@@ -22,7 +22,7 @@ fn test_measure_leaked_basic_functionality() {
     assert_eq!(outcomes.len(), 2);
     assert!(
         outcomes[0] <= 1,
-        "MeasureLeaked without leakage should return 0 or 1"
+        "MeasureZLeaked without leakage should return 0 or 1"
     );
     assert_eq!(outcomes[1], 0, "Qubit 1 should be in |0⟩ state");
 }
@@ -50,10 +50,10 @@ fn test_measure_leaked_with_general_noise_model() {
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
 
-    // Mix of regular Measure and MeasureLeaked
+    // Mix of regular Measure and MeasureZLeaked
     builder.mz(&[0]); // Regular measure on leaked qubit 0
-    builder.measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
-    builder.measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
+    builder.measure_z_leaked(&[1]); // MeasureZLeaked on non-leaked qubit 1
+    builder.measure_z_leaked(&[2]); // MeasureZLeaked on leaked qubit 2
 
     let circuit = builder.build();
     let result = system.process(circuit).unwrap();
@@ -66,17 +66,17 @@ fn test_measure_leaked_with_general_noise_model() {
     );
     assert_eq!(
         outcomes[1], 0,
-        "MeasureLeaked on non-leaked qubit should return 0"
+        "MeasureZLeaked on non-leaked qubit should return 0"
     );
     assert_eq!(
         outcomes[2], 2,
-        "MeasureLeaked on leaked qubit should return 2"
+        "MeasureZLeaked on leaked qubit should return 2"
     );
 }
 
 #[test]
 fn test_measure_leaked_preserves_quantum_state() {
-    // Verify that MeasureLeaked correctly measures quantum states when no leakage
+    // Verify that MeasureZLeaked correctly measures quantum states when no leakage
     let engine = Box::new(StateVecEngine::new(2));
     let mut system = QuantumSystem::new_without_noise(engine);
 
@@ -85,7 +85,7 @@ fn test_measure_leaked_preserves_quantum_state() {
     let _ = builder.for_quantum_operations();
     builder.h(&[0]);
     builder.cx(&[(0, 1)]);
-    builder.measure_leakages(&[0, 1]);
+    builder.measure_z_leaked(&[0, 1]);
 
     let circuit = builder.build();
 
@@ -137,7 +137,7 @@ fn test_measure_leaked_sequential_measurements() {
     // First circuit: measure the leaked qubit
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.measure_leakages(&[0]);
+    builder.measure_z_leaked(&[0]);
 
     let circuit1 = builder.build();
     let result1 = system.process(circuit1).unwrap();
@@ -145,13 +145,13 @@ fn test_measure_leaked_sequential_measurements() {
 
     assert_eq!(
         outcomes1[0], 2,
-        "First MeasureLeaked should return 2 for leaked qubit"
+        "First MeasureZLeaked should return 2 for leaked qubit"
     );
 
     // Second circuit: measure the same qubit again (should still be leaked)
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.measure_leakages(&[0]);
+    builder.measure_z_leaked(&[0]);
 
     let circuit2 = builder.build();
     let result2 = system.process(circuit2).unwrap();
@@ -159,7 +159,7 @@ fn test_measure_leaked_sequential_measurements() {
 
     assert_eq!(
         outcomes2[0], 2,
-        "Second MeasureLeaked should still return 2"
+        "Second MeasureZLeaked should still return 2"
     );
 
     // Third circuit: regular measurement (should return 1)
@@ -198,20 +198,23 @@ fn test_measure_leaked_with_prep_unleaks() {
     // First circuit: measure the leaked qubit
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
-    builder.measure_leakages(&[0]); // Should return 2
+    builder.measure_z_leaked(&[0]); // Should return 2
 
     let circuit1 = builder.build();
     let result1 = system.process(circuit1).unwrap();
     let outcomes1 = result1.outcomes().unwrap();
 
     assert_eq!(outcomes1.len(), 1);
-    assert_eq!(outcomes1[0], 2, "MeasureLeaked before prep should return 2");
+    assert_eq!(
+        outcomes1[0], 2,
+        "MeasureZLeaked before prep should return 2"
+    );
 
     // Second circuit: prep (unleak) and measure again
     let mut builder = ByteMessageBuilder::new();
     let _ = builder.for_quantum_operations();
     builder.pz(&[0]); // Unleak the qubit
-    builder.measure_leakages(&[0]); // Should return 0 (back to |0⟩)
+    builder.measure_z_leaked(&[0]); // Should return 0 (back to |0⟩)
 
     let circuit2 = builder.build();
     let result2 = system.process(circuit2).unwrap();
@@ -220,6 +223,6 @@ fn test_measure_leaked_with_prep_unleaks() {
     assert_eq!(outcomes2.len(), 1);
     assert_eq!(
         outcomes2[0], 0,
-        "MeasureLeaked after prep should return 0 (unleaked)"
+        "MeasureZLeaked after prep should return 0 (unleaked)"
     );
 }

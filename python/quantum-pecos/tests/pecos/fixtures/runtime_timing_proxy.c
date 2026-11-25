@@ -7,6 +7,7 @@
 
 static SeleneRuntimePluginDescriptorV1 original;
 static SeleneRuntimePluginDescriptorV1 proxy;
+static pthread_once_t descriptor_once = PTHREAD_ONCE_INIT;
 /* Deliberately synthetic timing: one second before the second RXY callback.
  * INITIAL_NANOS offsets every batch timestamp equally, adding an initial gap
  * while preserving the gaps between subsequent batches.
@@ -151,27 +152,30 @@ static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops)
     return rc;
 }
 
-const SeleneRuntimePluginDescriptorV1 *selene_runtime_get_plugin_descriptor_v1(void) {
-    /* PECOS configures worker clones on the host before running shots. */
-    if (proxy.struct_size == 0) {
-        void *library = dlopen(BASE_LIBRARY, RTLD_NOW | RTLD_LOCAL);
-        if (!library) return NULL;
-        const SeleneRuntimePluginDescriptorV1 *descriptor =
-            dlsym(library, "selene_runtime_plugin_descriptor_v1");
-        if (!descriptor) {
-            const SeleneRuntimePluginDescriptorV1 *(*get_descriptor)(void) =
-                dlsym(library, "selene_runtime_get_plugin_descriptor_v1");
-            if (!get_descriptor) return NULL;
-            descriptor = get_descriptor();
-        }
-        if (!descriptor || descriptor->struct_size != sizeof(original) ||
-            descriptor->api_version != SELENE_RUNTIME_CURRENT_API_VERSION) return NULL;
-        original = *descriptor;
-        proxy = original;
-        proxy.init_fn = init;
-        proxy.exit_fn = exit_runtime;
-        proxy.shot_start_fn = start;
-        proxy.get_next_operations_fn = next;
+/* Lazy runtime loading can request the descriptor concurrently on workers.
+ * Publish the complete callback table before any caller can use it. */
+static void initialize_descriptor(void) {
+    void *library = dlopen(BASE_LIBRARY, RTLD_NOW | RTLD_LOCAL);
+    if (!library) return;
+    const SeleneRuntimePluginDescriptorV1 *descriptor =
+        dlsym(library, "selene_runtime_plugin_descriptor_v1");
+    if (!descriptor) {
+        const SeleneRuntimePluginDescriptorV1 *(*get_descriptor)(void) =
+            dlsym(library, "selene_runtime_get_plugin_descriptor_v1");
+        if (!get_descriptor) return;
+        descriptor = get_descriptor();
     }
-    return &proxy;
+    if (!descriptor || descriptor->struct_size != sizeof(original) ||
+        descriptor->api_version != SELENE_RUNTIME_CURRENT_API_VERSION) return;
+    original = *descriptor;
+    proxy = original;
+    proxy.init_fn = init;
+    proxy.exit_fn = exit_runtime;
+    proxy.shot_start_fn = start;
+    proxy.get_next_operations_fn = next;
+}
+
+const SeleneRuntimePluginDescriptorV1 *selene_runtime_get_plugin_descriptor_v1(void) {
+    if (pthread_once(&descriptor_once, initialize_descriptor) != 0) return NULL;
+    return proxy.struct_size ? &proxy : NULL;
 }

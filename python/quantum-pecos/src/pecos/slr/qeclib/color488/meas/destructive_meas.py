@@ -30,7 +30,7 @@ class MeasureZ(Block):
             raise ValueError(msg)
 
         self.extend(
-            qb.Measure(data) > meas,
+            qb.MeasureZ(data) > meas,
         )
 
         # TODO: Extract the syndromes and logical outcome

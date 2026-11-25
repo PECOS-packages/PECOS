@@ -93,7 +93,6 @@ fn test_integer_constant_folding() {
                 let value = pecos_qasm::bitvec_expression::evaluate_expression_bitvec(
                     condition,
                     &pecos_qasm::QASMEngine::default(),
-                    1,
                 )
                 .unwrap();
                 assert!(matches!(value, pecos_core::ExprValue::Unsigned(_)));

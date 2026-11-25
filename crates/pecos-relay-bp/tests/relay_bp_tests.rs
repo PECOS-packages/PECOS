@@ -85,7 +85,7 @@ fn lcg_sparse_matrix() -> Array2<u8> {
 
 fn lcg_weight_two_syndromes(matrix: &ArrayView2<u8>) -> Vec<Array1<u8>> {
     let mut state = 0x5eed;
-    (0..8)
+    (0..128)
         .map(|_| {
             let mut error = Array1::zeros(60);
             let first = ((lcg_next(&mut state) >> 32) % 60) as usize;
@@ -115,54 +115,145 @@ fn decode_all(decoder: &mut RelayBpDecoder, syndromes: &[Array1<u8>]) -> Vec<(bo
 // --- Syndrome correctness: verify H * decoded_error mod 2 == syndrome ---
 
 #[test]
-fn default_gamma0_enables_memory_and_seed_sensitivity() {
+fn gamma0_none_disables_only_leg_zero_memory() {
     let matrix = lcg_sparse_matrix();
     let syndromes = lcg_weight_two_syndromes(&matrix.view());
-    let priors = vec![0.05; matrix.ncols()];
-    let build_default = |seed| {
+    let build = |gamma0, num_sets, seed| {
         RelayBpBuilder::new(&matrix.view())
-            .error_priors(&priors)
-            .pre_iter(0)
-            .num_sets(5)
-            .set_max_iter(30)
+            .error_priors(&[0.05; 60])
+            .gamma0(gamma0)
+            .pre_iter(8)
+            .num_sets(num_sets)
+            .set_max_iter(3)
             .seed(seed)
             .build()
             .unwrap()
     };
-    let build_memory_off = |seed| {
+    let mut plain = MinSumBpBuilder::new(&matrix.view())
+        .error_priors(&[0.05; 60])
+        .max_iter(8)
+        .gamma0(None)
+        .build()
+        .unwrap();
+    let mut relay = build(None, 0, 1);
+    for syndrome in &syndromes {
+        assert_result_eq(
+            &plain.decode(&syndrome.view()).unwrap(),
+            &relay.decode(&syndrome.view()).unwrap(),
+        );
+    }
+    assert_ne!(
+        decode_all(&mut build(None, 0, 1), &syndromes),
+        decode_all(&mut build(Some(0.65), 0, 1), &syndromes)
+    );
+    assert_ne!(
+        decode_all(&mut build(None, 5, 1), &syndromes),
+        decode_all(&mut build(None, 5, 2), &syndromes)
+    );
+}
+
+fn assert_result_eq(a: &DecodingResult, b: &DecodingResult) {
+    assert_eq!(a.decoding, b.decoding);
+    assert_eq!(a.converged, b.converged);
+    assert_eq!(a.iterations, b.iterations);
+}
+
+#[test]
+fn relay_order_batch_splitting_and_reuse_are_independent() {
+    use pecos_decoder_core::BatchDecoder;
+    let matrix = lcg_sparse_matrix();
+    let syndromes = lcg_weight_two_syndromes(&matrix.view());
+    let build = || {
         RelayBpBuilder::new(&matrix.view())
-            .error_priors(&priors)
-            .gamma0(None)
-            .pre_iter(0)
+            .error_priors(&[0.05; 60])
+            .pre_iter(2)
             .num_sets(5)
             .set_max_iter(30)
-            .seed(seed)
+            .seed(42)
             .build()
             .unwrap()
     };
+    let views: Vec<_> = syndromes.iter().map(|syndrome| syndrome.view()).collect();
+    let mut forward = build();
+    let expected = forward.decode_batch(&views).unwrap();
+    let mut reverse = build();
+    for (syndrome, result) in syndromes.iter().zip(&expected).rev() {
+        assert_result_eq(result, &reverse.decode(&syndrome.view()).unwrap());
+        assert_result_eq(result, &forward.decode(&syndrome.view()).unwrap());
+    }
+    let mut split = build();
+    for (chunk, expected) in views.chunks(3).zip(expected.chunks(3)) {
+        for (a, b) in split.decode_batch(chunk).unwrap().iter().zip(expected) {
+            assert_result_eq(a, b);
+        }
+    }
+}
 
-    let mut default_seed_one = build_default(1);
-    let mut default_seed_two = build_default(2);
-    let mut memory_off_seed_one = build_memory_off(1);
-    let mut memory_off_seed_two = build_memory_off(2);
-    let default_seed_one = decode_all(&mut default_seed_one, &syndromes);
-    let default_seed_two = decode_all(&mut default_seed_two, &syndromes);
-    let memory_off_seed_one = decode_all(&mut memory_off_seed_one, &syndromes);
-    let memory_off_seed_two = decode_all(&mut memory_off_seed_two, &syndromes);
+#[test]
+fn zero_pre_iter_failed_decode_does_not_reuse_previous_correction() {
+    let matrix = ndarray::arr2(&[[1, 0], [0, 0]]);
+    let build = || {
+        RelayBpBuilder::new(&matrix.view())
+            .error_priors(&[0.1; 2])
+            .pre_iter(0)
+            .num_sets(1)
+            .set_max_iter(1)
+            .seed(42)
+            .build()
+            .unwrap()
+    };
+    let mut reused = build();
+    let first = reused.decode(&ndarray::arr1(&[1, 0]).view()).unwrap();
+    assert!(first.converged);
+    let second = ndarray::arr1(&[0, 1]);
+    let result = reused.decode(&second.view()).unwrap();
+    assert!(!result.converged);
+    assert_result_eq(&result, &build().decode(&second.view()).unwrap());
+    assert_ne!(result.decoding, first.decoding);
+}
 
-    assert_eq!(memory_off_seed_one, memory_off_seed_two);
-    assert_ne!(default_seed_one, default_seed_two);
-    let default_converged = default_seed_one
-        .iter()
-        .filter(|(converged, _)| *converged)
-        .count();
-    let memory_off_converged = memory_off_seed_one
-        .iter()
-        .filter(|(converged, _)| *converged)
-        .count();
-    assert_eq!(default_converged, 8);
-    assert_eq!(memory_off_converged, 5);
-    assert!(default_converged > memory_off_converged);
+#[test]
+fn min_sum_matches_native_single_leg() {
+    use pecos_bp::{Alpha, BpGraph, RelayBp, Schedule, StopRule};
+    let matrix = hamming_7_4_matrix();
+    for alpha in [None, Some(0.0), Some(-0.0), Some(0.8)] {
+        for gamma in [None, Some(0.65)] {
+            let mut facade = MinSumBpBuilder::new(&matrix.view())
+                .error_priors(&[0.05; 7])
+                .max_iter(8)
+                .alpha(alpha)
+                .alpha_iteration_scaling_factor(2.0)
+                .gamma0(gamma)
+                .build()
+                .unwrap();
+            let mut native = RelayBp::new(
+                BpGraph::from_dense_check_matrix(matrix.view(), &[0.05; 7]).unwrap(),
+                pecos_bp::RelayConfig {
+                    schedule: Schedule::Flooding,
+                    alpha: match alpha {
+                        Some(0.0) => Alpha::Dynamic {
+                            scaling_factor: 2.0,
+                        },
+                        other => Alpha::Constant(other.unwrap_or(1.0)),
+                    },
+                    gamma0: gamma.unwrap_or(0.0),
+                    pre_iterations: 8,
+                    num_legs: 0,
+                    stop_rule: StopRule::Converged(1),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            for bits in 0..8 {
+                let syndrome = ndarray::arr1(&[bits & 1, (bits >> 1) & 1, (bits >> 2) & 1]);
+                let actual = facade.decode(&syndrome.view()).unwrap();
+                let expected = native.decode(syndrome.as_slice().unwrap(), 0).unwrap();
+                assert_eq!(actual.decoding.to_vec(), expected.correction);
+                assert_eq!(actual.converged, expected.converged);
+                assert_eq!(actual.iterations, expected.total_iterations);
+            }
+        }
+    }
 }
 
 #[test]
@@ -197,7 +288,8 @@ fn relay_decoding_satisfies_syndrome_repetition_3() {
     let h = repetition_3_matrix();
     let ms_config = MinSumConfig::new(default_priors(3));
     let relay_config = RelayConfig::default();
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let errors: Vec<Array1<u8>> = vec![
         Array1::from_vec(vec![1, 0, 0]),
@@ -284,7 +376,8 @@ fn relay_decoding_satisfies_syndrome_hamming_7_4() {
         num_sets: 50,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let mut converged_count = 0;
     for bit in 0..7 {
@@ -332,7 +425,8 @@ fn relay_zero_syndrome_produces_zero_decoding() {
     let h = hamming_7_4_matrix();
     let ms_config = MinSumConfig::new(default_priors(7));
     let relay_config = RelayConfig::default();
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let syndrome = Array1::zeros(3);
     let result = decoder.decode(&syndrome.view()).unwrap();
@@ -386,7 +480,8 @@ fn relay_sequential_decodes_are_independent() {
         seed: 42,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     for _ in 0..10 {
         let syndrome = Array1::from_vec(vec![1u8, 0]);
@@ -403,7 +498,7 @@ fn min_sum_with_alpha_scaling() {
     let h = hamming_7_4_matrix();
     let mut config = MinSumConfig::new(default_priors(7));
     config.alpha = Some(0.0);
-    config.alpha_iteration_scaling_factor = 0.0;
+    config.alpha_iteration_scaling_factor = 1.0;
     let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
     let mut error = Array1::zeros(7);
@@ -454,7 +549,8 @@ fn relay_with_stopping_criterion_all() {
         seed: 123,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let syndrome = Array1::from_vec(vec![1u8, 0]);
     let result = decoder.decode(&syndrome.view()).unwrap();
@@ -472,7 +568,8 @@ fn relay_with_stopping_criterion_pre_iter() {
         stopping_criterion: StoppingCriterion::PreIter,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let syndrome = Array1::from_vec(vec![0u8, 1]);
     let result = decoder.decode(&syndrome.view()).unwrap();
@@ -490,7 +587,8 @@ fn relay_with_custom_gamma_interval() {
         seed: 7,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let mut error = Array1::zeros(7);
     error[5] = 1;
@@ -561,9 +659,8 @@ fn relay_builder_all_options() {
     let h = hamming_7_4_matrix();
     let mut decoder = RelayBpBuilder::new(&h.view())
         .error_priors(&default_priors(7))
-        .max_iter(150)
         .alpha(Some(0.0))
-        .alpha_iteration_scaling_factor(0.0)
+        .alpha_iteration_scaling_factor(1.0)
         .gamma0(Some(0.1))
         .pre_iter(60)
         .num_sets(50)
@@ -700,7 +797,8 @@ fn invalid_syndrome_length_relay() {
     let h = repetition_3_matrix();
     let ms_config = MinSumConfig::new(default_priors(3));
     let relay_config = RelayConfig::default();
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let syndrome = Array1::from_vec(vec![1u8, 0, 1, 0]);
     assert!(decoder.decode(&syndrome.view()).is_err());
@@ -810,7 +908,8 @@ fn relay_exact_decoding_repetition_3_low_priors() {
         seed: 42,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let cases: Vec<(Array1<u8>, Array1<u8>)> = vec![
         (
@@ -881,7 +980,8 @@ fn relay_num_sets_zero_is_pure_bp_passthrough() {
         stopping_criterion: StoppingCriterion::PreIter,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let cases: Vec<(Array1<u8>, Array1<u8>)> = vec![
         (
@@ -959,14 +1059,15 @@ fn min_sum_membp_exact_decoding_repetition_3() {
 #[test]
 fn relay_with_membp_exact_decoding_repetition_3() {
     let h = repetition_3_matrix();
-    let mut ms_config = MinSumConfig::new(vec![0.003, 0.003, 0.003]);
-    ms_config.gamma0 = Some(0.9);
+    let ms_config = MinSumConfig::new(vec![0.003, 0.003, 0.003]);
     let relay_config = RelayConfig {
+        gamma0: Some(0.9),
         num_sets: 20,
         seed: 42,
         ..Default::default()
     };
-    let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+    let mut decoder =
+        RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let cases: Vec<(Array1<u8>, Array1<u8>)> = vec![
         (
@@ -1010,10 +1111,10 @@ fn min_sum_alpha_zero_exact_decoding_repetition_3() {
     let h = repetition_3_matrix();
     let mut config = MinSumConfig::new(vec![0.003, 0.003, 0.003]);
     config.alpha = Some(0.0);
-    config.alpha_iteration_scaling_factor = 0.0;
+    config.alpha_iteration_scaling_factor = 1.0;
     let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
-    // alpha=0 with scaling_factor=0 should still converge on the simple rep code
+    // alpha=0 with scaling_factor=1 should still converge on the simple rep code
     for (syndrome, expected_error) in [(vec![1u8, 0], vec![1u8, 0, 0]), (vec![0, 1], vec![0, 0, 1])]
     {
         let s = Array1::from_vec(syndrome);
@@ -1044,7 +1145,8 @@ fn relay_seed_gives_deterministic_results() {
             num_sets: 30,
             ..Default::default()
         };
-        let mut decoder = RelayBpDecoder::new(&h.view(), &ms_config, &relay_config).unwrap();
+        let mut decoder =
+            RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
         let result = decoder.decode(&syndrome.view()).unwrap();
         results.push(result);
     }
@@ -1054,4 +1156,238 @@ fn relay_seed_gives_deterministic_results() {
         "Same seed should give deterministic results"
     );
     assert_eq!(results[0].iterations, results[1].iterations);
+}
+
+#[test]
+fn facade_validates_configuration_and_graph_inputs() {
+    use pecos_relay_bp::RelayBpError;
+    let matrix = repetition_3_matrix();
+    let relay = || RelayBpBuilder::new(&matrix.view()).error_priors(&[0.1; 3]);
+    let min_sum = || MinSumBpBuilder::new(&matrix.view()).error_priors(&[0.1; 3]);
+    let configuration = |error: RelayBpError, field: &str, value: &str| {
+        assert!(matches!(&error, RelayBpError::Configuration(_)), "{error}");
+        assert!(error.to_string().contains(field), "{error}");
+        assert!(error.to_string().contains(value), "{error}");
+    };
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1] {
+        configuration(
+            relay().alpha(Some(value)).build().err().unwrap(),
+            "alpha",
+            &value.to_string(),
+        );
+        configuration(
+            min_sum().alpha(Some(value)).build().err().unwrap(),
+            "alpha",
+            &value.to_string(),
+        );
+    }
+    for value in [f64::NAN, f64::INFINITY, -1.0, 0.0] {
+        for alpha in [None, Some(0.0), Some(0.8)] {
+            configuration(
+                relay()
+                    .alpha(alpha)
+                    .alpha_iteration_scaling_factor(value)
+                    .build()
+                    .err()
+                    .unwrap(),
+                "alpha_iteration_scaling_factor",
+                &value.to_string(),
+            );
+            configuration(
+                min_sum()
+                    .alpha(alpha)
+                    .alpha_iteration_scaling_factor(value)
+                    .build()
+                    .err()
+                    .unwrap(),
+                "alpha_iteration_scaling_factor",
+                &value.to_string(),
+            );
+        }
+    }
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        configuration(
+            relay().gamma0(Some(value)).build().err().unwrap(),
+            "gamma0",
+            &value.to_string(),
+        );
+        configuration(
+            min_sum().gamma0(Some(value)).build().err().unwrap(),
+            "gamma0",
+            &value.to_string(),
+        );
+    }
+    configuration(
+        relay().pre_iter(0).num_sets(0).build().err().unwrap(),
+        "pre_iter",
+        "0",
+    );
+    configuration(
+        relay().set_max_iter(0).build().err().unwrap(),
+        "set_max_iter",
+        "0",
+    );
+    configuration(
+        relay().num_sets(usize::MAX).build().err().unwrap(),
+        "num_sets",
+        &usize::MAX.to_string(),
+    );
+    configuration(
+        relay()
+            .stopping_criterion(StoppingCriterion::NConv { stop_after: 0 })
+            .build()
+            .err()
+            .unwrap(),
+        "stop_after",
+        "0",
+    );
+    configuration(
+        min_sum().max_iter(0).build().err().unwrap(),
+        "max_iter",
+        "0",
+    );
+    for gammas in [vec![], vec![vec![0.1; 2]], vec![vec![f64::NAN; 3]]] {
+        configuration(
+            relay().explicit_gammas(gammas).build().err().unwrap(),
+            "explicit_gammas",
+            "",
+        );
+    }
+    for priors in [
+        vec![0.1; 2],
+        vec![-0.1; 3],
+        vec![1.1; 3],
+        vec![f64::NAN; 3],
+        vec![f64::INFINITY; 3],
+    ] {
+        assert!(matches!(
+            relay().error_priors(&priors).build(),
+            Err(RelayBpError::InvalidMatrix(_))
+        ));
+        assert!(matches!(
+            min_sum().error_priors(&priors).build(),
+            Err(RelayBpError::InvalidMatrix(_))
+        ));
+    }
+    let invalid = ndarray::arr2(&[[1, 2, 0]]);
+    assert!(matches!(
+        RelayBpBuilder::new(&invalid.view())
+            .error_priors(&[0.1; 3])
+            .build(),
+        Err(RelayBpError::InvalidMatrix(_))
+    ));
+    assert!(matches!(
+        MinSumBpBuilder::new(&invalid.view())
+            .error_priors(&[0.1; 3])
+            .build(),
+        Err(RelayBpError::InvalidMatrix(_))
+    ));
+}
+
+#[test]
+fn strided_syndromes_and_sparse_input_validation() {
+    use pecos_decoder_core::{CheckMatrixConfig, CheckMatrixDecoder};
+    use pecos_relay_bp::RelayBpError;
+    let matrix = repetition_3_matrix();
+    let mut relay = RelayBpBuilder::new(&matrix.view())
+        .error_priors(&[0.1; 3])
+        .build()
+        .unwrap();
+    let mut min_sum = MinSumBpBuilder::new(&matrix.view())
+        .error_priors(&[0.1; 3])
+        .build()
+        .unwrap();
+    let padded = ndarray::arr1(&[1, 255, 0, 255]);
+    let strided = padded.slice(ndarray::s![..;2]);
+    let dense = ndarray::arr1(&[1, 0]);
+    assert_result_eq(
+        &relay.decode(&strided).unwrap(),
+        &relay.decode(&dense.view()).unwrap(),
+    );
+    assert_result_eq(
+        &min_sum.decode(&strided).unwrap(),
+        &min_sum.decode(&dense.view()).unwrap(),
+    );
+    for syndrome in [ndarray::arr1(&[1, 2]), ndarray::arr1(&[255, 0])] {
+        assert!(matches!(
+            relay.decode(&syndrome.view()),
+            Err(RelayBpError::InvalidSyndrome(_))
+        ));
+        assert!(matches!(
+            min_sum.decode(&syndrome.view()),
+            Err(RelayBpError::InvalidSyndrome(_))
+        ));
+    }
+    for (rows, cols) in [
+        (vec![0], vec![]),
+        (vec![], vec![0]),
+        (vec![2], vec![0]),
+        (vec![0], vec![3]),
+    ] {
+        assert!(
+            RelayBpDecoder::from_sparse_matrix_with_config(
+                rows.clone(),
+                cols.clone(),
+                (2, 3),
+                CheckMatrixConfig::default()
+            )
+            .is_err()
+        );
+        assert!(
+            MinSumBpDecoder::from_sparse_matrix_with_config(
+                rows,
+                cols,
+                (2, 3),
+                CheckMatrixConfig::default()
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn relay_validation_reports_public_gamma_fields_without_config_dumps() {
+    use pecos_relay_bp::RelayBpError;
+    let matrix = repetition_3_matrix();
+    let builder = || RelayBpBuilder::new(&matrix.view()).error_priors(&[0.1; 3]);
+    for interval in [
+        (f64::NAN, 0.1),
+        (0.1, f64::INFINITY),
+        (0.2, 0.1),
+        (-f64::MAX, f64::MAX),
+    ] {
+        let RelayBpError::Configuration(message) = builder()
+            .gamma_dist_interval(interval)
+            .build()
+            .err()
+            .unwrap()
+        else {
+            panic!("expected configuration error");
+        };
+        assert!(message.contains("gamma_dist_interval"));
+        assert!(message.contains(&interval.0.to_string()));
+        assert!(message.contains(&interval.1.to_string()));
+        assert!(!message.contains("RelayConfig"));
+    }
+    assert!(builder().gamma_dist_interval((0.0, 0.0)).build().is_ok());
+    for (gammas, expected) in [
+        (
+            vec![vec![0.1; 3], vec![0.2; 2]],
+            "explicit_gammas row 1 must have 3 columns, got column count 2",
+        ),
+        (
+            vec![vec![0.1; 3], vec![0.1, 0.2, f64::INFINITY]],
+            "explicit_gammas[1][2] must be finite, got inf",
+        ),
+    ] {
+        let RelayBpError::Configuration(message) =
+            builder().explicit_gammas(gammas).build().err().unwrap()
+        else {
+            panic!("expected configuration error");
+        };
+        assert_eq!(message, expected);
+    }
+    let error = builder().error_priors(&[0.1]).build().err().unwrap();
+    assert!(matches!(error, RelayBpError::InvalidMatrix(_)));
+    assert!(!error.to_string().contains("Invalid configuration:"));
 }

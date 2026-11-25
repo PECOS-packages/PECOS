@@ -8,6 +8,16 @@ use std::collections::BTreeMap;
 /// Structured metadata attached to QIS operations or lowered quantum operations.
 pub type TraceMetadata = BTreeMap<String, String>;
 
+/// Measurement identity carried by a single output byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "class", rename_all = "snake_case")]
+pub enum ValueProvenance {
+    Constant,
+    Measurement { id: usize },
+    Derived,
+    Unknown,
+}
+
 /// Runtime provenance for a named `result(...)` output.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NamedResultTrace {
@@ -17,6 +27,10 @@ pub struct NamedResultTrace {
     pub values: Vec<bool>,
     /// Runtime measurement result IDs read to produce `values`, in element order.
     pub result_ids: Vec<usize>,
+    /// Byte provenance, unavailable on uninstrumented or integer outputs.
+    pub provenance: Option<Vec<ValueProvenance>>,
+    /// Whether measurement-dependent control has occurred before this output.
+    pub control_dependent: Option<bool>,
 }
 
 /// Program requests handled by the runtime, in source order.

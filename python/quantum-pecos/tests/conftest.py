@@ -3,8 +3,11 @@
 # The test tree contains ``tests/pecos``. Pytest can import tests from that
 # directory as a namespace package named ``pecos`` when an individual file is run
 # in isolation. Import the installed/source package first so later
-# ``import pecos`` statements resolve to the public PECOS package.
+# ``import pecos`` statements resolve to the public PECOS package. Load the
+# catalogs package too: ``tests/pecos/qec/catalogs`` otherwise shadows it when
+# pytest collects the catalog tests on their own.
 import pecos
+import pecos.qec.catalogs
 import pytest
 
 

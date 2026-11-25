@@ -519,7 +519,9 @@ fn split_batched_tick_commands(circuit: &mut TickCircuit) {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
 
-            let split_gates: Vec<Gate> = if batch.gate_count() == 0 {
+            // Keep detection operands and result IDs intact across passes (amendment 17).
+            let split_gates: Vec<Gate> = if gate.gate_type.is_detection() || batch.gate_count() == 0
+            {
                 vec![gate.clone()]
             } else {
                 batch
@@ -1541,7 +1543,7 @@ impl CircuitPass for CompactTicks {
                 .map(|q| qubit_ready.get(q).copied().unwrap_or(0))
                 .max()
                 .unwrap_or(0);
-            if gate.gate_type.consumes_measurement_record() {
+            if crate::tick_circuit::is_measurement_for_scheduling(gate.gate_type) {
                 earliest = earliest.max(last_measurement_tick);
                 last_measurement_tick = earliest;
             }

@@ -14,8 +14,8 @@
 
 use pecos_core::clifford_rep::CliffordRep;
 use pecos_core::{Pauli, PauliOperator, PauliString, QuarterPhase, QubitId};
+use pecos_simulators::stab_tn::stab_mps::{PauliKind, StabMps};
 use pecos_simulators::{ArbitraryRotationGateable, CHForm, CliffordGateable, QuantumSimulator};
-use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PySet, PyTuple};
 
@@ -568,9 +568,9 @@ impl PyStabMps {
     #[getter]
     fn measurement(&self) -> &'static str {
         match self.inner.measurement_mode() {
-            pecos_stab_tn::stab_mps::MeasurementMode::Exact => "exact",
-            pecos_stab_tn::stab_mps::MeasurementMode::Pragmatic => "pragmatic",
-            pecos_stab_tn::stab_mps::MeasurementMode::Lazy => "lazy",
+            pecos_simulators::stab_tn::stab_mps::MeasurementMode::Exact => "exact",
+            pecos_simulators::stab_tn::stab_mps::MeasurementMode::Pragmatic => "pragmatic",
+            pecos_simulators::stab_tn::stab_mps::MeasurementMode::Lazy => "lazy",
         }
     }
 

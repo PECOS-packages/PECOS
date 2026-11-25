@@ -42,6 +42,8 @@ use crate::command::GateType;
 use crate::extensible::{GateCategory, GateDefinitions, GateId, GateSpec};
 use pecos_core::{Angle64, QubitId, TimeUnits};
 use smallvec::SmallVec;
+#[cfg(feature = "composite-noise")]
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Simple bit vector implementation using u64 words.
@@ -225,6 +227,8 @@ pub(crate) struct EnclosingEvent {
     qubit_index: usize,
     sampled_correlation: Option<usize>,
     gate_qubits: SmallVec<[QubitId; 2]>,
+    group_leader: Option<usize>,
+    sequence_skips: BTreeMap<(usize, usize), SmallVec<[QubitId; 4]>>,
     fired_flags: [bool; 4],
 }
 
@@ -278,6 +282,12 @@ pub struct NoiseContext {
     sampled_correlation: Option<usize>,
     /// The qubits involved in the current gate.
     current_gate_qubits: SmallVec<[QubitId; 2]>,
+    /// Stable eligible leader of the selected composite operand group.
+    #[cfg(feature = "composite-noise")]
+    group_leader: Option<usize>,
+    /// Skip targets already reported at each sequence site and step in this group/stage.
+    #[cfg(feature = "composite-noise")]
+    sequence_skips: BTreeMap<(usize, usize), SmallVec<[QubitId; 4]>>,
     /// Per-qubit "fired" flags for two-stage processing.
     /// Index corresponds to qubit position in gate (0, 1, ...).
     fired_flags: [bool; 4],
@@ -322,6 +332,10 @@ impl NoiseContext {
             current_qubit_index: 0,
             sampled_correlation: None,
             current_gate_qubits: SmallVec::new(),
+            #[cfg(feature = "composite-noise")]
+            group_leader: None,
+            #[cfg(feature = "composite-noise")]
+            sequence_skips: BTreeMap::new(),
             fired_flags: [false; 4],
             gate_definitions: None,
         }
@@ -457,6 +471,8 @@ impl NoiseContext {
             qubit_index: std::mem::take(&mut self.current_qubit_index),
             sampled_correlation: self.sampled_correlation.take(),
             gate_qubits: std::mem::take(&mut self.current_gate_qubits),
+            group_leader: self.group_leader.take(),
+            sequence_skips: std::mem::take(&mut self.sequence_skips),
             fired_flags: std::mem::take(&mut self.fired_flags),
         }
     }
@@ -470,6 +486,8 @@ impl NoiseContext {
         self.current_qubit_index = enclosing.qubit_index;
         self.sampled_correlation = enclosing.sampled_correlation;
         self.current_gate_qubits = enclosing.gate_qubits;
+        self.group_leader = enclosing.group_leader;
+        self.sequence_skips = enclosing.sequence_skips;
         self.fired_flags = enclosing.fired_flags;
     }
 
@@ -504,18 +522,75 @@ impl NoiseContext {
     /// allowing actions to know which qubit they're processing and access
     /// the other qubits involved.
     pub fn set_current_qubit_index(&mut self, index: usize, gate_qubits: &[QubitId]) {
-        if self.current_gate.is_some() && self.current_gate_qubits.as_slice() != gate_qubits {
-            self.sampled_correlation = None;
-            self.clear_fired_flags();
-        }
-        self.current_qubit_index = index;
-        self.current_gate_qubits = gate_qubits.iter().copied().collect();
+        self.select_operand_group(index, gate_qubits);
     }
 
-    /// Select a member of the operands already in context, without copying them.
+    /// Select a member and install its operands, returning whether the group changed.
+    pub(crate) fn select_operand_group(&mut self, index: usize, gate_qubits: &[QubitId]) -> bool {
+        let changed = self.current_gate_qubits.as_slice() != gate_qubits;
+        if changed {
+            #[cfg(feature = "composite-noise")]
+            self.sequence_skips.clear();
+            if self.current_gate.is_some() {
+                self.sampled_correlation = None;
+                self.clear_fired_flags();
+            }
+            self.current_gate_qubits = gate_qubits.iter().copied().collect();
+        }
+        self.current_qubit_index = index;
+        changed
+    }
+
+    /// Expose the actual storage mode to operand-buffer regression tests.
+    #[cfg(all(test, feature = "composite-noise"))]
+    pub(crate) fn current_gate_qubits_spilled(&self) -> bool {
+        self.current_gate_qubits.spilled()
+    }
+
+    /// Select a member without copying the optionally installed operands.
     #[cfg(feature = "composite-noise")]
     pub(crate) fn set_current_member_index(&mut self, index: usize) {
         self.current_qubit_index = index;
+    }
+
+    /// Set the leader when a composite selects an operand group.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn set_group_leader(&mut self, leader: Option<usize>) {
+        self.group_leader = leader;
+        self.sequence_skips.clear();
+    }
+
+    /// Insert nonempty skip targets for a sequence step; empty input leaves records intact.
+    ///
+    /// This method only inserts records. They are cleared with the group, stage or
+    /// event, and saved/restored across nested events.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn record_sequence_skips(
+        &mut self,
+        site: usize,
+        step: usize,
+        mut qubits: SmallVec<[QubitId; 4]>,
+    ) {
+        if !qubits.is_empty() {
+            qubits.sort_unstable();
+            qubits.dedup();
+            self.sequence_skips.insert((site, step), qubits);
+        }
+    }
+
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn sequence_skipped(&self, site: usize, step: usize, qubit: QubitId) -> bool {
+        !self.sequence_skips.is_empty()
+            && self
+                .sequence_skips
+                .get(&(site, step))
+                .is_some_and(|qubits| qubits.binary_search(&qubit).is_ok())
+    }
+
+    /// Get the selected group's stable leader, or `None` for standalone actions.
+    #[cfg(feature = "composite-noise")]
+    pub(crate) fn group_leader(&self) -> Option<usize> {
+        self.group_leader
     }
 
     /// Get the current qubit index within a multi-qubit gate.
@@ -525,6 +600,14 @@ impl NoiseContext {
     }
 
     /// Get the qubits involved in the current gate.
+    ///
+    /// `other_qubit()` and partner conditions depend on these installed operands.
+    /// Geometric single-pass non-gate channels install them before sampling only
+    /// if their primitive declares `reads_operands`; otherwise this slice is empty.
+    #[cfg_attr(
+        feature = "composite-noise",
+        doc = "See [`Primitive::reads_operands`](crate::noise::composite::Primitive::reads_operands)."
+    )]
     #[must_use]
     pub fn current_gate_qubits(&self) -> &[QubitId] {
         &self.current_gate_qubits
@@ -561,6 +644,8 @@ impl NoiseContext {
         self.current_qubit_index = 0;
         self.sampled_correlation = None;
         self.current_gate_qubits.clear();
+        #[cfg(feature = "composite-noise")]
+        self.set_group_leader(None);
         self.fired_flags = [false; 4];
     }
 

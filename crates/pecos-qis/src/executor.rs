@@ -3,9 +3,7 @@
 //! This module implements the `QisInterface` trait for Selene's Helios compiler.
 
 use crate::qis_interface::{DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface};
-use crate::selene_runtimes::{
-    bundled_library, find_library_in_dir, platform_hashed_library_pattern, platform_library_name,
-};
+use crate::selene_runtimes::{bundled_library, find_library_in_dir, platform_library_name};
 use libloading::{Library, Symbol};
 use log::{debug, error, info, warn};
 use pecos_qis_ffi_types::OperationCollector;
@@ -15,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use tempfile::NamedTempFile;
+
+mod scoped_execution;
 
 /// Process-wide singleton for the QIS FFI library.
 ///
@@ -228,8 +228,10 @@ impl SharedLibrary {
 // FFI function type aliases for dlopen symbol lookup
 type ResetInterfaceFn = unsafe extern "C" fn();
 type GetOperationsFn = unsafe extern "C" fn() -> *mut OperationCollector;
-type CallQmainFn = unsafe extern "C" fn(extern "C" fn(u64) -> u64) -> u64;
-type CallVoidMainFn = unsafe extern "C" fn(extern "C" fn()) -> u64;
+// Program frames may be traversed by Windows longjmp. The outer guard catches
+// that transfer and remains a non-unwinding C boundary.
+type CallQmainFn = unsafe extern "C" fn(unsafe extern "C-unwind" fn(u64) -> u64) -> u64;
+type CallVoidMainFn = unsafe extern "C" fn(unsafe extern "C-unwind" fn()) -> u64;
 
 /// The entry-point shape found in a compiled QIR program, bundled with the
 /// matching setjmp wrapper from the FFI runtime. Each variant pairs the function
@@ -237,11 +239,11 @@ type CallVoidMainFn = unsafe extern "C" fn(extern "C" fn()) -> u64;
 /// `void main()` through the qmain wrapper) is undefined behaviour.
 enum ExecutionEntryPoint<'a> {
     Qmain {
-        func: Symbol<'a, extern "C" fn(u64) -> u64>,
+        func: Symbol<'a, unsafe extern "C-unwind" fn(u64) -> u64>,
         call: Symbol<'a, CallQmainFn>,
     },
     VoidMain {
-        func: Symbol<'a, extern "C" fn()>,
+        func: Symbol<'a, unsafe extern "C-unwind" fn()>,
         call: Symbol<'a, CallVoidMainFn>,
     },
 }
@@ -728,6 +730,42 @@ fn library_load_error(context: &str, error: &libloading::Error) -> InterfaceErro
     InterfaceError::ExecutionError(format!("{context}: {detail}"))
 }
 
+// Primitive-only handshake: do not inspect any runtime-owned Rust value until
+// this succeeds. A matching stamp detects stale builds, not arbitrary ABI safety.
+fn validate_qis_ffi_abi(library: &Library, path: &Path) -> Result<(), InterfaceError> {
+    type FingerprintFn = unsafe extern "C" fn(u32) -> u64;
+    const SYMBOL: &[u8] = b"pecos_qis_ffi_abi_fingerprint_v1\0";
+    let remedy = "Rebuild pecos-qis-ffi and the host/Python extension from the same checkout, \
+                  Rust toolchain, target, profile and build flags. Correct or unset \
+                  PECOS_QIS_FFI_PATH if it selects an older library, then restart the process.";
+    // SAFETY: The versioned export has a fixed-width integer-only C ABI.
+    let fingerprint = unsafe { library.get::<FingerprintFn>(SYMBOL) }.map_err(|_| {
+        InterfaceError::LoadError(format!(
+            "QIS FFI library {} has no compatible build fingerprint (missing pecos_qis_ffi_abi_fingerprint_v1). {remedy}",
+            path.display()
+        ))
+    })?;
+    let mut actual = [0_u64; 4];
+    for (index, word) in (0_u32..4).zip(&mut actual) {
+        // SAFETY: Only the declared primitive handshake is called, with valid indices.
+        *word = unsafe { fingerprint(index) };
+    }
+    let expected = pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT;
+    if actual != expected {
+        let hex = |words: [u64; 4]| {
+            let [a, b, c, d] = words;
+            format!("{a:016x}{b:016x}{c:016x}{d:016x}")
+        };
+        return Err(InterfaceError::LoadError(format!(
+            "QIS FFI library {} has an incompatible build fingerprint: expected {}, found {}. {remedy}",
+            path.display(),
+            hex(expected),
+            hex(actual)
+        )));
+    }
+    Ok(())
+}
+
 fn link_error_message(stdout: &[u8], stderr: &[u8]) -> String {
     // Clang and its platform linker can report errors on different streams.
     format!(
@@ -892,17 +930,11 @@ impl QisHeliosInterface {
             .map_err(|e| InterfaceError::LoadError(e.clone()))
     }
 
-    /// Find the `libpecos_qis_ffi` library by searching common locations.
+    /// Find QIS FFI through `PECOS_QIS_FFI_PATH`, the registered host bundle,
+    /// then a library directly next to the running executable.
+    /// Prepare development libraries with `pecos qis-runtime` or `just build-debug`.
     ///
-    /// Issue #365 discovery precedence is: the authoritative
-    /// `PECOS_QIS_FFI_PATH` override; executable-adjacent and compile-time
-    /// workspace artifacts from this build; `CARGO_TARGET_DIR`; then the
-    /// remaining parent/cwd fallbacks. Keeping runtime Cargo overrides below
-    /// build-associated locations reduces the risk of loading a stale,
-    /// ABI-incompatible FFI library across ownership-transferring calls.
-    ///
-    /// Unlike `PECOS_SELENE_DIR`, which is one source in a fallthrough search,
-    /// a set-but-invalid `PECOS_QIS_FFI_PATH` fails loudly because it is an
+    /// A set-but-invalid `PECOS_QIS_FFI_PATH` fails loudly because it is an
     /// authoritative per-purpose override.
     fn find_pecos_qis_lib() -> Result<PathBuf, InterfaceError> {
         let lib_name = platform_library_name("pecos_qis_ffi");
@@ -912,15 +944,8 @@ impl QisHeliosInterface {
             std::env::consts::OS
         );
 
-        let profile_order = if cfg!(debug_assertions) {
-            ["debug", "release"]
-        } else {
-            ["release", "debug"]
-        };
-
         if let Some(override_path) = std::env::var_os("PECOS_QIS_FFI_PATH") {
             let override_path = PathBuf::from(override_path);
-            let hashed_pattern = platform_hashed_library_pattern("pecos_qis_ffi");
             if override_path.is_file() {
                 return Ok(override_path);
             }
@@ -931,7 +956,7 @@ impl QisHeliosInterface {
             }
 
             return Err(InterfaceError::ExecutionError(format!(
-                "PECOS_QIS_FFI_PATH is set to {}, but no library was found. Searched it as a direct file and searched for {lib_name} and {hashed_pattern} in the directory and its deps subdirectory",
+                "PECOS_QIS_FFI_PATH is set to {}, but no library was found. Searched it as a direct file or for {lib_name} directly in the directory. Set PECOS_QIS_FFI_PATH and PECOS_SELENE_DIR to the directory printed by `pecos qis-runtime --profile <profile>` using the profile you built with, use `pecos rust test --profile <profile>`, or run `pecos python build --profile <profile>` with the same profile (for example `just build-debug` for debug)",
                 override_path.display()
             )));
         }
@@ -951,104 +976,21 @@ impl QisHeliosInterface {
 
         debug!("Executable directory: {}", exe_dir.display());
 
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        Self::find_pecos_qis_lib_from_roots(&exe_dir, &manifest_dir, &profile_order, &lib_name)
+        Self::find_pecos_qis_lib_from_roots(&exe_dir, &lib_name)
     }
 
     fn find_pecos_qis_lib_from_roots(
         exe_dir: &Path,
-        manifest_dir: &Path,
-        profile_order: &[&str; 2],
         lib_name: &str,
     ) -> Result<PathBuf, InterfaceError> {
-        let mut candidate_paths = vec![
-            exe_dir.join(lib_name),
-            exe_dir.join(format!("deps/{lib_name}")),
-        ];
-
-        // Editable/development installs may execute from outside the checkout.
-        // Preserve the workspace target as a stable fallback in that case.
-        if let Some(workspace_root) = manifest_dir.parent().and_then(std::path::Path::parent) {
-            for profile in profile_order {
-                candidate_paths.push(workspace_root.join(format!("target/{profile}/{lib_name}")));
-                candidate_paths
-                    .push(workspace_root.join(format!("target/{profile}/deps/{lib_name}")));
-            }
+        let path = exe_dir.join(lib_name);
+        if path.is_file() {
+            return Ok(path);
         }
-
-        if let Some(path) = candidate_paths.iter().find(|path| path.is_file()) {
-            return Ok(path.clone());
-        }
-
-        if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
-            let target_dir = PathBuf::from(target_dir);
-            for profile in profile_order {
-                let profile_dir = target_dir.join(profile);
-                if let Some(path) = find_library_in_dir(&profile_dir, "pecos_qis_ffi") {
-                    return Ok(path);
-                }
-                candidate_paths.push(profile_dir.join(lib_name));
-                candidate_paths.push(profile_dir.join("deps").join(lib_name));
-            }
-        }
-
-        if let Some(parent) = exe_dir.parent() {
-            candidate_paths.push(parent.join(lib_name));
-            candidate_paths.push(parent.join(format!("deps/{lib_name}")));
-        }
-
-        if let Ok(current_dir) = std::env::current_dir() {
-            debug!("Current directory: {}", current_dir.display());
-            for profile in profile_order {
-                candidate_paths.push(current_dir.join(format!("target/{profile}/{lib_name}")));
-                candidate_paths.push(current_dir.join(format!("target/{profile}/deps/{lib_name}")));
-            }
-
-            // Search up the directory tree for workspace root (when running from Python)
-            let mut search_dir = current_dir.as_path();
-            for _ in 0..5 {
-                // Search up to 5 levels
-                if let Some(parent) = search_dir.parent() {
-                    for profile in profile_order {
-                        candidate_paths.push(parent.join(format!("target/{profile}/{lib_name}")));
-                        candidate_paths
-                            .push(parent.join(format!("target/{profile}/deps/{lib_name}")));
-                    }
-                    search_dir = parent;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        debug!("Searching {} candidate paths...", candidate_paths.len());
-
-        // Check each path and report which ones exist
-        let mut found_files = Vec::new();
-        for path in &candidate_paths {
-            if path.exists() {
-                debug!("Found library: {}", path.display());
-                found_files.push(path.clone());
-            }
-        }
-
-        if found_files.is_empty() {
-            warn!("No matching files found!");
-            warn!("Searched paths:");
-            for (i, path) in candidate_paths.iter().enumerate() {
-                warn!("  {}: {}", i + 1, path.display());
-            }
-        }
-
-        candidate_paths
-            .iter()
-            .find(|p| p.exists())
-            .ok_or_else(|| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to find {lib_name}. Searched in: {candidate_paths:?}"
-                ))
-            })
-            .cloned()
+        Err(InterfaceError::ExecutionError(format!(
+            "Failed to find {lib_name}. No registered bundle or executable-adjacent library at {}. Set PECOS_QIS_FFI_PATH and PECOS_SELENE_DIR to the directory printed by `pecos qis-runtime --profile <profile>` using the profile you built with (add --tests for Rust tests), use `pecos rust test --profile <profile>`, or run `pecos python build --profile <profile>` with the same profile (for example `just build-debug` for debug).",
+            path.display()
+        )))
     }
 
     fn validate_qis_ffi_abi(lib: &Library) -> Result<(), String> {
@@ -1088,6 +1030,7 @@ impl QisHeliosInterface {
                     Ok((lib_global, lib)) => {
                         Self::validate_qis_ffi_abi(&lib)
                             .map_err(|error| format!("{error} ({})", lib_path.display()))?;
+                        validate_qis_ffi_abi(&lib, &lib_path).map_err(|error| error.to_string())?;
                         debug!("QIS FFI library singleton initialized successfully");
                         Ok(SharedLibrary {
                             _global_handle: std::mem::ManuallyDrop::new(lib_global),
@@ -1330,7 +1273,7 @@ impl QisHeliosInterface {
         // Prefer `qmain` (Helios profile); fall back to `main` (void-return form).
         // We look up qmain first because it's the only one we want to call
         // through the i64-returning wrapper.
-        let qmain_fn: Result<Symbol<'a, extern "C" fn(u64) -> u64>, _> =
+        let qmain_fn: Result<Symbol<'a, unsafe extern "C-unwind" fn(u64) -> u64>, _> =
             unsafe { program_lib.get(b"qmain\0") };
 
         if let Ok(func) = qmain_fn {
@@ -1348,7 +1291,7 @@ impl QisHeliosInterface {
 
         // No qmain -- try `main` and dispatch through the void-main wrapper so
         // we don't read a garbage value out of the return register.
-        let main_fn: Symbol<'a, extern "C" fn()> = unsafe {
+        let main_fn: Symbol<'a, unsafe extern "C-unwind" fn()> = unsafe {
             program_lib.get(b"main\0").map_err(|e| {
                 InterfaceError::ExecutionError(format!(
                     "Failed to find qmain or main entry point: {e}"
@@ -1998,7 +1941,11 @@ entry:
     fn execute_program(
         &mut self,
         measurements: Option<&BTreeMap<usize, bool>>,
+        mut scoped: Option<&mut scoped_execution::RequestHost<'_>>,
     ) -> Result<OperationCollector, InterfaceError> {
+        // Reject host-side nested execution before context registration/reset;
+        // the native guard alone is too late to protect the outer context.
+        let _execution_scope = scoped_execution::ExecutionScope::enter()?;
         // Verify the executable path is set
         let so_path = self.executable_path.as_ref().ok_or_else(|| {
             InterfaceError::ExecutionError(
@@ -2116,11 +2063,17 @@ entry:
             // FFI Rust guard export → C setjmp → program qmain/main → FFI QIS or
             // selene_* adapter → thread-local operation collection. Termination
             // transfers to the C guard, which cleans up and restores the handler.
-            let (entry_label, result) = match &entry_point {
-                // SAFETY: Symbols were resolved with matching entry/guard ABIs.
-                ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
-                // SAFETY: Symbols were resolved with matching entry/guard ABIs.
-                ExecutionEntryPoint::VoidMain { func, call } => ("main", unsafe { call(**func) }),
+            let (entry_label, result) = if let Some(host) = scoped.as_mut() {
+                scoped_execution::call(pecos_qis_lib.inner(), ctx, &entry_point, host)?
+            } else {
+                match &entry_point {
+                    // SAFETY: Symbols were resolved with matching entry/guard ABIs.
+                    ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
+                    // SAFETY: Symbols were resolved with matching entry/guard ABIs.
+                    ExecutionEntryPoint::VoidMain { func, call } => {
+                        ("main", unsafe { call(**func) })
+                    }
+                }
             };
             // Read the error while this worker still has its context registered.
             // A type mismatch is fatal even if the program returned normally.
@@ -2348,7 +2301,33 @@ impl QisInterface for QisHeliosInterface {
 
     fn collect_operations(&mut self) -> Result<OperationCollector, InterfaceError> {
         // Execute the program and collect operations (no pre-populated measurements)
-        self.execute_program(None)
+        self.execute_program(None, None)
+    }
+
+    fn supports_scoped_execution(&self) -> bool {
+        true
+    }
+
+    fn collect_operations_scoped(
+        &mut self,
+        request: &mut dyn FnMut(u64) -> Result<(), InterfaceError>,
+    ) -> Result<OperationCollector, InterfaceError> {
+        if !self.dynamic_mode {
+            return Err(InterfaceError::ExecutionError(
+                "Scoped execution requires dynamic mode".into(),
+            ));
+        }
+        let mut host = scoped_execution::RequestHost::new(request);
+        let execution = self.execute_program(None, Some(&mut host));
+        // Program guards and TLS registration have returned before propagating
+        // a host failure. No unwind crosses the C callback or program frames.
+        if let Some(payload) = host.panic.take() {
+            std::panic::resume_unwind(payload);
+        }
+        if let Some(error) = host.error.take() {
+            return Err(error);
+        }
+        execution
     }
 
     fn execute_with_measurements(
@@ -2357,7 +2336,7 @@ impl QisInterface for QisHeliosInterface {
     ) -> Result<OperationCollector, InterfaceError> {
         // Execute with pre-populated measurements via the cdylib
         // This enables dynamic circuits where conditionals depend on measurement results
-        self.execute_program(Some(&measurements))
+        self.execute_program(Some(&measurements), None)
     }
 
     fn set_program_shot(&mut self, shot: u64) {
@@ -2526,6 +2505,13 @@ mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
+
+    // Keep the compiled ABI probe in the executor::tests filter used by the
+    // Python compatibility smoke builds on all supported host platforms.
+    #[test]
+    fn compiled_entries_use_scoped_requests_in_the_selected_ffi() {
+        super::scoped_request_tests::run_compiled_entries();
+    }
 
     // Only primitive/pointer ABI types: this oracle also runs on Windows.
     #[test]
@@ -4184,6 +4170,12 @@ attributes #0 = { "EntryPoint" }
             format!(
                 "int pecos_test_helper(void);\nint pecos_test_runtime(void) {{ return pecos_test_helper(); }}\nunsigned long long pecos_qis_ffi_abi_version(void) {{ return {}; }}\n",
                 pecos_qis_ffi_types::QIS_FFI_ABI_VERSION,
+            ) + &format!(
+                "unsigned long long pecos_qis_ffi_abi_fingerprint_v1(unsigned int i) {{ unsigned long long words[4] = {{ {}ULL, {}ULL, {}ULL, {}ULL }}; return i < 4 ? words[i] : 0; }}\n",
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[0],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[1],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[2],
+                pecos_qis_ffi_types::QIS_FFI_ABI_FINGERPRINT[3],
             ),
         )
         .expect("write runtime source");
@@ -4579,13 +4571,13 @@ attributes #0 = { "EntryPoint" }
     }
 
     #[test]
-    fn qis_ffi_env_accepts_directory_with_hashed_deps_library() {
+    fn qis_ffi_env_rejects_directory_with_hashed_deps_library() {
         // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
         // possibly from a parallel test, so change it only in a child process.
         const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_HASHED_DIR";
         if std::env::var_os(CHILD_ENV).is_none() {
             run_test_in_child(
-                "executor::tests::qis_ffi_env_accepts_directory_with_hashed_deps_library",
+                "executor::tests::qis_ffi_env_rejects_directory_with_hashed_deps_library",
                 &[(CHILD_ENV, "1".as_ref())],
             );
             return;
@@ -4604,10 +4596,17 @@ attributes #0 = { "EntryPoint" }
         File::create(&library_path).expect("create hashed library");
         let _env = EnvVarGuard::set("PECOS_QIS_FFI_PATH", temp_dir.path());
 
-        assert_eq!(
-            QisHeliosInterface::find_pecos_qis_lib().expect("find hashed library"),
-            library_path
-        );
+        let error = QisHeliosInterface::find_pecos_qis_lib()
+            .expect_err("unreported hashed library")
+            .to_string();
+        for text in [
+            "PECOS_QIS_FFI_PATH",
+            &temp_dir.path().display().to_string(),
+            &exact_name,
+            "pecos qis-runtime --profile <profile>",
+        ] {
+            assert!(error.contains(text), "{error}");
+        }
     }
 
     #[test]
@@ -4634,110 +4633,68 @@ attributes #0 = { "EntryPoint" }
     }
 
     #[test]
-    fn qis_ffi_cargo_target_finds_hashed_deps_library() {
-        const CHILD_ENV: &str = "PECOS_TEST_CARGO_TARGET_HASHED";
-        if std::env::var_os(CHILD_ENV).is_none() {
-            // Runtime tests also discover libraries through CARGO_TARGET_DIR.
-            run_test_in_child(
-                "executor::tests::qis_ffi_cargo_target_finds_hashed_deps_library",
-                &[(CHILD_ENV, "1".as_ref())],
-            );
+    fn qis_ffi_bundle_and_override_precedence() {
+        const CHILD: &str = "PECOS_TEST_FFI_BUNDLE";
+        if std::env::var_os(CHILD).is_none() {
+            crate::test_env::join_test_child(crate::test_env::spawn_test_child_removing(
+                "executor::tests::qis_ffi_bundle_and_override_precedence",
+                &[(CHILD, "1".as_ref())],
+                &["PECOS_QIS_FFI_PATH", "PECOS_SELENE_DIR"],
+            ));
             return;
         }
-        let _env_lock = ENV_MUTEX
+        let _lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let temp_dir = tempfile::tempdir().expect("create temp directory");
-        let cargo_target = temp_dir.path().join("cargo-target");
-        let profile = if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        };
-        let deps_dir = cargo_target.join(profile).join("deps");
-        std::fs::create_dir_all(&deps_dir).expect("create Cargo deps directory");
-        let exact_name = platform_library_name("pecos_qis_ffi");
-        let (stem, extension) = exact_name
-            .rsplit_once('.')
-            .expect("platform library name has extension");
-        let library_path = deps_dir.join(format!("{stem}-abc123.{extension}"));
-        File::create(&library_path).expect("create hashed library");
-        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", &cargo_target);
-
-        let fake_exe_dir = temp_dir.path().join("untrusted/bin");
-        let fake_manifest_dir = temp_dir.path().join("untrusted/workspace/crates/pecos-qis");
-        let profile_order = if cfg!(debug_assertions) {
-            ["debug", "release"]
-        } else {
-            ["release", "debug"]
-        };
-
+        let bundle = tempfile::tempdir().expect("bundle directory");
+        let library = bundle.path().join(platform_library_name("pecos_qis_ffi"));
+        File::create(&library).expect("bundled library");
+        crate::set_bundled_library_dir(bundle.path()).expect("register bundle");
         assert_eq!(
-            QisHeliosInterface::find_pecos_qis_lib_from_roots(
-                &fake_exe_dir,
-                &fake_manifest_dir,
-                &profile_order,
-                &exact_name,
-            )
-            .expect("find hashed Cargo target library"),
-            library_path
+            QisHeliosInterface::find_pecos_qis_lib().expect("bundle lookup"),
+            library
         );
+
+        let explicit = bundle.path().join("explicit-library");
+        File::create(&explicit).expect("explicit library");
+        let _override = EnvVarGuard::set("PECOS_QIS_FFI_PATH", &explicit);
+        assert_eq!(
+            QisHeliosInterface::find_pecos_qis_lib().expect("explicit lookup"),
+            explicit
+        );
+
+        let empty = tempfile::tempdir().expect("invalid override directory");
+        let _invalid = EnvVarGuard::set("PECOS_QIS_FFI_PATH", empty.path());
+        let error = QisHeliosInterface::find_pecos_qis_lib()
+            .expect_err("invalid override must not fall back to bundle");
+        assert!(error.to_string().contains("PECOS_QIS_FFI_PATH"));
     }
 
     #[test]
-    fn qis_ffi_build_associated_library_precedes_cargo_target() {
-        const CHILD_ENV: &str = "PECOS_TEST_CARGO_TARGET_PRECEDENCE";
-        if std::env::var_os(CHILD_ENV).is_none() {
-            run_test_in_child(
-                "executor::tests::qis_ffi_build_associated_library_precedes_cargo_target",
-                &[(CHILD_ENV, "1".as_ref())],
-            );
-            return;
-        }
-        let _env_lock = ENV_MUTEX
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let temp_dir = tempfile::tempdir().expect("create temp directory");
-        let exe_dir = temp_dir.path().join("bin");
-        std::fs::create_dir(&exe_dir).expect("create executable directory");
-        let exact_name = platform_library_name("pecos_qis_ffi");
-        let exe_library = exe_dir.join(&exact_name);
-        File::create(&exe_library).expect("create executable-adjacent library");
-
-        let cargo_target = temp_dir.path().join("cargo-target");
-        let profile = if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        };
-        let cargo_deps = cargo_target.join(profile).join("deps");
-        std::fs::create_dir_all(&cargo_deps).expect("create Cargo deps directory");
-        let (stem, extension) = exact_name
-            .rsplit_once('.')
-            .expect("platform library name has extension");
-        File::create(cargo_deps.join(format!("{stem}-newer.{extension}")))
-            .expect("create Cargo target library");
-        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", cargo_target);
-
-        let fake_manifest_dir = temp_dir.path().join("workspace/crates/pecos-qis");
-        let profile_order = if cfg!(debug_assertions) {
-            ["debug", "release"]
-        } else {
-            ["release", "debug"]
-        };
-
+    fn qis_ffi_only_searches_directly_beside_executable() {
+        let directory = tempfile::tempdir().expect("executable directory");
+        let name = platform_library_name("pecos_qis_ffi");
+        let deps = directory.path().join("deps");
+        std::fs::create_dir(&deps).expect("deps directory");
+        File::create(deps.join(&name)).expect("ignored dependency library");
+        let error = QisHeliosInterface::find_pecos_qis_lib_from_roots(directory.path(), &name)
+            .expect_err("must not search deps beside executable");
+        assert!(error.to_string().contains("pecos qis-runtime"));
+        let library = directory.path().join(&name);
+        File::create(&library).expect("executable-adjacent library");
         assert_eq!(
-            QisHeliosInterface::find_pecos_qis_lib_from_roots(
-                &exe_dir,
-                &fake_manifest_dir,
-                &profile_order,
-                &exact_name,
-            )
-            .expect("find build-associated library"),
-            exe_library
+            QisHeliosInterface::find_pecos_qis_lib_from_roots(directory.path(), &name)
+                .expect("adjacent library"),
+            library
         );
     }
 }
 
 #[cfg(test)]
 mod selene_tests;
+
+#[cfg(test)]
+mod abi_tests;
+
+#[cfg(test)]
+mod scoped_request_tests;

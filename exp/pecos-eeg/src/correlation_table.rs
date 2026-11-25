@@ -150,7 +150,7 @@ impl CorrelationTable {
             for o in &obs_list {
                 let _ = write!(targets, " L{o}");
             }
-            lines.push(format!("error({p_edge:.6e}) {targets}"));
+            lines.push(format!("error({p_edge}) {targets}"));
         }
 
         // Boundary edges: P(Di AND Lk) - P(Di)*P(Lk)
@@ -174,7 +174,7 @@ impl CorrelationTable {
                     continue;
                 }
 
-                lines.push(format!("error({p_boundary:.6e}) D{di} L{obs_id}"));
+                lines.push(format!("error({p_boundary}) D{di} L{obs_id}"));
             }
         }
 
@@ -420,7 +420,7 @@ mod tests {
         };
         assert_eq!(
             table.to_matching_dem(),
-            "error(3.000000e-2) D2 D5 L3\nerror(1.200000e-1) D2 L3"
+            "error(0.03) D2 D5 L3\nerror(0.12) D2 L3"
         );
     }
 
@@ -434,7 +434,7 @@ mod tests {
             num_observables: 1,
             num_walks: 0,
         };
-        assert_eq!(table.to_matching_dem(), "error(1.000000e-2) D5 L3");
+        assert_eq!(table.to_matching_dem(), "error(0.01) D5 L3");
     }
 
     #[test]

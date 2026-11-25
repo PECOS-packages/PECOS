@@ -491,7 +491,7 @@ fn mixed_support_and_odd_overlap() {
 }
 
 fn check_roundoff_endpoint(pair: bool) {
-    use pecos_stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
+    use pecos_simulators::stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
 
     for outcome in [false, true] {
         let mut sim = StabActive::with_seed(1, 34);
@@ -645,4 +645,11 @@ fn signed_clifford_paulis_match_dense_matrix() {
             }
         }
     }
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn platform_maximum_active_width() {
+    const MAX_WIDTH: usize = StabActive::max_supported_active_width();
+    assert_eq!(MAX_WIDTH, 58);
 }

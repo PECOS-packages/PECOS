@@ -616,7 +616,8 @@ impl PyStateVec {
     }
 
     #[staticmethod]
-    fn _from_pickle(num_qubits: usize, state_bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
+    #[pyo3(name = "_from_pickle")]
+    fn from_pickle(num_qubits: usize, state_bytes: &Bound<'_, PyBytes>) -> PyResult<Self> {
         let bytes = state_bytes.as_bytes();
         let expected_len = (1usize << num_qubits) * 16;
         if bytes.len() != expected_len {

@@ -357,6 +357,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
     chunks: list[dict[str, Any]],
     *,
     measurement_crosstalk_topology: str | None = None,
+    preserve_measurement_kinds: bool = False,
 ) -> TickCircuit:
     """Replay lowered post-runtime ByteMessage gate batches into a TickCircuit.
 
@@ -365,12 +366,12 @@ def _replay_lowered_qis_trace_into_tick_circuit(
     a tick --- matching the parallel structure of the abstract circuit.
 
     MeasIds flow from runtime-lowered measurement provenance:
-    ``lowered_quantum_ops`` MZ and MeasureLeaked entries must carry
-    ``measurement_result_ids``. MeasureLeaked is replayed as the Boolean MZ
-    component of the accepted no-leakage path; leakage probability remains
-    outside the Pauli circuit/DEM model. This avoids inferring lowered
-    measurement IDs from raw QIS operation order, which is not stable under
-    runtime scheduling or transport.
+    ``lowered_quantum_ops`` MZ and herald-measurement entries must carry
+    ``measurement_result_ids``. Analysis replay retains the Boolean MZ component
+    of the accepted no-leakage/no-loss path; herald probabilities remain outside
+    the Pauli circuit/DEM model. Visual replay preserves each measurement kind. This
+    avoids inferring lowered measurement IDs from raw QIS operation order,
+    which is not stable under runtime scheduling or transport.
     """
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
         measurement_crosstalk_topology,
@@ -394,6 +395,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
             angles = _trace_gate_float_list(gate, "angles", gate_type)
             params = _trace_gate_float_list(gate, "params", gate_type)
             metadata = _lowered_gate_metadata(gate)
+            first_emitted_tick = tick_circuit.num_ticks()
             tick = tick_circuit.tick()
 
             if gate_type == "H":
@@ -419,7 +421,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                     msg = f"Lowered Idle gate expected one duration param, got {params!r}"
                     raise ValueError(msg)
                 tick.idle(_runtime_idle_seconds_to_time_units(params[0]), qubits)
-            elif gate_type in {"MZ", "MeasureLeaked"}:
+            elif gate_type in {"MZ", "MeasureLeaked", "MeasureZLeaked", "MeasureZLost", "MeasureZLeakedLost"}:
                 if not isinstance(gate.get("measurement_result_ids"), list):
                     msg = (
                         f"Lowered {gate_type} trace is missing measurement_result_ids; "
@@ -449,7 +451,16 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                         "MeasCrosstalkGlobalPayload",
                         qubits,
                     )
-                tick.mz_with_ids(qubits, [int(meas_id) for meas_id in meas_ids])
+                if preserve_measurement_kinds and gate_type != "MZ":
+                    insert_measurement = {
+                        "MeasureLeaked": "measure_leaked_with_ids",
+                        "MeasureZLeaked": "measure_leaked_with_ids",
+                        "MeasureZLost": "measure_lost_with_ids",
+                        "MeasureZLeakedLost": "measure_leaked_lost_with_ids",
+                    }[gate_type]
+                    getattr(tick, insert_measurement)(qubits, meas_ids)
+                else:
+                    tick.mz_with_ids(qubits, meas_ids)
             elif gate_type == "MeasCrosstalkGlobalPayload":
                 tick.add_gate("MeasCrosstalkGlobalPayload", qubits)
             elif gate_type == "MeasCrosstalkLocalPayload":
@@ -492,7 +503,27 @@ def _replay_lowered_qis_trace_into_tick_circuit(
             else:
                 msg = f"Unsupported lowered traced gate {gate_type!r}"
                 raise ValueError(msg)
-            _set_lowered_gate_metadata(tick, metadata)
+            if preserve_measurement_kinds:
+                # One lowered operation can emit several native stages (CRZ).
+                # Each operation starts at a new tick, so this interval contains
+                # only its emitted batches. Store origin on batches before ASAP
+                # compaction, which can merge ticks but preserves batch attrs.
+                origin = {
+                    "format": "pecos_qis_lowered_origin_v1",
+                    "engine_trace_id": chunk["engine_trace_id"],
+                    "shot_index": chunk["shot_index"],
+                    "chunk_index": chunk["chunk_index"],
+                    "lowered_op_index": gate_index,
+                }
+                for emitted_tick in range(first_emitted_tick, tick_circuit.num_ticks()):
+                    for batch_index in range(tick_circuit.get_tick(emitted_tick).gate_batch_count()):
+                        for key, value in metadata.items():
+                            tick_circuit.set_gate_meta(emitted_tick, batch_index, key, value)
+                        # Authoritative stream location wins over a metadata
+                        # collision. A dictionary preserves u64 IDs exactly.
+                        tick_circuit.set_gate_meta(emitted_tick, batch_index, "_pecos_trace_origin", origin)
+            else:
+                _set_lowered_gate_metadata(tick, metadata)
 
     # Compact: ASAP-schedule gates into minimal ticks
     tick_circuit.compact_ticks()
@@ -567,6 +598,7 @@ def _replay_qis_trace_chunks_into_tick_circuit(
     *,
     measurement_crosstalk_topology: str | None = None,
     allow_raw_measurement_id_fallback: bool = False,
+    preserve_measurement_kinds: bool = False,
 ) -> TickCircuit:
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
     if not isinstance(chunks, list):
@@ -597,6 +629,7 @@ def _replay_qis_trace_chunks_into_tick_circuit(
             return _replay_lowered_qis_trace_into_tick_circuit(
                 chunks,
                 measurement_crosstalk_topology=measurement_crosstalk_topology,
+                preserve_measurement_kinds=preserve_measurement_kinds,
             )
         except ValueError as exc:
             if "missing measurement_result_ids" not in str(exc):

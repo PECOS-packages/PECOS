@@ -9,6 +9,7 @@
 
 #![allow(clippy::fn_params_excessive_bools)]
 
+pub mod build_context;
 pub mod cuda_cmd;
 pub mod cuquantum_cmd;
 pub mod env_cmd;
@@ -20,6 +21,7 @@ pub mod llvm_cmd;
 pub mod manifest_cmd;
 pub mod migrate_cmd;
 pub mod python_cmd;
+pub mod qis_runtime_cmd;
 pub mod rust_cmd;
 pub mod selene_cmd;
 pub mod setup_cmd;
@@ -77,6 +79,22 @@ pub enum BuildProfile {
 }
 
 impl BuildProfile {
+    pub const fn cargo_args(self) -> &'static [&'static str] {
+        match self {
+            Self::Dev | Self::Debug => &[],
+            Self::Release => &["--release"],
+            Self::Native => &["--profile", "native"],
+        }
+    }
+
+    pub const fn directory(self) -> &'static str {
+        match self {
+            Self::Dev | Self::Debug => "debug",
+            Self::Release => "release",
+            Self::Native => "native",
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Dev => "dev",

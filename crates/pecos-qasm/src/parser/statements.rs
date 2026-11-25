@@ -19,6 +19,7 @@ use crate::parser::{Program, QASMParser, Rule};
 ///
 /// Returns an error if the statement is invalid
 pub fn parse_statement(pair: Pair<Rule>, program: &mut Program) -> Result<(), PecosError> {
+    let first_operation = program.operations.len();
     let statement_str = pair.as_str();
     let inner = pair
         .into_inner()
@@ -85,6 +86,10 @@ pub fn parse_statement(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pe
                 inner.as_rule()
             )));
         }
+    }
+    // Check names and bit indices against declarations seen so far.
+    for operation in &program.operations[first_operation..] {
+        program.validate_classical_operation(operation)?;
     }
     Ok(())
 }

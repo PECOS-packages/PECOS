@@ -33,6 +33,9 @@ pub mod bp_trellis;
 pub mod factor;
 pub mod streaming;
 
+#[cfg(test)]
+mod prune_wide_delta_tests;
+
 pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
 pub use streaming::{StreamingMode, StreamingProgress, TrellisStreamingDecoder};
 
@@ -160,6 +163,10 @@ pub struct TrellisConfig {
     /// Quantization units per natural-log unit for [`MetricMode::MaxLogInt`].
     /// This must be positive in every mode and is ignored by the float metric.
     pub int_metric_scale: i32,
+    /// Report the discarded-prefix-mass diagnostic. Float metrics accumulate it
+    /// at extra pruning cost; the integer metric always keeps its cheap running maximum.
+    /// Defaults to false; never changes predictions or any other result field.
+    pub dropped_mass: bool,
 }
 
 /// Pruning parameters for one attempt, validated against its decoder's model.
@@ -262,6 +269,7 @@ impl Default for TrellisConfig {
             bp_score_iterations: 0,
             metric_mode: MetricMode::LogSumExpFloat,
             int_metric_scale: 1024,
+            dropped_mass: false,
         }
     }
 }
@@ -408,17 +416,18 @@ pub struct TrellisResult {
     /// Number of merged boundary states discarded across all pruning calls in
     /// the successful rung.
     pub dropped_states: u64,
-    /// Log-sum-exp of the log masses of all states discarded by float pruning,
-    /// or negative infinity when no state was discarded. Under `maxlog_int`,
-    /// this is the largest dropped quantized route mass divided by the scale.
+    /// When enabled, `Some` of the log-sum-exp of log masses discarded by float
+    /// pruning, or `Some(f64::NEG_INFINITY)` when no state was discarded.
+    /// Under `maxlog_int`, the value is the largest dropped quantized route
+    /// mass divided by the scale.
     ///
     /// This accounts for retained prefix mass discarded at pruning time. It is
     /// not a bound on true lost posterior mass: a state dropped early would
     /// otherwise have branched through later columns.
     /// For an escalated `BpTrellis` result, this covers only the
     /// successful rung.
-    /// Prediction-only decoding skips computing this field.
-    pub dropped_log_mass: f64,
+    /// Present only when `TrellisConfig::dropped_mass` is true; otherwise `None`.
+    pub dropped_log_mass: Option<f64>,
     /// Wall-clock seconds spent producing BP-informed suffix scores for this
     /// shot. This is zero when BP scoring is disabled or pruning cannot run.
     /// Escalation reuses these scores, so this time is attached once.
@@ -841,7 +850,8 @@ fn sort_parities<T: Ord + Copy>(records: &mut [T], scratch: &mut Vec<T>) {
 fn compact_parity_sort_matches_full_integer_order() {
     let mut scratch = Vec::new();
     let mut state = 0x0072_6f75_6e64_3439_u128;
-    for count in 0_usize..=512 {
+    for count in (0_usize..=512).chain([513, 514, 767, 1023, 1024, 1025]) {
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
         for pattern in 0..6 {
             let mut values: Vec<u128> = (0..count)
                 .map(|i| {
@@ -850,9 +860,9 @@ fn compact_parity_sort_matches_full_integer_order() {
                         .wrapping_add(1);
                     match pattern {
                         0 => state,
-                        1 => (i as u128) << 9 | i as u128,
-                        2 => ((count - i) as u128) << 9 | i as u128,
-                        3 => (state % 4) << 9 | i as u128,
+                        1 => (i as u128) << arrival_bits | i as u128,
+                        2 => ((count - i) as u128) << arrival_bits | i as u128,
+                        3 => (state % 4) << arrival_bits | i as u128,
                         4 => u128::MAX,
                         _ => {
                             if i % 2 == 0 {
@@ -876,16 +886,17 @@ fn compact_parity_sort_matches_full_integer_order() {
 fn narrow_parity_sort_matches_full_integer_order() {
     let mut scratch = Vec::new();
     let mut state = 0x0072_6f75_6e64_3536_u64;
-    for count in 0_usize..=512 {
+    for count in (0_usize..=512).chain([513, 514, 767, 1023, 1024, 1025]) {
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
         for pattern in 0..6 {
             let mut values: Vec<u64> = (0..count)
                 .map(|i| {
                     state = state.wrapping_mul(0x4385_df64_9fcc_f645).wrapping_add(1);
                     match pattern {
                         0 => state,
-                        1 => (i as u64) << 9 | i as u64,
-                        2 => ((count - i) as u64) << 9 | i as u64,
-                        3 => (state % 4) << 9 | i as u64,
+                        1 => (i as u64) << arrival_bits | i as u64,
+                        2 => ((count - i) as u64) << arrival_bits | i as u64,
+                        3 => (state % 4) << arrival_bits | i as u64,
                         4 => u64::MAX,
                         _ => {
                             if i % 2 == 0 {
@@ -1123,6 +1134,13 @@ fn final_score_group_matches_reference() {
 /// `parent` is always in ascending key order at a column boundary: expansion
 /// order determines the load-bearing left-to-right floating-point merge fold.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(
+    any(test, feature = "runtime-checks"),
+    expect(
+        clippy::struct_excessive_bools,
+        reason = "The check-only path observer extends existing private merge-selection flags without changing hot-path dispatch"
+    )
+)]
 struct FrontierScratch<M> {
     parent: StateBuffer<M>,
     branches: StateBuffer<M>,
@@ -1138,6 +1156,9 @@ struct FrontierScratch<M> {
     narrow_sort_scratch: Vec<u64>,
     use_narrow_merge_records: bool,
     use_compact_merge_records: bool,
+    #[cfg(any(test, feature = "runtime-checks"))]
+    use_generalized_merge_records: bool,
+    merge_record_arrival_bits: u32,
     merge_word_masks: Vec<u64>,
     merge_word_indices: Vec<usize>,
     scores: Vec<M>,
@@ -1168,17 +1189,23 @@ impl<M: Copy> FrontierScratch<M> {
     /// Sorting preserves arrival order within each equal-key run. The
     /// first arrival is installed verbatim, then each subsequent arrival applies
     /// `fold(accumulated, next)` in arrival order.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Packed arrival indices are masked to at most ten bits and fit both 32-bit and 64-bit usize"
+    )]
     fn merge(&mut self, fold: impl Fn(M, M) -> M) {
         self.sort_merge_indices();
         self.parent.clear(self.stride);
-        // Packed records hold a complete key above a nine-bit arrival index.
+        // Packed records hold a complete key above the original arrival index.
+        let arrival_bits = self.merge_record_arrival_bits;
+        let arrival_mask = (1_u64 << arrival_bits) - 1;
         if self.use_narrow_merge_records {
             merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
                 self.narrow_merge_records
                     .iter()
-                    .map(|&record| (record >> 9, (record & 511) as usize)),
+                    .map(|&record| (record >> arrival_bits, (record & arrival_mask) as usize)),
                 self.stride,
                 fold,
             );
@@ -1188,9 +1215,12 @@ impl<M: Copy> FrontierScratch<M> {
             merge_sorted_records(
                 &mut self.parent,
                 &self.branches,
-                self.compact_merge_records
-                    .iter()
-                    .map(|&record| (record >> 9, (record & 511) as usize)),
+                self.compact_merge_records.iter().map(|&record| {
+                    (
+                        record >> arrival_bits,
+                        (record & u128::from(arrival_mask)) as usize,
+                    )
+                }),
                 self.stride,
                 fold,
             );
@@ -1284,10 +1314,21 @@ impl<M: Copy> FrontierScratch<M> {
         }
     }
 
+    #[cfg_attr(
+        any(test, feature = "runtime-checks"),
+        expect(
+            clippy::cast_possible_truncation,
+            reason = "Decoded arrival indices are masked to nine or ten bits and cannot truncate on supported pointer widths"
+        )
+    )]
     fn sort_merge_indices_impl(&mut self) {
         self.packed_merge_keys = false;
         self.use_compact_merge_records = false;
         self.use_narrow_merge_records = false;
+        #[cfg(any(test, feature = "runtime-checks"))]
+        {
+            self.use_generalized_merge_records = false;
+        }
         self.merge_word_indices.clear();
         if self.stride > 4 {
             self.merge_word_masks.clear();
@@ -1309,8 +1350,15 @@ impl<M: Copy> FrontierScratch<M> {
         // a separate usize. The guarded mapping is injective and monotonic.
         let count = self.branches.masses.len();
         let width = self.merge_word_indices.len();
+        // Preserve the existing nine-bit records and key budgets through 512
+        // arrivals. A K=512 expansion can emit 1024 branches and needs ten bits.
+        let arrival_bits = if count <= 512 { 9 } else { 10 };
+        self.merge_record_arrival_bits = arrival_bits;
+        #[cfg(any(test, feature = "runtime-checks"))]
+        let arrival_mask = (1_u64 << arrival_bits) - 1;
+        let narrow_key_bits = 64 - arrival_bits;
         'try_trimmed: {
-            if (64..=512).contains(&count) && (width == 2 || width == 3) {
+            if (64..=1024).contains(&count) && (width == 2 || width == 3) {
                 // Remove only bits proven zero in every branch. Each word's
                 // significant span remains in its original lexicographic position.
                 let mut masks = [0_u64; 3];
@@ -1319,7 +1367,7 @@ impl<M: Copy> FrontierScratch<M> {
                         *mask = self.merge_word_masks[self.merge_word_indices[slot]];
                     }
                 } else {
-                    // An OR-mask span can only widen. Any sampled span above 55
+                    // An OR-mask span can only widen. An excessive sampled span
                     // proves complete-key packing impossible; no keys are dropped.
                     for index in [0, (count - 1) / 3, 2 * (count - 1) / 3, count - 1] {
                         let key = self.branches.key(index, self.stride);
@@ -1337,7 +1385,7 @@ impl<M: Copy> FrontierScratch<M> {
                             }
                         })
                         .sum();
-                    if sampled_bits > 55 {
+                    if sampled_bits > narrow_key_bits {
                         break 'try_trimmed;
                     }
                     for key in self.branches.words.chunks_exact(self.stride) {
@@ -1354,9 +1402,9 @@ impl<M: Copy> FrontierScratch<M> {
                         widths[slot] = 64 - masks[slot].leading_zeros() - shifts[slot];
                     }
                 }
-                // Reserve exactly nine bits for the original arrival index. The
-                // resulting complete record can use ordinary integer sorting.
-                if widths.iter().sum::<u32>() <= 55 {
+                // Reserve enough arrival bits without changing the key mapping
+                // or equal-key fold order for the existing <=512 branch path.
+                if widths.iter().sum::<u32>() <= narrow_key_bits {
                     self.narrow_merge_records.clear();
                     let first = self.merge_word_indices[0];
                     let second = self.merge_word_indices[1];
@@ -1370,7 +1418,8 @@ impl<M: Copy> FrontierScratch<M> {
                         {
                             let key = ((source[first] >> shifts[0]) << widths[1])
                                 | (source[second] >> shifts[1]);
-                            self.narrow_merge_records.push((key << 9) | index as u64);
+                            self.narrow_merge_records
+                                .push((key << arrival_bits) | index as u64);
                         }
                     } else {
                         let third = self.merge_word_indices[2];
@@ -1385,7 +1434,8 @@ impl<M: Copy> FrontierScratch<M> {
                                 | (source[second] >> shifts[1]))
                                 << widths[2])
                                 | (source[third] >> shifts[2]);
-                            self.narrow_merge_records.push((key << 9) | index as u64);
+                            self.narrow_merge_records
+                                .push((key << arrival_bits) | index as u64);
                         }
                     }
                     sort_parities(
@@ -1400,14 +1450,14 @@ impl<M: Copy> FrontierScratch<M> {
                         self.indices.extend(
                             self.narrow_merge_records
                                 .iter()
-                                .map(|&v| (v & 511) as usize),
+                                .map(|&v| (v & arrival_mask) as usize),
                         );
                     }
                     return;
                 }
             }
         }
-        if (64..=512).contains(&count) && (width == 2 || width == 3) {
+        if (64..=1024).contains(&count) && (width == 2 || width == 3) {
             self.compact_merge_records.clear();
             let mut eligible = true;
             if width == 2 {
@@ -1424,8 +1474,11 @@ impl<M: Copy> FrontierScratch<M> {
                         eligible = false;
                         break;
                     }
-                    self.compact_merge_records
-                        .push((u128::from(high) << 10) | (u128::from(low) << 9) | index as u128);
+                    self.compact_merge_records.push(
+                        (u128::from(high) << (arrival_bits + 1))
+                            | (u128::from(low) << arrival_bits)
+                            | index as u128,
+                    );
                 }
             } else {
                 for (index, source) in self
@@ -1438,14 +1491,14 @@ impl<M: Copy> FrontierScratch<M> {
                     let high = source[self.merge_word_indices[0]];
                     let middle = source[self.merge_word_indices[1]];
                     let low = source[self.merge_word_indices[2]];
-                    if high >> 54 != 0 || low > 1 {
+                    if high >> (63 - arrival_bits) != 0 || low > 1 {
                         eligible = false;
                         break;
                     }
                     self.compact_merge_records.push(
-                        (u128::from(high) << 74)
-                            | (u128::from(middle) << 10)
-                            | (u128::from(low) << 9)
+                        (u128::from(high) << (arrival_bits + 65))
+                            | (u128::from(middle) << (arrival_bits + 1))
+                            | (u128::from(low) << arrival_bits)
                             | index as u128,
                     );
                 }
@@ -1462,11 +1515,29 @@ impl<M: Copy> FrontierScratch<M> {
                     self.indices.extend(
                         self.compact_merge_records
                             .iter()
-                            .map(|&v| (v & 511) as usize),
+                            .map(|&v| (v & u128::from(arrival_mask)) as usize),
                     );
                 }
                 return;
             }
+        }
+
+        // Multibit joint classes do not fit the older logical<=1 layout. Pack
+        // complete component spans only when their original lexicographic order
+        // and every arrival index fit in u128; otherwise keep the same fallback.
+        if self.try_pack_generalized_records(count, arrival_bits) {
+            self.use_compact_merge_records = true;
+            #[cfg(any(test, feature = "runtime-checks"))]
+            {
+                self.use_generalized_merge_records = true;
+                self.indices.clear();
+                self.indices.extend(
+                    self.compact_merge_records
+                        .iter()
+                        .map(|&v| (v & u128::from(arrival_mask)) as usize),
+                );
+            }
+            return;
         }
 
         // Preserve lexicographic key order and equal-key arrival order, while
@@ -1645,6 +1716,67 @@ impl<M: Copy> FrontierScratch<M> {
         self.indices.clear();
         self.indices
             .extend(self.merge_keys.iter().map(|&(_, index)| index));
+    }
+
+    fn try_pack_generalized_records(&mut self, count: usize, arrival_bits: u32) -> bool {
+        let width = self.merge_word_indices.len();
+        if !(64..=1024).contains(&count) || !(2..=4).contains(&width) {
+            return false;
+        }
+        let budget = 128 - arrival_bits;
+        let span = |mask: u64| {
+            if mask == 0 {
+                0
+            } else {
+                64 - mask.leading_zeros() - mask.trailing_zeros()
+            }
+        };
+        let mut masks = [0_u64; 4];
+        if self.stride > 4 {
+            // The wide-key path already scanned every branch to find zero words.
+            for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                *mask = self.merge_word_masks[self.merge_word_indices[slot]];
+            }
+        } else {
+            // Samples may prove failure, never success. Finish the full OR scan
+            // before accepting a plan; an unseen bit must never be truncated.
+            for index in [0, (count - 1) / 3, 2 * (count - 1) / 3, count - 1] {
+                let source = self.branches.key(index, self.stride);
+                for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                    *mask |= source[self.merge_word_indices[slot]];
+                }
+            }
+            if masks.iter().copied().map(span).sum::<u32>() > budget {
+                return false;
+            }
+            for source in self.branches.words.chunks_exact(self.stride) {
+                for (slot, mask) in masks.iter_mut().enumerate().take(width) {
+                    *mask |= source[self.merge_word_indices[slot]];
+                }
+            }
+        }
+        let widths = masks.map(span);
+        if widths.iter().sum::<u32>() > budget {
+            return false;
+        }
+        let shifts = masks.map(|mask| if mask == 0 { 0 } else { mask.trailing_zeros() });
+        self.compact_merge_records.clear();
+        for (index, source) in self.branches.words.chunks_exact(self.stride).enumerate() {
+            let mut key = 0_u128;
+            for slot in 0..width {
+                // Each component is at most 64 bits, and the checked total leaves
+                // the arrival budget free. Zero and full-width spans are safe.
+                key = (key << widths[slot])
+                    | u128::from(source[self.merge_word_indices[slot]] >> shifts[slot]);
+            }
+            self.compact_merge_records
+                .push((key << arrival_bits) | index as u128);
+        }
+        sort_parities(
+            &mut self.compact_merge_records,
+            &mut self.compact_sort_scratch,
+        );
+        true
     }
 
     /// Transpose the inclusive detector-word span read by the scoring rows.
@@ -1869,6 +2001,52 @@ impl TrellisDecodeAttempt {
 pub struct TrellisDecoder {
     model: Arc<TrellisModel>,
     scratch: TrellisScratch,
+}
+
+/// Progress of an exact batch attempt split across bounded column ranges.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrellisBoundedProgress {
+    /// Columns in completely successful ranges. A failed range may have done
+    /// additional work, recorded exactly in the terminal attempt's telemetry.
+    pub completed_columns: usize,
+    /// Total columns in this model's binary kernel.
+    pub total_columns: usize,
+    /// The attempt can be consumed by [`TrellisResumableDecoder::finish`].
+    pub ready_to_finish: bool,
+}
+
+/// An owning, exact resumable binary-float batch decoder.
+///
+/// This changes only the boundaries of calls into the existing column walk.
+/// The full syndrome, scoring inputs, pruning parameters and arithmetic order
+/// stay fixed for the attempt. It does not retain a beam between input windows.
+/// Owning the decoder prevents another API from changing its prepared scratch
+/// while an attempt is pending. Existing [`TrellisDecoder`] APIs are unchanged.
+///
+/// A column budget bounds actual DP columns, not milliseconds. Model creation,
+/// [`Self::begin`] (including any BP refresh), and [`Self::finish`] have separate
+/// costs and must be timed separately when a host imposes invocation limits.
+pub struct TrellisResumableDecoder {
+    decoder: TrellisDecoder,
+    attempt: Option<BoundedBinaryAttempt>,
+}
+
+struct BoundedBinaryAttempt {
+    next_column: usize,
+    total_columns: usize,
+    bp_ran: bool,
+    bp_seconds: f64,
+    terminal: Option<TrellisDecodeAttempt>,
+}
+
+impl BoundedBinaryAttempt {
+    fn progress(&self) -> TrellisBoundedProgress {
+        TrellisBoundedProgress {
+            completed_columns: self.next_column,
+            total_columns: self.total_columns,
+            ready_to_finish: self.terminal.is_some() || self.next_column == self.total_columns,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2457,22 +2635,11 @@ impl TrellisDecoder {
     /// policies.
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
-        self.decode_attempt_with_mode(syndrome, DecodeMode::Full)
-    }
-
-    fn decode_attempt_with_mode(
-        &mut self,
-        syndrome: &[u8],
-        mode: DecodeMode,
-    ) -> TrellisDecodeAttempt {
         match self.prepare(syndrome) {
-            Ok(TrellisPrepared::Ready { .. }) => self.attempt_with_mode(
-                PruneParams {
-                    k: self.model.config.k,
-                    delta: self.model.config.delta,
-                },
-                mode,
-            ),
+            Ok(TrellisPrepared::Ready { .. }) => self.attempt(PruneParams {
+                k: self.model.config.k,
+                delta: self.model.config.delta,
+            }),
             Ok(TrellisPrepared::Residual { .. }) => TrellisDecodeAttempt::NoPath {
                 error: unexplainable_error(),
                 transitions: 0,
@@ -2527,43 +2694,32 @@ impl TrellisDecoder {
     /// Panics unless the latest prepare completed `Ready`.
     #[must_use]
     pub fn attempt(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
-        self.attempt_with_mode(params, DecodeMode::Full)
-    }
-
-    /// Run a fresh DP attempt on the prepared shot for its prediction only.
-    /// `LogSumExpFloat` kernels skip dropped-mass accounting, and every metric mode
-    /// reports `dropped_log_mass` as NaN on success. Validation and readiness
-    /// requirements are the same as for [`Self::attempt`].
-    ///
-    /// # Panics
-    /// Panics unless the latest prepare completed `Ready`.
-    #[must_use]
-    pub fn attempt_prediction_only(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
-        self.attempt_with_mode(params, DecodeMode::PredictionOnly)
-    }
-
-    fn attempt_with_mode(&mut self, params: PruneParams, mode: DecodeMode) -> TrellisDecodeAttempt {
-        if let Err(error) = params.validate(self.model.config.metric_mode) {
+        if let Err(error) = self.validate_attempt_params(params) {
             return TrellisDecodeAttempt::Error(error);
-        }
-        if self.model.config.bp_score_iterations > 0
-            && self.model.bp_graph.is_none()
-            && !(params.k == usize::MAX && params.delta.is_infinite())
-        {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidConfiguration(
-                "non-exact pruning parameters require a BP graph when bp_score_iterations > 0"
-                    .into(),
-            ));
         }
         let (bp_ran, _) = self
             .scratch
             .prepared
             .expect("attempt requires a Ready prepare");
-        let mut attempt = self.model.decode_attempt(&mut self.scratch, params, mode);
+        let mut attempt = self.model.decode_attempt(&mut self.scratch, params);
         if let TrellisDecodeAttempt::Success(result) = &mut attempt {
             result.bp_runs = u32::from(bp_ran);
         }
         attempt
+    }
+
+    fn validate_attempt_params(&self, params: PruneParams) -> Result<(), DecoderError> {
+        params.validate(self.model.config.metric_mode)?;
+        if self.model.config.bp_score_iterations > 0
+            && self.model.bp_graph.is_none()
+            && !(params.k == usize::MAX && params.delta.is_infinite())
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "non-exact pruning parameters require a BP graph when bp_score_iterations > 0"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Configured pruning parameters used by `decode_attempt`.
@@ -2596,6 +2752,33 @@ impl TrellisDecoder {
         }
     }
 
+    /// Consume this decoder into an exact resumable batch wrapper.
+    ///
+    /// BP is prepared once by `begin`, exactly as in a normal batch attempt.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a non-binary or non-float kernel,
+    /// together with this unchanged decoder so the caller can keep using it.
+    pub fn into_resumable(self) -> Result<TrellisResumableDecoder, (DecoderError, Box<Self>)> {
+        let metric_mode = self.model.config.metric_mode;
+        let binary = matches!(self.model.kernel, Kernel::Binary(_));
+        if metric_mode != MetricMode::LogSumExpFloat || !binary {
+            let kernel = if binary { "binary" } else { "N-ary" };
+            return Err((
+                DecoderError::InvalidConfiguration(format!(
+                    "resumable batch attempts require a binary LogSumExpFloat kernel, got a \
+                     {kernel} {metric_mode:?} kernel; build from a sparse DEM with \
+                     MetricMode::LogSumExpFloat"
+                )),
+                Box::new(self),
+            ));
+        }
+        Ok(TrellisResumableDecoder {
+            decoder: self,
+            attempt: None,
+        })
+    }
+
     /// Decode dense shots in input order using independent worker scratch.
     ///
     /// Workers are capped at one per shot, with one worker for an empty batch.
@@ -2608,6 +2791,179 @@ impl TrellisDecoder {
         workers: usize,
     ) -> Result<Vec<TrellisDecodeAttempt>, DecoderError> {
         batch::decode_batch(shots, workers, || self.fresh_worker(), Self::decode_attempt)
+    }
+}
+
+impl TrellisResumableDecoder {
+    /// Prepare a full-syndrome batch attempt with the configured diagnostics.
+    ///
+    /// Preparation failures are retained as structured terminal attempts and
+    /// reported by `finish`; they are never inferred from an error string.
+    /// No DP columns or terminal class aggregation are performed here.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` if another attempt is still pending.
+    pub fn begin(&mut self, syndrome: &[u8]) -> Result<TrellisBoundedProgress, DecoderError> {
+        if self.attempt.is_some() {
+            return Err(DecoderError::InvalidConfiguration(
+                "finish or cancel the pending resumable attempt before beginning another".into(),
+            ));
+        }
+        let Kernel::Binary(columns) = &self.decoder.model.kernel else {
+            unreachable!("resumable constructor validates the binary kernel");
+        };
+        let total_columns = columns.len();
+        let mut state = BoundedBinaryAttempt {
+            next_column: 0,
+            total_columns,
+            bp_ran: false,
+            bp_seconds: 0.0,
+            terminal: None,
+        };
+        state.terminal = match self.decoder.prepare(syndrome) {
+            Ok(TrellisPrepared::Ready { bp_ran, bp_seconds }) => {
+                state.bp_ran = bp_ran;
+                state.bp_seconds = bp_seconds;
+                match self
+                    .decoder
+                    .validate_attempt_params(self.decoder.prune_params())
+                {
+                    Ok(()) => {
+                        self.decoder
+                            .scratch
+                            .float_progress
+                            .reset(&self.decoder.model);
+                        None
+                    }
+                    Err(error) => Some(TrellisDecodeAttempt::Error(error)),
+                }
+            }
+            Ok(TrellisPrepared::Residual { .. }) => Some(TrellisDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                dropped_states: 0,
+                bp_seconds: 0.0,
+            }),
+            Err(error) => Some(TrellisDecodeAttempt::Error(error)),
+        };
+        let progress = state.progress();
+        self.attempt = Some(state);
+        Ok(progress)
+    }
+
+    /// Process at most `max_columns` consecutive columns of the pending attempt.
+    ///
+    /// The same full-syndrome range walk, suffix values, merge/prune order and
+    /// telemetry accumulation are used by the unbounded batch decoder. A ready
+    /// attempt is unchanged by another positive-budget step. Engine failures
+    /// make the attempt ready and remain structured until `finish` consumes it.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero budget or a missing begin.
+    pub fn step(&mut self, max_columns: usize) -> Result<TrellisBoundedProgress, DecoderError> {
+        if max_columns == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "resumable attempts require a positive column budget".into(),
+            ));
+        }
+        let state = self.attempt.as_mut().ok_or_else(|| {
+            DecoderError::InvalidConfiguration("begin a resumable attempt before stepping".into())
+        })?;
+        if state.progress().ready_to_finish {
+            return Ok(state.progress());
+        }
+        let end = state
+            .next_column
+            .saturating_add(max_columns)
+            .min(state.total_columns);
+        let model = &self.decoder.model;
+        let scratch = &mut self.decoder.scratch;
+        let suffix_values = scratch
+            .bp_score
+            .as_ref()
+            .map_or(&model.suffix_values, |bp| &bp.suffix_values);
+        let failure = model.process_binary_range_with_mode(
+            &mut scratch.float_progress,
+            &scratch.observed,
+            suffix_values,
+            state.next_column..end,
+            PruneParams {
+                k: model.config.k,
+                delta: model.config.delta,
+            },
+            BinaryRangeOptions {
+                mode: model.decode_mode(),
+                known_count: None,
+            },
+        );
+        if let Err(failure) = failure {
+            state.terminal = Some(match failure {
+                BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
+                    error: failure.error(),
+                    transitions: scratch.float_progress.transitions,
+                    dropped_states: scratch.float_progress.dropped_states,
+                    bp_seconds: state.bp_seconds,
+                },
+                BinaryFailure::UnusableScores => TrellisDecodeAttempt::Error(failure.error()),
+            });
+        } else {
+            state.next_column = end;
+        }
+        Ok(state.progress())
+    }
+
+    /// Inspect the pending attempt without processing columns or aggregating classes.
+    #[must_use]
+    pub fn progress(&self) -> Option<TrellisBoundedProgress> {
+        self.attempt.as_ref().map(BoundedBinaryAttempt::progress)
+    }
+
+    /// Consume a ready attempt, using the unchanged terminal constructor.
+    ///
+    /// This performs no column work. Terminal sorting and class/evidence
+    /// aggregation have their own invocation cost, outside the column budget.
+    /// Preparation and DP failures return their original structured variant.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for a missing or undrained attempt.
+    /// A failed protocol check leaves the pending attempt unchanged.
+    ///
+    /// # Panics
+    /// Panics if the checked private attempt disappears before consumption,
+    /// indicating an internal state invariant violation.
+    pub fn finish(&mut self) -> Result<TrellisDecodeAttempt, DecoderError> {
+        if !self
+            .attempt
+            .as_ref()
+            .is_some_and(|state| state.progress().ready_to_finish)
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "drain a pending resumable attempt before finishing".into(),
+            ));
+        }
+        let state = self.attempt.take().expect("checked pending attempt");
+        if let Some(terminal) = state.terminal {
+            return Ok(terminal);
+        }
+        let mut result = self.decoder.model.finish_binary(
+            &self.decoder.scratch.float_progress,
+            state.total_columns,
+            state.bp_seconds,
+        );
+        result.bp_runs = u32::from(state.bp_ran);
+        Ok(TrellisDecodeAttempt::Success(result))
+    }
+
+    /// Cancel a pending attempt. The next begin prepares and resets a fresh shot.
+    pub fn cancel(&mut self) {
+        self.attempt = None;
+        self.decoder.scratch.prepared = None;
+    }
+
+    /// Lifetime BP refresh count, including cancelled attempts.
+    #[must_use]
+    pub fn bp_refreshes(&self) -> u64 {
+        self.decoder.bp_refreshes()
     }
 }
 
@@ -2625,13 +2981,21 @@ struct BinaryRangeOptions {
 }
 
 impl TrellisModel {
+    fn decode_mode(&self) -> DecodeMode {
+        if self.config.dropped_mass {
+            DecodeMode::Full
+        } else {
+            DecodeMode::PredictionOnly
+        }
+    }
+
     fn decode_attempt(
         &self,
         scratch: &mut TrellisScratch,
         params: PruneParams,
-        mode: DecodeMode,
     ) -> TrellisDecodeAttempt {
-        let mut attempt = match (self.config.metric_mode, &self.kernel) {
+        let mode = self.decode_mode();
+        match (self.config.metric_mode, &self.kernel) {
             (MetricMode::LogSumExpFloat, Kernel::Binary(_)) => {
                 self.decode_attempt_binary(scratch, params, mode)
             }
@@ -2644,13 +3008,7 @@ impl TrellisModel {
             (MetricMode::MaxLogInt, Kernel::Nary(_)) => {
                 self.decode_attempt_nary_maxlog(scratch, params)
             }
-        };
-        if mode == DecodeMode::PredictionOnly
-            && let TrellisDecodeAttempt::Success(result) = &mut attempt
-        {
-            result.dropped_log_mass = f64::NAN;
         }
-        attempt
     }
 
     fn decode_attempt_binary(
@@ -2691,7 +3049,7 @@ impl TrellisModel {
                 BinaryFailure::UnusableScores => TrellisDecodeAttempt::Error(failure.error()),
             };
         }
-        TrellisDecodeAttempt::Success(Self::finish_binary(progress, columns.len(), bp_seconds))
+        TrellisDecodeAttempt::Success(self.finish_binary(progress, columns.len(), bp_seconds))
     }
 
     /// The binary float column walk shared by batch and streaming.
@@ -2894,6 +3252,7 @@ impl TrellisModel {
     }
 
     fn finish_binary(
+        &self,
         progress: &BinaryProgress,
         processed_columns: usize,
         bp_seconds: f64,
@@ -2955,7 +3314,7 @@ impl TrellisModel {
             processed_columns,
             transitions,
             dropped_states,
-            dropped_log_mass,
+            dropped_log_mass: self.config.dropped_mass.then_some(dropped_log_mass),
             bp_seconds,
             bp_runs: 0,
             escalation_rungs_used: 0,
@@ -3000,7 +3359,8 @@ impl TrellisModel {
         let mut peak_retained_states = frontier.parent.masses.len();
         let mut transitions = 0;
         let mut dropped_states = 0;
-        let mut dropped_log_mass = f64::NEG_INFINITY;
+        let dropped_log_mass = &mut scratch.float_progress.dropped_log_mass;
+        *dropped_log_mass = f64::NEG_INFINITY;
         let mut k_capped = false;
         let mut delta_pruned = false;
 
@@ -3077,7 +3437,7 @@ impl TrellisModel {
             );
             dropped_states += pruned.dropped_states;
             if mode == DecodeMode::Full {
-                dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
+                *dropped_log_mass = logaddexp(*dropped_log_mass, pruned.dropped_log_mass);
             }
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
@@ -3136,7 +3496,7 @@ impl TrellisModel {
             processed_columns: columns.len(),
             transitions,
             dropped_states,
-            dropped_log_mass,
+            dropped_log_mass: self.config.dropped_mass.then_some(*dropped_log_mass),
             bp_seconds: 0.0,
             bp_runs: 0,
             escalation_rungs_used: 0,
@@ -3244,6 +3604,7 @@ impl TrellisModel {
         }
 
         finish_maxlog_decode(
+            self.config.dropped_mass,
             frontier,
             scale,
             MaxLogDecodeStats {
@@ -3346,6 +3707,7 @@ impl TrellisModel {
         }
 
         finish_maxlog_decode(
+            self.config.dropped_mass,
             frontier,
             scale,
             MaxLogDecodeStats {
@@ -3413,10 +3775,7 @@ impl TrellisModel {
 
 impl ObservableDecoder for TrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        Ok(self
-            .decode_attempt_with_mode(syndrome, DecodeMode::PredictionOnly)
-            .into_result()?
-            .predicted)
+        Ok(self.decode_attempt(syndrome).into_result()?.predicted)
     }
 
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
@@ -4187,6 +4546,31 @@ fn prune_reference(
     }
 }
 
+// A sufficient guard, not a decoder parameter or an approximation.
+//
+// Finite delta: b=delta/4 and h=delta/2 are exact. If every score is in
+// [-b,b], best-delta <= -3delta/4 < -h. Monotonic binary64 rounding gives
+// cutoff <= -h (negative overflow also satisfies this), while every score
+// >= -b >= -h. Therefore all original >= tests pass.
+//
+// Infinite delta: a finite best score gives cutoff = -inf, which every finite
+// score passes. The bound f64::MAX admits exactly the finite scores.
+//
+// The comparison against a finite bound excludes both infinities and every
+// NaN. The 1e6 threshold is no part of the proof: it only skips this scan
+// when delta is small enough that the cutoff is likely to drop states.
+fn wide_delta_all_scores_pass(scores: &[f64], delta: f64) -> bool {
+    if scores.is_empty() || delta.is_nan() || delta < 1e6 {
+        return false;
+    }
+    let bound = if delta.is_infinite() {
+        f64::MAX
+    } else {
+        delta * 0.25
+    };
+    scores.iter().all(|score| score.abs() <= bound)
+}
+
 fn prune_impl(
     frontier: &mut FrontierScratch<f64>,
     k: usize,
@@ -4217,33 +4601,56 @@ fn prune_impl(
                 )
             })
     };
-    let best = (0..frontier.parent.masses.len())
-        .min_by(better)
-        .expect("a nonempty merged frontier must have a score");
-    let cutoff = frontier.scores[best] - delta;
-    frontier.indices.clear();
-    frontier.retained.clear();
-    // Most frontiers need only their cutoff mask. Count the same decisions
-    // without writing an index for every survivor unless selection needs it.
-    let mut eligible = 0;
-    for candidate in 0..frontier.parent.masses.len() {
-        let keep = frontier.scores[candidate] >= cutoff;
-        frontier.retained.push(keep);
-        eligible += usize::from(keep);
-    }
-    if eligible > k {
-        frontier.indices.extend(
-            (0..frontier.parent.masses.len()).filter(|&candidate| frontier.retained[candidate]),
-        );
-        frontier.indices.select_nth_unstable_by(k, better);
-        frontier.indices.truncate(k);
-        // Selection uses the unchanged total-score/full-key comparator. Rebuild
-        // the mask only when the cap actually removes an eligible state.
-        frontier.retained.fill(false);
-        for &candidate in &frontier.indices {
-            frontier.retained[candidate] = true;
+    let eligible = if wide_delta_all_scores_pass(&frontier.scores, delta) {
+        let count = frontier.parent.masses.len();
+        frontier.indices.clear();
+        frontier.retained.clear();
+        if count > k {
+            // Identical to the original all-eligible filtered index sequence.
+            // Preserve the original full-key comparator and selection call.
+            frontier.indices.extend(0..count);
+            frontier.indices.select_nth_unstable_by(k, better);
+            frontier.indices.truncate(k);
+            frontier.retained.resize(count, false);
+            for &candidate in &frontier.indices {
+                frontier.retained[candidate] = true;
+            }
+        } else {
+            // Vec<bool> stores ordinary boolean byte flags; resize can fill
+            // them in bulk rather than pushing one flag per membership test.
+            frontier.retained.resize(count, true);
         }
-    }
+        count
+    } else {
+        let best = (0..frontier.parent.masses.len())
+            .min_by(better)
+            .expect("a nonempty merged frontier must have a score");
+        let cutoff = frontier.scores[best] - delta;
+        frontier.indices.clear();
+        frontier.retained.clear();
+        // Most frontiers need only their cutoff mask. Count the same decisions
+        // without writing an index for every survivor unless selection needs it.
+        let mut eligible = 0;
+        for candidate in 0..frontier.parent.masses.len() {
+            let keep = frontier.scores[candidate] >= cutoff;
+            frontier.retained.push(keep);
+            eligible += usize::from(keep);
+        }
+        if eligible > k {
+            frontier.indices.extend(
+                (0..frontier.parent.masses.len()).filter(|&candidate| frontier.retained[candidate]),
+            );
+            frontier.indices.select_nth_unstable_by(k, better);
+            frontier.indices.truncate(k);
+            // Selection uses the unchanged total-score/full-key comparator. Rebuild
+            // the mask only when the cap actually removes an eligible state.
+            frontier.retained.fill(false);
+            for &candidate in &frontier.indices {
+                frontier.retained[candidate] = true;
+            }
+        }
+        eligible
+    };
     let original_states = frontier.parent.masses.len();
     let retained_states = eligible.min(k);
     let mut dropped_log_mass = f64::NEG_INFINITY;
@@ -4497,6 +4904,7 @@ fn suffix_compatibility_score_int(
 }
 
 fn finish_maxlog_decode(
+    dropped_mass: bool,
     frontier: &FrontierScratch<i64>,
     scale: i32,
     stats: MaxLogDecodeStats,
@@ -4548,11 +4956,13 @@ fn finish_maxlog_decode(
         processed_columns: stats.processed_columns,
         transitions: stats.transitions,
         dropped_states: stats.dropped_states,
-        dropped_log_mass: if stats.dropped_log_mass == INT_METRIC_NEG_INF {
-            f64::NEG_INFINITY
-        } else {
-            i64_to_f64(stats.dropped_log_mass) / scale_f64
-        },
+        dropped_log_mass: dropped_mass.then(|| {
+            if stats.dropped_log_mass == INT_METRIC_NEG_INF {
+                f64::NEG_INFINITY
+            } else {
+                i64_to_f64(stats.dropped_log_mass) / scale_f64
+            }
+        }),
         bp_seconds: stats.bp_seconds,
         bp_runs: 0,
         escalation_rungs_used: 0,
@@ -4658,12 +5068,545 @@ fn and_not_assign(left: &mut [u64], right: &[u64]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resumable_unusable_scores_remain_an_engine_fault_and_can_be_cancelled() {
+        let decoder = super::TrellisDecoder::from_dem_str(
+            "error(0.2) D0 L0\nerror(0.1) D0",
+            super::TrellisConfig {
+                k: 1,
+                ..super::TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let mut bounded = decoder.into_resumable().unwrap();
+        bounded.begin(&[0]).unwrap();
+        // Inject an engine fault after valid preparation. It must never be
+        // reclassified as a genuine no-path that a committee could absorb.
+        bounded
+            .decoder
+            .scratch
+            .float_progress
+            .frontier
+            .parent
+            .masses[0] = f64::NAN;
+        let progress = bounded.step(1).unwrap();
+        assert!(progress.ready_to_finish);
+        assert_eq!(bounded.step(1).unwrap(), progress);
+        assert!(matches!(
+            bounded.finish().unwrap(),
+            super::TrellisDecodeAttempt::Error(super::DecoderError::InternalError(_))
+        ));
+        bounded.begin(&[0]).unwrap();
+        bounded.step(1).unwrap();
+        bounded.cancel();
+        bounded.begin(&[1]).unwrap();
+        bounded.step(usize::MAX).unwrap();
+        assert!(matches!(
+            bounded.finish().unwrap(),
+            super::TrellisDecodeAttempt::Success(_)
+        ));
+    }
+
     use super::{
         INT_METRIC_MAX, INT_METRIC_NEG_INF, MetricMode, SparseDem, TrellisConfig, TrellisDecoder,
         bp_score_probability, fixed_mul_round, fixed_mul_round_fast, i64_to_f64, logaddexp,
         merge_indistinguishable_columns, quantize_metric,
     };
     use std::collections::BTreeMap;
+
+    fn assert_retained_equal(a: &super::TrellisResult, b: &super::TrellisResult) {
+        let super::TrellisResult {
+            predicted,
+            log_evidence,
+            runner_up_gap,
+            peak_retained_states,
+            processed_columns,
+            transitions,
+            dropped_states,
+            dropped_log_mass,
+            bp_seconds,
+            bp_runs,
+            escalation_rungs_used,
+            status,
+            logical_masses,
+        } = a;
+        assert_eq!(predicted, &b.predicted);
+        assert_eq!(log_evidence.to_bits(), b.log_evidence.to_bits());
+        assert_eq!(
+            runner_up_gap.map(f64::to_bits),
+            b.runner_up_gap.map(f64::to_bits)
+        );
+        assert_eq!(*peak_retained_states, b.peak_retained_states);
+        assert_eq!(*processed_columns, b.processed_columns);
+        assert_eq!(*transitions, b.transitions);
+        assert_eq!(*dropped_states, b.dropped_states);
+        assert_eq!(*bp_runs, b.bp_runs);
+        assert_eq!(*escalation_rungs_used, b.escalation_rungs_used);
+        assert_eq!(*status, b.status);
+        assert!(bp_seconds.is_finite() && *bp_seconds >= 0.0);
+        assert!(b.bp_seconds.is_finite() && b.bp_seconds >= 0.0);
+        if *bp_runs == 0 {
+            assert_eq!(bp_seconds.to_bits(), b.bp_seconds.to_bits());
+        }
+        assert_eq!(logical_masses.len(), b.logical_masses.len());
+        for (left, right) in logical_masses.iter().zip(&b.logical_masses) {
+            assert_eq!(left.logical, right.logical);
+            assert_eq!(left.log_mass.to_bits(), right.log_mass.to_bits());
+        }
+        assert!(dropped_log_mass.is_some());
+        assert_eq!(b.dropped_log_mass, None);
+    }
+
+    #[test]
+    fn dropped_mass_flag_controls_accumulation_and_observable_adapter() {
+        use pecos_decoder_core::ObservableDecoder;
+        assert!(!TrellisConfig::default().dropped_mass);
+        assert!(!super::bp_trellis::BpTrellisConfig::default().dropped_mass);
+        let mut predictions = Vec::new();
+        for dropped_mass in [false, true] {
+            let mut decoder = TrellisDecoder::from_dem_str(
+                "error(0.25) L0\nerror(0.2) L1",
+                TrellisConfig {
+                    dropped_mass,
+                    k: 1,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            let full = decoder.decode(&[]).unwrap();
+            assert!(full.dropped_states > 0);
+            assert_eq!(full.dropped_log_mass.is_some(), dropped_mass);
+            assert_eq!(
+                decoder.scratch.float_progress.dropped_log_mass == f64::NEG_INFINITY,
+                !dropped_mass
+            );
+            let predicted = decoder.decode_obs(&[]).unwrap();
+            assert_eq!(predicted, full.predicted);
+            assert_eq!(
+                decoder.scratch.float_progress.dropped_log_mass == f64::NEG_INFINITY,
+                !dropped_mass
+            );
+            assert_eq!(
+                decoder.decode_to_observables(&[]).unwrap(),
+                predicted.to_u64().unwrap()
+            );
+            predictions.push(predicted);
+        }
+        assert_eq!(predictions[0], predictions[1]);
+    }
+
+    #[test]
+    fn nary_dropped_mass_flag_controls_accumulation_and_observable_adapter() {
+        use crate::factor::{Factor, FactorModel, Outcome};
+        use pecos_decoder_core::ObservableDecoder;
+
+        let model = FactorModel::new(
+            vec![Factor {
+                outcomes: vec![
+                    Outcome {
+                        probability: 0.5,
+                        detectors: vec![],
+                        observables: vec![],
+                    },
+                    Outcome {
+                        probability: 0.3,
+                        detectors: vec![],
+                        observables: vec![0],
+                    },
+                    Outcome {
+                        probability: 0.2,
+                        detectors: vec![],
+                        observables: vec![1],
+                    },
+                ],
+            }],
+            0,
+            2,
+        )
+        .unwrap();
+        let mut predictions = Vec::new();
+        for dropped_mass in [false, true] {
+            let mut decoder = TrellisDecoder::from_factor_model(
+                &model,
+                TrellisConfig {
+                    k: 1,
+                    dropped_mass,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            assert!(matches!(decoder.model.kernel, super::Kernel::Nary(_)));
+            let result = decoder.decode(&[]).unwrap();
+            assert!(result.dropped_states > 0);
+            assert_eq!(result.dropped_log_mass.is_some(), dropped_mass);
+            let raw_mass = decoder.scratch.float_progress.dropped_log_mass;
+            if dropped_mass {
+                assert!(raw_mass.is_finite());
+                assert_eq!(
+                    result.dropped_log_mass.expect("enabled").to_bits(),
+                    raw_mass.to_bits()
+                );
+            } else {
+                assert_eq!(
+                    raw_mass.to_bits(),
+                    f64::NEG_INFINITY.to_bits(),
+                    "flag off must not accumulate N-ary dropped mass"
+                );
+            }
+            // Each entry point starts a fresh attempt and follows the same flag.
+            assert_eq!(decoder.decode_obs(&[]).unwrap(), result.predicted);
+            assert_eq!(
+                decoder.scratch.float_progress.dropped_log_mass.to_bits(),
+                raw_mass.to_bits()
+            );
+            assert_eq!(
+                decoder.decode_to_observables(&[]).unwrap(),
+                result.predicted.to_u64().unwrap()
+            );
+            assert_eq!(
+                decoder.scratch.float_progress.dropped_log_mass.to_bits(),
+                raw_mass.to_bits()
+            );
+            predictions.push(result.predicted);
+        }
+        assert_eq!(predictions[0], predictions[1]);
+    }
+
+    #[test]
+    fn resumable_dropped_mass_flag_controls_accumulation() {
+        for dropped_mass in [false, true] {
+            let mut decoder = TrellisDecoder::from_dem_str(
+                "error(0.25) L0\nerror(0.2) L1",
+                TrellisConfig {
+                    dropped_mass,
+                    k: 1,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap()
+            .into_resumable()
+            .unwrap();
+            let mut progress = decoder.begin(&[]).unwrap();
+            while !progress.ready_to_finish {
+                progress = decoder.step(1).unwrap();
+            }
+            let super::TrellisDecodeAttempt::Success(result) = decoder.finish().unwrap() else {
+                panic!("pruning must retain a path");
+            };
+            let progress = &decoder.decoder.scratch.float_progress;
+            assert!(progress.dropped_states > 0);
+            assert_eq!(result.dropped_states, progress.dropped_states);
+            if dropped_mass {
+                assert!(progress.dropped_log_mass.is_finite());
+                assert_eq!(
+                    result.dropped_log_mass.expect("enabled").to_bits(),
+                    progress.dropped_log_mass.to_bits()
+                );
+            } else {
+                assert_eq!(
+                    progress.dropped_log_mass.to_bits(),
+                    f64::NEG_INFINITY.to_bits()
+                );
+                assert_eq!(result.dropped_log_mass, None);
+            }
+        }
+    }
+
+    #[test]
+    fn dropped_mass_flag_preserves_retained_results_and_errors() {
+        use super::TrellisDecodeAttempt::{Error, NoPath, Success};
+        let dem = SparseDem {
+            mechanisms: vec![
+                (0.2, vec![0, 1], vec![0]),
+                (0.1, vec![0], vec![1]),
+                (0.05, vec![1], vec![0]),
+            ],
+            detector_coords: BTreeMap::new(),
+            num_detectors: 3,
+            num_observables: 2,
+        };
+        let mut full = TrellisDecoder::from_sparse_dem(
+            &dem,
+            TrellisConfig {
+                dropped_mass: true,
+                k: 1,
+                delta: 1.0,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let mut config = full.model.config.clone();
+        config.dropped_mass = false;
+        let mut skipped = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();
+        let mut syndromes: Vec<Vec<u8>> = (0..8)
+            .map(|value| (0..3).map(|bit| (value >> bit) & 1).collect())
+            .collect();
+        syndromes.extend([vec![], vec![0], vec![0, 0, 0, 0], vec![1, 0, 0]]);
+        for syndrome in syndromes {
+            match (
+                full.decode_attempt(&syndrome),
+                skipped.decode_attempt(&syndrome),
+            ) {
+                (Success(expected), Success(actual)) => {
+                    assert_eq!(actual.dropped_log_mass, None);
+                    assert!(expected.dropped_log_mass.is_some());
+                    assert_retained_equal(&expected, &actual);
+                }
+                (
+                    NoPath {
+                        error: a,
+                        transitions: at,
+                        dropped_states: ad,
+                        bp_seconds: ab,
+                    },
+                    NoPath {
+                        error: b,
+                        transitions: bt,
+                        dropped_states: bd,
+                        bp_seconds: bb,
+                    },
+                ) => {
+                    assert_eq!(a.to_string(), b.to_string());
+                    assert_eq!((at, ad, ab.to_bits()), (bt, bd, bb.to_bits()));
+                }
+                (Error(a), Error(b)) => assert_eq!(a.to_string(), b.to_string()),
+                _ => panic!("flag-on and flag-off decoders disagree on failure provenance"),
+            }
+        }
+    }
+
+    #[test]
+    fn expanded_records_preserve_scalar_order_mass_and_fallbacks() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        // Reuse across the old/new arrival-bit boundary, both packed formats,
+        // unsupported key shapes, a count fallback and a return to the old path.
+        for count in [512_u32, 513, 1023, 1024, 1025, 64] {
+            let arrival_bits = if count <= 512 { 9 } else { 10 };
+            for width in [2, 3] {
+                for wide in [false, true] {
+                    for shape in 0..4 {
+                        let stride = if wide { 7 } else { width };
+                        let detector_words = stride - 1;
+                        scratch.reset(
+                            &vec![0; detector_words],
+                            &[0],
+                            &vec![u64::MAX; detector_words],
+                            0.0,
+                        );
+                        let positions = if width == 2 {
+                            [detector_words - 1, stride - 1, 0]
+                        } else {
+                            [detector_words - 1, 0, stride - 1]
+                        };
+                        for index in 0..count {
+                            let logical = if width == 2 { 1 } else { 2 };
+                            let mut key = [0_u64; 3];
+                            if shape == 0 {
+                                key[0] = 1 + u64::from(index % 7);
+                                key[1] = 1 + u64::from((index / 7) % 5);
+                                if width == 3 {
+                                    key[2] = 1 + u64::from((index / 35) % 3);
+                                }
+                            } else {
+                                key[0] = if width == 2 {
+                                    u64::MAX - u64::from(index % 7)
+                                } else if shape == 2 {
+                                    1_u64 << (63 - arrival_bits)
+                                } else {
+                                    (1_u64 << (63 - arrival_bits)) - 1
+                                };
+                                if width == 3 {
+                                    key[1] = u64::MAX - u64::from((index / 7) % 5);
+                                }
+                                key[logical] = if shape == 3 || (shape == 2 && width == 2) {
+                                    2
+                                } else {
+                                    u64::from((index / 35) % 2)
+                                };
+                            }
+                            let mut words = vec![0_u64; stride];
+                            for slot in 0..width {
+                                words[positions[slot]] = key[slot];
+                            }
+                            scratch.branches.words.extend_from_slice(&words);
+                            scratch.branches.masses.push(match index % 4 {
+                                0 => -1e-16,
+                                1 => -80.0,
+                                2 => -0.2,
+                                _ => -5.0,
+                            });
+                        }
+                        let mut oracle = scratch.clone();
+                        oracle.merge_reference(super::logaddexp);
+                        scratch.merge(super::logaddexp);
+                        assert_eq!(scratch.indices, oracle.indices);
+                        assert_eq!(scratch.parent.words, oracle.parent.words);
+                        assert!(
+                            scratch.parent.masses.iter().map(|x| x.to_bits()).eq(oracle
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|x| x.to_bits()))
+                        );
+                        assert_eq!(scratch.merge_record_arrival_bits, arrival_bits);
+                        assert_eq!(
+                            scratch.use_narrow_merge_records,
+                            count <= 1024 && shape == 0
+                        );
+                        assert_eq!(
+                            scratch.use_compact_merge_records,
+                            (count <= 1024 && shape <= 1) || scratch.use_generalized_merge_records
+                        );
+                        if count <= 1024 && shape <= 1 {
+                            assert!(
+                                !scratch.use_generalized_merge_records,
+                                "existing packing keeps precedence"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generalized_records_preserve_multibit_classes_at_u128_boundaries() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        let cases = [
+            (2, [32, 32, 0, 0]),
+            (2, [64, 32, 0, 0]),
+            (3, [43, 43, 32, 0]), //118 bits: fits ten arrival bits exactly.
+            (3, [44, 43, 32, 0]), //119 bits: only the nine-bit path fits.
+            (3, [45, 43, 32, 0]),
+            (3, [64, 22, 32, 0]),
+            (3, [64, 23, 32, 0]),
+            (4, [22, 32, 32, 32]),
+            (4, [23, 32, 32, 32]),
+            (4, [24, 32, 32, 32]),
+            (4, [40, 0, 40, 32]),
+        ];
+        for count in [0, 1, 63, 64, 511, 512, 513, 1023, 1024, 1025, 64] {
+            for (width, spans) in cases {
+                for wide in [false, true] {
+                    for top_aligned in [false, true] {
+                        let stride = if wide { 8 } else { width };
+                        let detector_words = stride - 1;
+                        scratch.reset(
+                            &vec![0; detector_words],
+                            &[0],
+                            &vec![u64::MAX; detector_words],
+                            0.0,
+                        );
+                        let positions = match width {
+                            2 => [detector_words - 1, stride - 1, 0, 0],
+                            3 => [detector_words - 1, 0, stride - 1, 0],
+                            _ => [detector_words - 1, detector_words - 2, 0, stride - 1],
+                        };
+                        for index in 0..count {
+                            let mut words = vec![0; stride];
+                            for slot in 0..width {
+                                let bits = spans[slot];
+                                let mask = if bits == 64 {
+                                    u64::MAX
+                                } else {
+                                    (1_u64 << bits) - 1
+                                };
+                                let shift = if top_aligned && bits != 0 {
+                                    64 - bits
+                                } else {
+                                    0
+                                };
+                                words[positions[slot]] =
+                                    (mask & !(((index / (slot + 1)) % 9) as u64)) << shift;
+                            }
+                            scratch.branches.words.extend_from_slice(&words);
+                            scratch.branches.masses.push(match index % 4 {
+                                0 => -0.0,
+                                1 => -80.0,
+                                2 => -0.2,
+                                _ => -1e-10,
+                            });
+                        }
+                        let mut oracle = scratch.clone();
+                        oracle.merge_reference(super::logaddexp);
+                        scratch.merge(super::logaddexp);
+                        assert_eq!(scratch.indices, oracle.indices);
+                        assert_eq!(scratch.parent.words, oracle.parent.words);
+                        assert!(
+                            scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|v| v.to_bits()))
+                        );
+                        let arrival_bits = if count <= 512 { 9 } else { 10 };
+                        assert_eq!(
+                            scratch.use_generalized_merge_records,
+                            (64..=1024).contains(&count)
+                                && spans.iter().sum::<u32>() <= 128 - arrival_bits
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generalized_records_reject_unsampled_overflow_and_unsupported_width() {
+        let mut scratch = super::FrontierScratch::<f64>::default();
+        for count in [512_u32, 513, 1024] {
+            let high_width = if count <= 512 { 44 } else { 43 };
+            for special in [0, 1, count - 1] {
+                scratch.reset(&[0, 0], &[0], &[u64::MAX; 2], 0.0);
+                for index in 0..count {
+                    let logical =
+                        u64::from(u32::MAX) | if index == special { 1_u64 << 32 } else { 0 };
+                    scratch.branches.words.extend_from_slice(&[
+                        (1_u64 << 43) - 1,
+                        (1_u64 << high_width) - 1,
+                        logical,
+                    ]);
+                    scratch.branches.masses.push(-f64::from(index) * 0.125);
+                }
+                let mut oracle = scratch.clone();
+                oracle.merge_reference(super::logaddexp);
+                scratch.merge(super::logaddexp);
+                assert!(!scratch.use_generalized_merge_records);
+                assert_eq!(scratch.indices, oracle.indices);
+                assert_eq!(scratch.parent.words, oracle.parent.words);
+                assert!(
+                    scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|v| v.to_bits()))
+                );
+            }
+            // Five nonzero components remain on the generic complete-key path,
+            // even when their small values would fit in a numeric record.
+            scratch.reset(&[0; 4], &[0], &[u64::MAX; 4], 0.0);
+            for index in 0..count {
+                scratch
+                    .branches
+                    .words
+                    .extend_from_slice(&[1, 1, 1, 1, 1 + u64::from(index % 17)]);
+                scratch.branches.masses.push(-f64::from(index) * 0.25);
+            }
+            let mut oracle = scratch.clone();
+            oracle.merge_reference(super::logaddexp);
+            scratch.merge(super::logaddexp);
+            assert!(!scratch.use_generalized_merge_records);
+            assert_eq!(scratch.indices, oracle.indices);
+            assert_eq!(scratch.parent.words, oracle.parent.words);
+            assert!(
+                scratch.parent.masses.iter().map(|v| v.to_bits()).eq(oracle
+                    .parent
+                    .masses
+                    .iter()
+                    .map(|v| v.to_bits()))
+            );
+        }
+    }
 
     #[test]
     fn short_state_comparisons_match_generic_word_order() {
@@ -4836,7 +5779,7 @@ mod tests {
         for width in [2, 3] {
             for wide in [false, true] {
                 let stride = if wide { 7 } else { width };
-                for count in [0, 1, 63, 64, 65, 127, 511, 512, 513, 64] {
+                for count in [0, 1, 63, 64, 65, 127, 511, 512, 513, 1023, 1024, 1025, 64] {
                     for spans in [
                         [0, 0, 0],
                         [1, 1, 1],
@@ -4932,9 +5875,10 @@ mod tests {
                                     .map(|x| x.to_bits())
                                     .collect::<Vec<_>>()
                             );
-                            let expected = (64..=512).contains(&count)
+                            let key_bits = if count <= 512 { 55 } else { 54 };
+                            let expected = (64..=1024).contains(&count)
                                 && (2..=3).contains(&scratch.merge_word_indices.len())
-                                && spans[..width].iter().sum::<u32>() <= 55;
+                                && spans[..width].iter().sum::<u32>() <= key_bits;
                             assert_eq!(scratch.use_narrow_merge_records, expected);
                         }
                     }
@@ -4947,9 +5891,9 @@ mod tests {
     fn sampled_and_unsampled_overflow_preserve_exact_merge_order() {
         let mut scratch = super::FrontierScratch::<f64>::default();
         for width in [2, 3] {
-            for count in [64, 128, 512] {
+            for count in [64, 128, 512, 513, 1023, 1024, 1025] {
                 for special in [0, 1, count / 3, count - 1] {
-                    for high_bit in [53, 54] {
+                    for high_bit in [52, 53, 54] {
                         let detector_words = width - 1;
                         scratch.reset(
                             &vec![0; detector_words],
@@ -5014,7 +5958,11 @@ mod tests {
                                 .map(|x| x.to_bits())
                                 .collect::<Vec<_>>()
                         );
-                        assert_eq!(scratch.use_narrow_merge_records, high_bit == 53);
+                        let key_bits = if count <= 512 { 55 } else { 54 };
+                        assert_eq!(
+                            scratch.use_narrow_merge_records,
+                            count <= 1024 && high_bit + 2 <= key_bits
+                        );
                     }
                 }
             }
@@ -5873,6 +6821,7 @@ mod tests {
             bp_score_iterations: 5,
             metric_mode: MetricMode::default(),
             int_metric_scale: 1024,
+            dropped_mass: false,
         };
         let first = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
         let second = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();
@@ -6084,7 +7033,7 @@ fn compact_records_preserve_full_keys_arrival_and_mass_bits_at_boundaries() {
         // Reuse scratch across packed and fallback shapes, including a shorter
         // next column, to catch stale mode flags or partially built records.
         for count in [
-            0, 1, 63, 64, 65, 127, 128, 129, 255, 256, 511, 512, 513, 64, 128, 1,
+            0, 1, 63, 64, 65, 127, 128, 129, 255, 256, 511, 512, 513, 1023, 1024, 1025, 64, 128, 1,
         ] {
             for pattern in 0..7 {
                 frontier.branches.words.clear();
@@ -6166,12 +7115,15 @@ fn compact_records_preserve_full_keys_arrival_and_mass_bits_at_boundaries() {
                         .eq(expected_masses.iter().map(|v| v.to_bits())),
                     "original left fold bits"
                 );
-                if !(64..=512).contains(&count)
+                if !(64..=1024).contains(&count)
                     || pattern == 3
                     || pattern == 6
                     || (stride > 2 && (pattern == 4 || pattern == 5))
                 {
-                    assert!(!frontier.use_compact_merge_records);
+                    assert!(
+                        !frontier.use_compact_merge_records
+                            || frontier.use_generalized_merge_records
+                    );
                 }
                 if frontier.use_compact_merge_records {
                     packed_cases += 1;

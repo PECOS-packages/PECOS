@@ -20,7 +20,7 @@ import inspect
 import sys
 from pathlib import Path
 
-from selene_core import SeleneComponent
+from selene_core import SeleneComponent, Utility
 
 
 def main(package: str) -> None:
@@ -32,7 +32,7 @@ def main(package: str) -> None:
     components = [
         obj
         for obj in vars(module).values()
-        if inspect.isclass(obj) and issubclass(obj, SeleneComponent) and obj.__module__.startswith(package)
+        if inspect.isclass(obj) and issubclass(obj, (SeleneComponent, Utility)) and obj.__module__.startswith(package)
     ]
     if len(components) != 1:
         sys.exit(f"expected one Selene component in {package}, found {components}")

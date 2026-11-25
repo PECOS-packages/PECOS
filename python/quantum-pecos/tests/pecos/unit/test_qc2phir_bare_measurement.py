@@ -34,7 +34,7 @@ def _run(program: str, runner: str) -> dict:
 @pytest.mark.parametrize("runner", ["default", "python", "native"])
 def test_slr_bare_measurement_runs_and_reports_only_user_registers(runner) -> None:
     q, c = QReg("q", 2), CReg("c", 1)
-    program = Main(q, c, qb.X(q[0]), qb.X(q[1]), qb.Measure(q[0]) > c[0], qb.Measure(q[1]))
+    program = Main(q, c, qb.X(q[0]), qb.X(q[1]), qb.MeasureZ(q[0]) > c[0], qb.MeasureZ(q[1]))
     phir = SlrConverter(program).quantum_circuit().to_phir_json()
     PhirModel.model_validate(json.loads(phir))
     assert _run(phir, runner) == {"c": [1, 1, 1]}

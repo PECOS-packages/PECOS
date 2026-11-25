@@ -1,0 +1,282 @@
+{
+  "doi": "10.5281/zenodo.22820614",
+  "upstream": "distance/witnesses.json",
+  "cases": [
+    {
+      "circuit": "circuits/simulated/planar_488_d3_r3_X_phase0_p0p0005.stim",
+      "sha256": "81d578dfc8e9a37b45f35aaafabd522f13a180995052ec617f73b7c97164466f",
+      "distance": 3,
+      "tick": 0,
+      "x_error_qubits": [
+        2,
+        5,
+        6
+      ],
+      "source": "Three-qubit right data boundary, initial reset faults.",
+      "fixture": "planar_488_d3_r3_X_phase0_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/planar_488_d3_r3_X_phase0_p0p001.stim",
+      "sha256": "aa8fbd61320aafa76b94f9d1a6a6ad00f126b426b76c20142accb23479c95dcb",
+      "distance": 3,
+      "tick": 0,
+      "x_error_qubits": [
+        2,
+        5,
+        6
+      ],
+      "source": "Three-qubit right data boundary, initial reset faults.",
+      "fixture": "planar_488_d3_r3_X_phase0_p0p001.stim"
+    },
+    {
+      "circuit": "circuits/simulated/planar_488_d3_r3_X_phase1_p0p0005.stim",
+      "sha256": "675dad21e43d74778cc4b5129a71a6cc2a14aee12d5cac6b79794bd9592f9d0a",
+      "distance": 3,
+      "tick": 0,
+      "x_error_qubits": [
+        2,
+        5,
+        6
+      ],
+      "source": "Three-qubit right data boundary, initial reset faults.",
+      "fixture": "planar_488_d3_r3_X_phase1_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/planar_488_d3_r3_X_phase1_p0p001.stim",
+      "sha256": "801100ef8bb77af00697eb1ed381561c575d34d75fb6a1719e4f8ee99237b519",
+      "distance": 3,
+      "tick": 0,
+      "x_error_qubits": [
+        2,
+        5,
+        6
+      ],
+      "source": "Three-qubit right data boundary, initial reset faults.",
+      "fixture": "planar_488_d3_r3_X_phase1_p0p001.stim"
+    },
+    {
+      "circuit": "circuits/simulated/planar_488_d3_r3_Z_phase0_p0p0005.stim",
+      "sha256": "49714fdbb6d8c44b20163ebbb4e9902315dff291e8ad0c1b1bba74b63e89e9ea",
+      "distance": 3,
+      "tick": 0,
+      "x_error_qubits": [
+        2,
+        5,
+        6
+      ],
+      "source": "Three-qubit right data boundary, initial reset faults.",
+      "fixture": "planar_488_d3_r3_Z_phase0_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/planar_488_d3_r3_Z_phase0_p0p001.stim",
+      "sha256": "85b396d3c9682cbac9096767546671ccfbb777804c61784a59141863dbc95633",
+      "distance": 3,
+      "tick": 0,
+      "x_error_qubits": [
+        2,
+        5,
+        6
+      ],
+      "source": "Three-qubit right data boundary, initial reset faults.",
+      "fixture": "planar_488_d3_r3_Z_phase0_p0p001.stim"
+    },
+    {
+      "circuit": "circuits/simulated/planar_488_d3_r3_Z_phase1_p0p0005.stim",
+      "sha256": "e641d874f14e577248761bb876adbc05ed16eaefee82aa043f6e58eedb2e49d7",
+      "distance": 3,
+      "tick": 0,
+      "x_error_qubits": [
+        2,
+        5,
+        6
+      ],
+      "source": "Three-qubit right data boundary, initial reset faults.",
+      "fixture": "planar_488_d3_r3_Z_phase1_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/planar_488_d3_r3_Z_phase1_p0p001.stim",
+      "sha256": "bec0a4901f68fcea5161a99c1334ae86a252d2a523aea83b24690f0d93b23768",
+      "distance": 3,
+      "tick": 0,
+      "x_error_qubits": [
+        2,
+        5,
+        6
+      ],
+      "source": "Three-qubit right data boundary, initial reset faults.",
+      "fixture": "planar_488_d3_r3_Z_phase1_p0p001.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d12_r12_X_phase0_p0p0005.stim",
+      "sha256": "42b1eb8ea2da7e6cfb8fbaca7e80a1f89a01154c088e88d55bb69a2a3283c93a",
+      "distance": 12,
+      "tick": 299,
+      "x_error_qubits": [
+        1,
+        3,
+        8,
+        13,
+        49,
+        51,
+        56,
+        61,
+        97,
+        99,
+        104,
+        109
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d12/X.weight12.witness.json",
+      "fixture": "torus_488_d12_r12_X_phase0_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d12_r12_Z_phase0_p0p0005.stim",
+      "sha256": "09cb6a8d362048f1f7280e907d00ed494e0ccd4c64fc5a9b8b67f85751836df5",
+      "distance": 12,
+      "tick": 299,
+      "x_error_qubits": [
+        0,
+        1,
+        2,
+        4,
+        16,
+        17,
+        18,
+        20,
+        32,
+        33,
+        34,
+        36
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d12/Z.weight12.witness.json",
+      "fixture": "torus_488_d12_r12_Z_phase0_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d4_r4_X_phase0_p0p0005.stim",
+      "sha256": "6f9a6c6e3a517bbd9678750f227f4e794ace359a55bc7b9eaf5ac7855a928ffc",
+      "distance": 4,
+      "tick": 99,
+      "x_error_qubits": [
+        0,
+        3,
+        8,
+        11
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d4/X.weight4.witness.json",
+      "fixture": "torus_488_d4_r4_X_phase0_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d4_r4_X_phase0_p0p001.stim",
+      "sha256": "dfe4432748479b5d914402c3813682c761d91526eb90acdfb90d5004e5949e4b",
+      "distance": 4,
+      "tick": 99,
+      "x_error_qubits": [
+        0,
+        3,
+        8,
+        11
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d4/X.weight4.witness.json",
+      "fixture": "torus_488_d4_r4_X_phase0_p0p001.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d4_r4_Z_phase0_p0p0005.stim",
+      "sha256": "1355fb36f336d8a6a226ff105fbe0ad05375ea1a716dbeba7f145530755c95b1",
+      "distance": 4,
+      "tick": 99,
+      "x_error_qubits": [
+        0,
+        1,
+        2,
+        4
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d4/Z.weight4.witness.json",
+      "fixture": "torus_488_d4_r4_Z_phase0_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d4_r4_Z_phase0_p0p001.stim",
+      "sha256": "cf942447a86a698e8cb8837bf4a271bf1185b823ea5ff7ae868229c7d6305ecf",
+      "distance": 4,
+      "tick": 99,
+      "x_error_qubits": [
+        0,
+        1,
+        2,
+        4
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d4/Z.weight4.witness.json",
+      "fixture": "torus_488_d4_r4_Z_phase0_p0p001.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d8_r8_X_phase0_p0p0005.stim",
+      "sha256": "12094d58e214f181e47105c0b759dd6dbfab60948b87a06a55cd4371dea23d45",
+      "distance": 8,
+      "tick": 199,
+      "x_error_qubits": [
+        16,
+        19,
+        24,
+        27,
+        32,
+        35,
+        40,
+        43
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d8/X.weight8.witness.json",
+      "fixture": "torus_488_d8_r8_X_phase0_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d8_r8_X_phase0_p0p001.stim",
+      "sha256": "c95b63f42df792f7665282b21a2a59488c869ac60cb60a5a230a5bc68f5378a3",
+      "distance": 8,
+      "tick": 199,
+      "x_error_qubits": [
+        16,
+        19,
+        24,
+        27,
+        32,
+        35,
+        40,
+        43
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d8/X.weight8.witness.json",
+      "fixture": "torus_488_d8_r8_X_phase0_p0p001.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d8_r8_Z_phase0_p0p0005.stim",
+      "sha256": "e24440a77be51ed2299b805c88316a5946b58ebf01fb46803b92e684b06b9e98",
+      "distance": 8,
+      "tick": 199,
+      "x_error_qubits": [
+        0,
+        1,
+        2,
+        4,
+        16,
+        17,
+        18,
+        20
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d8/Z.weight8.witness.json",
+      "fixture": "torus_488_d8_r8_Z_phase0_p0p0005.stim"
+    },
+    {
+      "circuit": "circuits/simulated/torus_488_d8_r8_Z_phase0_p0p001.stim",
+      "sha256": "ea5d583533304d3a917fc40a158f9b2befed528affdcb8d7b1193d09188355a6",
+      "distance": 8,
+      "tick": 199,
+      "x_error_qubits": [
+        0,
+        1,
+        2,
+        4,
+        16,
+        17,
+        18,
+        20
+      ],
+      "source": "torus488_cz_25_moment_result.zip#torus488_cz_25_moment/results/d8/Z.weight8.witness.json",
+      "fixture": "torus_488_d8_r8_Z_phase0_p0p001.stim"
+    }
+  ]
+}

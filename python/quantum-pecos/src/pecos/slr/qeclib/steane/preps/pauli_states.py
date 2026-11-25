@@ -111,7 +111,7 @@ class PrepZeroVerify(Block):
                 (q[1], a),
                 (q[3], a),
             ),
-            qubit.Measure(a) > c,
+            qubit.MeasureZ(a) > c,
             Comment(""),
         )
 

@@ -319,6 +319,11 @@ rslib-rust-test:
       LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       cargo test --locked -p pecos-rslib --lib
 
+# Inspector DOM checks (install npm dependencies as described in the test README).
+[group('test')]
+test-inspector:
+    npm test --prefix crates/pecos-quantum/tests/inspector
+
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:
@@ -1123,6 +1128,7 @@ python-ci-sync-test:
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
       --package quantum-pecos \
+      --package pecos-selene-wasm \
       --package pecos-selene-runtime-plugin \
       --no-install-package pecos-rslib \
       --no-install-package pecos-rslib-exp \
@@ -1202,7 +1208,7 @@ build-selene profile="release":
             NEEDS_BUILD=true
             break
         fi
-        NEWER=$(find "crates/" "$DIR" -name "*.rs" -newer "$LIB" 2>/dev/null | head -1 || true)
+        NEWER=$(find "crates/" "exp/pecos-stab-active/" "$DIR" -name "*.rs" -newer "$LIB" 2>/dev/null | head -1 || true)
         if [ -n "$NEWER" ]; then
             NEEDS_BUILD=true
             break

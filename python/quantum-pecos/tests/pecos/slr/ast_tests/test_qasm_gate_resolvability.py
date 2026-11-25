@@ -100,8 +100,8 @@ def test_sxx_and_syy_have_distinct_end_to_end_signatures() -> None:
         c := CReg("c", 2),
         qubit.SXX(q[0], q[1]),
         qubit.SXX(q[0], q[1]),
-        qubit.Measure(q[0]) > c[0],
-        qubit.Measure(q[1]) > c[1],
+        qubit.MeasureZ(q[0]) > c[0],
+        qubit.MeasureZ(q[1]) > c[1],
         Return(c),
     )
     syy_twice = Main(
@@ -109,8 +109,8 @@ def test_sxx_and_syy_have_distinct_end_to_end_signatures() -> None:
         c := CReg("c", 2),
         qubit.SYY(q[0], q[1]),
         qubit.SYY(q[0], q[1]),
-        qubit.Measure(q[0]) > c[0],
-        qubit.Measure(q[1]) > c[1],
+        qubit.MeasureZ(q[0]) > c[0],
+        qubit.MeasureZ(q[1]) > c[1],
         Return(c),
     )
     sxx_then_syy = Main(
@@ -118,8 +118,8 @@ def test_sxx_and_syy_have_distinct_end_to_end_signatures() -> None:
         c := CReg("c", 2),
         qubit.SXX(q[0], q[1]),
         qubit.SYY(q[0], q[1]),
-        qubit.Measure(q[0]) > c[0],
-        qubit.Measure(q[1]) > c[1],
+        qubit.MeasureZ(q[0]) > c[0],
+        qubit.MeasureZ(q[1]) > c[1],
         Return(c),
     )
     odd_parity = Main(
@@ -128,8 +128,8 @@ def test_sxx_and_syy_have_distinct_end_to_end_signatures() -> None:
         qubit.X(q[1]),
         qubit.SXX(q[0], q[1]),
         qubit.SYY(q[0], q[1]),
-        qubit.Measure(q[0]) > c[0],
-        qubit.Measure(q[1]) > c[1],
+        qubit.MeasureZ(q[0]) > c[0],
+        qubit.MeasureZ(q[1]) > c[1],
         Return(c),
     )
     assert _run_slr_qasm(sxx_twice) == [3] * 8
@@ -149,8 +149,8 @@ def test_szz_native_end_to_end_signature() -> None:
         qubit.SZZ(q[0], q[1]),
         qubit.H(q[0]),
         qubit.H(q[1]),
-        qubit.Measure(q[0]) > c[0],
-        qubit.Measure(q[1]) > c[1],
+        qubit.MeasureZ(q[0]) > c[0],
+        qubit.MeasureZ(q[1]) > c[1],
         Return(c),
     )
 
@@ -171,8 +171,8 @@ def test_hqslib_opt_in_executes_supported_native_program() -> None:
         qubit.SZZ(q[0], q[1]),
         qubit.H(q[0]),
         qubit.H(q[1]),
-        qubit.Measure(q[0]) > c[0],
-        qubit.Measure(q[1]) > c[1],
+        qubit.MeasureZ(q[0]) > c[0],
+        qubit.MeasureZ(q[1]) > c[1],
         Return(c),
     )
 
@@ -191,8 +191,8 @@ def test_ch_exercises_both_control_branches_end_to_end() -> None:
         qubit.X(q[0]),
         qubit.CH(q[0], q[1]),
         qubit.H(q[1]),
-        qubit.Measure(q[0]) > c[0],
-        qubit.Measure(q[1]) > c[1],
+        qubit.MeasureZ(q[0]) > c[0],
+        qubit.MeasureZ(q[1]) > c[1],
         Return(c),
     )
     inactive_control = Main(
@@ -200,8 +200,8 @@ def test_ch_exercises_both_control_branches_end_to_end() -> None:
         c := CReg("c", 2),
         qubit.X(q[1]),
         qubit.CH(q[0], q[1]),
-        qubit.Measure(q[0]) > c[0],
-        qubit.Measure(q[1]) > c[1],
+        qubit.MeasureZ(q[0]) > c[0],
+        qubit.MeasureZ(q[1]) > c[1],
         Return(c),
     )
     phase_sensitive_control = Main(
@@ -211,7 +211,7 @@ def test_ch_exercises_both_control_branches_end_to_end() -> None:
         qubit.RY(rad(-3 * math.pi / 4), q[1]),
         qubit.CH(q[0], q[1]),
         qubit.H(q[0]),
-        qubit.Measure(q[0]) > c[0],
+        qubit.MeasureZ(q[0]) > c[0],
         Return(c),
     )
 
@@ -233,8 +233,8 @@ def test_controlled_rotations_have_distinct_end_to_end_signatures() -> None:
                 c := CReg("c", 2),
                 qubit.X(q[0]),
                 gate(math.pi, q[0], q[1]),
-                qubit.Measure(q[0]) > c[0],
-                qubit.Measure(q[1]) > c[1],
+                qubit.MeasureZ(q[0]) > c[0],
+                qubit.MeasureZ(q[1]) > c[1],
                 Return(c),
             ),
         )
@@ -246,8 +246,8 @@ def test_controlled_rotations_have_distinct_end_to_end_signatures() -> None:
                 qubit.H(q[1]),
                 gate(math.pi, q[0], q[1]),
                 qubit.H(q[1]),
-                qubit.Measure(q[0]) > c[0],
-                qubit.Measure(q[1]) > c[1],
+                qubit.MeasureZ(q[0]) > c[0],
+                qubit.MeasureZ(q[1]) > c[1],
                 Return(c),
             ),
         )
@@ -258,7 +258,7 @@ def test_controlled_rotations_have_distinct_end_to_end_signatures() -> None:
                 qubit.H(q[0]),
                 gate(math.tau, q[0], q[1]),
                 qubit.H(q[0]),
-                qubit.Measure(q[0]) > c[0],
+                qubit.MeasureZ(q[0]) > c[0],
                 Return(c),
             ),
         )
@@ -278,7 +278,7 @@ def test_controlled_rotations_have_distinct_end_to_end_signatures() -> None:
                 gate(math.pi, q[0], q[1]),
                 qubit.SZdg(q[0]),
                 qubit.H(q[0]),
-                qubit.Measure(q[0]) > c[0],
+                qubit.MeasureZ(q[0]) > c[0],
                 Return(c),
             ),
         )

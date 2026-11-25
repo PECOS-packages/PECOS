@@ -14,7 +14,7 @@ from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.slr import Block, CReg, For, If, Main, Parallel, Print, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
-from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import MeasureZ
 from pecos_rslib import Qasm, sim, state_vector
 
 
@@ -173,8 +173,8 @@ class TestSLRToQuantumCircuit:
             qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
             Return(c),
         )
 
@@ -185,7 +185,7 @@ class TestSLRToQuantumCircuit:
         # Check for reset and measure operations
         circuit_str = str(qc)
         assert "RESET" in circuit_str or "PZ" in circuit_str
-        assert "Measure" in circuit_str
+        assert [symbol for symbol, _, _ in qc.items() if symbol.startswith("Measure")] == ["Measure", "Measure"]
 
     def test_parallel_block_to_qc(self) -> None:
         """Test conversion of Parallel blocks from SLR to QuantumCircuit."""
@@ -362,10 +362,10 @@ class TestQuantumCircuitRoundTrip:
             qubit.CX(q[1], q[2]),
             qubit.CX(q[2], q[3]),
             # Measure
-            qubit.Measure(q[0]) > c[0],
-            qubit.Measure(q[1]) > c[1],
-            qubit.Measure(q[2]) > c[2],
-            qubit.Measure(q[3]) > c[3],
+            qubit.MeasureZ(q[0]) > c[0],
+            qubit.MeasureZ(q[1]) > c[1],
+            qubit.MeasureZ(q[2]) > c[2],
+            qubit.MeasureZ(q[3]) > c[3],
             Return(c),
         )
 
@@ -412,7 +412,7 @@ class TestQuantumCircuitStaticForAndWhile:
             q := QReg("q", 1),
             c := CReg("c", 1),
             For("i", 0, 3).Do(qubit.X(q[0])),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             Return(c),
         )
         qc = SlrConverter(prog).quantum_circuit()
@@ -423,7 +423,7 @@ class TestQuantumCircuitStaticForAndWhile:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            While(c[0] == 0).Do(qubit.X(q[0]), Measure(q[0]) > c[0]),
+            While(c[0] == 0).Do(qubit.X(q[0]), MeasureZ(q[0]) > c[0]),
             Return(c),
         )
         with pytest.raises(NotImplementedError, match=r"While loops cannot be converted"):
@@ -456,7 +456,7 @@ class TestQuantumCircuitIf:
         if shape == "then-else":
             conditional.Else(qubit.Z(q[1]))
         body = Repeat(2).block(conditional) if shape == "inside-repeat" else conditional
-        prog = Main(q, c, Measure(q[0]) > c[0], body, Return(c))
+        prog = Main(q, c, MeasureZ(q[0]) > c[0], body, Return(c))
         with pytest.raises(NotImplementedError, match=r"If cannot be converted to QuantumCircuit"):
             generate(prog)
 
@@ -466,7 +466,7 @@ class TestQuantumCircuitIf:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
-            Measure(q[0]) > c[0],
+            MeasureZ(q[0]) > c[0],
             c[1].set(c[0] ^ 1),
             qubit.H(q[0]),
             Return(c),
@@ -639,26 +639,26 @@ def _assert_classical_samples(program: Main, expected: dict) -> None:
 def test_destination_round_trip(case: str, *, optimize_parallel: bool, json_round_trip: bool) -> None:
     """Destinations, declarations and deterministic values survive both conversions."""
     q, c, d = QReg("q", 2), CReg("c", 2), CReg("d", 3)
-    measurements = (Measure(q[1]) > c[1], Measure(q[0]) > c[0])
+    measurements = (MeasureZ(q[1]) > c[1], MeasureZ(q[0]) > c[0])
     cases = {
         "out_of_order": (measurements, {"c": [1, 0], "d": [0, 0, 0]}),
-        "two_registers": ((Measure(q[0]) > d[2], Measure(q[1]) > c[0]), {"c": [0, 0], "d": [0, 0, 1]}),
-        "overwritten": ((Measure(q[1]) > c[0], Measure(q[0]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
-        "bare": ((Measure(q[1]), Measure(q[0])), {"c": [0, 0], "d": [0, 0, 0]}),
-        "short_results": ((Measure(q[1]), Measure(q[0], q[1]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
+        "two_registers": ((MeasureZ(q[0]) > d[2], MeasureZ(q[1]) > c[0]), {"c": [0, 0], "d": [0, 0, 1]}),
+        "overwritten": ((MeasureZ(q[1]) > c[0], MeasureZ(q[0]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
+        "bare": ((MeasureZ(q[1]), MeasureZ(q[0])), {"c": [0, 0], "d": [0, 0, 0]}),
+        "short_results": ((MeasureZ(q[1]), MeasureZ(q[0], q[1]) > c[0]), {"c": [1, 0], "d": [0, 0, 0]}),
         # Prepare and measure the -X and -Y eigenstates using the existing basis decomposition.
         "bases": (
             (
                 qubit.H(q[0]),
                 qubit.H(q[0]),
-                Measure(q[0]) > c[1],
+                MeasureZ(q[0]) > c[1],
                 qubit.H(q[0]),
                 qubit.H(q[1]),
                 qubit.SZ(q[1]),
                 qubit.Z(q[1]),
                 qubit.SZdg(q[1]),
                 qubit.H(q[1]),
-                Measure(q[1]) > c[0],
+                MeasureZ(q[1]) > c[0],
                 qubit.H(q[1]),
                 qubit.SZ(q[1]),
             ),
@@ -879,7 +879,7 @@ def test_valid_classical_register_name(name: str) -> None:
 @pytest.mark.parametrize("json_round_trip", [False, True])
 def test_bare_measurement_round_trip_without_registers(*, json_round_trip: bool) -> None:
     q = QReg("q", 2)
-    original = Main(q, qubit.X(q[0]), Measure(q[0]), Measure(q[1]))
+    original = Main(q, qubit.X(q[0]), MeasureZ(q[0]), MeasureZ(q[1]))
     qc = SlrConverter(original).quantum_circuit()
     if json_round_trip:
         qc = QuantumCircuit.from_json_str(qc.to_json_str())
@@ -907,7 +907,7 @@ def test_parallel_measurement_overwrite(basis: str, source: str) -> None:
         restore.append(qubit.SZ(q[0]))
     prepare.append(qubit.Z(q[0]))
     result = {"slr_register": c, "slr_slice": c[:]}.get(source, c[0])
-    original = Main(q, c, *prepare, Parallel(*rotate, Measure(q[0]) > result, *restore, Measure(q[1]) > c[0]))
+    original = Main(q, c, *prepare, Parallel(*rotate, MeasureZ(q[0]) > result, *restore, MeasureZ(q[1]) > c[0]))
     program = original
     if source == "quantum_circuit":
         qc = SlrConverter(Main(q, c, *prepare)).quantum_circuit()
@@ -977,7 +977,7 @@ def test_qvars_reproducer(*, json_round_trip: bool) -> None:
         anc := QReg("anc", 1),
         CReg("m", 1),
         qubit.CX(data[0], anc[0]),
-        Measure(anc[0]),
+        MeasureZ(anc[0]),
     )
     qc = SlrConverter(original).quantum_circuit()
     if json_round_trip:
@@ -1005,9 +1005,9 @@ def test_qvars_simulation_oracle(flipped: tuple, *, json_round_trip: bool) -> No
         out,
         flags,
         *(qubit.X(bits[i]) for i in flipped),
-        Measure(data[1]) > out[0],
-        Measure(anc[0]) > flags[1],
-        Measure(data[0]) > out[1],
+        MeasureZ(data[1]) > out[0],
+        MeasureZ(anc[0]) > flags[1],
+        MeasureZ(data[0]) > out[1],
     )
     qc = SlrConverter(original).quantum_circuit()
     if json_round_trip:
@@ -1116,7 +1116,7 @@ def test_qvars_name_collision(source: str) -> None:
 @pytest.mark.parametrize("json_round_trip", [False, True])
 def test_qvars_classical_q(*, json_round_trip: bool) -> None:
     """Red/green: q is available as a classical name without a synthesized quantum q."""
-    original = Main(data := QReg("data", 1), bits := CReg("q", 1), qubit.X(data[0]), Measure(data[0]) > bits[0])
+    original = Main(data := QReg("data", 1), bits := CReg("q", 1), qubit.X(data[0]), MeasureZ(data[0]) > bits[0])
     qc = SlrConverter(original).quantum_circuit()
     if json_round_trip:
         qc = QuantumCircuit.from_json_str(qc.to_json_str())

@@ -1577,7 +1577,7 @@ def test_nonfinite_rotation_is_atomic(angle):
 def test_json_round_trip_keeps_qvars_usable_by_phir() -> None:
     """from_json_str restores integer qubit ids and tuple refs in qvars."""
     data, anc, m = QReg("data", 2), QReg("anc", 1), CReg("m", 1)
-    circuit = SlrConverter(Main(data, anc, m, qb.CX(data[0], anc[0]), qb.Measure(anc[0]) > m[0])).quantum_circuit()
+    circuit = SlrConverter(Main(data, anc, m, qb.CX(data[0], anc[0]), qb.MeasureZ(anc[0]) > m[0])).quantum_circuit()
     restored = QuantumCircuit.from_json_str(circuit.to_json_str())
     assert restored.metadata["qvars"] == circuit.metadata["qvars"]
     assert restored.to_phir_dict()["ops"] == circuit.to_phir_dict()["ops"]

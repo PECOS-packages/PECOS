@@ -234,7 +234,6 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
         | GateType::MZ
         | GateType::MeasureFree
         | GateType::MPZ
-        | GateType::MeasureLeaked
         | GateType::I
         | GateType::Idle => return,
         _ => {}

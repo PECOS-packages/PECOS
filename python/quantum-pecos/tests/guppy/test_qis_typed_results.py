@@ -84,7 +84,9 @@ def test_measurement_dependent_integer(seed: int, trace_bit: bool) -> None:
     assert measured["values"] == [trace_bit]
     count_traces = [item for item in traces if item["name"] == "count"]
     if trace_bit:
-        assert count_traces == [{"name": "count", "values": [True], "result_ids": []}]
+        assert count_traces == [
+            {"name": "count", "values": [True], "result_ids": [], "provenance": None, "control_dependent": None},
+        ]
     else:
         assert count_traces == []
 
@@ -264,7 +266,7 @@ def test_integer_array_traces_are_empty_and_scalar_zero_traces() -> None:
     assert [item for chunk in array_chunks for item in chunk.get("named_result_traces", [])] == []
     scalar_chunks = pecos.capture_qis_operation_trace(scalar, 1)
     assert [item for chunk in scalar_chunks for item in chunk.get("named_result_traces", [])] == [
-        {"name": "det", "values": [False], "result_ids": []},
+        {"name": "det", "values": [False], "result_ids": [], "provenance": None, "control_dependent": None},
     ]
 
 

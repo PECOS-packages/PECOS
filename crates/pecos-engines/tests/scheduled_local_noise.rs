@@ -66,7 +66,7 @@ fn message(batches: &[TimedBatch], events: bool) -> ByteMessage {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, g)| {
-                    matches!(g.gate_type, GateType::MZ | GateType::MeasureLeaked).then_some(
+                    matches!(g.gate_type, GateType::MZ | GateType::MeasureZLeaked).then_some(
                         ScheduledResult {
                             operation_index: i,
                             runtime_result: b.batch_index * 10 + i as u64,
@@ -157,7 +157,7 @@ fn preparation_and_asymmetric_readout_are_applied_once() {
         for (prep, m0, m1, want) in [(1.0, 0.0, 0.0, 1), (0.0, 1.0, 0.0, 1), (1.0, 0.0, 1.0, 0)] {
             for measurement in [
                 Gate::mz(&[0]),
-                Gate::simple(GateType::MeasureLeaked, vec![0.into()]),
+                Gate::simple(GateType::MeasureZLeaked, vec![0.into()]),
             ] {
                 let mut sim = system(profile(0.0, 0.0, prep, m0, m1), events, 9);
                 let batches = [
@@ -286,7 +286,7 @@ fn leakage_readout_precedes_later_noisy_preparation() {
     for events in [false, true] {
         let local = ScheduledLocalNoise::new(idle.clone(), 0.0, 0.0, 1.0, 0.0, 1.0).unwrap();
         let mut sim = system(local.into(), events, 7);
-        let leaked = || Gate::simple(GateType::MeasureLeaked, vec![0.into()]);
+        let leaked = || Gate::simple(GateType::MeasureZLeaked, vec![0.into()]);
         let b = [
             batch(0, 0, 0, vec![Gate::pz(&[0])]),
             batch(
@@ -313,7 +313,7 @@ fn same_batch_reuse_preserves_gate_order_readout_and_rng() {
         Gate::rzz(pecos_core::radians!(-0.3), &[(0, 1)]),
         Gate::mz(&[1]),
         Gate::pz(&[0]),
-        Gate::measure_leaked(&[0]),
+        Gate::measure_z_leaked(&[0]),
     ];
     for events in [false, true] {
         for seed in 0..32 {
@@ -412,7 +412,7 @@ fn normalized_capacity_violation_poison_clone_and_reset() {
                     owner,
                     &[
                         batch(0, 0, 0, vec![Gate::pz(&[0])]),
-                        batch(1, 0, 0, vec![Gate::measure_leaked(&[0])])
+                        batch(1, 0, 0, vec![Gate::measure_z_leaked(&[0])])
                     ],
                     true
                 ),
@@ -456,7 +456,7 @@ fn preparation_leakage_is_conditional_and_readout_preserves_the_ternary_result()
                 0,
                 0,
                 0,
-                vec![Gate::pz(&[0]), Gate::measure_leaked(&[0]), Gate::mz(&[0])],
+                vec![Gate::pz(&[0]), Gate::measure_z_leaked(&[0]), Gate::mz(&[0])],
             )];
             // Binary 1 (whether leaked or an X fault) flips to zero; ternary 2 does not.
             assert_eq!(run(&mut sim, &b, events), expected);
@@ -468,12 +468,12 @@ fn preparation_leakage_is_conditional_and_readout_preserves_the_ternary_result()
 fn preparation_leakage_same_batch_reset_snapshots_match_general_readout() {
     let gates = vec![
         Gate::pz(&[0]),
-        Gate::measure_leaked(&[0]),
+        Gate::measure_z_leaked(&[0]),
         Gate::mz(&[0]),
         Gate::pz(&[0]),
-        Gate::measure_leaked(&[0]),
+        Gate::measure_z_leaked(&[0]),
         Gate::pz(&[0]),
-        Gate::measure_leaked(&[0]),
+        Gate::measure_z_leaked(&[0]),
     ];
     for events in [false, true] {
         let mut saw_clear = false;
@@ -546,7 +546,7 @@ fn whole_shot_reset_clears_preparation_leakage_in_cloned_hosts() {
                     0,
                     0,
                     0,
-                    vec![Gate::pz(&[0]), Gate::measure_leaked(&[0])]
+                    vec![Gate::pz(&[0]), Gate::measure_z_leaked(&[0])]
                 )],
                 events
             ),
@@ -559,7 +559,7 @@ fn whole_shot_reset_clears_preparation_leakage_in_cloned_hosts() {
             assert_eq!(
                 run(
                     host,
-                    &[batch(0, 0, 0, vec![Gate::measure_leaked(&[0])])],
+                    &[batch(0, 0, 0, vec![Gate::measure_z_leaked(&[0])])],
                     events
                 ),
                 vec![0]
@@ -571,7 +571,7 @@ fn whole_shot_reset_clears_preparation_leakage_in_cloned_hosts() {
                         1,
                         0,
                         0,
-                        vec![Gate::pz(&[0]), Gate::measure_leaked(&[0])]
+                        vec![Gate::pz(&[0]), Gate::measure_z_leaked(&[0])]
                     )],
                     events
                 ),
@@ -598,7 +598,7 @@ fn replacing_local_faults_clears_old_preparation_leakage_but_retains_idle_noise(
             0,
             1_000_000_000,
             0,
-            vec![Gate::pz(&[0]), Gate::measure_leaked(&[0]), Gate::mz(&[1])],
+            vec![Gate::pz(&[0]), Gate::measure_z_leaked(&[0]), Gate::mz(&[1])],
         )];
         // Preparation replaces qubit 0's idle history. Qubit 1 still receives
         // the retained idle channel, even after replacing the local profile.
@@ -727,7 +727,7 @@ fn nonuniform_pairs_match_whole_batch_general_model_results_and_rng() {
                     pecos_core::radians!(0.2),
                     &[(0, 1)],
                 ),
-                Gate::measure_leaked(&[1]),
+                Gate::measure_z_leaked(&[1]),
                 Gate::mz(&[0]),
             ],
         ),
@@ -806,7 +806,7 @@ fn replacing_pair_distribution_preserves_clones_and_other_faults() {
                 Gate::mz(&[0]),
                 Gate::mz(&[1]),
                 Gate::pz(&[0]),
-                Gate::measure_leaked(&[0]),
+                Gate::measure_z_leaked(&[0]),
             ],
         )];
         assert_eq!(
@@ -881,7 +881,7 @@ fn angle_scaling_preserves_mixed_faults_whole_batches_and_rng() {
                     pecos_core::radians!(0.2),
                     &[(0, 1)],
                 ),
-                Gate::measure_leaked(&[1]),
+                Gate::measure_z_leaked(&[1]),
                 Gate::mz(&[0]),
             ],
         ),
@@ -1166,10 +1166,10 @@ fn single_qubit_emission_replaces_the_gate_and_preserves_measurement_time_leakag
                     vec![
                         Gate::pz(&[0]),
                         gate.clone(),
-                        Gate::measure_leaked(&[0]),
+                        Gate::measure_z_leaked(&[0]),
                         Gate::mz(&[0]),
                         Gate::pz(&[0]),
-                        Gate::measure_leaked(&[0]),
+                        Gate::measure_z_leaked(&[0]),
                     ],
                 )];
                 assert_eq!(run(&mut sim, &b, events), expected);
@@ -1213,8 +1213,8 @@ fn two_qubit_emission_uses_operand_order_and_seepage_is_conditional() {
                                 Gate::pz(&[0]),
                                 Gate::pz(&[1]),
                                 Gate::rzz(Angle64::ZERO, &[(a, b)]),
-                                Gate::measure_leaked(&[a]),
-                                Gate::measure_leaked(&[b]),
+                                Gate::measure_z_leaked(&[a]),
+                                Gate::measure_z_leaked(&[b]),
                             ],
                         ),
                         batch(
@@ -1223,8 +1223,8 @@ fn two_qubit_emission_uses_operand_order_and_seepage_is_conditional() {
                             0,
                             vec![
                                 Gate::rxyxy2q(Angle64::ZERO, Angle64::ZERO, &[(a, b)]),
-                                Gate::measure_leaked(&[a]),
-                                Gate::measure_leaked(&[b]),
+                                Gate::measure_z_leaked(&[a]),
+                                Gate::measure_z_leaked(&[b]),
                             ],
                         ),
                     ];
@@ -1267,11 +1267,11 @@ fn single_qubit_seepage_observes_idle_leakage_and_measurement_reset_order() {
                     1_000_000_000,
                     0,
                     vec![
-                        Gate::measure_leaked(&[0]),
+                        Gate::measure_z_leaked(&[0]),
                         Gate::rxy1q(Angle64::ZERO, Angle64::ZERO, &[0]),
-                        Gate::measure_leaked(&[0]),
+                        Gate::measure_z_leaked(&[0]),
                         Gate::pz(&[0]),
-                        Gate::measure_leaked(&[0]),
+                        Gate::measure_z_leaked(&[0]),
                     ],
                 ),
             ];
@@ -1300,13 +1300,13 @@ fn mixed_emission_and_angle_scaling_match_general_noise_results_and_rng() {
             vec![
                 Gate::rxy1q(pecos_core::radians!(0.7), Angle64::ZERO, &[0]),
                 Gate::rzz(pecos_core::radians!(-0.3), &[(1, 0)]),
-                Gate::measure_leaked(&[0]),
+                Gate::measure_z_leaked(&[0]),
                 Gate::mz(&[1]),
                 Gate::rxyxy2q(pecos_core::radians!(0.5), Angle64::ZERO, &[(0, 1)]),
                 Gate::rz(pecos_core::radians!(0.9), &[1]),
-                Gate::measure_leaked(&[1]),
+                Gate::measure_z_leaked(&[1]),
                 Gate::pz(&[0]),
-                Gate::measure_leaked(&[0]),
+                Gate::measure_z_leaked(&[0]),
             ],
         ),
     ];
@@ -1420,8 +1420,8 @@ fn emission_defaults_clones_and_local_replacement_preserve_behavior() {
             vec![
                 Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0]),
                 Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]),
-                Gate::measure_leaked(&[0]),
-                Gate::measure_leaked(&[1]),
+                Gate::measure_z_leaked(&[0]),
+                Gate::measure_z_leaked(&[1]),
             ],
         )];
         for seed in 0..32 {
@@ -1459,7 +1459,7 @@ fn replacing_emission_models_preserves_profile_clones_and_host_reset() {
             0,
             vec![Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0])],
         );
-        let read = batch(1, 0, 0, vec![Gate::measure_leaked(&[0])]);
+        let read = batch(1, 0, 0, vec![Gate::measure_z_leaked(&[0])]);
         assert_eq!(
             run(
                 &mut system(original.into(), events, 3),
@@ -1486,7 +1486,7 @@ fn replacing_emission_models_preserves_profile_clones_and_host_reset() {
             assert_eq!(
                 run(
                     host,
-                    &[batch(0, 0, 0, vec![Gate::measure_leaked(&[0])])],
+                    &[batch(0, 0, 0, vec![Gate::measure_z_leaked(&[0])])],
                     events
                 ),
                 vec![0]
@@ -1500,7 +1500,7 @@ fn replacing_emission_models_preserves_profile_clones_and_host_reset() {
                         0,
                         vec![
                             Gate::rxy1q(Angle64::HALF_TURN, Angle64::ZERO, &[0]),
-                            Gate::measure_leaked(&[0])
+                            Gate::measure_z_leaked(&[0])
                         ]
                     )],
                     events
@@ -1551,8 +1551,8 @@ fn seepage_requires_both_a_gate_fault_and_its_emission_branch() {
                             Gate::pz(&[0]),
                             Gate::pz(&[1]),
                             gate,
-                            Gate::measure_leaked(&[0]),
-                            Gate::measure_leaked(&[1]),
+                            Gate::measure_z_leaked(&[0]),
+                            Gate::measure_z_leaked(&[1]),
                         ],
                     )],
                     events,
@@ -1784,12 +1784,12 @@ fn preparation_crosstalk_preserves_leakage_flags_across_repeated_preparations() 
                     0,
                     vec![
                         Gate::pz(&[0]),
-                        Gate::measure_leaked(&[0]),
+                        Gate::measure_z_leaked(&[0]),
                         Gate::pz(&[1]),
-                        Gate::measure_leaked(&[0]),
+                        Gate::measure_z_leaked(&[0]),
                         Gate::pz(&[1]),
-                        Gate::measure_leaked(&[0]),
-                        Gate::measure_leaked(&[1]),
+                        Gate::measure_z_leaked(&[0]),
+                        Gate::measure_z_leaked(&[1]),
                     ]
                 )],
                 events

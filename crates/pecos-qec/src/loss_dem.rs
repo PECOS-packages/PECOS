@@ -1,7 +1,9 @@
 //! Foundations for loss-conditioned detector error models.
 //!
 //! Locations use tick, stored batch, operand, and side. Records always use emission
-//! indices, never measurement IDs. Branch enumeration and decoding are separate work.
+//! indices, never measurement IDs. The catalog enumerates first-order loss branches;
+//! shot-dependent mixing and decoding are separate work. Non-coset partner Pauli
+//! models branch into certain outcomes; single Paulis and cosets use coin gates.
 //!
 //! The built-settings bridge is an allow-list:
 //!
@@ -36,7 +38,9 @@
 //! Recovery false alarms use the shared inline categorical conversion: each of X/Y/Z
 //! has independent probability `(1 - sqrt(1 - FP))/2`, per present operand. Before-site
 //! Paulis are conjugated forward as a whole through the location's resolved Clifford.
-//! E2 must replace these terms at sites with lost operands. Event labels containing L
+//! The catalog retains false-alarm contributions by recovery site and operand.
+//! E3 omits tagged contributions before merging per shot. The XOR inverse is
+//! not used, since it fails at `p_tag = 1/2` (FP = 1). Event labels containing L
 //! contribute identity here, a first-order background approximation.
 //!
 //! General categorical channels need not admit exact independent nonnegative mechanisms.
@@ -46,10 +50,17 @@
 //! location, channel kind, discrepancy signature, total-variation magnitude and requested
 //! nonidentity channel weight, just as for ordinary gate noise. No-loss Pauli mechanisms
 //! and their residuals are identical to the ordinary builder, including uniform defaults.
-//! No branch enumeration, shot-dependent DEM mixing, or decoder construction is included.
+//! Shot-dependent DEM mixing and decoder construction are not included.
+mod branch_replay;
+mod branches;
 mod bridge;
 mod channels;
 mod runner;
+mod trajectory;
+pub use branches::{
+    Approximation, BranchId, BranchNormalForm, BranchReport, FalseAlarmTag, LossBranch,
+    LossCatalog, LossMoment, LossRoot, RootKey, RootKind, RootPhase,
+};
 pub use bridge::pauli_noise_config;
 pub use channels::{LocationChannel, background_dem};
 mod symbolic;
@@ -58,7 +69,7 @@ pub use runner::{OutputSlot, OutputTable, Probe, ProbeId, Shot, TickRunner};
 pub use symbolic::{Span, located_pauli_flips};
 
 /// Side of a stored gate batch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Side {
     /// Immediately before the operation.
     Before,
@@ -67,7 +78,7 @@ pub enum Side {
 }
 
 /// Position in a tick circuit's stored batch order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location {
     /// Tick index.
     pub tick: usize,
@@ -160,3 +171,6 @@ impl From<crate::DemBuilderError> for LossDemError {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod branch_tests;

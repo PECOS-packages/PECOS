@@ -136,13 +136,10 @@ fn generate_pcgrandom_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using `RapidRng`
 fn generate_rapidrng_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use rand_core::{SeedableRng, TryRng};
-    // Raw from_seed preserves the legacy rapidhash-4.4 RapidRng::new stream.
-    let mut rng = rapidrand::RapidRng::from_seed(seed.to_le_bytes());
+    let mut rng = pecos_random::RapidRng::new(seed);
     let mut bytes = vec![0u8; count];
     for chunk in bytes.as_chunks_mut::<8>().0 {
-        let Ok(v) = rng.try_next_u64();
-        chunk.copy_from_slice(&v.to_le_bytes());
+        chunk.copy_from_slice(&rng.next_u64().to_le_bytes());
     }
     bytes
 }

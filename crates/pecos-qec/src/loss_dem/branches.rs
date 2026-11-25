@@ -74,6 +74,8 @@ pub struct FalseAlarmTag {
 /// Lost-set transition, ordered by engine action (including within a command).
 #[derive(Debug, Clone)]
 pub struct LossMoment {
+    /// Position in the compiled engine-action schedule.
+    pub action_index: usize,
     /// Stored circuit coordinates.
     pub location: Location,
     /// Stage at these coordinates.
@@ -116,6 +118,10 @@ pub struct LossBranch {
 /// First-order root and its mutually exclusive branches.
 #[derive(Debug, Clone)]
 pub struct LossRoot {
+    /// Position of this draw in the compiled engine-action schedule.
+    pub action_index: usize,
+    /// All draw operands, including the present Pauli leg of a mixed label.
+    pub qubits: Vec<usize>,
     /// Identity of the site and joint label.
     pub key: RootKey,
     /// Raw scaled site probability times label weight; no survival correction.
@@ -149,6 +155,15 @@ pub enum Approximation {
     RankLimit,
     /// Nonzero reduced constant with positive rank at absolute weight below one.
     WeightedCoset,
+    /// Independently mixed false-alarm marginals lose alternative correlations.
+    FalseAlarmMixture,
+    /// Unflagged branches remain in the background at their absolute prior weight,
+    /// including for empty flags. They are neither rescaled by 1/(1-f_d) nor
+    /// removed for draws used by an assignment.
+    UnflaggedBackground,
+    /// Catalog draw odds omit assignment-dependent blocked-draw survival.
+    /// Conservatively marked whenever any shot region has multiple assignments.
+    BlockedDrawOdds,
 }
 
 /// Catalog-wide diagnostics. Dropped mass is additionally recorded per root.
@@ -279,6 +294,30 @@ impl LossCatalog {
         dem
     }
 
+    // channels.rs creates one uniform X/Y/Z categorical per (site, operand,
+    // channel). Its exact conversion gives equal independent probabilities;
+    // invisible Pauli effects are omitted there. Clone whole surviving sources
+    // so reweighting retains location, Pauli and decomposition metadata.
+    pub(crate) fn shot_background(
+        &self,
+        removals: &BTreeSet<FalseAlarmTag>,
+    ) -> Result<super::ShotBackground, LossDemError> {
+        let removed = removals
+            .iter()
+            .map(|&tag| {
+                self.false_alarm_tags
+                    .get(&tag)
+                    .cloned()
+                    .map(|sources| (tag, sources))
+                    .ok_or_else(|| invalid(format!("unknown false-alarm tag {tag:?}")))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(super::ShotBackground {
+            dem: self.background_without(removals),
+            removed,
+        })
+    }
+
     pub(super) fn build_with_options(
         circuit: &TickCircuit,
         noise_model: &GeneralNoiseModel,
@@ -331,6 +370,8 @@ impl LossCatalog {
             let (paths, dropped, explored_paths) =
                 program.walk(seed, min_branch_weight, max_branches, options)?;
             let mut root = LossRoot {
+                action_index: seed.action,
+                qubits: seed.qubits.clone(),
                 key: seed.key.clone(),
                 prior: seed.prior,
                 explored_paths,

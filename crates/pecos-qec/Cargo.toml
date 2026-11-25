@@ -59,6 +59,7 @@ name = "surface_d3_fault_catalog_lookup"
 path = "../../examples/surface/d3_fault_catalog_lookup.rs"
 
 [dev-dependencies]
+pecos-decoders = { workspace = true, features = ["pymatching", "fusion-blossom", "tesseract", "ldpc"] }
 pecos-phir.workspace = true
 
 [lints]

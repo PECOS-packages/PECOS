@@ -2,8 +2,9 @@
 //!
 //! Locations use tick, stored batch, operand, and side. Records always use emission
 //! indices, never measurement IDs. The catalog enumerates first-order loss branches;
-//! shot-dependent mixing and decoding are separate work. Non-coset partner Pauli
-//! models branch into certain outcomes; single Paulis and cosets use coin gates.
+//! shot-dependent mixing and decoding use factored distinct-draw assignments.
+//! Non-coset partner Pauli models branch into certain outcomes; single Paulis and
+//! cosets use coin gates.
 //!
 //! The built-settings bridge is an allow-list:
 //!
@@ -50,12 +51,21 @@
 //! location, channel kind, discrepancy signature, total-variation magnitude and requested
 //! nonidentity channel weight, just as for ordinary gate noise. No-loss Pauli mechanisms
 //! and their residuals are identical to the ordinary builder, including uniform defaults.
-//! Shot-dependent DEM mixing and decoder construction are not included.
+//! Shot decoders cache successes and errors by flag set for the duration of a run.
 mod branch_replay;
 mod branches;
 mod bridge;
 mod channels;
+mod decode;
 mod runner;
+mod shot;
+pub use decode::{
+    BiasedDecoder, DecodeReport, ErroredShotReason, LossDecoder, ModeCounts, ShotError,
+};
+pub use shot::{
+    AssignmentError, ShotAlternative, ShotBackground, ShotBuildError, ShotDem, ShotDemBuilder,
+    ShotLimits, mix_shot_dem,
+};
 mod trajectory;
 pub use branches::{
     Approximation, BranchId, BranchNormalForm, BranchReport, FalseAlarmTag, LossBranch,
@@ -93,6 +103,16 @@ pub struct Location {
 /// Failures retain their category and the original error source where available.
 #[derive(Debug, thiserror::Error)]
 pub enum LossDemError {
+    /// A draw cannot be represented by finite flagging odds.
+    #[error(
+        "draw {draw} has flagging mass {mass}; require 0 <= f_d < 1; reduce the draw probability or correct its branch weights"
+    )]
+    InvalidDrawMass {
+        /// Draw identity (kind, channel, location, phase), excluding labels.
+        draw: String,
+        /// Summed absolute mass of nonempty-flag branches.
+        mass: f64,
+    },
     /// A compiled setting outside the supported noise model.
     #[error("{name} = {value} is not supported by the loss-conditioned DEM; {fix}")]
     UnsupportedSetting {
@@ -174,3 +194,6 @@ mod tests;
 
 #[cfg(test)]
 mod branch_tests;
+
+#[cfg(test)]
+mod shot_tests;

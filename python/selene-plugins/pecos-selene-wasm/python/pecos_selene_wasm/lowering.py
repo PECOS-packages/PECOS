@@ -46,6 +46,15 @@ def compile_guppy(guppy_function: object) -> Package:
     before WASM lowering: the metadata records how it was compiled, not a proof
     that arbitrary subsequent transformations preserved its semantics.
     """
+    compiled = _compile_guppy_package(guppy_function)
+    package = Package.from_bytes(compiled.to_bytes())
+    for graph in package.modules:
+        graph[graph.module_root].metadata[_FRONTEND_METADATA] = _SAFE_FRONTEND
+    return package
+
+
+def _compile_guppy_package(guppy_function: object) -> Package:
+    """Return frontend output for read-only consumption; it may be cached."""
     from guppylang.defs import GuppyFunctionDefinition  # noqa: PLC0415
 
     if not isinstance(guppy_function, GuppyFunctionDefinition):
@@ -53,11 +62,20 @@ def compile_guppy(guppy_function: object) -> Package:
         raise TypeError(msg)
     # A new optimizer instance leaves the original definition and normal PECOS
     # compile cache unchanged. Guppy compilation occurs before our HUGR pass.
-    compiled = guppy_function.with_minimal_opt().compile()
-    package = Package.from_bytes(compiled.to_bytes())
-    for graph in package.modules:
-        graph[graph.module_root].metadata[_FRONTEND_METADATA] = _SAFE_FRONTEND
-    return package
+    return guppy_function.with_minimal_opt().compile()
+
+
+def _has_unresolved_versions(value: Json) -> bool:
+    """Custom frontend operations may still need registry version resolution."""
+    if isinstance(value, list):
+        return any(_has_unresolved_versions(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    if (value.get("op") == "Extension" or value.get("t") == "Opaque") and value.get(
+        "extension_version",
+    ) in (None, "0.0.0"):
+        return True
+    return any(_has_unresolved_versions(item) for item in value.values())
 
 
 def _has_loops(document: dict) -> bool:
@@ -554,18 +572,39 @@ def compile_wasm(
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
         raise ValueError(msg)
-    if hasattr(program, "with_minimal_opt"):
-        program = compile_guppy(program)
-    program = Package.from_bytes(program if isinstance(program, bytes) else program.to_bytes())
+    from_source = hasattr(program, "with_minimal_opt")
+    if from_source:
+        program = _compile_guppy_package(program)
+    else:
+        # Caller-built graphs may have sparse node IDs or unresolved versions.
+        # Envelope decoding normalizes both; it is more than a defensive copy.
+        program = Package.from_bytes(program if isinstance(program, bytes) else program.to_bytes())
     if len(program.modules) != 1:
         msg = "Public WASM lowering currently requires one HUGR module"
         raise ValueError(msg)
     graph = program.modules[0]
+    if from_source and any(
+        node.idx != index
+        or ((parent := graph[node].parent) is not None and parent.idx >= index)
+        or [child.idx for child in graph[node].children] != sorted(child.idx for child in graph[node].children)
+        for index, node in enumerate(graph)
+    ):
+        # Custom compilers may delete/reuse nodes or reorder siblings. Decoding
+        # restores dense parent-before-child numbering and child-list order.
+        program = Package.from_bytes(program.to_bytes())
+        graph = program.modules[0]
     # HUGR 0.18 exposes graph editing through its versioned serialization model.
     serialized = graph._to_serial()  # noqa: SLF001
     serial_type = type(serialized)
     document = serialized.model_dump(mode="json")
-    _check_external_frontend(document)
+    if from_source and _has_unresolved_versions(document):
+        program = Package.from_bytes(program.to_bytes())
+        serialized = program.modules[0]._to_serial()  # noqa: SLF001
+        document = serialized.model_dump(mode="json")
+    # model_dump creates the independent document edited below, so built-in
+    # Guppy output needs no envelope round trip solely to copy it.
+    if not from_source:
+        _check_external_frontend(document)
     operations = []
     module_ids = {}
     for index, node in enumerate(document["nodes"]):
@@ -594,7 +633,8 @@ def compile_wasm(
         raise ValueError(msg)
     document = _replace_types(document)
     adapters = {}
-    digest = hashlib.sha256(program.to_bytes()).hexdigest()[:16]
+    original_envelope = program.to_bytes()
+    digest = hashlib.sha256(original_envelope).hexdigest()[:16]
     for index, operation in operations:
         signature = document["nodes"][index]["signature"]
         poly = {"params": [], "body": signature}
@@ -654,7 +694,7 @@ def compile_wasm(
         # identifiers address retained instances; a program hash is not a batch ID.
         key = hashlib.sha256()
         fields = [
-            program.to_bytes(),
+            original_envelope,
             repr(
                 (
                     platform,

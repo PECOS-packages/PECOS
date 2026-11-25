@@ -13,7 +13,7 @@ use pecos_quantum::TickCircuit;
 use std::collections::BTreeMap;
 
 /// Probe index in engine outcome order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProbeId(pub usize);
 
 /// Classification of one returned engine outcome.

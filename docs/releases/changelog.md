@@ -32,6 +32,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   - symbolic parity and GF(2) helpers.
 
   `pecos-qec` now depends on `pecos-engines` unconditionally.
+- **Added:** `pecos_qec::loss_dem::LossCatalog` enumerates the loss events a built
+  `GeneralNoiseModel` can produce on a `TickCircuit`, follows each one through the engine's loss
+  rules (spread, recovery, reload), and builds a DEM for each resulting branch. Branches that
+  raise no loss flag are added to the background DEM. Recovery false alarms are tagged, so a
+  per-shot DEM can leave them out where a qubit was lost.
 
 - **Breaking:** Trellis, Frontier and BpTrellis results no longer report
   `dropped_log_mass` by default, and float metrics no longer pay to accumulate it.

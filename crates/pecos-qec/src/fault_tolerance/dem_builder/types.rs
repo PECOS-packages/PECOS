@@ -6270,6 +6270,29 @@ impl DetectorErrorModel {
         records
     }
 
+    /// Clone definitions and model-wide metadata without the independent sources.
+    /// The caller must preserve the sources responsible for graphlike counts and
+    /// residuals. In particular, omitting direct exact false-alarm channels leaves
+    /// both unchanged; this is not a general-purpose source-removal operation.
+    pub(crate) fn clone_without_contributions(&self) -> Self {
+        Self {
+            detectors: self.detectors.clone(),
+            observables: self.observables.clone(),
+            tracked_paulis: self.tracked_paulis.clone(),
+            contributions: Vec::new(),
+            graphlike_decomposable_counts: self.graphlike_decomposable_counts.clone(),
+            idle_noise_residuals: self.idle_noise_residuals.clone(),
+            source_locations_index_influence_map: self.source_locations_index_influence_map,
+        }
+    }
+
+    /// Append a retained independent source without changing its source type,
+    /// provenance or decomposition components. Model-wide counts and residuals
+    /// are carried separately by `clone_without_contributions`.
+    pub(crate) fn push_contribution(&mut self, contribution: FaultContribution) {
+        self.contributions.push(contribution);
+    }
+
     /// Adds a direct error contribution (X or Z channel).
     ///
     /// Direct contributions are output as direct forms (e.g., "D0 D1") rather than

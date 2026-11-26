@@ -15,13 +15,15 @@
 //! instantiating, creating the Engine, dropping stores or modules, or handling a
 //! trap). A worker parked in guest code is fine. Forks that skip `pthread_atfork`
 //! handlers (raw `clone`/`clone3`, `vfork`, or glibc `_Fork`) are unsupported.
+//! On Apple targets the runtime's own waits survive fork, but std thread parking
+//! does not: a forking thread that parked before the fork (for example in a
+//! contended std lock or an `mpsc` receive) can crash if it parks again in the child.
 
 use pecos_wasm::{CompiledWasmModule, ForeignObject, WasmForeignObject, WasmScalarType};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::mpsc;
 
 mod async_pool;
 #[cfg(test)]
@@ -35,7 +37,7 @@ type AsyncReply = (ModuleInstances, Result<Vec<i64>>);
 
 enum Pending {
     Ready(Vec<i64>),
-    Async(mpsc::Receiver<AsyncReply>),
+    Async(async_pool::ReplyReceiver<AsyncReply>),
 }
 
 #[derive(Default)]
@@ -617,7 +619,7 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
         *async_workers = Some(workers);
         let arguments = arguments.to_vec();
         let mut instances = std::mem::take(&mut context.modules);
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = async_pool::reply();
         let job = Box::new(move || {
             let result = (|| {
                 if let Some((compiled, timeout, auto_init)) = prepared {
@@ -638,7 +640,7 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
                 execute(object, &function, &arguments)
             })();
             // An abandoned receiver must never block executor shutdown.
-            let _ = sender.send((instances, result));
+            sender.send((instances, result));
         });
         with_pool(|pool| pool.ok_or("WASM async executor unavailable")?.submit(job))?;
         context.pending = Some(Pending::Async(receiver));
@@ -663,8 +665,7 @@ pub fn read(context: u64, count: usize) -> Result<Vec<i64>> {
         let values = match context.pending.take().ok_or("No pending WASM result")? {
             Pending::Ready(values) => values,
             Pending::Async(receiver) => {
-                let (instances, result) =
-                    receiver.recv().map_err(|_| "WASM async job disconnected")?;
+                let (instances, result) = receiver.recv().ok_or("WASM async job disconnected")?;
                 context.modules = instances;
                 result?
             }

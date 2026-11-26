@@ -91,7 +91,10 @@ memory is bounded by `max(lane_budget_bytes, 16 * 2^peak)`. A budget smaller tha
 one lane, including zero, runs one shot at a time. `plan.par_run_batch` executes
 chunks on the Rayon pool and returns results in seed order, with up to one such
 memory bound per thread. The budget covers amplitudes, not per-shot buffers or
-returned results.
+returned results. Per-shot state (RNG, noise, measurement and record bits) is
+stored in contiguous arenas, and each chunk is further capped at about 4 MiB of
+it (at least one shot per chunk), because the per-shot work at each rotation and
+measurement slows down once that state no longer fits in cache (#1611).
 
 The accepted gates are named Cliffords, exact fixed-axis RX/RY/RZ/RXX/RYY/RZZ
 rotations at any angle, T/Tdg (compiled as RZ(+-pi/4), dropping their global

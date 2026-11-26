@@ -16,6 +16,16 @@ pub(crate) fn chunk_shots(peak: usize, lane_budget_bytes: usize) -> usize {
     (lane_budget_bytes / (size_of::<Complex64>() << peak)).max(1)
 }
 
+/// Bytes of per-shot state one chunk may hold, except that a chunk always holds
+/// at least one shot. Every rotation and measurement reads the state of every
+/// shot in its lane, and random measurement outcomes draw from each shot's RNG,
+/// so a chunk whose shot state outgrows the cache runs slower even though it
+/// shares more amplitude work. Measured on random H/S/CX/T circuits (20 to 100 qubits,
+/// 24 T, 100k shots, i9-14900KF E-core, #1611): one 100k-shot chunk ran about
+/// 2x slower than chunks near this size, which were within 3% of the best
+/// chunk size at every width.
+const SHOT_STATE_BUDGET_BYTES: usize = 4 << 20;
+
 impl SamplingPlan {
     /// One shot per seed. Result i is bit-identical to `self.run(seeds[i])` for
     /// every budget. Shots that agree on every rotation sign and projection value
@@ -23,11 +33,14 @@ impl SamplingPlan {
     /// `max(lane_budget_bytes, 16 * 2^peak)` bytes. Any budget below `16 << peak`,
     /// including 0, runs shots one at a time, at the cost of `run`. The budget
     /// covers amplitudes only: each shot in a chunk also holds its RNG and its
-    /// noise, measurement and record buffers until the chunk finishes.
+    /// noise, measurement and record bits until the chunk finishes. Chunks are
+    /// further capped at about 4 MiB of that per-shot state (or one shot, if a
+    /// single shot needs more), so a large budget does not put more shots in a
+    /// chunk than fit in cache.
     #[must_use]
     pub fn run_batch(&self, seeds: &[u64], lane_budget_bytes: usize) -> Vec<ShotResult> {
         seeds
-            .chunks(chunk_shots(self.peak, lane_budget_bytes))
+            .chunks(self.chunk_len(lane_budget_bytes))
             .flat_map(|seeds| BatchSampler::new(self, seeds).run())
             .collect()
     }
@@ -38,19 +51,59 @@ impl SamplingPlan {
     #[must_use]
     pub fn par_run_batch(&self, seeds: &[u64], lane_budget_bytes: usize) -> Vec<ShotResult> {
         seeds
-            .par_chunks(chunk_shots(self.peak, lane_budget_bytes))
+            .par_chunks(self.chunk_len(lane_budget_bytes))
             .flat_map_iter(|seeds| BatchSampler::new(self, seeds).run())
             .collect()
+    }
+
+    /// Bytes of state each shot holds while its chunk runs: its RNG, its noise,
+    /// measurement and record bits, and its sampler bookkeeping (arena index,
+    /// partition scratch and partition bit).
+    pub(in crate::heisenberg) fn shot_state_bytes(&self) -> usize {
+        size_of::<PecosRng>()
+            + self.num_noise_symbols
+            + self.num_measurements
+            + self.num_records
+            + 2 * size_of::<usize>()
+            + size_of::<bool>()
+    }
+
+    /// Shots per chunk: the amplitude budget's quotient, further capped so the
+    /// chunk's per-shot state fits [`SHOT_STATE_BUDGET_BYTES`], and never below
+    /// one shot.
+    pub(in crate::heisenberg) fn chunk_len(&self, lane_budget_bytes: usize) -> usize {
+        let state_cap = (SHOT_STATE_BUDGET_BYTES / self.shot_state_bytes()).max(1);
+        chunk_shots(self.peak, lane_budget_bytes).min(state_cap)
     }
 }
 
 // Field visibility is widened to the heisenberg module only so the test
 // observer in tests/batch.rs can inspect lanes and shot state.
-pub(in crate::heisenberg) struct Shot {
-    rng: PecosRng,
-    pub(in crate::heisenberg) noise: Vec<bool>,
-    pub(in crate::heisenberg) measurements: Vec<bool>,
+/// Per-shot state in contiguous arenas, one fixed-width row per shot. Sign
+/// evaluation walks every shot at every operation, so separate heap vectors per
+/// shot would scatter those reads across memory.
+pub(in crate::heisenberg) struct Shots {
+    rngs: Vec<PecosRng>,
+    noise: Vec<bool>,
+    measurements: Vec<bool>,
     records: Vec<bool>,
+    num_noise_symbols: usize,
+    num_measurements: usize,
+    num_records: usize,
+}
+
+impl Shots {
+    pub(in crate::heisenberg) fn noise(&self, id: usize) -> &[bool] {
+        &self.noise[id * self.num_noise_symbols..(id + 1) * self.num_noise_symbols]
+    }
+
+    pub(in crate::heisenberg) fn measurements(&self, id: usize) -> &[bool] {
+        &self.measurements[id * self.num_measurements..(id + 1) * self.num_measurements]
+    }
+
+    fn records(&self, id: usize) -> &[bool] {
+        &self.records[id * self.num_records..(id + 1) * self.num_records]
+    }
 }
 
 pub(in crate::heisenberg) struct Lane {
@@ -60,7 +113,7 @@ pub(in crate::heisenberg) struct Lane {
 
 pub(in crate::heisenberg) struct BatchSampler<'a> {
     plan: &'a SamplingPlan,
-    pub(in crate::heisenberg) shots: Vec<Shot>,
+    pub(in crate::heisenberg) shots: Shots,
     pub(in crate::heisenberg) lanes: Vec<Lane>,
     // Membership ranges partition this arena. Each range stays in ascending
     // shot order. Splits retain the majority (false on ties), cloning the
@@ -72,22 +125,24 @@ pub(in crate::heisenberg) struct BatchSampler<'a> {
 
 impl<'a> BatchSampler<'a> {
     pub(in crate::heisenberg) fn new(plan: &'a SamplingPlan, seeds: &[u64]) -> Self {
-        let shots = seeds
-            .iter()
-            .map(|&seed| {
-                let mut rng = PecosRng::seed_from_u64(seed);
-                let mut noise = vec![false; plan.num_noise_symbols];
-                for channel in &plan.noise_channels {
-                    channel.sample(&mut rng, &mut noise);
-                }
-                Shot {
-                    rng,
-                    noise,
-                    measurements: vec![false; plan.num_measurements],
-                    records: vec![false; plan.num_records],
-                }
-            })
-            .collect();
+        let mut shots = Shots {
+            rngs: Vec::with_capacity(seeds.len()),
+            noise: vec![false; seeds.len() * plan.num_noise_symbols],
+            measurements: vec![false; seeds.len() * plan.num_measurements],
+            records: vec![false; seeds.len() * plan.num_records],
+            num_noise_symbols: plan.num_noise_symbols,
+            num_measurements: plan.num_measurements,
+            num_records: plan.num_records,
+        };
+        for (id, &seed) in seeds.iter().enumerate() {
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let noise =
+                &mut shots.noise[id * plan.num_noise_symbols..(id + 1) * plan.num_noise_symbols];
+            for channel in &plan.noise_channels {
+                channel.sample(&mut rng, noise);
+            }
+            shots.rngs.push(rng);
+        }
         // Reserve by actual chunk length, never by the nominal budget quotient.
         let mut lanes = Vec::with_capacity(seeds.len());
         if !seeds.is_empty() {
@@ -125,14 +180,14 @@ impl<'a> BatchSampler<'a> {
             }
             observe(operation, &self);
         }
-        self.shots
-            .into_iter()
-            .map(|shot| {
-                let parity = |ids: &Vec<usize>| ids.iter().fold(false, |s, &i| s ^ shot.records[i]);
+        (0..self.shots.rngs.len())
+            .map(|id| {
+                let records = self.shots.records(id);
+                let parity = |ids: &Vec<usize>| ids.iter().fold(false, |s, &i| s ^ records[i]);
                 let detectors = self.plan.detectors.iter().map(parity).collect();
                 let observables = self.plan.observables.iter().map(parity).collect();
                 ShotResult {
-                    records: shot.records,
+                    records: records.to_vec(),
                     detectors,
                     observables,
                     peak_active_width: self.plan.peak,
@@ -150,8 +205,9 @@ impl<'a> BatchSampler<'a> {
                 parts,
             } => {
                 for &id in &self.indices[self.lanes[index].shots.clone()] {
-                    let shot = &self.shots[id];
-                    self.bits[id] = op.sign.evaluate(&shot.noise, &shot.measurements);
+                    self.bits[id] = op
+                        .sign
+                        .evaluate(self.shots.noise(id), self.shots.measurements(id));
                 }
                 self.apply_partition(index, |amplitudes, negative| {
                     if *double {
@@ -178,9 +234,9 @@ impl<'a> BatchSampler<'a> {
                 // amplitudes stay unchanged until every shot has drawn, so this
                 // preserves shot-index order without separate group buffers.
                 let mut probabilities = [None; 2];
+                let shots = &mut self.shots;
                 for &id in &self.indices[lane.shots.clone()] {
-                    let shot = &mut self.shots[id];
-                    let negative = op.sign.evaluate(&shot.noise, &shot.measurements);
+                    let negative = op.sign.evaluate(shots.noise(id), shots.measurements(id));
                     let probability =
                         *probabilities[usize::from(negative)].get_or_insert_with(|| {
                             let phase = if negative { -parts.phase } else { parts.phase };
@@ -196,14 +252,16 @@ impl<'a> BatchSampler<'a> {
                     let outcome = if deterministic {
                         probability >= 1.0
                     } else {
-                        shot.rng.random_bool(probability)
+                        shots.rngs[id].random_bool(probability)
                     };
-                    shot.measurements[*symbol] = outcome;
+                    shots.measurements[id * shots.num_measurements + *symbol] = outcome;
                     if let Some(ordinal) = record {
-                        shot.records[*ordinal] = outcome;
+                        shots.records[id * shots.num_records + *ordinal] = outcome;
                     }
                     if let Some(projection) = projection {
-                        self.bits[id] = projection.value.evaluate(&shot.noise, &shot.measurements);
+                        self.bits[id] = projection
+                            .value
+                            .evaluate(shots.noise(id), shots.measurements(id));
                     }
                 }
                 if let Some(projection) = projection {

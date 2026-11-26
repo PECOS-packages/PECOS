@@ -41,7 +41,7 @@ pub struct Probe {
 }
 
 /// Immutable layout constructed independently of message emission.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputTable {
     /// Every outcome, in batch then operand order.
     pub slots: Vec<OutputSlot>,

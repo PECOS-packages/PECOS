@@ -73,13 +73,14 @@ pub(super) struct Path {
 }
 
 impl Path {
-    fn change(&mut self, action: &Action, qubit: usize, lost: bool) {
+    fn change(&mut self, action_index: usize, action: &Action, qubit: usize, lost: bool) {
         if lost {
             self.lost.insert(qubit);
         } else {
             self.lost.remove(&qubit);
         }
         self.history.push(LossMoment {
+            action_index,
             location: action.location,
             phase: action.phase,
             lost: self.lost.clone(),
@@ -501,6 +502,7 @@ impl Program {
             }
         }
         path.history.push(LossMoment {
+            action_index: seed.action,
             location: seed.key.location,
             phase: seed.key.phase,
             lost: path.lost.clone(),
@@ -524,7 +526,7 @@ impl Program {
                 match kind {
                     ActionKind::Reload { qubit } => {
                         if path.lost.contains(qubit) {
-                            path.change(action, *qubit, false);
+                            path.change(index, action, *qubit, false);
                         }
                     }
                     ActionKind::Recovery {
@@ -538,7 +540,7 @@ impl Program {
                         path.removals.insert(*tag);
                         let mut recovered = path.clone();
                         recovered.weight *= 1.0 - false_negative;
-                        recovered.change(action, *qubit, false);
+                        recovered.change(index, action, *qubit, false);
                         recovered.insert(index, mixed_reset(*qubit));
                         path.weight *= false_negative;
                         if recovered.weight > 0.0 {
@@ -591,7 +593,7 @@ impl Program {
                                 }
                                 let mut spread = path.clone();
                                 spread.weight *= self.partner_probability;
-                                spread.change(action, q, true);
+                                spread.change(index, action, q, true);
                                 spread.insert(index, [Gate::pz(&[q])]);
                                 path.weight *= 1.0 - self.partner_probability;
                                 if spread.weight > 0.0 {

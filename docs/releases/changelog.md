@@ -37,6 +37,12 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   rules (spread, recovery, reload), and builds a DEM for each resulting branch. Branches that
   raise no loss flag are added to the background DEM. Recovery false alarms are tagged, so a
   per-shot DEM can leave them out where a qubit was lost.
+- **Added:** Loss-conditioned decoding in `pecos_qec::loss_dem`.
+  - `ShotDemBuilder` explains each shot's loss flags by exact cover and mixes the candidate
+    branches into a per-shot DEM, folding certain flips into a detector and observable bias.
+  - `LossDecoder` decodes with any `DecoderSpec` and compares against a loss-blind baseline.
+  - On a d=3 surface-code memory with loss as the dominant noise, loss-aware decoding cut the
+    logical error rate from 8.15% to 0.30%.
 
 - **Breaking:** Trellis, Frontier and BpTrellis results no longer report
   `dropped_log_mass` by default, and float metrics no longer pay to accumulate it.

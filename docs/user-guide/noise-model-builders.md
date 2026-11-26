@@ -605,8 +605,15 @@ always draw when reached. Recovery's fair coin always draws.
 Loss is outside the simple probability subset (`simple_probabilities()` returns `None`).
 Neo routing, `RuntimeNoise`, and the Selene general-noise adapter reject it; remove the
 `loss` section to use the latter two. Scheduled frames, pecos-qasm's flat schema,
-pecos-neo's own model and the Python Selene plugin are unchanged. Chain/group loss, decoder
-erasure flags, failing reload and recovery at prep/measurement/idle sites are not supported.
+pecos-neo's own model and the Python Selene plugin are unchanged. Chain/group loss, failing
+reload and recovery at prep/measurement/idle sites are not supported.
+
+Decoders can use loss flags through the Rust module `pecos_qec::loss_dem`. Put a `DetectLost`
+before each `MZ` you want flagged. `LossCatalog` precomputes a DEM for each possible loss
+branch, `ShotDemBuilder` turns each shot's flags into a loss-conditioned DEM, and `LossDecoder`
+decodes with any `DecoderSpec`, alongside a loss-blind baseline. Flags are treated as correct,
+and a lost readout is modelled as a random bit. The approximations used are listed in each
+`ShotDem`. Python bindings are not available yet.
 
 #### Published-model recipes
 

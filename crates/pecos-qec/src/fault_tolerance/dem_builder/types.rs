@@ -9930,8 +9930,8 @@ mod tests {
         assert_eq!(dem.to_structured_decoder_dem().unwrap(), expected);
     }
 
-    // Folding these in either insertion order gives different last digits; the
-    // ascending fold gives 0.0174050963996108.
+    // Folding these in the first insertion order gives 0.017405096399610798; the
+    // ascending fold, like the second order, gives 0.0174050963996108.
     #[test]
     fn written_priors_do_not_depend_on_contribution_order() {
         type Render = fn(&DetectorErrorModel) -> String;

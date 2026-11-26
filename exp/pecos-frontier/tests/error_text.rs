@@ -37,6 +37,7 @@ fn exact_config() -> FrontierConfig {
         metric_mode: pecos_frontier::MetricMode::default(),
         int_metric_scale: 1024,
         dropped_mass: false,
+        incremental_score: false,
     }
 }
 

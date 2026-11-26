@@ -370,6 +370,7 @@ fn configurations(
                             format!("{metric}/{regime}/bp={bp}/merge={merge}/order={order}"),
                             TrellisConfig {
                                 dropped_mass: true,
+                                incremental_score: false,
                                 k,
                                 delta,
                                 score_alpha: alpha,

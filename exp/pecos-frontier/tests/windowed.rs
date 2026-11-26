@@ -19,6 +19,7 @@ fn settings() -> FrontierConfig {
         metric_mode: MetricMode::LogSumExpFloat,
         int_metric_scale: 1024,
         dropped_mass: false,
+        incremental_score: false,
     }
 }
 fn window(blocks: Vec<Vec<u32>>, width: usize, stride: usize) -> WindowConfig {

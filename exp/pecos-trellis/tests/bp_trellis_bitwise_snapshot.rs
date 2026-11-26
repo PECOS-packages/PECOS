@@ -296,6 +296,7 @@ fn configurations(fixture: &Fixture) -> Vec<(String, BpTrellisConfig)> {
                             format!("{regime}/order={order}/bp={bp}/merge={merge}/ladder={ladder}"),
                             BpTrellisConfig {
                                 dropped_mass: true,
+                                incremental_score: false,
                                 k,
                                 delta,
                                 score_alpha: alpha,

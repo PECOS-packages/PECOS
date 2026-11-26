@@ -30,6 +30,7 @@ fn exact_config() -> TrellisConfig {
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
         dropped_mass: false,
+        incremental_score: false,
     }
 }
 
@@ -799,6 +800,7 @@ fn sparse_dem_factor_conversion_delegates_bitwise_with_binary_features() {
         metric_mode: MetricMode::default(),
         int_metric_scale: 1024,
         dropped_mass: false,
+        incremental_score: false,
     };
     let mut direct = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
     let mut delegated = TrellisDecoder::from_factor_model(&model, config).unwrap();

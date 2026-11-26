@@ -166,6 +166,7 @@ fn wide_delta_pruning_matches_reference_all_modes_and_key_orders() {
                                 - 3.0;
                         }
                         let compatibility = SuffixCompatibility {
+                            incremental: false,
                             rows: &rows,
                             values: &values,
                         };
@@ -210,6 +211,7 @@ fn wide_delta_pruning_matches_reference_all_modes_and_key_orders() {
 fn wide_delta_extreme_guard_edges_and_empty_contract_match_original() {
     let values = SuffixValues::new(0, None);
     let compatibility = SuffixCompatibility {
+        incremental: false,
         rows: &[],
         values: &values,
     };

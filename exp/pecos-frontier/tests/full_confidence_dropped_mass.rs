@@ -50,6 +50,7 @@ fn dense(mask: u128, count: usize) -> Vec<u8> {
 fn config(k: usize, delta: f64, column_order: Option<Vec<usize>>, bp: usize) -> FrontierConfig {
     FrontierConfig {
         dropped_mass: true,
+        incremental_score: false,
         k,
         delta,
         score_alpha: 0.8,

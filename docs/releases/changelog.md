@@ -446,6 +446,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   at once. Shots that agree on every rotation sign and projection value share one
   amplitude vector, and each result is bit-identical to `SamplingPlan::run` for
   its seed. An explicit `lane_budget_bytes` bounds amplitude memory per chunk.
+  Per-shot state lives in contiguous arenas, and chunks are also capped at about
+  4 MiB of it (at least one shot) so it stays in cache; on random 20-100 qubit circuits with 24 T,
+  `run_batch` with a large budget runs 2-3x faster than before (#1611).
 
 - `pecos-simulators` now contains the stabilizer tensor-network simulators (StabMps,
   MAST) as `pecos_simulators::stab_tn`, formerly the unpublished `pecos-stab-tn`

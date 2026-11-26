@@ -426,3 +426,99 @@ fn duplicate_stamped_ids_fail_at_all_build_boundaries() {
         }
     }
 }
+
+/// Folding these in insertion order gives `0.017405096399610798` for some orders and
+/// `0.0174050963996108` for others; the ascending fold gives the latter.
+const ORDER_SENSITIVE_PROBABILITIES: [f64; 3] = [0.001_43, 0.008_49, 0.007_661];
+
+/// One measurement flipped by a preparation fault, a one-qubit gate fault and a
+/// measurement fault, so three locations contribute to the same mechanism.
+fn one_measurement_three_faults() -> DagFaultInfluenceMap {
+    let mut circuit = DagCircuit::new();
+    circuit.pz(&[0]);
+    circuit.x(&[0]);
+    circuit.mz(&[0]);
+    DagFaultAnalyzer::new(&circuit)
+        .build_influence_map()
+        .expect("supported circuit")
+}
+
+#[test]
+fn sampler_priors_do_not_depend_on_contribution_order() {
+    use super::dem_sampler::SamplingEngine;
+    use super::mem_builder::MemBuilder;
+    use super::types::NoiseConfig;
+    use pecos_core::gate_type::GateType;
+
+    let map = one_measurement_three_faults();
+    let [gate, first, second] = ORDER_SENSITIVE_PROBABILITIES;
+    // The X-gate channel flips the measurement with probability 2*p1/3.
+    let p1 = gate * 1.5;
+    assert_eq!((p1 / 3.0 + p1 / 3.0).to_bits(), gate.to_bits());
+
+    // SamplingEngineBuilder::build: swapping the preparation and measurement
+    // rates permutes the contributions without changing their multiset.
+    let detectors = r#"[{"id":0,"records":[0]}]"#;
+    let builder_text = |p_meas: f64, p_prep: f64| {
+        SamplingEngineBuilder::new(&map)
+            .with_noise(p1, 0.0, p_meas, p_prep)
+            .with_detectors_json(detectors)
+            .unwrap()
+            .build()
+            .unwrap()
+            .to_detector_error_model()
+            .to_string()
+    };
+    // SamplingEngine::from_influence_map: the same swap through per-location
+    // probabilities. Preparation and measurement locations flip the measurement
+    // with their whole probability, the X gate with two thirds of it.
+    let engine_text = |p_meas: f64, p_prep: f64| {
+        let probabilities: Vec<f64> = map
+            .locations
+            .iter()
+            .map(|location| match location.gate_type {
+                GateType::PZ => p_prep,
+                GateType::X => p1,
+                GateType::MZ => p_meas,
+                other => panic!("unexpected fault location {other:?}"),
+            })
+            .collect();
+        SamplingEngine::from_influence_map(&map, &probabilities, &NoiseConfig::default())
+            .unwrap()
+            .to_detector_error_model()
+            .to_string()
+    };
+    // MemBuilder::build: the same swap as for SamplingEngineBuilder.
+    let mem_probabilities = |p_meas: f64, p_prep: f64| {
+        let mem = MemBuilder::new(&map)
+            .with_noise(p1, 0.0, p_meas, p_prep)
+            .build()
+            .unwrap();
+        let bits: Vec<u64> = mem.mechanisms.values().map(|p| p.to_bits()).collect();
+        format!("{bits:?}")
+    };
+
+    let built = builder_text(first, second);
+    let from_map = engine_text(first, second);
+    let mem = mem_probabilities(first, second);
+    let cases = [
+        ("SamplingEngineBuilder", &built, builder_text(second, first)),
+        ("from_influence_map", &from_map, engine_text(second, first)),
+        ("MemBuilder", &mem, mem_probabilities(second, first)),
+    ];
+    // Collect every site that differs, so a failure names all of them.
+    let differing: Vec<&str> = cases
+        .iter()
+        .filter(|(_, left, right)| *left != right)
+        .map(|(name, _, _)| *name)
+        .collect();
+    assert!(differing.is_empty(), "order-dependent: {differing:?}");
+
+    let expected = "error(0.0174050963996108) D0";
+    assert!(built.contains(expected), "{built}");
+    assert!(from_map.contains(expected), "{from_map}");
+    assert_eq!(
+        mem,
+        format!("{:?}", [0.017_405_096_399_610_8_f64.to_bits()])
+    );
+}

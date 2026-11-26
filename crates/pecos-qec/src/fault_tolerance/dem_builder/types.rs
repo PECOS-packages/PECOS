@@ -5163,6 +5163,12 @@ impl MeasurementNoiseModel {
     }
 
     /// Adds a mechanism with probability, combining with any existing identical mechanism.
+    ///
+    /// Each call XOR-combines `probability` into the held value, so repeated calls fold
+    /// in call order and the last bits can depend on that order. [`MemBuilder`] instead
+    /// combines all contributions to a mechanism in ascending probability order.
+    ///
+    /// [`MemBuilder`]: super::MemBuilder
     pub fn add_mechanism(&mut self, mechanism: MeasurementMechanism, probability: f64) {
         if mechanism.is_empty() || probability <= 0.0 {
             return;
@@ -5172,10 +5178,6 @@ impl MeasurementNoiseModel {
             .entry(mechanism)
             .and_modify(|p| *p = combine_probabilities(*p, probability))
             .or_insert(probability);
-    }
-
-    pub(crate) fn add_idle_noise_residual(&mut self, residual: MeasurementNoiseChannelResidual) {
-        self.idle_noise_residuals.push(residual);
     }
 
     /// Samples measurement outcomes into a pre-sized buffer.
@@ -6060,7 +6062,7 @@ impl DetectorErrorModel {
         struct Accumulator {
             num_contributions: usize,
             total_probability: f64,
-            probabilities: Vec<f64>,
+            probabilities: ContributionProbabilities,
             source_type_counts: BTreeMap<String, usize>,
             source_type_probabilities: BTreeMap<String, f64>,
             direct_source_family_counts: BTreeMap<String, usize>,
@@ -6149,12 +6151,12 @@ impl DetectorErrorModel {
         by_render
             .into_iter()
             .map(
-                |((effect, rendered_targets), acc)| ContributionRenderSummary {
+                |((effect, rendered_targets), mut acc)| ContributionRenderSummary {
                     effect,
                     rendered_targets,
                     num_contributions: acc.num_contributions,
                     total_probability: acc.total_probability,
-                    combined_probability: combine_independent_prob_set(acc.probabilities),
+                    combined_probability: combine_independent_prob_set(&mut acc.probabilities),
                     source_type_counts: acc.source_type_counts,
                     source_type_probabilities: acc.source_type_probabilities,
                     direct_source_family_counts: acc.direct_source_family_counts,
@@ -6506,17 +6508,6 @@ impl DetectorErrorModel {
             ));
     }
 
-    /// Marks a 2-detector mechanism as having a graphlike decomposable source.
-    ///
-    /// A source is "graphlike decomposable" if both component effects (P1I and IP2)
-    /// are non-empty and graphlike (≤2 detectors each). This is used to determine
-    /// the output format for representation diversity:
-    /// - ≥2 sources: 3 forms (direct + 2 decomposed)
-    /// - 1 source: 2 forms (decomposed only)
-    /// - 0 sources: 1 form (direct only)
-    ///
-    /// This should be called from the builder when processing 2-qubit gate channels
-    /// where both component effects are graphlike.
     /// Returns grouped mechanisms as (probability, `detector_ids`, `observable_ids`) tuples.
     ///
     /// Combines contributions with the same effect using the XOR probability formula.
@@ -6550,6 +6541,17 @@ impl DetectorErrorModel {
         )
     }
 
+    /// Marks a 2-detector mechanism as having a graphlike decomposable source.
+    ///
+    /// A source is "graphlike decomposable" if both component effects (P1I and IP2)
+    /// are non-empty and graphlike (≤2 detectors each). This is used to determine
+    /// the output format for representation diversity:
+    /// - ≥2 sources: 3 forms (direct + 2 decomposed)
+    /// - 1 source: 2 forms (decomposed only)
+    /// - 0 sources: 1 form (direct only)
+    ///
+    /// This should be called from the builder when processing 2-qubit gate channels
+    /// where both component effects are graphlike.
     pub fn mark_graphlike_decomposable(&mut self, d0: u32, d1: u32) {
         let key = if d0 < d1 { (d0, d1) } else { (d1, d0) };
         *self.graphlike_decomposable_counts.entry(key).or_insert(0) += 1;
@@ -7104,8 +7106,11 @@ impl DetectorErrorModel {
             }
         }
 
-        // Preserve the original effect order for probability merging, including
-        // its floating-point evaluation order, independently of label assignment.
+        // Merge the effects that render to the same targets in effect-key order
+        // (the order of `rendered_effects`), not in the probability order used for
+        // label assignment above. Each per-effect total is already combined in
+        // canonical order, so the merged prior depends only on the contributions,
+        // not on the order they were added.
         let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
         for (targets, total_prob) in rendered_effects.into_values() {
             by_targets
@@ -7775,7 +7780,7 @@ impl DetectorErrorModel {
         profile_step("source_graphlike_index", &mut profile_last);
         let singleton_set = maximal_decomposition.then(|| self.collect_singleton_index());
         profile_step("singleton_index", &mut profile_last);
-        let mut by_targets: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+        let mut by_targets: BTreeMap<String, ContributionProbabilities> = BTreeMap::new();
         let mut rendered_targets_cache: BTreeMap<
             (FaultMechanism, FaultSourceType, Option<String>),
             (String, ContributionRenderStrategy),
@@ -7823,8 +7828,8 @@ impl DetectorErrorModel {
         }
         profile_step("render_contributions", &mut profile_last);
 
-        for (targets, probabilities) in by_targets {
-            let total_prob = combine_independent_prob_set(probabilities);
+        for (targets, mut probabilities) in by_targets {
+            let total_prob = combine_independent_prob_set(&mut probabilities);
             if !targets.is_empty() && total_prob > 0.0 {
                 lines.push(format!(
                     "error({}) {}",
@@ -8020,17 +8025,23 @@ fn combine_independent_probs(p1: f64, p2: f64) -> f64 {
     p1 * (1.0 - p2) + p2 * (1.0 - p1)
 }
 
-/// XOR-combines a set of independent error probabilities.
+/// Probabilities of the independent contributions to one effect, held until
+/// [`combine_independent_prob_set`] combines them. Up to two contributions are stored
+/// inline, without a heap allocation.
+pub(crate) type ContributionProbabilities = SmallVec<[f64; 2]>;
+
+/// XOR-combines a set of independent error probabilities, sorting the slice.
 ///
 /// Floating-point combination is not associative, so folding in contribution order would
 /// make a written prior depend on the order the contributions were added: a model
 /// composed from cached slices and a full compile of the same circuit would differ in the
 /// last digits. Folding in ascending order makes the result depend only on the
 /// probabilities.
-pub(crate) fn combine_independent_prob_set(mut probabilities: Vec<f64>) -> f64 {
+pub(crate) fn combine_independent_prob_set(probabilities: &mut [f64]) -> f64 {
     probabilities.sort_unstable_by(f64::total_cmp);
     probabilities
-        .into_iter()
+        .iter()
+        .copied()
         .fold(0.0, combine_independent_probs)
 }
 
@@ -8039,13 +8050,13 @@ pub(crate) fn combine_independent_prob_set(mut probabilities: Vec<f64>) -> f64 {
 fn combine_independent_probs_by_key<K: Ord>(
     items: impl IntoIterator<Item = (K, f64)>,
 ) -> BTreeMap<K, f64> {
-    let mut grouped: BTreeMap<K, Vec<f64>> = BTreeMap::new();
+    let mut grouped: BTreeMap<K, ContributionProbabilities> = BTreeMap::new();
     for (key, probability) in items {
         grouped.entry(key).or_default().push(probability);
     }
     grouped
         .into_iter()
-        .map(|(key, probabilities)| (key, combine_independent_prob_set(probabilities)))
+        .map(|(key, mut probabilities)| (key, combine_independent_prob_set(&mut probabilities)))
         .collect()
 }
 
@@ -9923,40 +9934,104 @@ mod tests {
     // ascending fold gives 0.0174050963996108.
     #[test]
     fn written_priors_do_not_depend_on_contribution_order() {
+        type Render = fn(&DetectorErrorModel) -> String;
+
         let build = |probabilities: [f64; 3]| {
             let mut dem = DetectorErrorModel::new();
             dem.add_detector(DetectorDef::new(0));
-            for probability in probabilities {
-                dem.add_direct_contribution(
-                    FaultMechanism::from_unsorted([0], std::iter::empty()),
-                    probability,
-                );
+            dem.add_detector(DetectorDef::new(1));
+            for detectors in [&[0][..], &[0, 1][..]] {
+                for probability in probabilities {
+                    dem.add_direct_contribution(
+                        FaultMechanism::from_unsorted(
+                            detectors.iter().copied(),
+                            std::iter::empty(),
+                        ),
+                        probability,
+                    );
+                }
             }
             dem
         };
         let first = build([0.001_43, 0.008_49, 0.007_661]);
         let second = build([0.007_661, 0.001_43, 0.008_49]);
 
+        let renderers: [(&str, Render); 12] = [
+            ("to_string", |dem| dem.to_string()),
+            ("to_pecos_string", DetectorErrorModel::to_pecos_string),
+            (
+                "to_string_decomposed",
+                DetectorErrorModel::to_string_decomposed,
+            ),
+            (
+                "to_string_source_decomposed",
+                DetectorErrorModel::to_string_source_decomposed,
+            ),
+            (
+                "to_string_source_graphlike_decomposed",
+                DetectorErrorModel::to_string_source_graphlike_decomposed,
+            ),
+            (
+                "to_string_graphlike_search_decomposed",
+                DetectorErrorModel::to_string_graphlike_search_decomposed,
+            ),
+            (
+                "to_string_decomposed_with_two_detector_direct_policy",
+                |dem| {
+                    dem.to_string_decomposed_with_two_detector_direct_policy(
+                        TwoDetectorDirectRenderPolicy::PreferRecordedComponents,
+                    )
+                },
+            ),
+            (
+                "to_string_decomposed_maximally",
+                DetectorErrorModel::to_string_decomposed_maximally,
+            ),
+            (
+                "to_string_decomposed_maximally_with_two_detector_direct_policy",
+                |dem| {
+                    dem.to_string_decomposed_maximally_with_two_detector_direct_policy(
+                        TwoDetectorDirectRenderPolicy::PreferRecordedComponents,
+                    )
+                },
+            ),
+            ("to_string_terminal_graphlike_decomposed", |dem| {
+                dem.to_string_terminal_graphlike_decomposed().unwrap()
+            }),
+            ("to_mechanisms", |dem| {
+                let (mechanisms, _) = dem.to_mechanisms();
+                let bits: Vec<_> = mechanisms
+                    .into_iter()
+                    .map(|(probability, detectors, observables)| {
+                        (probability.to_bits(), detectors, observables)
+                    })
+                    .collect();
+                format!("{bits:?}")
+            }),
+            (
+                "contribution_render_summaries combined_probability",
+                |dem| {
+                    let bits: Vec<_> = dem
+                        .contribution_render_summaries()
+                        .into_iter()
+                        .map(|summary| summary.combined_probability.to_bits())
+                        .collect();
+                    format!("{bits:?}")
+                },
+            ),
+        ];
+        // Collect every renderer that differs, so a failure names all of them.
+        let differing: Vec<&str> = renderers
+            .iter()
+            .filter(|(_, render)| render(&first) != render(&second))
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(differing.is_empty(), "order-dependent: {differing:?}");
         assert_eq!(
             first.to_string(),
-            "detector D0\nerror(0.0174050963996108) D0"
+            "detector D0\ndetector D1\nerror(0.0174050963996108) D0\n\
+             error(0.0174050963996108) D0 D1"
         );
-        assert_eq!(second.to_string(), first.to_string());
-        assert_eq!(second.to_pecos_string(), first.to_pecos_string());
-        assert_eq!(second.to_string_decomposed(), first.to_string_decomposed());
-        assert_eq!(
-            second.to_string_terminal_graphlike_decomposed().unwrap(),
-            first.to_string_terminal_graphlike_decomposed().unwrap()
-        );
-        assert_eq!(second.to_mechanisms(), first.to_mechanisms());
-        let combined = |dem: &DetectorErrorModel| {
-            dem.contribution_render_summaries_with_two_detector_direct_policy(
-                TwoDetectorDirectRenderPolicy::KeepDirect,
-            )[0]
-            .combined_probability
-            .to_bits()
-        };
-        assert_eq!(combined(&second), combined(&first));
     }
 
     #[test]

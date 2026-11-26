@@ -470,6 +470,19 @@ directly own the execution thread's lifetime; call `pecos_wasm_v1_reset` on that
 thread to begin a fresh session. The program/configuration key is not a batch ID.
 Rebuild the native utility and QIS FFI for the worker-lifecycle ABI.
 
+### Fork
+
+Fork is supported through the native C ABI. A child discards all of the forking
+thread's runtime state: registrations, function handles, contexts, retained
+worker-scope instances and pending results. Start a new shot and register again
+in the child. Compiled code is kept; timeouts and traps continue to work.
+
+No other thread may be performing Wasmtime host-side work at the fork:
+compiling, instantiating, creating the Engine, dropping stores or modules, or
+handling a trap. A worker parked in guest code is fine. Forks that skip
+`pthread_atfork` handlers (raw `clone`/`clone3`, `vfork`, or glibc `_Fork`) are
+unsupported.
+
 ## Overlap independent WASM calls
 
 Pass `wasm_async_workers=2` to `build`, `compile_wasm`, `Guppy`, or `Hugr` to
@@ -478,8 +491,10 @@ The default `0` executes inline; integer values from `1` through `64` enable
 the pool. PECOS constructors require explicit `wasm_modules` when enabling it.
 Rebuild both the native utility and PECOS QIS FFI for the async call ABI.
 Building this runtime requires Rust 1.98 or newer, including its Windows
-thread-local cleanup fix. Custom native hosts must reset live worker state
-before unloading the runtime library.
+thread-local cleanup fix. Custom native hosts must still reset live worker state
+when they are done: worker threads and thread-local state run library code.
+Once the runtime has created its WASM engine, unloading the runtime library is
+a no-op on Linux, macOS and Windows; it stays loaded for the life of the process.
 
 Calls enqueue work and their result reads wait for completion. Results remain
 associated with their contexts, including when read in a different order.

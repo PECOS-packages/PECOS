@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_support::watchdog;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -283,7 +283,7 @@ fn owner_thread_exit_joins_pool() {
     }
 }
 
-mod abi {
+pub(crate) mod abi {
     crate::export_wasm_runtime!();
 }
 

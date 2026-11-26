@@ -358,10 +358,10 @@ impl PyWasmForeignObject {
         PyBytes::new(py, self.inner.wasm_bytes())
     }
 
-    /// Cleanup resources
+    /// Compatibility hook; currently a no-op.
     ///
-    /// Stops the epoch increment thread. This is called automatically
-    /// when the object is dropped, but can be called explicitly.
+    /// Object resources are released on drop. The shared epoch ticker continues
+    /// for the lifetime of the process.
     fn teardown(&mut self) {
         self.inner.teardown();
     }

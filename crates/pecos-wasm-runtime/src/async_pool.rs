@@ -203,6 +203,80 @@ impl Drop for Pool {
     }
 }
 
+enum Slot<T> {
+    Waiting,
+    Sent(T),
+    Closed,
+}
+
+struct Reply<T> {
+    slot: Mutex<Slot<T>>,
+    ready: Condvar,
+}
+
+impl<T> Reply<T> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Slot<T>> {
+        self.slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// Completes a [`ReplyReceiver`] once; dropping it unsent disconnects the receiver.
+pub(crate) struct ReplySender<T>(Arc<Reply<T>>);
+
+/// Waits for one value from its [`ReplySender`].
+pub(crate) struct ReplyReceiver<T>(Arc<Reply<T>>);
+
+/// A one-shot reply channel that blocks on a `Mutex` and `Condvar`, never on
+/// thread parking. On Apple targets std parks threads (as `mpsc::Receiver::recv`
+/// does) on libdispatch semaphores backed by Mach ports, which a forked child
+/// does not inherit: the forking thread crashes if it parked before the fork and
+/// parks again in the child. Apple's `Mutex` and `Condvar` are pthread objects
+/// and keep working in the child. The job queue can stay an `mpsc` channel: only
+/// workers wait on it, and a child never reuses an inherited worker.
+pub(crate) fn reply<T>() -> (ReplySender<T>, ReplyReceiver<T>) {
+    let reply = Arc::new(Reply {
+        slot: Mutex::new(Slot::Waiting),
+        ready: Condvar::new(),
+    });
+    (ReplySender(Arc::clone(&reply)), ReplyReceiver(reply))
+}
+
+impl<T> ReplySender<T> {
+    /// Never blocks, whether or not the receiver still exists.
+    pub(crate) fn send(self, value: T) {
+        *self.0.lock() = Slot::Sent(value);
+        self.0.ready.notify_one();
+    }
+}
+
+impl<T> Drop for ReplySender<T> {
+    fn drop(&mut self) {
+        let mut slot = self.0.lock();
+        if matches!(*slot, Slot::Waiting) {
+            *slot = Slot::Closed;
+            self.0.ready.notify_one();
+        }
+    }
+}
+
+impl<T> ReplyReceiver<T> {
+    /// Returns `None` if the sender was dropped without sending.
+    pub(crate) fn recv(self) -> Option<T> {
+        let slot = self.0.lock();
+        let mut slot = self
+            .0
+            .ready
+            .wait_while(slot, |slot| matches!(slot, Slot::Waiting))
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match std::mem::replace(&mut *slot, Slot::Closed) {
+            Slot::Sent(value) => Some(value),
+            Slot::Waiting | Slot::Closed => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,19 +350,46 @@ mod tests {
             return;
         }
         let pool = Pool::new(1).unwrap();
-        let (reply, receiver) = mpsc::channel::<()>();
+        let (sender, receiver) = reply::<()>();
         pool.submit(Box::new(move || {
-            let _reply = reply;
+            let _sender = sender;
             panic!("injected job panic");
         }))
         .unwrap();
-        assert!(receiver.recv().is_err());
-        let (reply, receiver) = mpsc::channel();
-        pool.submit(Box::new(move || {
-            reply.send(42).unwrap();
-        }))
-        .unwrap();
-        assert_eq!(receiver.recv().unwrap(), 42);
+        assert!(receiver.recv().is_none());
+        let (sender, receiver) = reply();
+        pool.submit(Box::new(move || sender.send(42))).unwrap();
+        assert_eq!(receiver.recv(), Some(42));
+    }
+
+    #[test]
+    fn reply_wakes_a_waiting_receiver() {
+        if !watchdog("async_pool::tests::reply_wakes_a_waiting_receiver") {
+            return;
+        }
+        for send in [true, false] {
+            let (sender, receiver) = reply();
+            let completer = thread::spawn(move || {
+                // Let the receiver reach its wait before completing.
+                thread::sleep(Duration::from_millis(50));
+                if send {
+                    sender.send(7);
+                } else {
+                    drop(sender);
+                }
+            });
+            assert_eq!(receiver.recv(), send.then_some(7));
+            completer.join().unwrap();
+        }
+        let (sender, receiver) = reply();
+        sender.send(7);
+        assert_eq!(receiver.recv(), Some(7));
+        let (sender, receiver) = reply::<i32>();
+        drop(sender);
+        assert_eq!(receiver.recv(), None);
+        let (sender, receiver) = reply();
+        drop(receiver);
+        sender.send(7);
     }
 
     #[test]

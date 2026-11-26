@@ -1,4 +1,4 @@
-//! Preserve ordinary TLS cleanup, but never synchronize during Windows process exit.
+//! Preserve ordinary TLS cleanup, but skip inherited fork state and Windows shutdown.
 
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
@@ -21,6 +21,12 @@ impl<T> Deref for Value<T> {
 
 impl<T> Drop for Value<T> {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        if crate::inherited() {
+            // A child that never re-enters the ABI must leak everything, including
+            // compiled code: its inherited workers cannot be joined or waited on.
+            return;
+        }
         #[cfg(windows)]
         {
             #[link(name = "ntdll")]

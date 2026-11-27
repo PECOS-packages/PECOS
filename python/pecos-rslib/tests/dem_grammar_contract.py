@@ -41,11 +41,11 @@ def assert_outcome(
             "remains after support reduction, for example because of error_rate=0"
         )
         or (
-            # PyMatching rejects the infinite weight when the decoder is built.
-            consumer in {"pymatching", "PyMatchingDecoder"}
+            # PyMatching rejects the infinite weight when the matcher is first built.
+            consumer == "pymatching"
             and text == "error(1) D0"
-            and message.removeprefix("invalid graph structure: ")
-            == "failed to parse dem: maximum absolute edge weight of 16777215 exceeded."
+            and message == "decoder failed on shot 0: invalid graph structure: "
+            "failed to build the matcher: maximum absolute edge weight of 16777215 exceeded."
         )
     )
     if accepted:

@@ -52,17 +52,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (`DecoderError::InvalidGraph`, `ValueError`) instead of an FFI error
   (`RuntimeError`), including allocation failures from caller sizes. Examples
   are a decomposed error with an undetectable component under
-  `pymatching_correlated`, an unterminated `repeat` block, `D4294967295`,
-  `PyMatchingDecoder(2**62)`, `add_edge(2**63, 1, [])`, an edge that `add_edge`
-  or `add_boundary_edge` refuses under `MergeStrategy::Disallow`, and
-  `error(1) D0`, whose weight exceeds upstream's maximum. DEM construction now
-  checks edge weights and rewrite rules, so `from_dem` and the specs built on it
-  reject such a DEM when the decoder is built instead of at its first decode; a
-  graph built edge by edge meets the check when its matcher is first built.
+  `pymatching_correlated`, an unterminated `repeat` block, `add_edge(2**63, 1,
+  [])`, an edge that `add_edge` or `add_boundary_edge` refuses under
+  `MergeStrategy::Disallow`, and `error(1) D0`, whose weight exceeds upstream's
+  maximum when the matcher is first built for decoding.
+  `PyMatchingDecoder(2**62)` raises `ValueError` instead of ending the process.
   Failures while decoding a syndrome, or sampling noise, stay `RuntimeError`,
   including an odd-parity syndrome with no perfect matching. A rejected
-  internally generated window or logical sub-DEM stays an internal error. These
-  public Rust signatures now return `Result`:
+  internally generated window or logical sub-DEM is reported as an internal
+  error when its decoder is built. These public Rust signatures now return
+  `Result`:
   `PyMatchingDecoder::get_edge_weight_normalising_constant` and
   `PyMatchingDecoder::set_boundary`; before, an upstream failure in them ended
   the process, and `set_boundary` rejects `usize::MAX`.

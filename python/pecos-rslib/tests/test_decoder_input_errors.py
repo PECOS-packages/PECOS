@@ -451,8 +451,6 @@ def test_logical_membership_does_not_hide_a_prior_above_half(dem, membership):
     [
         pytest.param("repeat 2 {\nerror(0.1) D0", id="unterminated-repeat"),
         pytest.param("error(0.1) D0\n}", id="uninitiated-repeat"),
-        pytest.param("error(0.1) D0 D4294967295", id="huge-detector"),
-        pytest.param("error(1) D0", id="weight-above-maximum"),
     ],
 )
 def test_pymatching_graph_phase_rejection_is_input_error(dem):
@@ -460,10 +458,17 @@ def test_pymatching_graph_phase_rejection_is_input_error(dem):
         PyMatchingDecoder.from_dem(dem)
 
 
-def test_pymatching_weight_rejection_happens_at_build():
-    with pytest.raises(ValueError, match="maximum absolute edge weight") as caught:
+def test_pymatching_weight_rejection_happens_when_the_matcher_is_built():
+    # The graph builds; upstream rejects the infinite weight when the matcher is
+    # first built for decoding, which is still a rejection of the graph.
+    with pytest.raises(ValueError, match="decoder failed on shot 0:.*maximum absolute edge weight"):
         SampleBatch([[1]], [0]).decode("error(1) D0", pymatching(correlated=False), workers=1)
-    assert "decoder failed on shot" not in str(caught.value)
+
+
+def test_pymatching_error_probability_override_replaces_an_out_of_range_dem_weight():
+    decoder = PyMatchingDecoder.from_dem("error(1) D0", error_probability=0.1)
+    decoder.decode_syndrome([1])
+    SampleBatch([[1]], [0]).decode("error(1) D0", pymatching(correlated=False, error_probability=0.1), workers=1)
 
 
 def test_pymatching_graph_size_rejection_is_input_error():

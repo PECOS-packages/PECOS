@@ -346,10 +346,10 @@ pub(crate) mod ffi {
 ///
 /// The bridge classifies by the phase that failed, not by exception type. It
 /// prepends the marker to any `std::exception` from a graph-phase step: parsing or
-/// building from DEM text (which also checks edge weights and rewrite rules),
-/// creating a graph, adding edges, setting the boundary, computing the edge weight
-/// normalising constant, and building the matcher, including when a graph built
-/// edge by edge is first used for decoding. These depend only on the caller's
+/// building from DEM text, creating a graph, adding edges, setting the boundary,
+/// computing the edge weight normalising constant, and building the matcher,
+/// which happens when the graph is first used for decoding and is where edge
+/// weights and rewrite rules are checked. These depend only on the caller's
 /// graph or arguments, so `std::bad_alloc` and `std::length_error` count too.
 /// [`PyMatchingError`](crate::PyMatchingError) strips the marker and reports
 /// [`PyMatchingError::InvalidGraph`](crate::PyMatchingError::InvalidGraph).

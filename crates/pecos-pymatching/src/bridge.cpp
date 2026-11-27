@@ -131,10 +131,6 @@ std::unique_ptr<PyMatchingGraph> PyMatchingGraph::from_dem(
             user_graph.get_num_observables()
         );
 
-        // Reject edge weights and rewrite rules now, when the decoder is built,
-        // rather than when the matcher is first built for decoding.
-        user_graph.get_edge_weight_normalising_constant(pm::NUM_DISTINCT_WEIGHTS);
-
         // Replace the default user graph with the one from DEM
         graph->pimpl_->user_graph_ = std::make_unique<pm::UserGraph>(std::move(user_graph));
         graph->pimpl_->enable_correlations_ = enable_correlations;

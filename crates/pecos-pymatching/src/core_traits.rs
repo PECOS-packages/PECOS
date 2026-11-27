@@ -349,17 +349,32 @@ mod tests {
     }
 
     #[test]
-    fn upstream_weight_rejection_is_an_invalid_graph_at_construction() {
-        // `error(1)` has an infinite weight; DEM construction checks weights eagerly.
-        let error = crate::PyMatchingDecoder::from_dem("error(1) D0")
-            .err()
-            .expect("upstream rejects the edge weight when the decoder is built");
+    fn upstream_weight_rejection_is_an_invalid_graph_when_the_matcher_is_built() {
+        // `error(1)` builds, but its infinite weight is rejected when the matcher
+        // is first built for decoding.
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(1) D0").expect("the graph builds");
+        let error = decoder
+            .decode(&[1])
+            .expect_err("upstream rejects the edge weight");
         assert!(
             matches!(&error, crate::PyMatchingError::InvalidGraph(message)
-                if message.starts_with("Failed to parse DEM: ")
+                if message.starts_with("Failed to build the matcher: ")
                     && message.contains("maximum absolute edge weight")),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn error_probability_override_replaces_an_out_of_range_dem_weight() {
+        // The override rewrites every weight before the matcher is built, so the
+        // DEM's own infinite weight is never checked.
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem_with_error_probability("error(1) D0", 0.1)
+                .expect("the graph builds");
+        decoder
+            .decode(&[1])
+            .expect("the overridden weight is in range");
     }
 
     /// A graph built edge by edge whose weight upstream only rejects when it

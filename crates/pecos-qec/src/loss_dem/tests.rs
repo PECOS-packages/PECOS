@@ -1,6 +1,6 @@
 use super::*;
 use crate::fault_tolerance::fault_sampler::symbolic_measurement_history;
-use crate::{DemBuilder, DetectorErrorModel, NoiseConfig};
+use crate::{DemBuilder, DetectorErrorModel, MeasurementNoiseKind, NoiseConfig};
 use pecos_core::{BitSet, Gate, Pauli, gate_type::GateType};
 use pecos_engines::noise::GeneralNoiseModel;
 use pecos_engines::noise::general::{HookDescription, HookProbabilities, LossSite, QubitLoss};
@@ -316,11 +316,13 @@ fn bridge_conversion_and_rejections() {
 }
 
 #[test]
-fn measurement_noise_repeated_record_reproduction() {
+fn measurement_noise_repeated_record_matches_engine() {
     let mut c = TickCircuit::new();
     c.tick().pz(&[0]);
     measured(&mut c, &[0]);
-    measured(&mut c, &[0]);
+    let second = c.tick().mz(&[0]);
+    c.detector(&second).unwrap();
+    c.observable(&second).unwrap();
     let noise = GeneralNoiseModel::builder()
         .with_p_meas_0(1.0)
         .with_p_meas_1(1.0)
@@ -329,10 +331,17 @@ fn measurement_noise_repeated_record_reproduction() {
     assert_eq!(runner.shot().unwrap().records, [1, 1]);
     let dem = DemBuilder::try_from_tick_circuit(&c, 0.0, 0.0, 1.0, 0.0).unwrap();
     assert_eq!(distribution(&dem), [0.0, 1.0, 0.0, 0.0]);
-    let error = pauli_noise_config(&c, &noise.description())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("records 0 and 1"), "{error}");
+    let config = pauli_noise_config(&c, &noise.description()).unwrap();
+    assert_eq!(
+        config.measurement_noise_kind,
+        MeasurementNoiseKind::RecordFlip
+    );
+    let dem = DemBuilder::try_from_tick_circuit_with_noise_config(&c, config).unwrap();
+    assert_eq!(distribution(&dem), [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!(
+        dem.to_mechanisms().0,
+        vec![(1.0, vec![0], vec![]), (1.0, vec![1], vec![0])]
+    );
 }
 
 #[test]
@@ -948,22 +957,46 @@ fn events_two_qubit_independent_labels() {
 }
 
 #[test]
-fn measurement_noise_cross_qubit_guard() {
+fn measurement_noise_cross_qubit_matches_engine() {
     let mut c = TickCircuit::new();
     c.tick().pz(&[0, 1]);
     measured(&mut c, &[0]);
     c.tick().cx(&[(0, 1)]);
     measured(&mut c, &[1]);
     let noise = GeneralNoiseModel::builder()
-        .with_p_meas_0(0.1)
-        .with_p_meas_1(0.1)
+        .with_p_meas_0(0.25)
+        .with_p_meas_1(0.25)
         .build();
-    let error = pauli_noise_config(&c, &noise.description())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("record 0 propagates to record 1"), "{error}");
-    assert!(error.contains("prepare the measured qubit"), "{error}");
-    pauli_noise_config(&c, &GeneralNoiseModel::default().description()).unwrap();
+    let config = pauli_noise_config(&c, &noise.description()).unwrap();
+    assert_eq!(
+        config.measurement_noise_kind,
+        MeasurementNoiseKind::RecordFlip
+    );
+    let dem = background_dem(&c, &noise).unwrap();
+    assert_engine_distribution(&c, noise, &dem);
+}
+
+#[test]
+fn measurement_noise_mpz_engine_regression() {
+    // MPZ re-prepares, so both measurement-noise kinds agree here. This checks
+    // the MPZ readout regression, not the distinction between the two kinds.
+    let mut c = TickCircuit::new();
+    c.tick().pz(&[0]);
+    let first = c.tick().mpz(&[0]);
+    c.detector(&first).unwrap();
+    measured(&mut c, &[0]);
+    let certain = GeneralNoiseModel::builder()
+        .with_p_meas_0(1.0)
+        .with_p_meas_1(1.0)
+        .build();
+    let mut runner = TickRunner::new(&c, certain, 9).unwrap();
+    assert_eq!(runner.shot().unwrap().records, [1, 1]);
+    let noise = GeneralNoiseModel::builder()
+        .with_p_meas_0(0.25)
+        .with_p_meas_1(0.25)
+        .build();
+    let dem = background_dem(&c, &noise).unwrap();
+    assert_engine_distribution(&c, noise, &dem);
 }
 
 #[test]

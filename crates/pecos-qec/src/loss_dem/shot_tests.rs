@@ -2063,3 +2063,113 @@ fn r3_catalog_caches() {
         1
     );
 }
+
+// The existing engine oracle uses convention_coins=false to replay actual lost
+// readouts (zero before readout noise), rather than the decoder's mixed-state
+// convention. X after the loss probe makes the loss-free ideal records [1, 1],
+// while loss of q0 makes them [0, 0]. Compare the emitted per-shot DEM, including
+// branch effects and readout noise, with each flag-conditioned engine distribution
+// relative to the loss-free [1, 1] baseline, as in engine_conditional above.
+// Use one idle-loss site on q0; simultaneous interacting losses are covered
+// by separate work.
+fn record_flip_loss_conditionals(cross_qubit: bool) {
+    let mut circuit = TickCircuit::new();
+    let qubits: &[usize] = if cross_qubit { &[0, 1] } else { &[0] };
+    circuit.tick().pz(qubits);
+    circuit.tick().idle(1, &[0]);
+    probe(&mut circuit, &[0]);
+    circuit.tick().x(&[0]);
+    let first = circuit.tick().mz(&[0]);
+    circuit.detector(&first).unwrap();
+    if cross_qubit {
+        circuit.tick().cx(&[(0, 1)]);
+    }
+    let second = circuit.tick().mz(&[usize::from(cross_qubit)]);
+    circuit.detector(&second).unwrap();
+    let noise = GeneralNoiseModel::builder()
+        .with_p_meas_0(0.25)
+        .with_p_meas_1(0.25)
+        .with_loss(
+            QubitLoss::builder()
+                .with_default_recovery(false)
+                .with_idle_rate(0.3)
+                .build()
+                .unwrap(),
+        )
+        .build();
+    let catalog = LossCatalog::build_with_options(
+        &circuit,
+        &noise,
+        0.0,
+        12,
+        1000,
+        super::branch_replay::ReplayOptions {
+            convention_coins: false,
+            ..super::branch_replay::ReplayOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(!catalog.roots.is_empty());
+    assert!(catalog.roots.iter().any(
+        |root| root.prior > 0.0 && root.branches.iter().any(|branch| !branch.flags.is_empty())
+    ));
+    let mut baseline = TickRunner::new(&circuit, GeneralNoiseModel::default(), 824_109).unwrap();
+    assert_eq!(baseline.shot().unwrap().detectors, vec![1, 1]);
+    let baseline_mask = 0b11;
+    let mut runner = TickRunner::new(&circuit, noise, 824_109).unwrap();
+    let mut counts: BTreeMap<BTreeSet<ProbeId>, [u64; 4]> = BTreeMap::new();
+    for _ in 0..100_000 {
+        let shot = runner.shot().unwrap();
+        let flags = shot
+            .flags
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &flag)| flag.then_some(ProbeId(i)))
+            .collect();
+        let cell = usize::from(shot.detectors[0]) | (usize::from(shot.detectors[1]) << 1);
+        counts.entry(flags).or_default()[cell ^ baseline_mask] += 1;
+    }
+    assert_eq!(counts.len(), 2);
+    let builder = ShotDemBuilder::new(&catalog).unwrap();
+    // Check flagged conditions first. The background retains loss-free measurement
+    // propagation, so the StateFlip bridge mutation changes both the flagged and
+    // unflagged distributions in these fixtures.
+    for (flags, observed) in counts.iter().rev() {
+        let shot_dem = builder.build(flags, limits()).unwrap();
+        let expected = emitted(&shot_dem, 2);
+        // Loss of q0 removes both ideal ones. Independent readout flips
+        // translate this fixed mask; the flagged and unflagged laws differ.
+        let loss_mask = if flags.contains(&ProbeId(0)) { 0b11 } else { 0 };
+        let readout_distribution = [0.5625, 0.1875, 0.1875, 0.0625];
+        let total: u64 = observed.iter().sum();
+        // The smaller condition expects 30,000 shots; this floor still gives
+        // about 625 expected samples in its least likely outcome.
+        assert!(
+            total >= 10_000,
+            "flags={flags:?}: only {total} conditional samples"
+        );
+        for (cell, (&count, p)) in observed.iter().zip(expected).enumerate() {
+            let interval = pecos_num::stats::jeffreys_interval(
+                count,
+                total,
+                0.001 / f64::from(u32::try_from(4 * counts.len()).unwrap()),
+            )
+            .unwrap();
+            assert!(
+                p >= interval.lo && p <= interval.hi,
+                "record-flip loss oracle cross_qubit={cross_qubit}, flags={flags:?}, cell={cell}: DEM={p}, engine={count}/{total}, {interval:?}"
+            );
+            close(p, readout_distribution[cell ^ loss_mask]);
+        }
+    }
+}
+
+#[test]
+fn record_flip_repeated_measurements_with_loss_engine_oracle() {
+    record_flip_loss_conditionals(false);
+}
+
+#[test]
+fn record_flip_cross_qubit_with_loss_engine_oracle() {
+    record_flip_loss_conditionals(true);
+}

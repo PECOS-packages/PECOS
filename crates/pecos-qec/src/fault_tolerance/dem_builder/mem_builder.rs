@@ -75,6 +75,11 @@ impl<'a> MemBuilder<'a> {
     /// another scheduled gate's Clifford action is rejected here too instead of
     /// being silently ignored.
     pub fn build(&self) -> Result<MeasurementNoiseModel, DemBuilderError> {
+        self.noise.measurement_noise_kind.reject_record_noise(
+            self.noise.p_meas,
+            None,
+            "MemBuilder",
+        )?;
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }

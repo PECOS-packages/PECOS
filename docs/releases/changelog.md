@@ -6,6 +6,22 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Breaking:** `NoiseConfig` gains the public `measurement_noise_kind` field;
+  downstream complete struct literals must supply it (use `StateFlip` to preserve
+  previous behavior). `DirectSourceFamily` gains `MeasurementRecordFlip`;
+  downstream exhaustive matches must handle the new variant. Python contribution
+  provenance can now report the source-family string `"MeasurementRecordFlip"`.
+
+- **Added:** `NoiseConfig::measurement_noise_kind` distinguishes persistent `StateFlip`
+  measurement noise (the unchanged default) from `RecordFlip`, supported by `DemBuilder`.
+  The loss DEM bridge now uses record flips to match `GeneralNoiseModel`, including
+  repeated unprepared measurements and circuits where pre-measurement Paulis would
+  propagate to later records, including downstream cross-qubit operations.
+  Bridge measurement contributions carry the `MeasurementRecordFlip` source family
+  with empty `paulis`, because readout noise has no physical Pauli.
+  Other `NoiseConfig` consumers reject positive record-flip measurement noise with
+  guidance to use `DemBuilder` or `StateFlip`.
+
 - **Changed:** The PECOS Selene runtime (`pecos-selene-runtime`) now rejects every
   call except `exit` after any call fails, with a message naming the first error,
   and `shot_start` rejects a shot that was never ended with `shot_end`. Both were

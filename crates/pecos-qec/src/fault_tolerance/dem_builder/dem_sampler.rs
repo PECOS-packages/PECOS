@@ -74,10 +74,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use wide::u64x4;
 
 use super::types::{
-    FaultMechanism, IdleChannelFamilies, NoiseChannelKind, NoiseChannelResidual, NoiseConfig,
-    PauliProbs, PauliWeights, PerGateTypeNoise, ReplacementBranchApproximation,
-    combine_probabilities, fit_exclusive_signatures, is_two_qubit_noise_gate,
-    validate_exclusive_probabilities, validate_idle_probabilities,
+    FaultMechanism, IdleChannelFamilies, MeasurementNoiseKind, NoiseChannelKind,
+    NoiseChannelResidual, NoiseConfig, PauliProbs, PauliWeights, PerGateTypeNoise,
+    ReplacementBranchApproximation, combine_probabilities, fit_exclusive_signatures,
+    is_two_qubit_noise_gate, validate_exclusive_probabilities, validate_idle_probabilities,
 };
 
 // ============================================================================
@@ -474,6 +474,20 @@ impl SamplingEngine {
                 influence_map.locations.len(),
             )));
         }
+
+        let measurement_rate = influence_map
+            .locations
+            .iter()
+            .zip(per_location_probs)
+            .filter(|(loc, _)| loc.before && loc.gate_type.consumes_measurement_record())
+            .fold(noise.p_meas, |rate, (_, &probability)| {
+                rate.max(probability)
+            });
+        noise.measurement_noise_kind.reject_record_noise(
+            measurement_rate,
+            None,
+            "SamplingEngine::from_influence_map",
+        )?;
 
         if let Some(error) = influence_map.unsupported_gate() {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
@@ -2073,6 +2087,8 @@ pub(crate) struct SamplingEngineBuilder<'a> {
     p2: f64,
     p2_gate_rates: BTreeMap<GateType, f64>,
     p_meas: f64,
+    measurement_noise_kind: MeasurementNoiseKind,
+    noise_kind_explicit: bool,
     p_prep: f64,
     p1_weights: Option<PauliWeights>,
     p2_weights: Option<PauliWeights>,
@@ -2100,6 +2116,8 @@ impl<'a> SamplingEngineBuilder<'a> {
             p2: 0.01,
             p2_gate_rates: BTreeMap::new(),
             p_meas: 0.01,
+            measurement_noise_kind: MeasurementNoiseKind::default(),
+            noise_kind_explicit: false,
             p_prep: 0.01,
             p1_weights: None,
             p2_weights: None,
@@ -2114,6 +2132,10 @@ impl<'a> SamplingEngineBuilder<'a> {
     }
 
     /// Set uniform-depolarizing noise parameters.
+    ///
+    /// Replaces the scalar configuration, including any explicit measurement-noise
+    /// kind. An attached per-gate configuration supplies its base kind in either
+    /// setter order; without one, the kind defaults to `StateFlip`.
     #[must_use]
     pub fn with_noise(mut self, p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
         self.p1 = p1;
@@ -2121,6 +2143,13 @@ impl<'a> SamplingEngineBuilder<'a> {
         self.p2 = p2;
         self.p2_gate_rates.clear();
         self.p_meas = p_meas;
+        self.measurement_noise_kind = self
+            .per_gate
+            .as_ref()
+            .map_or_else(MeasurementNoiseKind::default, |config| {
+                config.base.measurement_noise_kind
+            });
+        self.noise_kind_explicit = false;
         self.p_prep = p_prep;
         self.p1_weights = None;
         self.p2_weights = None;
@@ -2130,6 +2159,9 @@ impl<'a> SamplingEngineBuilder<'a> {
     }
 
     /// Set the full noise model, including biased Pauli weights.
+    ///
+    /// When combined with `with_per_gate_noise`, both configurations must use
+    /// the same `measurement_noise_kind`; build rejects a mismatch in either order.
     #[must_use]
     pub fn with_noise_config(mut self, noise: NoiseConfig) -> Self {
         self.p1 = noise.p1;
@@ -2137,6 +2169,8 @@ impl<'a> SamplingEngineBuilder<'a> {
         self.p2 = noise.p2;
         self.p2_gate_rates = noise.p2_gate_rates.clone();
         self.p_meas = noise.p_meas;
+        self.measurement_noise_kind = noise.measurement_noise_kind;
+        self.noise_kind_explicit = true;
         self.p_prep = noise.p_prep;
         self.p1_weights.clone_from(&noise.p1_weights);
         self.p2_weights.clone_from(&noise.p2_weights);
@@ -2166,9 +2200,15 @@ impl<'a> SamplingEngineBuilder<'a> {
     ///
     /// Intended consumer: `pecos-lindblad::PauliLindbladModel` via
     /// per-gate-type adapter helpers.
+    ///
+    /// When combined with `with_noise_config`, both configurations must use
+    /// the same `measurement_noise_kind`; build rejects a mismatch in either order.
     #[must_use]
     pub fn with_per_gate_noise(mut self, cfg: PerGateTypeNoise) -> Self {
         self.p_meas = cfg.p_meas;
+        if !self.noise_kind_explicit {
+            self.measurement_noise_kind = cfg.base.measurement_noise_kind;
+        }
         self.p_prep = cfg.p_init;
         self.per_gate = Some(cfg);
         self
@@ -2230,6 +2270,13 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// are rejected for non-empty maps. On an
     /// empty map, records remain opaque coordinates and bounds are not checked.
     pub fn build(mut self) -> Result<SamplingEngine, super::DemBuilderError> {
+        self.measurement_noise_kind
+            .validate_per_gate_kind(self.per_gate.as_ref())?;
+        self.measurement_noise_kind.reject_record_noise(
+            self.p_meas,
+            self.per_gate.as_ref(),
+            "SamplingEngineBuilder",
+        )?;
         super::builder::validate_sampler_measurements(self.influence_map)?;
         if let Some(json) = &self.detectors_json {
             self.detector_records =
@@ -2559,7 +2606,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         self.p_prep
     }
 
-    /// Resolve the X-flip rate for a measurement location. Uses
+    /// Resolve the measurement-noise rate for a measurement location. Uses
     /// `per_gate`'s per-qubit `measurement_rates` if set, otherwise the
     /// scalar `self.p_meas`.
     fn measurement_rate_for_location(
@@ -3922,5 +3969,162 @@ mod tests {
         let stats = sampler.sample_statistics(1000, 42);
         // Just verify it runs without panicking
         assert_eq!(stats.total_shots, 1000);
+    }
+}
+
+#[cfg(test)]
+mod record_flip_tests {
+    use super::*;
+    use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+    use pecos_core::QubitId;
+    use pecos_quantum::DagCircuit;
+
+    fn noise(p: f64) -> NoiseConfig {
+        NoiseConfig::new(0.0, 0.0, p, 0.0)
+            .set_measurement_noise_kind(MeasurementNoiseKind::RecordFlip)
+    }
+
+    fn assert_rejected(
+        result: Result<SamplingEngine, super::super::DemBuilderError>,
+        consumer: &str,
+    ) {
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains(&format!("measurement_noise_kind = RecordFlip is not supported by {consumer}; use DemBuilder or StateFlip")), "{error}");
+    }
+    #[test]
+    fn rejects_sampling_engine_builder() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        circuit.mz(&[0]);
+        circuit.mz(&[0]);
+        let influence = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
+        for config in [
+            PerGateTypeNoise::from_base_noise(noise(0.1)),
+            PerGateTypeNoise::from_base_noise(noise(0.0)).with_measurement_rate(QubitId(99), 0.2),
+        ] {
+            assert_rejected(
+                SamplingEngineBuilder::new(&influence)
+                    .with_per_gate_noise(config)
+                    .build(),
+                "SamplingEngineBuilder",
+            );
+        }
+        assert_rejected(
+            SamplingEngineBuilder::new(&influence)
+                .with_noise_config(noise(0.1))
+                .build(),
+            "SamplingEngineBuilder",
+        );
+        SamplingEngineBuilder::new(&influence)
+            .with_noise_config(noise(0.0))
+            .build()
+            .unwrap();
+    }
+
+    #[test]
+    fn sampling_builder_rejects_conflicting_kinds_in_both_orders() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        circuit.mz(&[0]);
+        let influence = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
+        for scalar_first in [false, true] {
+            for (scalar, per_gate) in [
+                (
+                    noise(0.0),
+                    PerGateTypeNoise::from_base_noise(NoiseConfig::uniform(0.0)),
+                ),
+                (
+                    NoiseConfig::uniform(0.0),
+                    PerGateTypeNoise::from_base_noise(noise(0.0)),
+                ),
+            ] {
+                let builder = SamplingEngineBuilder::new(&influence);
+                let builder = if scalar_first {
+                    builder
+                        .with_noise_config(scalar)
+                        .with_per_gate_noise(per_gate)
+                } else {
+                    builder
+                        .with_per_gate_noise(per_gate)
+                        .with_noise_config(scalar)
+                };
+                let error = builder.build().unwrap_err().to_string();
+                assert!(
+                    error.contains("conflicting measurement_noise_kind"),
+                    "{error}"
+                );
+                assert!(
+                    error.contains("set the same measurement_noise_kind"),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sampling_builder_scalar_noise_replaces_explicit_kind() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        circuit.mz(&[0]);
+        let influence = DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unwrap();
+        for previous in [
+            MeasurementNoiseKind::StateFlip,
+            MeasurementNoiseKind::RecordFlip,
+        ] {
+            for kind in [
+                MeasurementNoiseKind::StateFlip,
+                MeasurementNoiseKind::RecordFlip,
+            ] {
+                for scalar_first in [false, true] {
+                    for p in [0.0, 0.1] {
+                        let config = PerGateTypeNoise::from_base_noise(
+                            noise(p).set_measurement_noise_kind(kind),
+                        );
+                        let builder = SamplingEngineBuilder::new(&influence).with_noise_config(
+                            NoiseConfig::uniform(0.5).set_measurement_noise_kind(previous),
+                        );
+                        let builder = if scalar_first {
+                            builder
+                                .with_noise(0.0, 0.0, p, 0.0)
+                                .with_per_gate_noise(config)
+                        } else {
+                            builder
+                                .with_per_gate_noise(config)
+                                .with_noise(0.0, 0.0, p, 0.0)
+                        };
+                        let result = builder.build();
+                        if p > 0.0 && kind == MeasurementNoiseKind::RecordFlip {
+                            assert_rejected(result, "SamplingEngineBuilder");
+                        } else {
+                            result.unwrap();
+                        }
+                    }
+                }
+            }
+        }
+        for scalar_first in [false, true] {
+            let builder = SamplingEngineBuilder::new(&influence);
+            let builder = if scalar_first {
+                builder
+                    .with_noise(0.0, 0.0, 0.1, 0.0)
+                    .with_noise_config(noise(0.1))
+            } else {
+                builder
+                    .with_noise_config(noise(0.1))
+                    .with_noise(0.0, 0.0, 0.1, 0.0)
+            };
+            let result = builder.build();
+            if scalar_first {
+                assert_rejected(result, "SamplingEngineBuilder");
+            } else {
+                result.unwrap();
+            }
+        }
     }
 }

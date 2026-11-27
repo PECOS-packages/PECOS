@@ -132,7 +132,7 @@ pub use distance_problem::{
 };
 pub use fault_tolerance::dem_builder::{
     DecomposedFault, DemBuilder, DemBuilderError, DemOutput, DetectorDef, DetectorErrorModel,
-    FaultMechanism, IdleNoiseFamily, NoiseConfig, PecosDemMetadataError,
+    FaultMechanism, IdleNoiseFamily, MeasurementNoiseKind, NoiseConfig, PecosDemMetadataError,
     TerminalDecompositionError, combine_probabilities,
 };
 pub use fault_tolerance::{

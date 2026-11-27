@@ -614,6 +614,9 @@ impl DemBuildBuilder {
         let noise = self
             .noise
             .unwrap_or_else(|| NoiseConfig::new(0.001, 0.01, 0.001, 0.001));
+        noise
+            .measurement_noise_kind
+            .reject_record_noise(noise.p_meas, None, "DemBuildBuilder")?;
         let definitions = definitions_from_tick_circuit(&circuit)?;
         let detector_ids: Vec<_> = definitions
             .detectors

@@ -91,6 +91,129 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `generate_*_code_dem` and `pecos-zx` wrote six decimal places, so priors at or
   below about 5e-7 became `error(0.000000)`; the other writers kept six, seven or
   eleven significant digits. `DetectorErrorModel.to_string()` is unchanged.
+- **Breaking:** Python decoder surfaces now raise `ValueError` for caller input
+  errors on spec-built, batch, sampler and logical paths, including wrong
+  syndrome lengths and empty reduced support. This also covers `CssUfDecoder`
+  construction, `decode_css`, `count_erasures` and `decode_count_batch`, as well
+  as raw `pecos_rslib.decoders` classes, which classify each backend error by its
+  `DecoderError` conversion (for example, `PyMatchingDecoder.from_dem` with an
+  invalid `error_probability`, or a wrong-length syndrome). Internal failures
+  remain `RuntimeError`. Logical-subgraph, windowed logical-subgraph,
+  logical-algorithm and logical-circuit decoders reject a syndrome whose length
+  differs from their detector count instead of zero-padding or truncating it, and
+  `SampleBatch.compare_decoders` rejects a detector-count mismatch before
+  decoding. `DemAwareDecoder.from_dem(..., "union_find")`
+  rejects `error_rate` because this entry point has no prior override; the spec
+  `union_find` uses DEM priors as edge weights. The Rust
+  `CheckMatrixObservableDecoder` adapter now requires inner errors convertible
+  to `DecoderError`, preserving their category.
+  `WeightedUnionFindDecoder::new` now returns `Result` and rejects an LLR vector
+  that is neither empty nor one entry per bit, and
+  `CssUfDecoder::count_intersection_erasures` now returns `Result` and rejects
+  syndromes of the wrong length. `CssUfDecoder::x_num_detectors` is new.
+  `From<TesseractError> for DecoderError` maps `InvalidConfig` and `InvalidInput`
+  to `InvalidConfiguration`; Tesseract detection-array errors are now
+  `TesseractError::Dem(DecoderError::InvalidSyndrome)`. The `ObservableDecoder`
+  impls for Fusion Blossom, MWPF, PyMatching, Tesseract and weighted union-find
+  return typed variants instead of `DecodingFailed`. Wrong lengths are rejected
+  by `Decoder::decode` on both Tesseract decoders, `CssUfDecoder::decode_css`,
+  the logical-subgraph, windowed logical-subgraph, logical-circuit and
+  beam-search decoders, `LogicalAlgorithmDecoder::decode_shot`/`decode_obs`,
+  `ParallelLogicalSubgraphDecoder::decode_parallel` and
+  `CommittedLogicalSubgraphDecoder::decode_active`/`commit_range`. All of
+  these except `ParallelLogicalSubgraphDecoder`, which has no
+  `ObservableDecoder` impl, also report their width through
+  `ObservableDecoder::num_detectors`. PyMatching
+  `decode`, `decode_to_matched_pairs`, `decode_to_edges` and
+  `decode_batch_with_config` accept a dense syndrome or stride of
+  `num_detectors` to `num_nodes` entries, as upstream PyMatching does, so a
+  boundary node below a detector no longer hides the top detectors; other
+  lengths are rejected (previously only longer ones). Python
+  `PyMatchingDecoder.decode_batch` takes an optional `syndrome_length` keyword,
+  defaulting to `num_detectors`, that accepts the same range, and raises
+  `ValueError` naming `num_shots` and `syndrome_length` unless the input has
+  exactly `num_shots * syndrome_length` entries;
+  `decode_into` and `decode_with_buffer` check the syndrome, and
+  `decode_with_buffer` also the buffer's width, before writing to the caller's
+  buffer. Their observable buffer now holds one byte per observable, like
+  `DecodingResult::observable`, and must be at least the new
+  `PyMatchingDecoder::num_decoded_observables` bytes, the length `decode`
+  returns. Before, it was sized as packed bits, but the result was copied one
+  byte per observable, so every observable past the first
+  `ceil(num_observables / 8)` was silently dropped. It was also sized from the
+  graph's `num_observables`, which `new` and check-matrix decoders pad to 64,
+  so `DecodeBuffer` and `decode_with_buffer` results were 64 entries wide
+  where `decode` returns the configured count.
+  `StreamingLogicalDecoder::feed_dense`, `feed_sparse` and `feed_detection` now
+  return `Result` and reject wrong lengths and out-of-range indices; Python
+  `LogicalAlgorithmDecoder.feed_dense` and `feed_sparse` raise `ValueError`.
+  `LogicalAlgorithmDecoder::new` and `LogicalCircuitDecoder::new` reject a
+  descriptor whose detector total differs from their decoder's or strategy's,
+  so a windowed `LogicalCircuitDecoder` no longer zero-pads a short descriptor:
+  `DecodeStrategy` gains a defaulted `num_detectors`,
+  `WindowedLogicalSubgraphStrategy::new` takes the full-DEM detector count, and
+  `CommittedLogicalSubgraphDecoder::new` takes only the inner decoder, whose
+  width it adopts. A DEM prior above 0.5 is now a configuration error
+  (`ValueError`) for Fusion Blossom's DEM constructors (also `k_mwpm`,
+  `perturbed_fb_corr` and the `belief_matching` families) and for correlated
+  PyMatching; `parse_correlated_dem` rejects one too. Previously a prior of 1.0
+  or more on `from_dem`, `from_dem_correlated`, `from_check_matrix_correlated`
+  and the spec families built on them, `belief_matching` included, was accepted
+  silently, as was a prior above 0.5 with weight factors on
+  `from_check_matrix_correlated`, whose negative weight was clamped to a small
+  positive one (on `from_parsed_correlated` the double count fixed below made
+  it an invalid-graph error instead). Other priors above 0.5 gave a Fusion
+  Blossom invalid-graph error, already a `ValueError` when building directly
+  but a `RuntimeError` as a logical decoder's inner decoder, or a
+  correlated-PyMatching FFI error (`RuntimeError`); the `belief_matching`
+  families rejected them in their BP stage, already as `ValueError`, and now
+  report the matching prior. Each DEM mechanism's own prior must be at most
+  0.5, as upstream PyMatching requires of each instruction when correlations
+  are enabled. `DemMatchingGraph::from_dem_str`, commit windows and
+  logical-subgraph extraction now check every mechanism with a one- or
+  two-detector component before parallel mechanisms are merged, so two
+  `error(0.7) D0 D1`, whose merged prior is 0.42, are now rejected by
+  `FusionBlossomDecoder::from_dem`, the uncorrelated spec Fusion Blossom
+  families and `k_mwpm`, the `belief_matching` families, the union-find, A*
+  and windowed decoders, and logical-subgraph decoders whatever their inner
+  decoder. The correlated Fusion Blossom paths already checked each mechanism.
+  Commit windows check every column, so a windowed decoder with an uncorrelated
+  PyMatching inner now also rejects a single prior above 0.5, which the
+  non-windowed `pymatching_uncorrelated` still accepts. PyMatching
+  `decode_batch_with_config` (and Python `decode_batch`) predictions now have
+  the width `decode` returns instead of the graph's padded width, and `add_edge`
+  and `add_boundary_edge` widen that width to cover any observable index they
+  are given; before, flips on such an observable were dropped by `decode`.
+  `MwpfDecoder` accepts detectors that no mechanism can flip and models with no
+  edges at all (including parallel mechanisms that cancel exactly), which used
+  to panic when building the solver, and reports such a detector as the new
+  `MwpfError::InvalidSyndrome` only if it fires; a syndrome of the wrong length
+  is the new `MwpfError::InvalidDimensions`. Logical decoders raise
+  `RuntimeError` when an internally generated sub-DEM fails to build for another
+  reason. A Tesseract `decode_detections` or `decode_with_order` index outside
+  the model is `InvalidSyndrome` instead of `DecodingFailed`.
+  `DecoderError::BatchSizeMismatch` now means a flat batch buffer of the wrong
+  byte count, and PyMatching reports that case with it instead of
+  `Configuration`. `From<DecoderError> for FusionBlossomError` maps graph,
+  syndrome, matrix and decoding variants to the matching `FusionBlossomError`
+  variants, and internal ones to a new `Internal` variant; all were previously
+  `Configuration`.
+
+- **Fixed:** Logical-subgraph sub-DEMs now declare their full detector and
+  observable widths, so spec families no longer reject shots whose last local
+  detector has no edges.
+
+- **Fixed:** `FusionBlossomDecoder::from_parsed_correlated` counted the first
+  mechanism on each edge twice when merging, so each lone prior p became
+  2p - p² (0.1 became 0.19), and any lone prior above about 0.293 was rejected
+  as above 0.5 although it was legal; each mechanism now enters the merge once.
+  Parallel mechanisms now merge as independent events,
+  `p1 * (1 - p2) + p2 * (1 - p1)`, as its documentation and `DemMatchingGraph`
+  already did, instead of `p1 + p2 - p1 * p2`, so `error(0.3) D0 D1` with
+  `error(0.3) D0 D1 L0` merges to 0.42 and is accepted instead of rejected as
+  0.51. `MwpfDecoder` merged parallel mechanisms the same wrong way and now
+  also merges them as independent events, so its weights change for DEMs with
+  parallel mechanisms.
 
 - **Added:** Independent qubit loss in `GeneralNoiseModel`, configured from Rust, JSON
   and Python: measurement, preparation, idle and gate-event sources; recovery,
@@ -130,21 +253,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   declared-but-unused detectors, raises `InvalidSyndrome`, naming the lowest
   index and count; this aborts a batch. Python `DemAwareDecoder` raises
   `ValueError` for empty reduced support and invalid syndromes.
-  `StructuredDemDecoder.decode_syndrome` raises `ValueError` for fired dead
-  detectors and non-binary input, but `RuntimeError` for wrong lengths. On
-  spec-built paths, empty reduced support raises `RuntimeError` when the decoder
-  is built (for the logical-subgraph, logical-algorithm and logical-circuit
-  decoders, in their constructors). `SampleBatch.decode`, `DemSampler` decoding
-  and the logical decoders' `decode`/`decode_count` raise `RuntimeError` for
-  fired dead detectors; `SampleBatch.compare_decoders` counts them as
-  decode-error outcomes for those shots. Wrappers validate syndrome
-  length and binary values before applying biases. Raw BP-OSD, BP-LSD,
-  soft-information BP and BeliefFind builders now reject endpoint priors and
-  require finite values in `(0, 1)`; see the MBP entry above for its prior rule.
-  Product-sum check updates bound saturated tanh products so check-to-bit
-  messages remain finite; all other products are unchanged. `belief_matching`, experimental BP-trellis, and
-  the `pecos_uf` `bp` and `bp_serial` presets retain native ±30 saturation;
-  perturbed ensemble members retain their existing prior clamp.
+  `StructuredDemDecoder.decode_syndrome`, spec-built paths, `SampleBatch.decode`,
+  `DemSampler` decoding and logical decoder constructors and `decode`/`decode_count`
+  likewise raise `ValueError` for these input errors, including wrong lengths.
+  `SampleBatch.compare_decoders` counts per-shot decode errors as outcomes.
+  Wrappers validate syndrome length and binary values before applying biases.
+  Raw BP-OSD, BP-LSD, soft-information BP and BeliefFind builders now reject
+  endpoint priors and require finite values in `(0, 1)`; see the MBP entry
+  above for its prior rule. Product-sum check updates bound saturated tanh
+  products so check-to-bit messages remain finite; all other products are
+  unchanged. `belief_matching`, experimental BP-trellis, and the `pecos_uf` `bp`
+  and `bp_serial` presets retain native ±30 saturation; perturbed ensemble
+  members retain their existing prior clamp.
 - **Breaking:** Native Relay-BP and min-sum now flip bits whose posterior is
   exactly zero (using `<= 0`, matching relay-bp and ldpc). PECOS always floors
   the stored prior that seeds messages and memory at magnitude `4e-5`, as
@@ -264,7 +384,6 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   (`LdpcError::InvalidInput`), such as an invalid prior, a channel of the wrong
   length, or a union-find syndrome of the wrong length. Errors raised by the C++
   core remain `RuntimeError`; BP-OSD and BP-LSD check the syndrome length there.
-  Decoders built from a `DecoderSpec` keep their exception types.
 - **Breaking:** Relay-BP and min-sum decoders now use PECOS's native kernel;
   results change. Relay-BP is deterministic per `(seed, syndrome)`, independent
   of decode order, batch splitting and worker count, enabling parallel batches.

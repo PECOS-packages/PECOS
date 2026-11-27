@@ -547,7 +547,7 @@ fn test_detector_error_model_edge_cases() {
                 );
 
                 // Try a basic decode to ensure the graph is functional
-                let syndrome = vec![0u8; decoder.num_detectors().min(10)];
+                let syndrome = vec![0u8; decoder.num_detectors()];
                 let decode_result = decoder.decode(&syndrome).unwrap();
                 assert!(decode_result.weight >= 0.0);
             }

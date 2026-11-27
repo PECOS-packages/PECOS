@@ -19,6 +19,25 @@ pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usiz
     })
 }
 
+/// Reject a DEM error mechanism whose own prior is above 0.5.
+///
+/// A matching edge's weight `ln((1 - p) / p)` is negative above 0.5, so every
+/// mechanism with a one- or two-detector component must have a prior of at most
+/// 0.5, as upstream `PyMatching` requires of each instruction. The check runs per
+/// mechanism, before parallel mechanisms are merged or correlated components
+/// cancel, so it also rejects parallel mechanisms whose independent combination
+/// falls back below 0.5.
+pub(crate) fn check_matching_prior(probability: f64) -> Result<(), DecoderError> {
+    if probability > 0.5 {
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "DEM error probability {probability} is above 0.5, which gives a negative matching \
+             weight; matching decoders accept only non-negative weights, so keep each error \
+             mechanism's probability at most 0.5"
+        )));
+    }
+    Ok(())
+}
+
 /// Trait for decoders that can be constructed from detector error models
 pub trait DemDecoder: super::Decoder {
     /// Configuration type for DEM construction
@@ -705,7 +724,10 @@ impl DemMatchingGraph {
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError`] if the DEM string is malformed.
+    /// Returns [`DecoderError`] if the DEM string is malformed, or
+    /// [`DecoderError::InvalidConfiguration`] if a mechanism with a one- or
+    /// two-detector component has a prior above 0.5. Each mechanism's own prior
+    /// is checked, before parallel mechanisms are merged or components cancel.
     pub fn from_dem_str(dem: &str) -> Result<Self, DecoderError> {
         let mut edges = Vec::new();
         let mut max_detector: Option<u32> = None;
@@ -759,20 +781,11 @@ impl DemMatchingGraph {
 
                 match detectors.len() {
                     0 => {} // Pure observable error, skip
-                    1 => {
+                    1 | 2 => {
+                        check_matching_prior(probability)?;
                         edges.push(MatchingEdge {
                             node1: detectors[0],
-                            node2: None, // boundary
-                            weight,
-                            observables,
-                            probability,
-                            fault_id: current_fault_id,
-                        });
-                    }
-                    2 => {
-                        edges.push(MatchingEdge {
-                            node1: detectors[0],
-                            node2: Some(detectors[1]),
+                            node2: detectors.get(1).copied(), // None for a boundary edge
                             weight,
                             observables,
                             probability,
@@ -936,7 +949,7 @@ impl DemMatchingGraph {
 }
 
 /// Generic wrapper that combines any [`Decoder`] with a [`DemCheckMatrix`]
-/// to implement [`ObservableDecoder`].
+/// to implement [`ObservableDecoder`], preserving errors convertible to [`DecoderError`].
 ///
 /// This is the proper way to use check-matrix decoders (BP+OSD, `UnionFind`,
 /// `RelayBP`, etc.) in a sample+decode loop. The wrapper:
@@ -1047,6 +1060,7 @@ impl<D> CheckMatrixObservableDecoder<D> {
 impl<D> super::ObservableDecoder for CheckMatrixObservableDecoder<D>
 where
     D: super::Decoder,
+    D::Error: Into<DecoderError>,
 {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         use super::DecodingResultTrait;
@@ -1070,7 +1084,7 @@ where
         let result = self
             .decoder
             .decode(&self.syndrome_arr.view())
-            .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(Into::into)?;
 
         let correction = result.correction();
         let mut observables = self.dem.observables_obsmask_from_correction(correction);

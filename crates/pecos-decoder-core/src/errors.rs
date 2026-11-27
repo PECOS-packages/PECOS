@@ -49,8 +49,8 @@ pub enum DecoderError {
     #[error("Matrix error: {0}")]
     MatrixError(String),
 
-    /// Batch size mismatch
-    #[error("Batch size mismatch: expected {expected}, got {actual}")]
+    /// Flat batch buffer holds the wrong number of bytes
+    #[error("Batch buffer size mismatch: expected {expected} bytes, got {actual}")]
     BatchSizeMismatch { expected: usize, actual: usize },
 
     /// Invalid syndrome
@@ -80,6 +80,18 @@ pub enum DecoderError {
     /// Other errors (for compatibility)
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+}
+
+/// Reject a dense syndrome whose length differs from the decoder's detector count.
+///
+/// # Errors
+///
+/// Returns [`DecoderError::InvalidDimensions`] if `actual != expected`.
+pub fn check_syndrome_length(expected: usize, actual: usize) -> Result<()> {
+    if actual != expected {
+        return Err(DecoderError::InvalidDimensions { expected, actual });
+    }
+    Ok(())
 }
 
 /// Specialized error for matrix operations

@@ -527,3 +527,17 @@ fn replacement_constructor_width_and_reset_contracts() {
         assert_eq!(text.finish().unwrap(), 0);
     }
 }
+
+#[test]
+fn generated_window_dem_error_is_internal() {
+    let model = pecos_decoder_core::window::StructuredDem::from_dem_str(
+        "error(0.1) D0 L0\ndetector(0,0,0) D0",
+    )
+    .unwrap();
+    let mut window = model.commit_window(0..1, 0..1).unwrap();
+    window.model.errors[0].probability = f64::NAN;
+    assert!(matches!(
+        pecos_pymatching::PyMatchingEdgeDecoder::from_commit_window(&window, false),
+        Err(pecos_decoder_core::DecoderError::InternalError(_))
+    ));
+}

@@ -205,6 +205,7 @@ impl StructuredDem {
             if !rows.contains(&owner) || column.probability == 0.0 {
                 continue;
             }
+            crate::dem::check_matching_prior(column.probability)?;
             if owner < commit.end && column.last >= rows.end {
                 return Err(invalid(format!(
                     "completeness error: column {index} (error {}) crosses the forward boundary",

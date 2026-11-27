@@ -7,7 +7,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PyMatchingError {
-    /// DEM validation failed
+    /// Shared validation failed (DEM text or batch buffer size)
     #[error("{0}")]
     Dem(#[from] DecoderError),
 

@@ -349,6 +349,8 @@ impl Default for PyMatchingConfig {
 /// Complete `PyMatching` decoder with full API
 pub struct PyMatchingDecoder {
     graph: UniquePtr<ffi::PyMatchingGraph>,
+    num_detectors: usize,
+    num_nodes: usize,
     config: PyMatchingConfig,
 }
 
@@ -521,7 +523,14 @@ impl PyMatchingDecoder {
             ));
         };
 
-        Ok(Self { graph, config })
+        let num_detectors = ffi::pymatching_get_num_detectors(&graph);
+        let num_nodes = ffi::pymatching_get_num_nodes(&graph);
+        Ok(Self {
+            graph,
+            num_detectors,
+            num_nodes,
+            config,
+        })
     }
 
     /// Create a decoder from a Detector Error Model (DEM) string
@@ -542,7 +551,13 @@ impl PyMatchingDecoder {
             num_observables,
         };
 
-        Ok(Self { graph, config })
+        let num_detectors = ffi::pymatching_get_num_detectors(&graph);
+        Ok(Self {
+            graph,
+            num_detectors,
+            num_nodes,
+            config,
+        })
     }
 
     /// Create a decoder from a DEM and override every graph edge's error probability.
@@ -581,9 +596,26 @@ impl PyMatchingDecoder {
     /// during graph construction and uses them during decoding.
     ///
     /// # Errors
-    /// Returns an error if the DEM string is invalid or cannot be parsed.
+    /// Returns an error if the DEM string is invalid or cannot be parsed, or
+    /// [`PyMatchingError::Configuration`] if correlations are enabled and an
+    /// error mechanism has probability above 0.5, which upstream `PyMatching`
+    /// does not support with correlations.
     pub fn from_dem_with_correlations(dem_string: &str, enable_correlations: bool) -> Result<Self> {
-        pecos_decoder_core::dem::grammar::validate_dem_text(dem_string)?;
+        use pecos_decoder_core::dem::grammar::{Kind, parse_line};
+        for line in dem_string.lines() {
+            if let Some(instruction) = parse_line(line)?
+                && enable_correlations
+                && instruction.kind == Kind::Error
+                && let Some(&probability) = instruction.args.first()
+                && probability > 0.5
+            {
+                return Err(PyMatchingError::Configuration(format!(
+                    "DEM error probability {probability} is above 0.5, which correlated \
+                     PyMatching does not support; keep every error probability at most 0.5 \
+                     or disable correlations"
+                )));
+            }
+        }
         let graph = ffi::create_pymatching_graph_from_dem_with_correlations(
             dem_string,
             enable_correlations,
@@ -598,7 +630,13 @@ impl PyMatchingDecoder {
             num_observables,
         };
 
-        Ok(Self { graph, config })
+        let num_detectors = ffi::pymatching_get_num_detectors(&graph);
+        Ok(Self {
+            graph,
+            num_detectors,
+            num_nodes,
+            config,
+        })
     }
 
     /// Create a decoder from a check matrix
@@ -740,6 +778,21 @@ impl PyMatchingDecoder {
         Self::from_check_matrix_with_config_internal(matrix, &config)
     }
 
+    /// Widen the decoded observable count to cover `observables`.
+    ///
+    /// `decode` returns `config.num_observables` entries, so it must cover every
+    /// observable an edge carries or flips on it would be dropped. The backend graph
+    /// grows on its own only when a new edge is added, not when a parallel edge is
+    /// merged, so both counts are raised together through `ensure_num_observables`.
+    fn include_observables(&mut self, observables: &[ObservableId]) -> Result<()> {
+        match observables.iter().max() {
+            Some(&max) if max >= self.config.num_observables => {
+                self.ensure_num_observables(max + 1)
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Add an edge between two nodes with configuration
     ///
     /// # Errors
@@ -753,7 +806,7 @@ impl PyMatchingDecoder {
     ) -> Result<()> {
         let error_prob = config.error_probability.unwrap_or(f64::NAN);
 
-        ffi::add_edge(
+        let result = ffi::add_edge(
             self.graph.pin_mut(),
             node1,
             node2,
@@ -761,7 +814,11 @@ impl PyMatchingDecoder {
             config.weight,
             error_prob,
             config.merge_strategy.into(),
-        )?;
+        );
+        self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
+        self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
+        result?;
+        self.include_observables(observables)?;
 
         Ok(())
     }
@@ -806,14 +863,18 @@ impl PyMatchingDecoder {
         let (weight, error_probability, merge_strategy) =
             Self::normalize_edge_params(weight, error_probability, merge_strategy);
 
-        ffi::add_boundary_edge(
+        let result = ffi::add_boundary_edge(
             self.graph.pin_mut(),
             node,
             observables,
             weight,
             error_probability,
             merge_strategy.into(),
-        )?;
+        );
+        self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
+        self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
+        result?;
+        self.include_observables(observables)?;
 
         Ok(())
     }
@@ -821,13 +882,13 @@ impl PyMatchingDecoder {
     /// Get the number of nodes in the graph
     #[must_use]
     pub fn num_nodes(&self) -> usize {
-        ffi::pymatching_get_num_nodes(&self.graph)
+        self.num_nodes
     }
 
     /// Get the number of detectors
     #[must_use]
     pub fn num_detectors(&self) -> usize {
-        ffi::pymatching_get_num_detectors(&self.graph)
+        self.num_detectors
     }
 
     /// Get the number of edges
@@ -837,9 +898,26 @@ impl PyMatchingDecoder {
     }
 
     /// Get the number of observables
+    ///
+    /// This is the graph's count. For a graph built with [`Self::new`] or from
+    /// a check matrix with at most 64 observables it is padded to 64; use
+    /// [`Self::num_decoded_observables`] for the length [`Self::decode`] returns.
     #[must_use]
     pub fn num_observables(&self) -> usize {
         ffi::pymatching_get_num_observables(&self.graph)
+    }
+
+    /// Number of entries in [`DecodingResult::observable`] from [`Self::decode`]
+    ///
+    /// With at most 64 configured observables, `decode` returns the configured
+    /// count; otherwise it returns the graph's [`Self::num_observables`].
+    #[must_use]
+    pub fn num_decoded_observables(&self) -> usize {
+        if self.config.num_observables <= OPTIMIZED_OBSERVABLE_LIMIT {
+            self.config.num_observables
+        } else {
+            self.num_observables()
+        }
     }
 
     /// Ensure the graph has at least the specified number of observables
@@ -902,6 +980,8 @@ impl PyMatchingDecoder {
     pub fn set_boundary(&mut self, boundary: &[NodeId]) {
         // PyMatching will auto-expand nodes as needed
         ffi::pymatching_set_boundary(self.graph.pin_mut(), boundary);
+        self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
+        self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
     }
 
     /// Check if a node is a boundary node
@@ -910,13 +990,50 @@ impl PyMatchingDecoder {
         ffi::pymatching_is_boundary_node(&self.graph, node)
     }
 
+    /// Reject a dense syndrome width outside the range upstream `PyMatching` accepts.
+    ///
+    /// Dense entry `i` is node `i`, and [`Self::num_detectors`] counts only the
+    /// non-boundary nodes. When a boundary node sits below a detector, the
+    /// detector is addressable only by a syndrome longer than `num_detectors`,
+    /// so, as upstream does, any width from `num_detectors` to
+    /// [`Self::num_nodes`] (boundary entries included) is accepted. Upstream
+    /// creates no detection event at a boundary node.
+    pub(crate) fn validate_syndrome_width(&self, width: usize) -> Result<()> {
+        let num_nodes = self.num_nodes();
+        if (self.num_detectors..=num_nodes).contains(&width) {
+            return Ok(());
+        }
+        if num_nodes == self.num_detectors {
+            return Err(PyMatchingError::InvalidSyndrome {
+                expected: self.num_detectors,
+                actual: width,
+            });
+        }
+        Err(PyMatchingError::Dem(
+            pecos_decoder_core::DecoderError::InvalidSyndrome(format!(
+                "dense syndrome has {width} entries, but this graph accepts {} (one per \
+                 detector) to {num_nodes} (one per node, boundary nodes included)",
+                self.num_detectors
+            )),
+        ))
+    }
+
+    /// Reject a dense syndrome whose length [`Self::validate_syndrome_width`] rejects.
+    pub(crate) fn validate_syndrome(&self, syndrome: &[u8]) -> Result<()> {
+        self.validate_syndrome_width(syndrome.len())
+    }
+
     /// Decode detection events
     ///
     /// Automatically uses the appropriate method based on the number of observables
     ///
     /// # Errors
     ///
-    /// Returns an error if detection events are invalid or decoding fails.
+    /// Returns an invalid-syndrome error unless `detection_events` has between
+    /// [`Self::num_detectors`] and [`Self::num_nodes`] entries.
+    /// Entry `i` is node `i`, so with a boundary node below the highest
+    /// detector, the entries past `num_detectors` address the top detectors.
+    /// Also returns an error if decoding fails.
     ///
     /// # Panics
     ///
@@ -924,21 +1041,14 @@ impl PyMatchingDecoder {
     /// the value `(obs_mask >> i) & 1` is always 0 or 1, which fits in a `u8`.
     #[must_use = "The decoding result should be used"]
     pub fn decode(&mut self, detection_events: &[u8]) -> Result<DecodingResult> {
-        // Validate detection events length
-        let num_detectors = self.num_detectors();
-        if detection_events.len() > num_detectors {
-            return Err(PyMatchingError::InvalidSyndrome {
-                expected: num_detectors,
-                actual: detection_events.len(),
-            });
-        }
+        self.validate_syndrome(detection_events)?;
 
         // Use optimized method for ≤64 observables, extended method otherwise
         if self.config.num_observables <= OPTIMIZED_OBSERVABLE_LIMIT {
             let result = ffi::decode_detection_events_64(self.graph.pin_mut(), detection_events)?;
 
             // The first 8 bytes of observables contain the packed obs_mask
-            let num_obs = self.config.num_observables;
+            let num_obs = self.num_decoded_observables();
             let mut observables = vec![0u8; num_obs];
 
             // Unpack the obs_mask from the result
@@ -974,9 +1084,11 @@ impl PyMatchingDecoder {
     /// A value of -1 in detector2 indicates matching to boundary
     ///
     /// # Errors
-    /// Returns an error if detection events are invalid or matching fails.
+    /// Returns an invalid-syndrome error unless `detection_events` has a length
+    /// [`Self::decode`] accepts, or an error if matching fails.
     #[must_use = "The matched pairs should be used"]
     pub fn decode_to_matched_pairs(&mut self, detection_events: &[u8]) -> Result<Vec<MatchedPair>> {
+        self.validate_syndrome(detection_events)?;
         let pairs = ffi::decode_to_matched_pairs(self.graph.pin_mut(), detection_events)?;
         Ok(pairs.into_iter().map(std::convert::Into::into).collect())
     }
@@ -1023,8 +1135,10 @@ impl PyMatchingDecoder {
     /// These are detector pairs that form edges, not detection event pairs
     ///
     /// # Errors
-    /// Returns an error if detection events are invalid or edge extraction fails.
+    /// Returns an invalid-syndrome error unless `detection_events` has a length
+    /// [`Self::decode`] accepts, or an error if edge extraction fails.
     pub fn decode_to_edges(&mut self, detection_events: &[u8]) -> Result<Vec<MatchedPair>> {
+        self.validate_syndrome(detection_events)?;
         let edges = ffi::decode_to_edges(self.graph.pin_mut(), detection_events)?;
         Ok(edges.into_iter().map(std::convert::Into::into).collect())
     }
@@ -1034,7 +1148,7 @@ impl PyMatchingDecoder {
     /// # Arguments
     /// * `shots` - Detection events for all shots (flat array)
     /// * `num_shots` - Number of shots to decode
-    /// * `num_detectors` - Number of detectors per shot
+    /// * `num_detectors` - Dense entries per shot, any width [`Self::decode`] accepts
     /// * `config` - Configuration for batch decoding
     ///
     /// # Errors
@@ -1046,41 +1160,30 @@ impl PyMatchingDecoder {
         num_detectors: usize,
         config: BatchConfig,
     ) -> Result<BatchDecodingResult> {
-        // Validate input parameters
+        // Each shot is a dense syndrome, with the widths `decode` accepts.
+        self.validate_syndrome_width(num_detectors)?;
+        let stride = if config.bit_packed_input {
+            num_detectors.div_ceil(8)
+        } else {
+            num_detectors
+        };
+        let expected_size = num_shots.checked_mul(stride).ok_or_else(|| {
+            PyMatchingError::Configuration("batch dimensions overflow usize".to_string())
+        })?;
+        if shots.len() != expected_size {
+            return Err(PyMatchingError::Dem(
+                pecos_decoder_core::DecoderError::BatchSizeMismatch {
+                    expected: expected_size,
+                    actual: shots.len(),
+                },
+            ));
+        }
         if num_shots == 0 {
             return Ok(BatchDecodingResult {
                 predictions: vec![],
                 weights: vec![],
                 bit_packed: config.bit_packed_output,
             });
-        }
-
-        // Validate that num_detectors doesn't exceed actual detector count
-        let actual_detectors = self.num_detectors();
-        if num_detectors > actual_detectors {
-            return Err(PyMatchingError::InvalidSyndrome {
-                expected: actual_detectors,
-                actual: num_detectors,
-            });
-        }
-
-        // Calculate expected shots array size
-        let expected_size = if config.bit_packed_input {
-            num_shots * num_detectors.div_ceil(8)
-        } else {
-            num_shots * num_detectors
-        };
-
-        if shots.len() != expected_size {
-            return Err(PyMatchingError::Configuration(format!(
-                "shots array length {} doesn't match expected size {} \
-                        (num_shots={}, num_detectors={}, bit_packed={})",
-                shots.len(),
-                expected_size,
-                num_shots,
-                num_detectors,
-                config.bit_packed_input
-            )));
         }
 
         let result = ffi::decode_batch(
@@ -1094,6 +1197,17 @@ impl PyMatchingDecoder {
 
         let mut batch_result = BatchDecodingResult::from(result);
         batch_result.bit_packed = config.bit_packed_output;
+        // The backend pads predictions to the graph's observable count; trim them to the
+        // width `decode` returns.
+        let observables = self.num_decoded_observables();
+        let width = if config.bit_packed_output {
+            observables.div_ceil(BITS_PER_BYTE)
+        } else {
+            observables
+        };
+        for prediction in &mut batch_result.predictions {
+            prediction.truncate(width);
+        }
 
         // If not returning weights, clear them
         if !config.return_weights {
@@ -1644,6 +1758,90 @@ mod tests {
     use super::*;
 
     #[test]
+    fn merged_edge_observable_past_64_is_decoded() {
+        let config = PyMatchingConfig {
+            num_nodes: Some(2),
+            num_observables: 1,
+            ..Default::default()
+        };
+        let mut decoder = PyMatchingDecoder::new(config).unwrap();
+        decoder
+            .add_edge(0, 1, &[3], Some(2.0), Some(0.1), None)
+            .unwrap();
+        // A lighter parallel edge replaces the observables of the existing edge, so
+        // the backend graph does not grow on its own.
+        decoder
+            .add_edge(0, 1, &[70], Some(1.0), Some(0.1), None)
+            .unwrap();
+        assert_eq!(decoder.num_decoded_observables(), 71);
+        let observable = decoder.decode(&[1, 1]).unwrap().observable;
+        assert_eq!(observable.len(), 71);
+        assert_eq!(observable[70], 1);
+        assert_eq!(observable.iter().filter(|&&bit| bit != 0).count(), 1);
+    }
+
+    #[test]
+    fn added_edge_observables_are_decoded_in_single_and_batch_paths() {
+        let config = PyMatchingConfig {
+            num_nodes: Some(2),
+            num_observables: 1,
+            ..Default::default()
+        };
+        let mut decoder = PyMatchingDecoder::new(config).unwrap();
+        // Observable 5 lies past the configured count of 1.
+        decoder
+            .add_edge(0, 1, &[5], Some(1.0), Some(0.1), None)
+            .unwrap();
+        decoder
+            .add_boundary_edge(0, &[], Some(3.0), Some(0.01), None)
+            .unwrap();
+        assert_eq!(decoder.num_decoded_observables(), 6);
+
+        let single = decoder.decode(&[1, 1]).unwrap().observable;
+        assert_eq!(single, [0, 0, 0, 0, 0, 1]);
+
+        let unpacked = decoder
+            .decode_batch_with_config(&[1, 1], 1, 2, BatchConfig::default())
+            .unwrap();
+        assert_eq!(unpacked.predictions, std::slice::from_ref(&single));
+
+        let packed_config = BatchConfig {
+            bit_packed_output: true,
+            ..BatchConfig::default()
+        };
+        let packed = decoder
+            .decode_batch_with_config(&[1, 1], 1, 2, packed_config)
+            .unwrap();
+        // Six observables pack into one byte, with observable 5 in bit 5.
+        assert_eq!(packed.predictions, [vec![1_u8 << 5]]);
+    }
+
+    #[test]
+    fn batch_validates_empty_buffers_and_size_overflow() {
+        let mut decoder = PyMatchingDecoder::from_dem("error(0.1) D0 L0\ndetector D1").unwrap();
+        for bit_packed_input in [false, true] {
+            let config = BatchConfig {
+                bit_packed_input,
+                ..BatchConfig::default()
+            };
+            assert!(matches!(
+                decoder.decode_batch_with_config(&[0], 0, 2, config),
+                Err(PyMatchingError::Dem(
+                    pecos_decoder_core::DecoderError::BatchSizeMismatch {
+                        expected: 0,
+                        actual: 1
+                    }
+                ))
+            ));
+            assert!(decoder.decode_batch_with_config(&[], 0, 2, config).is_ok());
+        }
+        assert!(matches!(
+            decoder.decode_batch_with_config(&[], usize::MAX, 2, BatchConfig::default()),
+            Err(PyMatchingError::Configuration(_))
+        ));
+    }
+
+    #[test]
     fn dem_validation_precedes_backend_parsing() {
         for text in [
             "error(0.1) D0 D0",
@@ -1718,8 +1916,9 @@ mod tests {
             .unwrap();
         decoder.set_boundary(&[4]);
 
-        // Test unpacked format with valid syndromes
-        let shots = vec![0, 0, 0, 0, 0, 0]; // 2 shots of 3 detectors each (all zero)
+        // Test unpacked format with valid syndromes: nodes 0..=3 are detectors
+        // and node 4 is the boundary.
+        let shots = vec![0; 8]; // 2 shots of 4 detectors each (all zero)
         let config = BatchConfig {
             bit_packed_input: false,
             bit_packed_output: false,
@@ -1728,7 +1927,7 @@ mod tests {
         let result = decoder
             .decode_batch_with_config(
                 &shots, 2, // num_shots
-                3, // num_detectors
+                4, // num_detectors
                 config,
             )
             .unwrap();
@@ -1748,7 +1947,7 @@ mod tests {
             .decode_batch_with_config(
                 &packed_shots,
                 2, // num_shots
-                3, // num_detectors
+                4, // num_detectors
                 packed_config,
             )
             .unwrap();

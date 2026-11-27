@@ -416,7 +416,7 @@ def test_windowed_logical_subgraph_requires_positive_step() -> None:
         WindowedLogicalSubgraphDecoder("", [], buffer=1)
     with pytest.raises(TypeError, match="buffer"):
         WindowedLogicalSubgraphDecoder("", [], step=1)
-    with pytest.raises(RuntimeError, match="step must be at least 1"):
+    with pytest.raises(ValueError, match="step must be at least 1"):
         WindowedLogicalSubgraphDecoder("", [], step=0, buffer=1)
 
 

@@ -43,27 +43,14 @@ use pyo3::prelude::*;
 
 use crate::observable_flips_bindings::PyObservableFlips;
 
-fn decoder_runtime_error_to_py(error: impl std::error::Error + 'static) -> PyErr {
-    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
-    while let Some(current) = source {
-        if matches!(
-            current.downcast_ref::<pecos_decoder_core::DecoderError>(),
-            Some(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
-        ) || matches!(
-            current.downcast_ref::<pecos_decoders::LdpcError>(),
-            Some(pecos_decoders::LdpcError::InvalidInput(_))
-        ) || matches!(
-            current.downcast_ref::<pecos_decoders::TesseractError>(),
-            Some(
-                pecos_decoders::TesseractError::InvalidConfig(_)
-                    | pecos_decoders::TesseractError::InvalidInput(_)
-            )
-        ) {
-            return pyo3::exceptions::PyValueError::new_err(error.to_string());
-        }
-        source = current.source();
-    }
-    pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
+/// Classify a backend error through its `DecoderError` conversion, keeping the
+/// backend's own message.
+fn decoder_runtime_error_to_py<E>(error: E) -> PyErr
+where
+    E: std::fmt::Display + Into<pecos_decoder_core::DecoderError>,
+{
+    let message = error.to_string();
+    crate::errors::decoder_error(&error.into(), message)
 }
 
 fn explicit_decode_attribute_error(class_name: &str, name: &str) -> PyErr {
@@ -594,14 +581,24 @@ impl PyPyMatchingDecoder {
     ///
     /// # Arguments
     ///
-    /// * `detection_events` - Flattened detection events array (`num_shots` * `num_detectors` bytes)
+    /// * `detection_events` - Flattened row-major detection events: `num_shots` rows of
+    ///   `syndrome_length` entries, one byte per node, so exactly
+    ///   `num_shots * syndrome_length` entries
     /// * `num_shots` - Number of shots in the batch
+    /// * `syndrome_length` - Entries per row. Defaults to `num_detectors`; as in
+    ///   `decode_syndrome`, any width from `num_detectors` to `num_nodes` (boundary
+    ///   nodes included) is accepted
     ///
     /// # Returns
     ///
     /// List of observable predictions (one per shot), where each prediction
     /// is a list of 0/1 values (one per observable). Check index 0 for
     /// single-observable codes.
+    ///
+    /// # Errors
+    ///
+    /// Raises `ValueError` if `syndrome_length` is outside that range, or if
+    /// `detection_events` does not have `num_shots * syndrome_length` entries.
     ///
     /// # Example
     ///
@@ -611,14 +608,37 @@ impl PyPyMatchingDecoder {
     /// predictions = decoder.decode_batch(flat, num_shots=len(detection_events))
     /// num_errors = sum(p[0] != t for p, t in zip(predictions, true_flips))
     /// ```
+    #[pyo3(signature = (detection_events, num_shots, *, syndrome_length=None))]
     fn decode_batch(
         &mut self,
         detection_events: Vec<u8>,
         num_shots: usize,
+        syndrome_length: Option<usize>,
     ) -> PyResult<Vec<Vec<u8>>> {
         use pecos_decoders::BatchConfig as RustBatchConfig;
 
-        let num_detectors = self.inner.num_detectors();
+        let (num_detectors, num_nodes) = (self.inner.num_detectors(), self.inner.num_nodes());
+        let syndrome_length = syndrome_length.unwrap_or(num_detectors);
+        if !(num_detectors..=num_nodes).contains(&syndrome_length) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "syndrome_length={syndrome_length} is outside the widths this decoder accepts: \
+                 {num_detectors} (one per detector) to {num_nodes} (one per node, boundary \
+                 nodes included)"
+            )));
+        }
+        let expected = num_shots.checked_mul(syndrome_length);
+        if expected != Some(detection_events.len()) {
+            let needed = expected.map_or_else(
+                || "more than usize can count".to_string(),
+                |entries| entries.to_string(),
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detection_events has {} entries, but num_shots={num_shots} rows of \
+                 syndrome_length={syndrome_length} need {needed}; check num_shots, or pass \
+                 syndrome_length for rows wider than num_detectors",
+                detection_events.len()
+            )));
+        }
         let config = RustBatchConfig {
             bit_packed_input: false,
             bit_packed_output: false,
@@ -626,7 +646,7 @@ impl PyPyMatchingDecoder {
         };
 
         self.inner
-            .decode_batch_with_config(&detection_events, num_shots, num_detectors, config)
+            .decode_batch_with_config(&detection_events, num_shots, syndrome_length, config)
             .map(|result| result.predictions)
             .map_err(decoder_runtime_error_to_py)
     }
@@ -2424,7 +2444,7 @@ impl PyTesseractDecoder {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
             .build()
-            .map_err(decoder_runtime_error_to_py)?;
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let dem_str = &self.dem_string;
         let config = &self.config;
@@ -2698,7 +2718,7 @@ impl PyTesseractTrellisDecoder {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
             .build()
-            .map_err(decoder_runtime_error_to_py)?;
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let dem_str = &self.dem_string;
         let config = &self.config;
@@ -3484,8 +3504,7 @@ pub struct PyDemAwareDecoder {
 
 impl PyDemAwareDecoder {
     fn parse_dem(dem: &str) -> PyResult<DemCheckMatrix> {
-        let dcm = DemCheckMatrix::from_dem_str(dem)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let dcm = DemCheckMatrix::from_dem_str(dem).map_err(decoder_runtime_error_to_py)?;
 
         if dcm.num_mechanisms == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -3523,7 +3542,7 @@ impl PyDemAwareDecoder {
             let (reduced, support) = dcm.merge_duplicate_symptoms().reduce_support();
             reduced
                 .ensure_nonempty_support()
-                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+                .map_err(decoder_runtime_error_to_py)?;
             dcm = reduced;
             support
         } else {
@@ -3681,6 +3700,7 @@ impl PyDemAwareDecoder {
     ///   merging identical detector and observable sets; a group of k lines receives the
     ///   k-fold independent XOR of the rate. Endpoints are then reduced exactly.
     ///   Construction raises `ValueError` if no uncertain error mechanism remains.
+    ///   This union-find entry point has no prior override and rejects explicit `error_rate` values.
     /// * `max_iter` - None uses 30 for BP-LSD, 100 for BP-OSD and min-sum. Relay-BP and
     ///   union-find reject explicit values; use `pre_iter` / `set_max_iter` on
     ///   the Relay builder or spec factory to configure Relay iteration limits.
@@ -3757,6 +3777,11 @@ impl PyDemAwareDecoder {
                 lsd_order,
             )?),
             DemDecoderType::UnionFind => {
+                if let Some(value) = error_rate {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "union_find has no error_rate (got {value}); union-find takes no priors; omit error_rate for union_find"
+                    )));
+                }
                 if let Some(value) = max_iter {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "union_find has no max_iter (got {value}); omit max_iter for union_find"
@@ -3796,7 +3821,7 @@ impl PyDemAwareDecoder {
     fn decode_syndrome(&mut self, mut syndrome: Vec<u8>) -> PyResult<PyDemAwareResult> {
         self.support
             .bias_syndrome(&mut syndrome, self.dem_check_matrix.num_detectors)
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+            .map_err(decoder_runtime_error_to_py)?;
         let arr = Array1::from_vec(syndrome);
         let (decoding, converged, iterations) = match &mut self.inner {
             InnerDecoder::BpOsd(d) => {

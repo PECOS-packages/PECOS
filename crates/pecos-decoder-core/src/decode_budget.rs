@@ -182,6 +182,15 @@ impl DetectorRegion {
 /// (observable correction mask) but with different accuracy/latency
 /// trade-offs.
 pub trait DecodeStrategy: Send + Sync {
+    /// Full-circuit syndrome width this strategy decodes, when known.
+    ///
+    /// [`LogicalCircuitDecoder`](crate::logical_algorithm::LogicalCircuitDecoder)
+    /// rejects a descriptor whose segment detector total differs from it.
+    #[must_use]
+    fn num_detectors(&self) -> Option<usize> {
+        None
+    }
+
     /// Expose the optional phase-2 feed-forward consultation surface.
     ///
     /// The logical-circuit harness reaches

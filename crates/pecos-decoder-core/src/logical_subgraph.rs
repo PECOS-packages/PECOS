@@ -56,7 +56,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ObservableDecoder;
 use crate::dem::{DemMatchingGraph, MatchingEdge, SparseDem};
-use crate::errors::DecoderError;
+use crate::errors::{DecoderError, check_syndrome_length};
 use crate::obs_mask::ObsMask;
 
 // ============================================================================
@@ -345,12 +345,17 @@ pub fn coordinate_membership_from_dem(
 /// coordinate one ([`coordinate_membership_from_dem`]) or a back-propagation
 /// builder in a higher crate.
 ///
-/// # Errors
-///
 /// Supports arbitrarily many observables: flips are packed into a wide
 /// [`ObsMask`] by [`ObservableDecoder::decode_obs`]. (The `u64`
 /// [`ObservableDecoder::decode_to_observables`] convenience errors above 64; the
 /// windowed paths still cap at 64 — see their constructors.)
+///
+/// # Errors
+///
+/// Returns [`DecoderError::InvalidConfiguration`] if a membership id is out of
+/// range, or if a mechanism with a one- or two-detector component has a prior
+/// above 0.5; each mechanism's own prior is checked, before parallel mechanisms
+/// are merged.
 pub fn subgraphs_from_membership(
     sdem: &SparseDem,
     membership: &[Vec<usize>],
@@ -415,22 +420,20 @@ pub fn subgraphs_from_membership(
             let observables = if flips_obs { vec![0u32] } else { vec![] };
 
             match sub_dets.len() {
-                1 => edges.push(MatchingEdge {
-                    node1: sub_dets[0],
-                    node2: None,
-                    weight,
-                    observables,
-                    probability: *p,
-                    fault_id: m,
-                }),
-                2 => edges.push(MatchingEdge {
-                    node1: sub_dets[0],
-                    node2: Some(sub_dets[1]),
-                    weight,
-                    observables,
-                    probability: *p,
-                    fault_id: m,
-                }),
+                1 | 2 => {
+                    // Check the caller's prior before merging: a sub-DEM
+                    // rendered from this graph holds merged priors, which are
+                    // at most 0.5 whenever every merged prior is.
+                    crate::dem::check_matching_prior(*p)?;
+                    edges.push(MatchingEdge {
+                        node1: sub_dets[0],
+                        node2: sub_dets.get(1).copied(),
+                        weight,
+                        observables,
+                        probability: *p,
+                        fault_id: m,
+                    });
+                }
                 _ => skipped += 1,
             }
         }
@@ -468,6 +471,8 @@ pub struct LogicalSubgraphDecoder {
     subgraphs: Vec<LogicalSubgraph>,
     decoders: Vec<Box<dyn ObservableDecoder + Send + Sync>>,
     num_observables: usize,
+    /// Full-DEM detector count; every syndrome must have exactly this length.
+    num_detectors: usize,
     sub_syndromes: Vec<Vec<u8>>,
 }
 
@@ -501,7 +506,9 @@ impl LogicalSubgraphDecoder {
             &DemMatchingGraph,
         ) -> Result<Box<dyn ObservableDecoder + Send + Sync>, DecoderError>,
     {
-        let subgraphs = partition_dem_by_logical_windowed(dem, stab_coords, max_time_radius)?;
+        let sdem = SparseDem::from_dem_str(dem)?;
+        let membership = coordinate_membership_from_dem(&sdem, stab_coords, max_time_radius)?;
+        let subgraphs = subgraphs_from_membership(&sdem, &membership)?;
         let num_observables = subgraphs.len();
 
         let mut decoders = Vec::with_capacity(subgraphs.len());
@@ -515,6 +522,7 @@ impl LogicalSubgraphDecoder {
             subgraphs,
             decoders,
             num_observables,
+            num_detectors: sdem.num_detectors,
             sub_syndromes,
         })
     }
@@ -556,6 +564,7 @@ impl LogicalSubgraphDecoder {
             subgraphs,
             decoders,
             num_observables,
+            num_detectors: sdem.num_detectors,
             sub_syndromes,
         })
     }
@@ -564,6 +573,12 @@ impl LogicalSubgraphDecoder {
     #[must_use]
     pub fn num_observables(&self) -> usize {
         self.num_observables
+    }
+
+    /// Full-DEM detector count each syndrome must match.
+    #[must_use]
+    pub fn num_detectors(&self) -> usize {
+        self.num_detectors
     }
 
     /// Access a subgraph.
@@ -605,11 +620,20 @@ impl LogicalSubgraphDecoder {
     /// For each subgraph, extracts all sub-syndromes into a flat buffer
     /// and calls `decode_batch_to_observables` once — avoiding per-shot
     /// reset overhead in decoders like `PyMatching`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidDimensions`] if any syndrome's length
+    /// differs from the full-DEM detector count, before decoding any shot, and
+    /// propagates inner decoder failures.
     pub fn decode_count_batched(
         &mut self,
         syndromes: &[Vec<u8>],
         expected_masks: &[ObsMask],
     ) -> Result<usize, DecoderError> {
+        for syn in syndromes {
+            check_syndrome_length(self.num_detectors, syn.len())?;
+        }
         let num_shots = syndromes.len();
         if num_shots == 0 {
             return Ok(0);
@@ -630,11 +654,7 @@ impl LogicalSubgraphDecoder {
             for (shot_idx, syn) in syndromes.iter().enumerate() {
                 let row = &mut flat[shot_idx * n..(shot_idx + 1) * n];
                 for (sub_idx, &full_idx) in sg.detector_map.iter().enumerate() {
-                    row[sub_idx] = if full_idx < syn.len() {
-                        syn[full_idx]
-                    } else {
-                        0
-                    };
+                    row[sub_idx] = syn[full_idx];
                 }
             }
 
@@ -660,6 +680,10 @@ impl LogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for LogicalSubgraphDecoder {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.num_detectors)
+    }
+
     /// Narrowing wrapper over [`Self::decode_obs`]. Errors (rather than
     /// truncating) if the decoder has more than 64 observables; callers that may
     /// exceed 64 should use [`ObservableDecoder::decode_obs`].
@@ -675,6 +699,7 @@ impl ObservableDecoder for LogicalSubgraphDecoder {
     /// [`ObsMask`], mapping each subgraph's local result to its GLOBAL observable
     /// index. Supports more than 64 observables with no truncation.
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         let mut obs_mask = ObsMask::new();
 
         for (i, (sg, dec)) in self
@@ -690,11 +715,7 @@ impl ObservableDecoder for LogicalSubgraphDecoder {
 
             let buf = &mut self.sub_syndromes[i];
             for (sub_idx, &full_idx) in sg.detector_map.iter().enumerate() {
-                buf[sub_idx] = if full_idx < syndrome.len() {
-                    syndrome[full_idx]
-                } else {
-                    0
-                };
+                buf[sub_idx] = syndrome[full_idx];
             }
 
             let sub_obs = dec.decode_to_observables(&buf[..n])?;
@@ -712,6 +733,8 @@ impl ObservableDecoder for LogicalSubgraphDecoder {
 pub struct ParallelLogicalSubgraphDecoder {
     subgraphs: Vec<LogicalSubgraph>,
     decoders: Vec<std::sync::Mutex<Box<dyn ObservableDecoder + Send>>>,
+    /// Full-DEM detector count; every syndrome must have exactly this length.
+    num_detectors: usize,
 }
 
 impl ParallelLogicalSubgraphDecoder {
@@ -728,7 +751,9 @@ impl ParallelLogicalSubgraphDecoder {
     where
         F: FnMut(&DemMatchingGraph) -> Result<Box<dyn ObservableDecoder + Send>, DecoderError>,
     {
-        let subgraphs = partition_dem_by_logical(dem, stab_coords)?;
+        let sdem = SparseDem::from_dem_str(dem)?;
+        let membership = coordinate_membership_from_dem(&sdem, stab_coords, None)?;
+        let subgraphs = subgraphs_from_membership(&sdem, &membership)?;
 
         let mut decoders = Vec::with_capacity(subgraphs.len());
         for sg in &subgraphs {
@@ -738,6 +763,7 @@ impl ParallelLogicalSubgraphDecoder {
         Ok(Self {
             subgraphs,
             decoders,
+            num_detectors: sdem.num_detectors,
         })
     }
 
@@ -745,9 +771,12 @@ impl ParallelLogicalSubgraphDecoder {
     ///
     /// # Errors
     ///
-    /// Returns error if any subgraph decoder fails.
+    /// Returns [`DecoderError::InvalidDimensions`] if the syndrome length differs
+    /// from the full-DEM detector count, or an error if any subgraph decoder fails.
     pub fn decode_parallel(&self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         use rayon::prelude::*;
+
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
 
         let results: Vec<Result<bool, DecoderError>> = self
             .subgraphs
@@ -761,11 +790,7 @@ impl ParallelLogicalSubgraphDecoder {
 
                 let mut sub_syn = vec![0u8; n];
                 for (sub_idx, &full_idx) in sg.detector_map.iter().enumerate() {
-                    sub_syn[sub_idx] = if full_idx < syndrome.len() {
-                        syndrome[full_idx]
-                    } else {
-                        0
-                    };
+                    sub_syn[sub_idx] = syndrome[full_idx];
                 }
 
                 let mut dec = dec_mutex.lock().unwrap();
@@ -1138,5 +1163,30 @@ mod tests {
 
         let obs = dec.decode_parallel(&[0, 0]).unwrap();
         assert_eq!(obs, 0);
+    }
+
+    #[test]
+    fn test_parallel_decoder_rejects_wrong_lengths() {
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n",
+            "detector(3, 0, 0) D1\n",
+            "error(0.01) D0 L0\n",
+            "error(0.01) D1 L1\n",
+        );
+        let sc = simple_stab_coords();
+        let dec = ParallelLogicalSubgraphDecoder::from_dem(dem, &sc, |_| {
+            Ok(Box::new(NullDecoder) as Box<dyn ObservableDecoder + Send>)
+        })
+        .unwrap();
+
+        for length in [0, 1, 3] {
+            assert!(
+                matches!(
+                    dec.decode_parallel(&vec![0; length]),
+                    Err(DecoderError::InvalidDimensions { expected: 2, actual }) if actual == length
+                ),
+                "length {length}"
+            );
+        }
     }
 }

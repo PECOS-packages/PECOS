@@ -96,6 +96,8 @@ pub struct CssUfDecoder {
     z_decoder: UfDecoder,
     /// Number of X detectors (split point for concatenated syndromes).
     x_num_detectors: usize,
+    /// Number of Z detectors.
+    z_num_detectors: usize,
     /// Qubit-to-edge mapping for intersection step.
     qubit_map: Option<QubitEdgeMapping>,
 }
@@ -135,6 +137,7 @@ impl CssUfDecoder {
         let qubit_map = Self::build_qubit_mapping(&x_graph, &z_graph);
 
         let x_num_detectors = x_graph.num_detectors;
+        let z_num_detectors = z_graph.num_detectors;
         let x_decoder = UfDecoder::from_matching_graph(&x_graph, config)?;
         let z_decoder = UfDecoder::from_matching_graph(&z_graph, config)?;
 
@@ -142,6 +145,7 @@ impl CssUfDecoder {
             x_decoder,
             z_decoder,
             x_num_detectors,
+            z_num_detectors,
             qubit_map,
         })
     }
@@ -206,6 +210,12 @@ impl CssUfDecoder {
         }
     }
 
+    /// Number of X detectors in a concatenated syndrome.
+    #[must_use]
+    pub fn x_num_detectors(&self) -> usize {
+        self.x_num_detectors
+    }
+
     /// Number of qubit pairs in the mapping (0 = no mapping, falls back to independent).
     #[must_use]
     pub fn num_qubit_pairs(&self) -> usize {
@@ -230,12 +240,14 @@ impl CssUfDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `DecoderError` if decoding fails.
+    /// Returns [`DecoderError::InvalidDimensions`] if `x_syndrome` or
+    /// `z_syndrome` does not have exactly one entry per detector of its DEM.
     pub fn decode_css(
         &mut self,
         x_syndrome: &[u8],
         z_syndrome: &[u8],
     ) -> Result<(u64, u64), DecoderError> {
+        self.validate_syndrome_lengths(x_syndrome, z_syndrome)?;
         if let Some(mapping) = &self.qubit_map {
             let pairs = mapping.pairs.clone();
             Ok(self.decode_uiuf(x_syndrome, z_syndrome, &pairs))
@@ -248,8 +260,18 @@ impl CssUfDecoder {
     }
 
     /// Count erasures that the intersection would produce (diagnostic).
-    pub fn count_intersection_erasures(&mut self, x_syndrome: &[u8], z_syndrome: &[u8]) -> usize {
-        if let Some(mapping) = &self.qubit_map {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidDimensions`] if `x_syndrome` or
+    /// `z_syndrome` does not have exactly one entry per detector of its DEM.
+    pub fn count_intersection_erasures(
+        &mut self,
+        x_syndrome: &[u8],
+        z_syndrome: &[u8],
+    ) -> Result<usize, DecoderError> {
+        self.validate_syndrome_lengths(x_syndrome, z_syndrome)?;
+        Ok(if let Some(mapping) = &self.qubit_map {
             self.x_decoder.syndrome_validate(x_syndrome);
             self.z_decoder.syndrome_validate(z_syndrome);
             let mut count = 0;
@@ -263,7 +285,23 @@ impl CssUfDecoder {
             count
         } else {
             0
+        })
+    }
+
+    fn validate_syndrome_lengths(
+        &self,
+        x_syndrome: &[u8],
+        z_syndrome: &[u8],
+    ) -> Result<(), DecoderError> {
+        for (actual, expected) in [
+            (x_syndrome.len(), self.x_num_detectors),
+            (z_syndrome.len(), self.z_num_detectors),
+        ] {
+            if actual != expected {
+                return Err(DecoderError::InvalidDimensions { expected, actual });
+            }
         }
+        Ok(())
     }
 
     /// Full UIUF algorithm.
@@ -317,12 +355,12 @@ impl pecos_decoder_core::ObservableDecoder for CssUfDecoder {
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let split = self.x_num_detectors;
-        if syndrome.len() < split {
-            return Err(DecoderError::DecodingFailed(format!(
-                "CssUfDecoder: syndrome length {} < x_num_detectors {}",
-                syndrome.len(),
-                split
-            )));
+        let expected = split + self.z_num_detectors;
+        if syndrome.len() != expected {
+            return Err(DecoderError::InvalidDimensions {
+                expected,
+                actual: syndrome.len(),
+            });
         }
         let x_syn = &syndrome[..split];
         let z_syn = &syndrome[split..];
@@ -336,6 +374,23 @@ impl pecos_decoder_core::ObservableDecoder for CssUfDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concatenated_syndrome_requires_total_dimension() {
+        use pecos_decoder_core::ObservableDecoder;
+        let mut decoder = CssUfDecoder::from_dems(
+            "error(0.1) D0",
+            "error(0.1) D0\ndetector D1",
+            UfDecoderConfig::default(),
+        )
+        .unwrap();
+        for actual in [0, 1, 2, 4] {
+            assert!(
+                matches!(decoder.decode_obs(&vec![0; actual]), Err(DecoderError::InvalidDimensions { expected: 3, actual: n }) if n == actual)
+            );
+        }
+        assert!(decoder.decode_obs(&[0; 3]).is_ok());
+    }
 
     // Minimal X-basis and Z-basis DEMs for a distance-3 repetition code.
     const X_DEM: &str = "\

@@ -123,6 +123,18 @@ struct ModelDimensionDecoder {
     num_detectors: usize,
 }
 
+impl ModelDimensionDecoder {
+    fn validate_length(&self, actual: usize) -> Result<(), DecoderError> {
+        if actual != self.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.num_detectors,
+                actual,
+            });
+        }
+        Ok(())
+    }
+}
+
 impl ObservableDecoder for ModelDimensionDecoder {
     fn num_detectors(&self) -> Option<usize> {
         Some(self.num_detectors)
@@ -132,6 +144,7 @@ impl ObservableDecoder for ModelDimensionDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+        self.validate_length(syndrome.len())?;
         self.inner.decode_obs(syndrome)
     }
 
@@ -141,6 +154,19 @@ impl ObservableDecoder for ModelDimensionDecoder {
         num_shots: usize,
         num_detectors: usize,
     ) -> Result<Vec<pecos_decoder_core::obs_mask::ObsMask>, DecoderError> {
+        self.validate_length(num_detectors)?;
+        let expected = num_shots.checked_mul(num_detectors).ok_or_else(|| {
+            DecoderError::InvalidSyndrome(format!(
+                "num_shots {num_shots} times num_detectors {num_detectors} overflows usize; the shots buffer holds {} bytes",
+                shots.len()
+            ))
+        })?;
+        if shots.len() != expected {
+            return Err(DecoderError::BatchSizeMismatch {
+                expected,
+                actual: shots.len(),
+            });
+        }
         self.inner
             .decode_batch_to_observables(shots, num_shots, num_detectors)
     }
@@ -148,6 +174,7 @@ impl ObservableDecoder for ModelDimensionDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         // Forward rather than inherit the trait default: an inner decoder that
         // overrides this method must keep its own semantics when wrapped.
+        self.validate_length(syndrome.len())?;
         self.inner.decode_to_observables(syndrome)
     }
 }
@@ -248,12 +275,10 @@ fn unavailable<T>(family: &'static str, required_feature: &'static str) -> Resul
     })
 }
 
-#[cfg(any(
-    feature = "pymatching",
-    feature = "fusion-blossom",
-    feature = "ldpc",
-    feature = "mwpf"
-))]
+// Every use passes values derived from one parsed matrix: a support attached to
+// the matrix it was reduced from, or weighted union-find LLRs computed one per
+// column of that matrix. A rejection is an internal invariant failure.
+#[cfg(any(feature = "ldpc", feature = "relay-bp"))]
 fn internal(error: impl std::fmt::Display) -> DecoderError {
     DecoderError::InternalError(error.to_string())
 }
@@ -301,7 +326,7 @@ fn build_pymatching(
     if let Some(error_probability) = config.error_probability {
         decoder
             .set_all_error_probabilities(error_probability)
-            .map_err(internal)?;
+            .map_err(DecoderError::from)?;
     }
     Ok(Box::new(decoder))
 }
@@ -402,7 +427,7 @@ fn build_k_mwpm(
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     use pecos_decoder_core::k_mwpm::{KMwpmConfig as CoreConfig, KMwpmDecoder};
 
-    let inner = crate::FusionBlossomDecoder::from_dem(dem).map_err(internal)?;
+    let inner = crate::FusionBlossomDecoder::from_dem(dem).map_err(DecoderError::from)?;
     Ok(Box::new(KMwpmDecoder::new(
         inner,
         CoreConfig { k: config.k },
@@ -442,14 +467,14 @@ fn build_fusion_blossom(
         (FusionBlossomSolverType::Auto, false) => build_fusion_auto(dem),
         (FusionBlossomSolverType::Parallel, false) => build_fusion_parallel(dem),
         (FusionBlossomSolverType::Serial, false) => Ok(Box::new(
-            crate::FusionBlossomDecoder::from_dem(dem).map_err(internal)?,
+            crate::FusionBlossomDecoder::from_dem(dem).map_err(DecoderError::from)?,
         )),
         (FusionBlossomSolverType::Legacy, false) => Ok(Box::new(
             crate::FusionBlossomDecoder::from_dem_with_solver_type(
                 dem,
                 FusionBlossomEngineSolverType::Legacy,
             )
-            .map_err(internal)?,
+            .map_err(DecoderError::from)?,
         )),
         (FusionBlossomSolverType::Auto | FusionBlossomSolverType::Serial, true) => {
             build_fusion_correlated(dem)
@@ -459,7 +484,7 @@ fn build_fusion_blossom(
                 dem,
                 FusionBlossomEngineSolverType::Legacy,
             )
-            .map_err(internal)?,
+            .map_err(DecoderError::from)?,
         )),
         (FusionBlossomSolverType::Parallel, true) => Err(DecoderError::InvalidConfiguration(
             "correlated Fusion Blossom does not support the parallel solver".to_string(),
@@ -475,7 +500,7 @@ fn build_fusion_auto(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
         build_fusion_parallel_from_graph(dem, &graph)
     } else {
         Ok(Box::new(
-            crate::FusionBlossomDecoder::from_dem(dem).map_err(internal)?,
+            crate::FusionBlossomDecoder::from_dem(dem).map_err(DecoderError::from)?,
         ))
     }
 }
@@ -486,6 +511,7 @@ fn build_fusion_correlated(dem: &str) -> Result<Box<dyn ObservableDecoder>, Deco
     use pecos_decoder_core::two_pass_decoder::TwoPassDecoder;
     use std::collections::BTreeMap;
 
+    // `from_dem_str` rejects any mechanism prior above 0.5.
     let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?;
     graph.ensure_observables_fit_u64()?;
     let engine_config = FusionBlossomEngineConfig {
@@ -493,7 +519,8 @@ fn build_fusion_correlated(dem: &str) -> Result<Box<dyn ObservableDecoder>, Deco
         num_observables: graph.num_observables,
         ..Default::default()
     };
-    let mut decoder = crate::FusionBlossomDecoder::new(engine_config).map_err(internal)?;
+    let mut decoder =
+        crate::FusionBlossomDecoder::new(engine_config).map_err(DecoderError::from)?;
     let mut edge_index_map = BTreeMap::new();
     let mut base_weights = Vec::with_capacity(graph.edges.len());
     for (index, edge) in graph.edges.iter().enumerate() {
@@ -511,12 +538,12 @@ fn build_fusion_correlated(dem: &str) -> Result<Box<dyn ObservableDecoder>, Deco
                     &observables,
                     Some(edge.weight),
                 )
-                .map_err(internal)?;
+                .map_err(DecoderError::from)?;
             ordered_edge(edge.node1, node2)
         } else {
             decoder
                 .add_boundary_edge(edge.node1 as usize, &observables, Some(edge.weight))
-                .map_err(internal)?;
+                .map_err(DecoderError::from)?;
             (edge.node1, u32::MAX)
         };
         edge_index_map.insert(key, index);
@@ -542,6 +569,8 @@ fn build_fusion_parallel_from_graph(
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     use std::collections::BTreeMap;
 
+    // Both callers build `graph` with `from_dem_str`, which already rejects any
+    // mechanism prior above 0.5.
     graph.ensure_observables_fit_u64()?;
     let mut round_groups: BTreeMap<u64, Vec<u32>> = BTreeMap::new();
     for (id, coord) in graph.detector_coords.iter().enumerate() {
@@ -559,7 +588,7 @@ fn build_fusion_parallel_from_graph(
     let num_rounds = round_groups.len();
     if num_rounds < 2 {
         return Ok(Box::new(
-            crate::FusionBlossomDecoder::from_dem(dem).map_err(internal)?,
+            crate::FusionBlossomDecoder::from_dem(dem).map_err(DecoderError::from)?,
         ));
     }
 
@@ -587,7 +616,8 @@ fn build_fusion_parallel_from_graph(
         num_observables: graph.num_observables,
         ..Default::default()
     };
-    let mut decoder = crate::FusionBlossomDecoder::new(engine_config).map_err(internal)?;
+    let mut decoder =
+        crate::FusionBlossomDecoder::new(engine_config).map_err(DecoderError::from)?;
     for &boundary in &partition_boundary {
         decoder.virtual_vertices.push(boundary);
     }
@@ -604,7 +634,7 @@ fn build_fusion_parallel_from_graph(
         );
         decoder
             .add_edge(node1, node2, &observables, Some(edge.weight))
-            .map_err(internal)?;
+            .map_err(DecoderError::from)?;
     }
 
     let partition_count = num_rounds.clamp(2, 4);
@@ -714,7 +744,8 @@ fn build_perturbed_fusion_blossom(
     };
     let decoder = build_perturbed_ensemble(dem, &core_config, |member_dem| {
         Ok(Box::new(
-            crate::FusionBlossomDecoder::from_dem_correlated(member_dem).map_err(internal)?,
+            crate::FusionBlossomDecoder::from_dem_correlated(member_dem)
+                .map_err(DecoderError::from)?,
         ))
     })?;
     Ok(Box::new(decoder))
@@ -780,7 +811,7 @@ fn build_bp_osd(
         None,
         config.random_schedule_seed,
     )
-    .map_err(internal)?;
+    .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
             .with_support(support)
@@ -826,7 +857,7 @@ fn build_bp_lsd(
         None,
         config.random_schedule_seed,
     )
-    .map_err(internal)?;
+    .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
             .with_support(support)
@@ -861,7 +892,7 @@ fn build_belief_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErr
         crate::UfMethod::Inversion,
         0,
     )
-    .map_err(internal)?;
+    .map_err(DecoderError::from)?;
     Ok(Box::new(
         pecos_decoder_core::CheckMatrixObservableDecoder::new(decoder, matrix)
             .with_support(support)
@@ -877,8 +908,8 @@ fn build_belief_find(_dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderEr
 #[cfg(feature = "ldpc")]
 fn build_union_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     let (matrix, sparse) = dem_matrix(dem)?;
-    let decoder =
-        crate::UnionFindDecoder::new(&sparse, crate::UfMethod::Inversion).map_err(internal)?;
+    let decoder = crate::UnionFindDecoder::new(&sparse, crate::UfMethod::Inversion)
+        .map_err(DecoderError::from)?;
     let llrs = matrix
         .error_priors
         .iter()
@@ -890,9 +921,9 @@ fn build_union_find(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderErro
             }
         })
         .collect();
-    Ok(Box::new(crate::WeightedUnionFindDecoder::new(
-        decoder, matrix, llrs,
-    )))
+    Ok(Box::new(
+        crate::WeightedUnionFindDecoder::new(decoder, matrix, llrs).map_err(internal)?,
+    ))
 }
 
 #[cfg(not(feature = "ldpc"))]
@@ -1090,6 +1121,10 @@ fn build_belief_matching_with_dems(
     use pecos_decoder_core::correlation_table::CorrelationTable;
     use std::collections::BTreeMap;
 
+    // Build the matching graph before BP: `from_dem_str` rejects any mechanism prior
+    // above 0.5, so these families report it as the other Fusion Blossom families do.
+    let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(matching_dem)?;
+    graph.ensure_observables_fit_u64()?;
     let bp = match mode {
         BeliefMatchingMode::MatchingGraphBp => {
             crate::BpUfDecoder::from_dem(bp_dem, crate::BpUfConfig::matching_bp())?
@@ -1101,14 +1136,13 @@ fn build_belief_matching_with_dems(
             crate::BpUfDecoder::from_dem(bp_dem, crate::BpUfConfig::balanced())?
         }
     };
-    let graph = pecos_decoder_core::DemMatchingGraph::from_dem_str(matching_dem)?;
-    graph.ensure_observables_fit_u64()?;
     let engine_config = FusionBlossomEngineConfig {
         num_nodes: Some(graph.num_detectors),
         num_observables: graph.num_observables,
         ..Default::default()
     };
-    let mut matching = crate::FusionBlossomDecoder::new(engine_config).map_err(internal)?;
+    let mut matching =
+        crate::FusionBlossomDecoder::new(engine_config).map_err(DecoderError::from)?;
     let correlated = !matches!(mode, BeliefMatchingMode::Standard);
     if correlated {
         let mut edge_index_map = BTreeMap::new();
@@ -1149,12 +1183,12 @@ fn add_fusion_edge(
                 &observables,
                 Some(edge.weight),
             )
-            .map_err(internal)?;
+            .map_err(DecoderError::from)?;
         Ok(ordered_edge(edge.node1, node2))
     } else {
         decoder
             .add_boundary_edge(edge.node1 as usize, &observables, Some(edge.weight))
-            .map_err(internal)?;
+            .map_err(DecoderError::from)?;
         Ok((edge.node1, u32::MAX))
     }
 }
@@ -1303,7 +1337,7 @@ fn build_mwpf(dem: &str, config: &MwpfConfig) -> Result<Box<dyn ObservableDecode
                 only_solve_primal_once: config.only_solve_primal_once,
             },
         )
-        .map_err(internal)?,
+        .map_err(DecoderError::from)?,
     ))
 }
 
@@ -1449,6 +1483,85 @@ fn build_ensemble(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "ldpc")]
+    #[test]
+    fn weighted_union_find_llr_mismatch_is_rejected_at_construction() {
+        let (matrix, sparse) = dem_matrix("error(0.1) D0 L0\nerror(0.2) D1").unwrap();
+        let inner = crate::UnionFindDecoder::new(&sparse, crate::UfMethod::Inversion).unwrap();
+        assert!(matches!(
+            crate::WeightedUnionFindDecoder::new(inner, matrix, vec![1.0]),
+            Err(crate::LdpcError::InvalidInput(_))
+        ));
+        let mut built = build_union_find("error(0.1) D0 L0\nerror(0.2) D1").unwrap();
+        assert_eq!(built.decode_obs(&[1, 0]).unwrap().to_u64(), Some(1));
+    }
+
+    #[test]
+    fn model_dimensions_guard_all_entry_points() {
+        struct AcceptsAnything;
+        impl ObservableDecoder for AcceptsAnything {
+            fn decode_obs(
+                &mut self,
+                _: &[u8],
+            ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+                Ok(pecos_decoder_core::obs_mask::ObsMask::new())
+            }
+        }
+        let mut decoder = ModelDimensionDecoder {
+            inner: Box::new(AcceptsAnything),
+            num_detectors: 3,
+        };
+        for actual in [1, 4] {
+            let syndrome = vec![0; actual];
+            for error in [
+                decoder.decode_obs(&syndrome).err(),
+                decoder.decode_to_observables(&syndrome).err(),
+                decoder
+                    .decode_batch_to_observables(&syndrome, 1, actual)
+                    .err(),
+            ] {
+                assert!(
+                    matches!(error, Some(DecoderError::InvalidDimensions { expected: 3, actual: n }) if n == actual)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn model_dimensions_guard_batch_buffer_length() {
+        struct AcceptsAnything;
+        impl ObservableDecoder for AcceptsAnything {
+            fn decode_obs(
+                &mut self,
+                _: &[u8],
+            ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+                Ok(pecos_decoder_core::obs_mask::ObsMask::new())
+            }
+        }
+        let mut decoder = ModelDimensionDecoder {
+            inner: Box::new(AcceptsAnything),
+            num_detectors: 3,
+        };
+        for actual in [5, 7] {
+            let shots = vec![0; actual];
+            assert!(matches!(
+                decoder.decode_batch_to_observables(&shots, 2, 3),
+                Err(DecoderError::BatchSizeMismatch { expected: 6, actual: n }) if n == actual
+            ));
+        }
+        assert!(matches!(
+            decoder.decode_batch_to_observables(&[0; 6], usize::MAX, 3),
+            Err(DecoderError::InvalidSyndrome(_))
+        ));
+        assert_eq!(
+            decoder
+                .decode_batch_to_observables(&[0; 6], 2, 3)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
 
     #[cfg(feature = "ldpc")]
     #[test]

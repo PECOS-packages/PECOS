@@ -67,8 +67,13 @@ pub fn assert_outcome(
                     | "CorrelationTable"
                     | "ghost"
             );
+            // Matching graphs reject a valid prior above 0.5 as a negative weight.
+            let matching_prior = consumer == "DemMatchingGraph"
+                && message.starts_with("DEM error probability ")
+                && message.contains(" is above 0.5, which gives a negative matching weight");
             assert!(
                 (supports_index_limit && overflow)
+                    || matching_prior
                     || message.contains(" requires a flattened DEM: "),
                 "{consumer}: unexpected semantic rejection of {input:?}: {message}"
             );
@@ -167,6 +172,12 @@ pub fn assert_mechanism_effects(input: &str, dense_index_threshold: u64) {
         );
 
         // Isolate each fault before independent parallel edges lose their fault provenance.
+        // Matching graphs reject a prior above 0.5 exactly when the mechanism
+        // has edges, so check its effect at p = 0.5.
+        let rejected = DemMatchingGraph::from_dem_str(&instruction.to_string()).is_err();
+        if *probability > 0.5 {
+            instruction.args[0] = 0.5;
+        }
         let mut graph = DemMatchingGraph::from_dem_str(&instruction.to_string()).unwrap();
         if *probability == 0.0 {
             assert!(graph.edges.is_empty(), "{input:?}");
@@ -175,6 +186,11 @@ pub fn assert_mechanism_effects(input: &str, dense_index_threshold: u64) {
             graph = DemMatchingGraph::from_dem_str(&instruction.to_string()).unwrap();
         }
         assert_eq!(graph.skipped_hyperedges, 0, "{input:?}");
+        assert_eq!(
+            rejected,
+            *probability > 0.5 && !graph.edges.is_empty(),
+            "{input:?}"
+        );
         let mut endpoints = vec![0; sparse.num_detectors];
         for edge in graph.edges {
             assert_eq!(edge.fault_id, 0, "{input:?}");

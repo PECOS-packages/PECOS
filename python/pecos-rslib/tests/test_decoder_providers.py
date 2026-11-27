@@ -396,7 +396,7 @@ def test_labelled_embedded_corpus_refuses_provider(tmp_path):
     path = tmp_path / "labelled.pecos"
     SampleBatch([[0]], [0], num_observables=0).save(path, dem=dem)
     with pytest.raises(
-        RuntimeError,
+        ValueError,
         match="embedded model carries fault-sector labels.*passing loaded.dem text decodes without them",
     ):
         SampleBatch.load(path).decode(None, Provider())

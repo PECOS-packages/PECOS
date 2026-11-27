@@ -14,7 +14,7 @@
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::correlated_decoder::EdgeTrackingDecoder;
-use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::errors::{DecoderError, check_syndrome_length};
 use pecos_decoder_core::window::{DemBoundaryKind, StructuredDem};
 
 /// Configuration for the windowed decoder.
@@ -267,10 +267,15 @@ impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
 }
 
 impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.num_detectors)
+    }
+
     fn decode_obs(
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         let k = self.beam_width;
         let commit_weight_max = self.commit_weight_max;
 
@@ -292,10 +297,7 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> 
             // independent — correction_effect is only used for Phase-2 residual).
             let mut window_syn = vec![0u8; window.num_local];
             for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                let gid = global_id as usize;
-                if gid < syndrome.len() {
-                    window_syn[local_id] = syndrome[gid];
-                }
+                window_syn[local_id] = syndrome[global_id as usize];
             }
 
             for hyp in &beam {
@@ -367,12 +369,11 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> 
         let mut predictions: Vec<u64> = Vec::with_capacity(beam.len());
         if let Some(ref mut residual_dec) = self.residual_decoder {
             for hyp in &beam {
-                let mut residual_syn = vec![0u8; self.num_detectors];
-                for (i, &s) in syndrome.iter().enumerate() {
-                    if i < self.num_detectors {
-                        residual_syn[i] = s ^ hyp.correction_effect[i];
-                    }
-                }
+                let residual_syn: Vec<u8> = syndrome
+                    .iter()
+                    .zip(&hyp.correction_effect)
+                    .map(|(&s, &c)| s ^ c)
+                    .collect();
                 let phase2_obs = residual_dec.decode_to_observables(&residual_syn)?;
                 predictions.push(hyp.obs_mask ^ phase2_obs);
             }
@@ -441,6 +442,39 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn beamsearch_rejects_wrong_lengths() {
+        let dem = "error(0.1) D0 D1 L0\nerror(0.1) D0\nerror(0.1) D1\nerror(0.1) D2\ndetector(0,0,0) D0\ndetector(0,0,1) D1\ndetector(0,0,2) D2";
+        let config = BeamSearchConfig {
+            window: BeamWindowConfig {
+                step_size: 1,
+                buffer_size: 1,
+                ..BeamWindowConfig::default()
+            },
+            ..BeamSearchConfig::default()
+        };
+        let factory = |text: &str| UfDecoder::from_dem(text, UfDecoderConfig::windowed());
+        let full_factory = |text: &str| -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+            Ok(Box::new(UfDecoder::from_dem(
+                text,
+                UfDecoderConfig::fast(),
+            )?))
+        };
+        let mut decoder =
+            BeamSearchWindowedDecoder::from_dem(dem, config, factory, Some(full_factory)).unwrap();
+        assert_eq!(decoder.num_detectors(), Some(3));
+        for length in [0, 2, 4] {
+            assert!(
+                matches!(
+                    decoder.decode_obs(&vec![0; length]),
+                    Err(DecoderError::InvalidDimensions { expected: 3, actual }) if actual == length
+                ),
+                "length {length}"
+            );
+        }
+        assert!(decoder.decode_obs(&[0, 0, 0]).is_ok());
     }
 
     #[test]

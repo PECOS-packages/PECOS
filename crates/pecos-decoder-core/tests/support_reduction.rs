@@ -242,3 +242,33 @@ fn nonbinary_matrix_entries_fold_as_one() {
     let (_, support) = matrix.reduce_support();
     assert_eq!(support.syndrome_bias(), &[1, 1]);
 }
+
+#[test]
+fn check_matrix_wrapper_preserves_backend_error_type() {
+    struct RejectingDecoder;
+    impl Decoder for RejectingDecoder {
+        type Result = Correction;
+        type Error = DecoderError;
+
+        fn decode(&mut self, _input: &ArrayView1<u8>) -> Result<Correction, DecoderError> {
+            Err(DecoderError::InvalidConfiguration(
+                "backend configuration".into(),
+            ))
+        }
+
+        fn check_count(&self) -> usize {
+            1
+        }
+
+        fn bit_count(&self) -> usize {
+            1
+        }
+    }
+
+    let matrix = DemCheckMatrix::from_dem_str("error(0.1) D0 L0").unwrap();
+    let mut decoder = CheckMatrixObservableDecoder::new(RejectingDecoder, matrix);
+    assert!(matches!(
+        decoder.decode_obs(&[0]),
+        Err(DecoderError::InvalidConfiguration(message)) if message == "backend configuration"
+    ));
+}

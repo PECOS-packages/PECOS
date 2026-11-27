@@ -209,8 +209,21 @@ fn test_css_from_dems_rejects_hyperedge_models() {
 #[test]
 #[should_panic(expected = "non-negative edge weights")]
 fn test_from_matching_graph_asserts_non_negative_weights() {
-    let dem = "error(0.6) D0 L0\n";
-    let graph = DemMatchingGraph::from_dem_str(dem).unwrap();
+    // Built directly: `DemMatchingGraph::from_dem_str` rejects the p = 0.6 prior itself.
+    let graph = DemMatchingGraph {
+        edges: vec![pecos_decoder_core::dem::MatchingEdge {
+            node1: 0,
+            node2: None,
+            weight: (0.4_f64 / 0.6).ln(),
+            observables: vec![0],
+            probability: 0.6,
+            fault_id: 0,
+        }],
+        num_detectors: 1,
+        num_observables: 1,
+        skipped_hyperedges: 0,
+        detector_coords: vec![None],
+    };
     let _ = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::balanced()).unwrap();
 }
 

@@ -36,7 +36,9 @@
 //!   validated at build time.
 
 use super::dem_sampler::SamplingEngine;
-use super::types::{DemOutput, NoiseConfig, PerGateTypeNoise, is_two_qubit_noise_gate};
+use super::types::{
+    DemOutput, MeasurementNoiseKind, NoiseConfig, PerGateTypeNoise, is_two_qubit_noise_gate,
+};
 use crate::fault_tolerance::propagator::{
     DagFaultInfluenceMap, DemOutputKind, GateNoiseKind, gate_noise_kind,
 };
@@ -487,6 +489,11 @@ impl DemSampler {
         circuit: &pecos_quantum::TickCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
+        noise.measurement_noise_kind.reject_record_noise(
+            noise.p_meas,
+            None,
+            "DemSampler::from_tick_circuit",
+        )?;
         if super::inline::tick_uses_inline_noise(circuit) {
             let dem =
                 super::DemBuilder::try_from_tick_circuit_with_noise_config(circuit, noise.clone())?;
@@ -521,6 +528,11 @@ impl DemSampler {
         use super::builder::DemBuilder;
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        noise.measurement_noise_kind.reject_record_noise(
+            noise.p_meas,
+            None,
+            "DemSampler::from_circuit",
+        )?;
         if super::inline::uses_inline_noise(circuit) {
             let dem = super::inline::build_inline_dem(circuit, noise)?;
             return Ok(Self::from_detector_error_model(&dem));
@@ -1049,6 +1061,7 @@ impl DemSampler {
 pub struct DemSamplerBuilder<'a> {
     influence_map: &'a DagFaultInfluenceMap,
     noise: NoiseConfig,
+    noise_kind_explicit: bool,
     per_gate: Option<PerGateTypeNoise>,
     output_mode: OutputMode,
     detector_records: Option<Vec<Vec<i32>>>,
@@ -1066,6 +1079,7 @@ impl<'a> DemSamplerBuilder<'a> {
         Self {
             influence_map,
             noise: NoiseConfig::default(),
+            noise_kind_explicit: false,
             per_gate: None,
             output_mode: OutputMode::RawMeasurements,
             detector_records: None,
@@ -1078,25 +1092,47 @@ impl<'a> DemSamplerBuilder<'a> {
     }
 
     /// Set noise parameters.
+    ///
+    /// Replaces the scalar configuration, including any explicit measurement-noise
+    /// kind. An attached per-gate configuration supplies its base kind in either
+    /// setter order; without one, the kind defaults to `StateFlip`.
     #[must_use]
     pub fn with_noise(mut self, p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
-        self.noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
+        let kind = self
+            .per_gate
+            .as_ref()
+            .map_or_else(MeasurementNoiseKind::default, |config| {
+                config.base.measurement_noise_kind
+            });
+        self.noise = NoiseConfig::new(p1, p2, p_meas, p_prep).set_measurement_noise_kind(kind);
+        self.noise_kind_explicit = false;
         self
     }
 
     /// Set noise from a `NoiseConfig` (includes `p_idle` if set).
+    ///
+    /// When combined with `with_per_gate_noise`, both configurations must use
+    /// the same `measurement_noise_kind`; build rejects a mismatch in either order.
     #[must_use]
     pub fn with_noise_config(mut self, config: NoiseConfig) -> Self {
         self.noise = config;
+        self.noise_kind_explicit = true;
         self
     }
 
     /// Set per-gate-type and optional per-qubit Pauli rates.
     ///
     /// Supported in detector-event mode; raw-measurement mode rejects this configuration.
+    ///
+    /// When combined with `with_noise_config`, both configurations must use
+    /// the same `measurement_noise_kind`; build rejects a mismatch in either order.
     #[must_use]
     pub fn with_per_gate_noise(mut self, config: PerGateTypeNoise) -> Self {
+        let kind = self.noise.measurement_noise_kind;
         self.noise = config.base.clone();
+        if self.noise_kind_explicit {
+            self.noise.measurement_noise_kind = kind;
+        }
         self.per_gate = Some(config);
         self
     }
@@ -1360,6 +1396,14 @@ impl<'a> DemSamplerBuilder<'a> {
     /// On an empty map, record bounds are not checked;
     /// detector independence and other configuration checks still apply.
     pub fn build(mut self) -> Result<DemSampler, DetectorValidationError> {
+        self.noise
+            .measurement_noise_kind
+            .validate_per_gate_kind(self.per_gate.as_ref())?;
+        self.noise.measurement_noise_kind.reject_record_noise(
+            self.noise.p_meas,
+            self.per_gate.as_ref(),
+            "DemSamplerBuilder",
+        )?;
         super::builder::validate_sampler_measurements(self.influence_map).map_err(|error| {
             match error {
                 super::DemBuilderError::ParseError(message)

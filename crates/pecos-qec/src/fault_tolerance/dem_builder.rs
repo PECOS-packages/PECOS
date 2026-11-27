@@ -120,11 +120,12 @@ pub use types::{
     ContributionRenderSummary, DecomposedFault, DemOutput, DetectorDef, DetectorErrorModel,
     DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, IdleNoiseFamily,
     MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, MeasurementMechanism,
-    MeasurementNoiseChannelResidual, MeasurementNoiseModel, NoiseChannelError, NoiseChannelKind,
-    NoiseChannelResidual, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights,
-    PecosDemMetadataError, PerGateTypeNoise, ReplacementBranchApproximation,
-    ReplacementBranchImpact, TerminalDecompositionError, TwoDetectorDirectRenderPolicy,
-    combine_probabilities, omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
+    MeasurementNoiseChannelResidual, MeasurementNoiseKind, MeasurementNoiseModel,
+    NoiseChannelError, NoiseChannelKind, NoiseChannelResidual, NoiseConfig, PAULI_1Q_ORDER,
+    PAULI_2Q_ORDER, PauliProbs, PauliWeights, PecosDemMetadataError, PerGateTypeNoise,
+    ReplacementBranchApproximation, ReplacementBranchImpact, TerminalDecompositionError,
+    TwoDetectorDirectRenderPolicy, combine_probabilities, omitted_two_qubit_gate_pauli_twirl,
+    record_offset_to_absolute_index,
 };
 pub(crate) use types::{SourceMetadata, fit_exclusive_signatures};
 

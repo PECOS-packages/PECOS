@@ -13,7 +13,7 @@
 //! | `p1`, `p1_pauli_model` | `p1`, `p1_weights` | Same ordinary DEM gate channel and signature fit; residual retained |
 //! | `p2`, `p2_pauli_model` | `p2`, `p2_weights` | Same ordinary DEM ordered-pair channel and signature fit; residual retained |
 //! | `p_prep` | `p_prep` | X after PZ; both engines and the ordinary DEM omit MPZ's Pauli prep half |
-//! | symmetric `p_meas_0/1` | `p_meas` | No surviving measurement-X effect on later records |
+//! | symmetric `p_meas_0/1` | `p_meas`, `measurement_noise_kind = RecordFlip` | Only the reported bit flips, including repeated unprepared measurements |
 //! | linear idle rate/model | `p_idle_linear` | Rates at or below `f64::EPSILON` are zero, matching the engine; same `TimeUnits` and axis weights |
 //! | noiseless unitary types | `p1_gate_rates`, `p2_gate_rates` = 0 | Shared engine exemption predicate, including phase-shaped U |
 //!
@@ -30,11 +30,9 @@
 //! or leakage-scale settings. Configuring a sampler equal to the compiled default is
 //! indistinguishable from leaving it unset and has identical sampling semantics.
 //!
-//! Measurement-noise caveat: PZ; MZ(record 0); MZ(record 1), with `p_meas=1`,
-//! returns [1,1] from the engine but the ordinary DEM predicts flips [1,0]. Its X before
-//! the first measurement survives into the second; the engine flips only the reported
-//! bit. The bridge rejects this lifecycle (and cross-qubit downstream effects), without
-//! changing the existing `DemBuilder` model.
+//! The bridge selects record-flip measurement noise, matching `GeneralNoiseModel`:
+//! PZ; MZ(record 0); MZ(record 1), with `p_meas=1`, returns [1,1]. The ordinary
+//! `DemBuilder` default remains state-flip noise, which predicts flips [1,0].
 //!
 //! Recovery false alarms use the shared inline categorical conversion: each of X/Y/Z
 //! has independent probability `(1 - sqrt(1 - FP))/2`, per present operand. Before-site

@@ -1,6 +1,6 @@
-use super::{LossDemError, circuit_error, invalid};
+use super::LossDemError;
 use crate::fault_tolerance::dem_builder::PauliWeights;
-use crate::{IdleNoiseFamily, NoiseConfig};
+use crate::{IdleNoiseFamily, MeasurementNoiseKind, NoiseConfig};
 use pecos_core::gate_type::GateType;
 use pecos_engines::noise::GeneralNoiseModel;
 use pecos_engines::noise::general::GeneralNoiseDescription;
@@ -61,8 +61,8 @@ fn weights(
 /// because those outcomes never enter detectors. Builder scaling is already applied.
 ///
 /// # Errors
-/// Names unsupported settings, repeated unprepared records with measurement noise,
-/// and incompatible readout lifecycles. Categorical fits retain ordinary DEM residuals.
+/// Names unsupported settings and incompatible readout lifecycles. Symmetric readout
+/// noise flips records only. Categorical fits retain ordinary DEM residuals.
 #[allow(clippy::float_cmp)] // Readout symmetry is a configuration identity, not a numerical tolerance.
 pub fn pauli_noise_config(
     circuit: &TickCircuit,
@@ -170,6 +170,7 @@ pub fn pauli_noise_config(
         description.p_meas_0,
         description.p_prep,
     );
+    config.measurement_noise_kind = MeasurementNoiseKind::RecordFlip;
     config.p1_weights = (description.p1_pauli_model != default.p1_pauli_model)
         .then(|| weights("p1_pauli_model", 1, &description.p1_pauli_model))
         .transpose()?;
@@ -201,74 +202,14 @@ pub fn pauli_noise_config(
             _ => {}
         }
     }
-    let mut last_record = BTreeMap::new();
-    let mut record = 0;
     for gate in circuit.iter_gate_batches() {
         let g = gate.as_gate();
         let exempt = description.is_noiseless_operation(g);
-        for &q in &g.qubits {
-            if g.gate_type == GateType::PZ {
-                last_record.remove(&q);
-            }
-            if g.gate_type.consumes_measurement_record() {
-                if description.p_meas_0 > 0.0
-                    && let Some(previous) = last_record.insert(q, record)
-                {
-                    return Err(invalid(format!(
-                        "p_meas = {} is not supported by the loss-conditioned DEM for records {previous} and {record} on qubit {q} without preparation; insert a preparation or disable measurement noise",
-                        description.p_meas_0
-                    )));
-                }
-                record += 1;
-            }
-            if g.gate_type == GateType::MPZ {
-                last_record.remove(&q);
-            }
-        }
         if super::channels::site_arity(g.gate_type).is_some() && exempt {
             if g.gate_type.is_two_qubit() {
                 config.p2_gate_rates.insert(g.gate_type, 0.0);
             } else {
                 config.p1_gate_rates.insert(g.gate_type, 0.0);
-            }
-        }
-    }
-    if description.p_meas_0 > 0.0 {
-        if let Some(error) =
-            crate::fault_tolerance::propagator::first_unsupported_tick_gate(circuit)
-        {
-            return Err(circuit_error("measurement-X propagation", error));
-        }
-        let (flat_gates, measurements) =
-            crate::fault_tolerance::fault_sampler::flatten_tick_circuit(circuit);
-        let mut source = 0;
-        for (tick, gates) in circuit.iter_ticks() {
-            for (batch, gate) in gates.iter_gate_batches().enumerate() {
-                if !gate.gate_type.consumes_measurement_record() {
-                    continue;
-                }
-                for operand in 0..gate.qubits.len() {
-                    if gate.gate_type == GateType::MZ {
-                        let flips = super::symbolic::located_pauli_flips_prepared(
-                            &flat_gates,
-                            &measurements,
-                            pecos_core::Pauli::X,
-                            super::Location {
-                                tick,
-                                batch,
-                                operand,
-                                side: super::Side::After,
-                            },
-                        )?;
-                        if let Some(target) = flips.iter().next() {
-                            return Err(invalid(format!(
-                                "p_meas = {} is not supported by the loss-conditioned DEM: the pre-measurement X for record {source} propagates to record {target}; prepare the measured qubit before reusing it or disable measurement noise",
-                                description.p_meas_0
-                            )));
-                        }
-                    }
-                    source += 1;
-                }
             }
         }
     }

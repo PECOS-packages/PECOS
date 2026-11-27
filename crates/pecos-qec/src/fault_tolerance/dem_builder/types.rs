@@ -124,6 +124,9 @@ pub enum DirectSourceFamily {
     /// No Pauli label is attached because signature aliases are merged first.
     ExclusiveSignature,
 
+    /// A reported measurement-bit flip with no physical Pauli.
+    MeasurementRecordFlip,
+
     /// Single-location direct source without a Y Pauli label.
     SingleLocation,
 
@@ -197,7 +200,8 @@ pub struct FaultContribution {
     /// Original Pauli channel at each tracked location.
     ///
     /// This is empty for exclusive-signature mechanisms, which are defined only
-    /// after equal Pauli effects have been merged.
+    /// after equal Pauli effects have been merged, and for measurement record flips,
+    /// which have no physical Pauli.
     pub paulis: SmallVec<[Pauli; 2]>,
 
     /// Gate type at each tracked source location.
@@ -389,8 +393,13 @@ impl FaultContribution {
         debug_assert!(
             source.location_indices.len() == source.paulis.len()
                 || (source.paulis.is_empty()
-                    && source.direct_source_family_override
-                        == Some(DirectSourceFamily::ExclusiveSignature))
+                    && matches!(
+                        source.direct_source_family_override,
+                        Some(
+                            DirectSourceFamily::ExclusiveSignature
+                                | DirectSourceFamily::MeasurementRecordFlip
+                        )
+                    ))
         );
         debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
         debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
@@ -2859,6 +2868,62 @@ impl IdleNoiseFamily {
     }
 }
 
+/// How measurement noise (`p_meas`) acts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MeasurementNoiseKind {
+    /// A physical Pauli before the measurement (X before Z-basis, Z before X-basis
+    /// measurements). It persists in the state and can reach later operations and
+    /// measurements until a preparation (including MPZ's preparation half) clears
+    /// it. This is `DepolarizingNoiseModel`'s convention.
+    #[default]
+    StateFlip,
+    /// Flips only the reported measurement bit. The post-measurement state is the true
+    /// outcome, and nothing reaches later operations. `GeneralNoiseModel`'s readout
+    /// error for MZ and MPZ is a record flip, as is Stim's `M(p)`.
+    RecordFlip,
+}
+
+impl MeasurementNoiseKind {
+    pub(crate) fn validate_per_gate_kind(
+        self,
+        per_gate: Option<&PerGateTypeNoise>,
+    ) -> Result<(), super::DemBuilderError> {
+        if let Some(config) = per_gate
+            && self != config.base.measurement_noise_kind
+        {
+            return Err(super::DemBuilderError::ConfigurationError(format!(
+                "conflicting measurement_noise_kind: NoiseConfig is {self:?}, \
+                 per_gate.base is {:?}; set the same measurement_noise_kind with \
+                 NoiseConfig::set_measurement_noise_kind on both configurations",
+                config.base.measurement_noise_kind
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn has_record_noise(self, p_meas: f64, per_gate: Option<&PerGateTypeNoise>) -> bool {
+        self == Self::RecordFlip
+            && (p_meas > 0.0
+                || per_gate.is_some_and(|config| {
+                    config.p_meas > 0.0 || config.measurement_rates.values().any(|&rate| rate > 0.0)
+                }))
+    }
+
+    pub(crate) fn reject_record_noise(
+        self,
+        p_meas: f64,
+        per_gate: Option<&PerGateTypeNoise>,
+        consumer: &str,
+    ) -> Result<(), super::DemBuilderError> {
+        if self.has_record_noise(p_meas, per_gate) {
+            return Err(super::DemBuilderError::ConfigurationError(format!(
+                "measurement_noise_kind = RecordFlip is not supported by {consumer}; use DemBuilder or StateFlip"
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Noise model configuration for circuit-level fault analysis.
 #[derive(Debug, Clone)]
 pub struct NoiseConfig {
@@ -2886,8 +2951,10 @@ pub struct NoiseConfig {
     /// the action of a different scheduled gate are rejected, even if another
     /// scheduled gate matches the key.
     pub p2_gate_rates: BTreeMap<GateType, f64>,
-    /// Measurement error rate.
+    /// Measurement error rate; its meaning depends on [`Self::measurement_noise_kind`].
     pub p_meas: f64,
+    /// Convention for scalar and per-qubit measurement noise.
+    pub measurement_noise_kind: MeasurementNoiseKind,
     /// Initialization (prep) error rate.
     pub p_prep: f64,
     /// Idle gate error rate per time unit.
@@ -3557,6 +3624,7 @@ impl Default for NoiseConfig {
             p2: 0.01,
             p2_gate_rates: BTreeMap::new(),
             p_meas: 0.01,
+            measurement_noise_kind: MeasurementNoiseKind::default(),
             p_prep: 0.01,
             p_idle: 0.0,
             t1: None,
@@ -3594,6 +3662,7 @@ impl NoiseConfig {
             p2,
             p2_gate_rates: BTreeMap::new(),
             p_meas,
+            measurement_noise_kind: MeasurementNoiseKind::default(),
             p_prep,
             p_idle: 0.0,
             t1: None,
@@ -3621,6 +3690,7 @@ impl NoiseConfig {
             p2,
             p2_gate_rates: BTreeMap::new(),
             p_meas,
+            measurement_noise_kind: MeasurementNoiseKind::default(),
             p_prep,
             p_idle,
             t1: None,
@@ -3651,6 +3721,7 @@ impl NoiseConfig {
             p2: p,
             p2_gate_rates: BTreeMap::new(),
             p_meas: p,
+            measurement_noise_kind: MeasurementNoiseKind::default(),
             p_prep: p,
             p_idle: 0.0,
             t1: None,
@@ -3667,6 +3738,13 @@ impl NoiseConfig {
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
             measurement_crosstalk_dem_mode: MeasurementCrosstalkDemMode::default(),
         }
+    }
+
+    /// Sets the convention for scalar and per-qubit measurement noise.
+    #[must_use]
+    pub fn set_measurement_noise_kind(mut self, kind: MeasurementNoiseKind) -> Self {
+        self.measurement_noise_kind = kind;
+        self
     }
 
     /// Sets the idle noise rate on an existing config (uniform depolarizing).
@@ -4562,8 +4640,8 @@ pub struct PerGateTypeNoise {
     pub rates_2q: HashMap<GateType, [f64; 15]>,
     pub rates_1q_per_qubit: HashMap<(GateType, QubitId), [f64; 3]>,
     pub rates_2q_per_qubits: HashMap<(GateType, QubitId, QubitId), [f64; 15]>,
-    /// Per-qubit readout (MZ) X-flip probabilities. Qubits not in this map use
-    /// [`Self::p_meas`].
+    /// Per-qubit measurement probabilities, using `base.measurement_noise_kind`.
+    /// Qubits not in this map use [`Self::p_meas`].
     pub measurement_rates: HashMap<QubitId, f64>,
     /// Per-qubit preparation (PZ) X-error probabilities. Qubits not in this map
     /// use [`Self::p_init`].
@@ -4647,7 +4725,7 @@ impl PerGateTypeNoise {
         }
     }
 
-    /// Attach measurement X-flip probability for a specific qubit.
+    /// Attach measurement-noise probability for a specific qubit.
     /// Overrides [`Self::p_meas`] when set. Use for devices with
     /// heterogeneous readout fidelity.
     #[must_use]
@@ -4664,7 +4742,7 @@ impl PerGateTypeNoise {
         self
     }
 
-    /// Lookup measurement X-flip rate for a qubit. Unspecified qubits use
+    /// Lookup measurement-noise rate for a qubit. Unspecified qubits use
     /// [`Self::p_meas`], which is seeded from the base `NoiseConfig::p_meas`.
     #[must_use]
     pub fn measurement_rate_on(&self, q: QubitId) -> f64 {
@@ -4871,6 +4949,19 @@ impl PerGateTypeNoise {
     pub fn to_neo_channel(
         &self,
     ) -> pecos_neo::noise::validation::ValidationResult<pecos_neo::noise::PerGatePauliChannel> {
+        self.base
+            .measurement_noise_kind
+            .reject_record_noise(
+                self.base.p_meas,
+                Some(self),
+                "PerGateTypeNoise::to_neo_channel",
+            )
+            .map_err(|error| {
+                pecos_neo::noise::validation::ValidationError::new(
+                    "measurement_noise_kind",
+                    error.to_string(),
+                )
+            })?;
         if self.base.idle_noise_request().is_some()
             || self.base.p1_gate_rates.contains_key(&GateType::Idle)
             || self.base.p2_gate_rates.contains_key(&GateType::Idle)
@@ -6079,6 +6170,7 @@ impl DetectorErrorModel {
 
         fn direct_source_family_label(family: DirectSourceFamily) -> &'static str {
             match family {
+                DirectSourceFamily::MeasurementRecordFlip => "MeasurementRecordFlip",
                 DirectSourceFamily::ExclusiveSignature => "ExclusiveSignature",
                 DirectSourceFamily::SingleLocation => "SingleLocation",
                 DirectSourceFamily::SingleLocationY => "SingleLocationY",

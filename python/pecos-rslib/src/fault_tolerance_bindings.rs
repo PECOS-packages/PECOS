@@ -2293,6 +2293,7 @@ fn contribution_record_to_pydict(
     dict.set_item("before_flags", contribution.source_before_flags.to_vec())?;
     if let Some(family) = contribution.direct_source_family {
         let family_label = match family {
+            RustDirectSourceFamily::MeasurementRecordFlip => "MeasurementRecordFlip",
             RustDirectSourceFamily::ExclusiveSignature => "ExclusiveSignature",
             RustDirectSourceFamily::SingleLocation => "SingleLocation",
             RustDirectSourceFamily::SingleLocationY => "SingleLocationY",

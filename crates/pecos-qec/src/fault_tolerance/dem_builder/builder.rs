@@ -17,8 +17,8 @@
 
 use super::types::{
     DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, DirectSourceFamily,
-    FaultMechanism, IdleChannelFamilies, MeasurementCrosstalkDemMode, NoiseChannelKind,
-    NoiseChannelResidual, NoiseConfig, PauliProbs, PerGateTypeNoise,
+    FaultMechanism, IdleChannelFamilies, MeasurementCrosstalkDemMode, MeasurementNoiseKind,
+    NoiseChannelKind, NoiseChannelResidual, NoiseConfig, PauliProbs, PerGateTypeNoise,
     ReplacementBranchApproximation, SourceMetadata, fit_exclusive_signatures,
     is_two_qubit_noise_gate, record_offset_to_absolute_index, validate_exclusive_probabilities,
     validate_idle_probabilities,
@@ -138,6 +138,7 @@ pub struct DemBuilder<'a> {
     /// set, its per-qubit / per-Pauli overrides take precedence; this
     /// `NoiseConfig` still seeds measurement/prep scalars.
     noise: NoiseConfig,
+    noise_kind_explicit: bool,
     /// Optional per-gate-type per-Pauli noise spec. Mirrors the
     /// `DemSamplerBuilder` path so DEM text export reflects the same
     /// asymmetric noise structure that the sampler does.
@@ -187,6 +188,13 @@ struct ExactBranchReplayRequest {
 struct MeasurementParityExpression {
     dependencies: BitSet,
     flip: bool,
+}
+
+#[derive(Default)]
+struct RecordFlipMappings {
+    records: BTreeMap<(usize, usize), usize>,
+    detectors: BTreeMap<usize, Vec<u32>>,
+    observables: BTreeMap<usize, Vec<u32>>,
 }
 
 impl<'a> DemBuilder<'a> {
@@ -362,6 +370,7 @@ impl<'a> DemBuilder<'a> {
         Self {
             influence_map,
             noise: NoiseConfig::default(),
+            noise_kind_explicit: false,
             per_gate: None,
             detectors: Vec::new(),
             measurement_classes: None,
@@ -380,16 +389,31 @@ impl<'a> DemBuilder<'a> {
     }
 
     /// Sets the noise configuration from individual parameters.
+    ///
+    /// Replaces the scalar configuration, including any explicit measurement-noise
+    /// kind. An attached per-gate configuration supplies its base kind in either
+    /// setter order; without one, the kind defaults to `StateFlip`.
     #[must_use]
     pub fn with_noise(mut self, p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
-        self.noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
+        let kind = self
+            .per_gate
+            .as_ref()
+            .map_or_else(MeasurementNoiseKind::default, |config| {
+                config.base.measurement_noise_kind
+            });
+        self.noise = NoiseConfig::new(p1, p2, p_meas, p_prep).set_measurement_noise_kind(kind);
+        self.noise_kind_explicit = false;
         self
     }
 
     /// Sets the full noise configuration (supports custom weights, T1/T2, idle).
+    ///
+    /// When combined with `with_per_gate_noise`, both configurations must use
+    /// the same `measurement_noise_kind`; build rejects a mismatch in either order.
     #[must_use]
     pub fn with_noise_config(mut self, noise: NoiseConfig) -> Self {
         self.noise = noise;
+        self.noise_kind_explicit = true;
         self
     }
 
@@ -416,9 +440,15 @@ impl<'a> DemBuilder<'a> {
     /// Mirrors
     /// [`crate::fault_tolerance::dem_builder::DemSamplerBuilder::with_per_gate_noise`]
     /// so the DEM text output reflects the same noise structure.
+    ///
+    /// When combined with `with_noise_config`, both configurations must use
+    /// the same `measurement_noise_kind`; build rejects a mismatch in either order.
     #[must_use]
     pub fn with_per_gate_noise(mut self, cfg: PerGateTypeNoise) -> Self {
         self.noise.p_meas = cfg.p_meas;
+        if !self.noise_kind_explicit {
+            self.noise.measurement_noise_kind = cfg.base.measurement_noise_kind;
+        }
         self.noise.p_prep = cfg.p_init;
         self.per_gate = Some(cfg);
         self
@@ -434,7 +464,7 @@ impl<'a> DemBuilder<'a> {
         self.noise.p_prep
     }
 
-    /// Resolve measurement X-flip rate at a specific location.
+    /// Resolve measurement-noise rate at a specific location.
     fn measurement_rate_for_loc(&self, loc: &DagSpacetimeLocation) -> f64 {
         if let Some(pg) = &self.per_gate
             && let Some(q) = loc.qubits.first()
@@ -569,6 +599,12 @@ impl<'a> DemBuilder<'a> {
     ///
     /// Tracked Paulis are carried by the influence map; this helper is only
     /// for observable metadata.
+    ///
+    /// Under `RecordFlip`, these record definitions determine readout effects. Gate
+    /// faults still use an existing same-id influence output. A standalone influence
+    /// map does not retain that output's original record set, so agreement with JSON
+    /// cannot be checked here; supply definitions from the same circuit. Circuit
+    /// entry points validate annotation/metadata agreement before building the map.
     ///
     /// Each object accepts either `"id"` or `"observable_id"` as the identifier key.
     ///
@@ -883,8 +919,9 @@ impl<'a> DemBuilder<'a> {
     /// Use `dem.to_string()` or `dem.to_string_decomposed()` for output.
     ///
     /// With measurement classes, this validates the count and all metadata refs.
-    /// Without classes this does **not** validate metadata refs; callers ingesting
-    /// circuit-derived metadata must use [`Self::try_build`] instead.
+    /// Active record-flip noise also validates all detector and observable references.
+    /// Otherwise, without classes this does **not** validate metadata refs; callers
+    /// ingesting circuit-derived metadata must use [`Self::try_build`] instead.
     ///
     /// # Errors
     ///
@@ -1002,6 +1039,9 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn validate_noise_configuration(&self) -> Result<(), DemBuilderError> {
+        self.noise
+            .measurement_noise_kind
+            .validate_per_gate_kind(self.per_gate.as_ref())?;
         // Validate exactly what this path consumes: per-gate noise or scalar tables.
         self.per_gate
             .as_ref()
@@ -1597,6 +1637,11 @@ impl<'a> DemBuilder<'a> {
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) -> Result<(), DemBuilderError> {
         let locations = &self.influence_map.locations;
+        let record_flips = if self.has_active_record_noise() {
+            self.build_record_flip_mappings()?
+        } else {
+            RecordFlipMappings::default()
+        };
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
@@ -1625,6 +1670,7 @@ impl<'a> DemBuilder<'a> {
                         dem,
                         meas_to_detectors,
                         meas_to_observables,
+                        &record_flips,
                     );
                 }
                 GateType::MeasCrosstalkLocalPayload
@@ -1889,9 +1935,49 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+        record_flips: &RecordFlipMappings,
     ) {
         let loc = &self.influence_map.locations[loc_idx];
         let p = self.measurement_rate_for_loc(loc);
+        if self.noise.measurement_noise_kind == MeasurementNoiseKind::RecordFlip {
+            let qubit = loc
+                .qubits
+                .first()
+                .expect("record-flip mappings validated every dispatched measurement qubit")
+                .index();
+            let record = record_flips
+                .records
+                .get(&(loc.node, qubit))
+                .expect("record-flip mappings validated every dispatched measurement record");
+            let mut detectors = SmallVec::new();
+            let mut observables = SmallVec::new();
+            if let Some(ids) = record_flips.detectors.get(record) {
+                for &id in ids {
+                    xor_toggle_4(&mut detectors, id);
+                }
+            }
+            if let Some(ids) = record_flips.observables.get(record) {
+                for &id in ids {
+                    xor_toggle_2(&mut observables, id);
+                }
+            }
+            detectors.sort_unstable();
+            observables.sort_unstable();
+            let mechanism = FaultMechanism::from_sorted_with_tracked_paulis(
+                detectors,
+                observables,
+                SmallVec::new(),
+            );
+            if !mechanism.is_empty() {
+                dem.add_direct_contribution_with_source(
+                    mechanism,
+                    p,
+                    SourceMetadata::new(&[loc_idx], &[], &[loc.gate_type], &[loc.before])
+                        .with_direct_source_family(DirectSourceFamily::MeasurementRecordFlip),
+                );
+            }
+            return;
+        }
         // A measurement fault anticommutes with the measured basis.
         let pauli = if loc.gate_type == GateType::MX {
             Pauli::Z
@@ -2408,6 +2494,130 @@ impl<'a> DemBuilder<'a> {
                 &DirectSourceComponents::new(e1, e2),
             );
         }
+    }
+
+    fn has_active_record_noise(&self) -> bool {
+        self.noise
+            .measurement_noise_kind
+            .has_record_noise(self.noise.p_meas, self.per_gate.as_ref())
+            && self.influence_map.locations.iter().any(|loc| {
+                loc.before
+                    && loc.gate_type.consumes_measurement_record()
+                    && self.measurement_rate_for_loc(loc) > 0.0
+            })
+    }
+
+    /// Index records once, retaining multiplicities until duplicate validation.
+    fn build_record_flip_mappings(&self) -> Result<RecordFlipMappings, DemBuilderError> {
+        let mut occurrences: BTreeMap<(usize, usize), (usize, usize)> = BTreeMap::new();
+        for (record, &(node, qubit, _)) in self.influence_map.measurements.iter().enumerate() {
+            let entry = occurrences.entry((node, qubit)).or_insert((record, 0));
+            entry.1 += 1;
+        }
+        let mut records = BTreeMap::new();
+        for ((node, qubit), (record, count)) in occurrences {
+            if count != 1 {
+                let message = format!(
+                    "ambiguous measurement record for node {node} qubit {qubit}: \
+                     found {count}, expected exactly one; use StateFlip or a circuit-built map"
+                );
+                return Err(DemBuilderError::ConfigurationError(message));
+            }
+            records.insert((node, qubit), record);
+        }
+        // Validate locations first so malformed/empty record maps keep their
+        // actionable missing-record diagnostic instead of an index-space error.
+        for loc in &self.influence_map.locations {
+            if loc.before
+                && loc.gate_type.consumes_measurement_record()
+                && self.measurement_rate_for_loc(loc) > 0.0
+            {
+                let qubit = loc
+                    .qubits
+                    .first()
+                    .ok_or_else(|| {
+                        let message = format!(
+                            "no measurement qubit for node {}; \
+                             use StateFlip or a circuit-built map",
+                            loc.node
+                        );
+                        DemBuilderError::ConfigurationError(message)
+                    })?
+                    .index();
+                if !records.contains_key(&(loc.node, qubit)) {
+                    let message = format!(
+                        "no measurement record for node {} qubit {qubit}: \
+                         found 0, expected exactly one; use StateFlip or a circuit-built map",
+                        loc.node
+                    );
+                    return Err(DemBuilderError::ConfigurationError(message));
+                }
+            }
+        }
+        if !self
+            .influence_map
+            .detector_indices_are_measurement_records()
+        {
+            let message = "measurement_noise_kind = RecordFlip requires measurement-record \
+                           influence indices; this map's detector basis differs from its \
+                           measurement records; use DagFaultAnalyzer or a circuit-built DemBuilder";
+            return Err(DemBuilderError::ConfigurationError(message.into()));
+        }
+        // Match try_build's policy for both reference kinds, even through build().
+        self.validate_measurement_count()?;
+        self.validate_metadata_refs()?;
+        let mut detectors: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
+        for detector in &self.detectors {
+            for record in
+                self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)?
+            {
+                detectors.entry(record).or_default().push(detector.id);
+            }
+        }
+        Ok(RecordFlipMappings {
+            records,
+            detectors,
+            observables: self.build_record_flip_observable_mapping()?,
+        })
+    }
+
+    /// Record flips use every observable definition, including influence-map outputs.
+    /// The map retains no original observable record sets: JSON controls readout
+    /// effects, while gate faults use the influence output for a same-id observable.
+    fn build_record_flip_observable_mapping(
+        &self,
+    ) -> Result<BTreeMap<usize, Vec<u32>>, DemBuilderError> {
+        if self
+            .influence_map
+            .influences
+            .max_dem_output_index()
+            .is_some_and(|index| index >= self.influence_map.dem_output_metadata.len())
+        {
+            let message = "measurement_noise_kind = RecordFlip cannot interpret influence \
+                           outputs with unknown kinds; supply dem_output_metadata identifying \
+                           observables and tracked Paulis, use a circuit-built map, or use StateFlip";
+            return Err(DemBuilderError::ConfigurationError(message.into()));
+        }
+        for id in self.influence_map.observable_ids() {
+            if !self
+                .observables
+                .iter()
+                .any(|observable| observable.id == id)
+            {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "observable {id} has no record definition for measurement_noise_kind = RecordFlip; supply observable definitions or use StateFlip"
+                )));
+            }
+        }
+        let mut mapping: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
+        for observable in &self.observables {
+            for record in
+                self.measurement_indices_from_refs(&observable.records, &observable.meas_ids)?
+            {
+                mapping.entry(record).or_default().push(observable.id);
+            }
+        }
+        Ok(mapping)
     }
 
     /// Builds mappings from measurement indices to detector/DEM-output IDs.

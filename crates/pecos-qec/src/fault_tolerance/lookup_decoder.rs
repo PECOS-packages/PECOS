@@ -86,6 +86,9 @@ impl LookupDecoder {
         max_weight: usize,
     ) -> Result<Self, DemBuilderError> {
         noise
+            .measurement_noise_kind
+            .reject_record_noise(noise.p_meas, None, "LookupDecoder")?;
+        noise
             .validate_gate_rate_keys(&map.locations)
             .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         validate_idle_noise_targets(map, noise.idle_noise_request())?;

@@ -691,10 +691,11 @@ pub struct DagFaultInfluenceMap {
 
     /// All measurements in the circuit (node, qubit, basis).
     ///
-    /// The order is this map's single private ordinal, shared by `meas_ids`,
-    /// `detectors`, and the influence data. Circuit-backed builders use emission
-    /// order (keyed topological node order, then qubit-list order). Hand-built
-    /// maps define their own order; resolve stable ids through `meas_index_of`.
+    /// This record order is shared with `meas_ids`. `DagFaultAnalyzer` uses one
+    /// detector per record in the same order; `InfluenceBuilder` instead uses
+    /// discovered detector parities, which can have a different index space.
+    /// Circuit-backed builders use emission order (keyed topological node order,
+    /// then qubit-list order). Resolve stable ids through `meas_index_of`.
     pub measurements: Vec<(usize, usize, u8)>,
 
     /// `MeasId` IDs for each measurement, in the same order as `measurements`.
@@ -773,7 +774,28 @@ impl DagFaultInfluenceMap {
         self.influences.classify(loc_idx, Pauli::from_u8(pauli))
     }
 
+    /// Whether detector coordinates are exactly individual measurement records.
+    /// This checks the basis itself, not the builder that produced the map.
+    pub(crate) fn detector_indices_are_measurement_records(&self) -> bool {
+        if self.detectors.len() != self.measurements.len() {
+            return false;
+        }
+        self.detectors
+            .iter()
+            .zip(&self.measurements)
+            .all(|(detector, &(node, qubit, basis))| {
+                let [measurement] = detector.measurements.as_slice() else {
+                    return false;
+                };
+                measurement.tick == node && measurement.qubit == qubit && measurement.basis == basis
+            })
+    }
+
     /// Returns the detector indices flipped by a fault.
+    ///
+    /// These index `detectors`: individual records for `DagFaultAnalyzer`, but
+    /// discovered parity checks for `InfluenceBuilder`. They are record indices
+    /// only when the detector basis is one-to-one with `measurements`.
     #[inline]
     #[must_use]
     pub fn get_detector_indices(&self, loc_idx: usize, pauli: u8) -> &[u32] {

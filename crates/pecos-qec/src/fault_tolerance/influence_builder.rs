@@ -610,6 +610,8 @@ impl<'a> InfluenceBuilder<'a> {
         // the sampler's raw channels) actually use. Re-sorting measurements by
         // id rank here while the detectors kept replay order gave one map two
         // internal orderings, which only agreed while ids were positional.
+        // The influence indices themselves enumerate the discovered detectors,
+        // not individual measurement records.
         let mut measurements = vec![(0usize, 0usize, 0u8); info.num_measurements];
         let mut meas_ids = vec![pecos_core::MeasId::from_raw(usize::MAX); info.num_measurements];
         let mut any_id = false;

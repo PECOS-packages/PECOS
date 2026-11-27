@@ -719,7 +719,7 @@ impl TrellisStreamingDecoder {
     fn ensure_no_bounded_advance(&self) -> Result<(), DecoderError> {
         if self.bounded_advance.is_some() {
             return Err(DecoderError::InvalidConfiguration(
-                "finish or reset the pending bounded advance before feeding or unbounded processing".into(),
+                "a bounded advance is pending; finish it (finish_bounded_advance or finish_bounded_flush) or call reset before feeding, unbounded processing, or retirement".into(),
             ));
         }
         Ok(())
@@ -864,9 +864,9 @@ impl TrellisStreamingDecoder {
         if !minimum_retained_probability.is_finite()
             || !(0.0..=1.0).contains(&minimum_retained_probability)
         {
-            return Err(DecoderError::InvalidConfiguration(
-                "retained class probability threshold must be finite and within [0, 1]".into(),
-            ));
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "retained class probability threshold {minimum_retained_probability} is invalid; use a finite value within [0, 1]"
+            )));
         }
         let preview = self.analyze_completed_class(&mask)?;
         let accepts = minimum_retained_probability == 0.0
@@ -938,6 +938,7 @@ impl TrellisStreamingDecoder {
         frontier.retain_in_place();
         let states_after = frontier.parent.masses.len();
         debug_assert_eq!(states_after, preview.selected_state_count);
+        self.progress.conditioned |= states_after < preview.states_before;
         let progress = self.take_progress();
         Ok(ConditionalLinearRetirement {
             selected_class: preview.selected_class,
@@ -960,20 +961,24 @@ impl TrellisStreamingDecoder {
         self.ensure_no_bounded_advance()?;
         if rows.is_empty() {
             return Err(DecoderError::InvalidConfiguration(
-                "project at least one logical row".into(),
+                "projection row list is empty (0 rows); provide at least one logical row".into(),
             ));
         }
-        for row in rows {
+        for (row_index, row) in rows.iter().enumerate() {
             for logical in row.iter_set_bits() {
                 let Some(last) = self.last_toggle_column.get(logical) else {
-                    return Err(DecoderError::InvalidConfiguration(
-                        "projection source logical index out of range".into(),
-                    ));
+                    return Err(DecoderError::InvalidConfiguration(format!(
+                        "projection row {row_index} source logical index {logical} is out of range; use an index in 0..{} (number of logical observables)",
+                        self.last_toggle_column.len()
+                    )));
                 };
-                if last.is_some_and(|column| column >= self.next_column) {
-                    return Err(DecoderError::InvalidConfiguration(
-                        "projection source logical still has an unprocessed toggle".into(),
-                    ));
+                if let Some(column) = last
+                    && *column >= self.next_column
+                {
+                    return Err(DecoderError::InvalidConfiguration(format!(
+                        "projection row {row_index} source logical index {logical} has its last toggle at processed column {column}, but columns_processed is {}; feed the detectors it needs and advance until columns_processed exceeds {column}",
+                        self.next_column
+                    )));
                 }
             }
         }
@@ -1148,6 +1153,7 @@ impl TrellisStreamingDecoder {
         frontier.retain_in_place();
         let states_after = frontier.parent.masses.len();
         debug_assert_eq!(states_after, preview.selected_state_count);
+        self.progress.conditioned |= states_after < preview.states_before;
         let progress = self.take_progress();
         ConditionalLogicalRetirement {
             selected_class: preview.selected_class,
@@ -1170,27 +1176,32 @@ impl TrellisStreamingDecoder {
         self.ensure_no_bounded_advance()?;
         if logicals.is_empty() {
             return Err(DecoderError::InvalidConfiguration(
-                "retire at least one logical bit".into(),
+                "retirement logical list is empty (0 indices); provide at least one logical index"
+                    .into(),
             ));
         }
         let mut mask = vec![0; self.model.logical_words];
         for &logical in logicals {
             let Some(last) = self.last_toggle_column.get(logical) else {
-                return Err(DecoderError::InvalidConfiguration(
-                    "retirement logical index out of range".into(),
-                ));
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "retirement logical index {logical} is out of range; use an index in 0..{} (number of logical observables)",
+                    self.last_toggle_column.len()
+                )));
             };
             let word = logical / WORD_BITS;
             let bit = 1_u64 << (logical % WORD_BITS);
             if mask[word] & bit != 0 {
-                return Err(DecoderError::InvalidConfiguration(
-                    "duplicate retirement logical index".into(),
-                ));
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "duplicate retirement logical index {logical}; provide each logical index only once"
+                )));
             }
-            if last.is_some_and(|column| column >= self.next_column) {
-                return Err(DecoderError::InvalidConfiguration(
-                    "retirement logical still has an unprocessed toggle".into(),
-                ));
+            if let Some(column) = last
+                && *column >= self.next_column
+            {
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "retirement logical index {logical} has its last toggle at processed column {column}, but columns_processed is {}; feed the detectors it needs and advance until columns_processed exceeds {column}",
+                    self.next_column
+                )));
             }
             mask[word] |= bit;
         }

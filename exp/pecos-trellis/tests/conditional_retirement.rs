@@ -5,7 +5,7 @@
 
 use pecos_trellis::{
     ConditionalLogicalRetirement, DecoderError, ObsMask, SparseDem, TrellisConfig,
-    TrellisLogicalMass, TrellisResult, TrellisStreamingDecoder,
+    TrellisLogicalMass, TrellisResult, TrellisStatus, TrellisStreamingDecoder,
 };
 use std::collections::BTreeMap;
 
@@ -519,29 +519,141 @@ fn equal_mass_classes_use_unsigned_wide_mask_order_and_keep_original_bit_positio
 }
 
 #[test]
-fn conditioning_does_not_increment_existing_beam_drop_counters_or_rewrite_status() {
+fn conditioning_preserves_beam_drop_counters_and_reports_pruning_flags() {
     let model = dem(vec![(0.4, vec![], vec![0]), (0.3, vec![], vec![1])], 0, 2);
-    let cfg = TrellisConfig {
-        k: 3,
-        ..config(model.mechanisms.len())
-    };
-    let mut control = TrellisStreamingDecoder::from_sparse_dem(&model, cfg.clone()).unwrap();
-    let baseline = control.flush().unwrap();
-    assert!(baseline.dropped_states > 0);
-    let mut subject = TrellisStreamingDecoder::from_sparse_dem(&model, cfg).unwrap();
+    for (k, delta) in [(3, f64::INFINITY), (usize::MAX, 0.9), (2, 0.9)] {
+        let cfg = TrellisConfig {
+            k,
+            delta,
+            ..config(model.mechanisms.len())
+        };
+        let mut control = TrellisStreamingDecoder::from_sparse_dem(&model, cfg.clone()).unwrap();
+        let baseline = control.flush().unwrap();
+        assert!(baseline.dropped_states > 0);
+        let TrellisStatus::Pruned {
+            k_capped,
+            delta_pruned,
+        } = baseline.status
+        else {
+            panic!("baseline must be pruned: {:?}", baseline.status);
+        };
+        let mut subject = TrellisStreamingDecoder::from_sparse_dem(&model, cfg).unwrap();
+        subject.advance().unwrap();
+        let retired = subject.retire_completed_logical_class(&[0]).unwrap();
+        assert!(retired.removed_states > 0);
+        let result = subject.flush().unwrap();
+        assert_eq!(result.dropped_states, baseline.dropped_states);
+        assert_eq!(
+            result.dropped_log_mass.map(f64::to_bits),
+            baseline.dropped_log_mass.map(f64::to_bits)
+        );
+        assert_eq!(
+            result.status,
+            TrellisStatus::Conditioned {
+                k_capped,
+                delta_pruned
+            }
+        );
+        assert_eq!(result.transitions, baseline.transitions);
+        assert_eq!(result.processed_columns, baseline.processed_columns);
+        assert_eq!(result.peak_retained_states, baseline.peak_retained_states);
+    }
+}
+
+#[test]
+fn logical_conditioning_reaches_both_flush_paths_and_reset_starts_exact() {
+    let model = dem(vec![(0.2, vec![], vec![0]), (0.3, vec![0], vec![1])], 1, 2);
+    for bounded in [false, true] {
+        let mut subject = stream(&model);
+        assert_eq!(subject.advance().unwrap().columns_processed, 1);
+        assert_eq!(
+            subject
+                .retire_completed_logical_class(&[0])
+                .unwrap()
+                .removed_states,
+            1
+        );
+        // A repeated retirement removes nothing but must preserve conditioning.
+        assert_eq!(
+            subject
+                .retire_completed_logical_class(&[0])
+                .unwrap()
+                .removed_states,
+            0
+        );
+        subject.feed_prefix(&[0]).unwrap();
+        let result = if bounded {
+            assert_eq!(subject.begin_bounded_advance().unwrap(), 1);
+            assert!(subject.step_bounded_advance(1).unwrap().1);
+            subject.finish_bounded_flush().unwrap()
+        } else {
+            subject.flush().unwrap()
+        };
+        assert_eq!(
+            result.status,
+            TrellisStatus::Conditioned {
+                k_capped: false,
+                delta_pruned: false
+            }
+        );
+        assert_eq!(result.dropped_states, 0);
+        assert_eq!(result.dropped_log_mass, Some(f64::NEG_INFINITY));
+        subject.reset();
+        subject.feed_prefix(&[0]).unwrap();
+        assert_eq!(subject.flush().unwrap().status, TrellisStatus::Exact);
+    }
+}
+
+#[test]
+fn sole_logical_class_retirement_keeps_exact_status() {
+    let model = dem(vec![(1.0, vec![], vec![0]), (0.3, vec![], vec![1])], 0, 2);
+    let mut subject = stream(&model);
     subject.advance().unwrap();
     let retired = subject.retire_completed_logical_class(&[0]).unwrap();
-    assert!(retired.removed_states > 0);
-    let result = subject.flush().unwrap();
-    assert_eq!(result.dropped_states, baseline.dropped_states);
-    assert_eq!(
-        result.dropped_log_mass.map(f64::to_bits),
-        baseline.dropped_log_mass.map(f64::to_bits)
-    );
-    assert_eq!(result.status, baseline.status);
-    assert_eq!(result.transitions, baseline.transitions);
-    assert_eq!(result.processed_columns, baseline.processed_columns);
-    assert_eq!(result.peak_retained_states, baseline.peak_retained_states);
+    assert_eq!(retired.class_log_masses.len(), 1);
+    assert_eq!(retired.removed_states, 0);
+    assert_eq!(subject.flush().unwrap().status, TrellisStatus::Exact);
+}
+
+#[test]
+fn invalid_logical_requests_name_bad_indices_and_fixes() {
+    let model = dem(vec![(0.2, vec![], vec![7]), (0.3, vec![], vec![7])], 0, 10);
+    let mut subject = stream(&model);
+    for (request, fragments) in [
+        (vec![12], vec!["logical index 12", "0..10", "use an index"]),
+        (
+            vec![9, 9],
+            vec!["duplicate retirement logical index 9", "only once"],
+        ),
+        (
+            vec![7],
+            vec![
+                "logical index 7",
+                "last toggle at processed column 1",
+                "columns_processed is 0",
+                "advance until columns_processed exceeds 1",
+            ],
+        ),
+        (vec![], vec!["empty (0 indices)", "provide at least one"]),
+    ] {
+        for error in [
+            subject
+                .preview_completed_logical_class(&request)
+                .unwrap_err(),
+            subject
+                .retire_completed_logical_class(&request)
+                .unwrap_err(),
+            subject
+                .try_retire_completed_logical_class(&request, 0.5)
+                .unwrap_err(),
+        ] {
+            assert_invalid(&error);
+            let message = error.to_string();
+            for fragment in &fragments {
+                assert!(message.contains(fragment), "{message:?} lacks {fragment:?}");
+            }
+        }
+    }
 }
 
 #[test]

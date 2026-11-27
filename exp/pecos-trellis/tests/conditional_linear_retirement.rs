@@ -5,7 +5,7 @@
 
 use pecos_trellis::{
     DecoderError, ObsMask, SparseDem, TrellisConfig, TrellisLogicalMass, TrellisResult,
-    TrellisStreamingDecoder,
+    TrellisStatus, TrellisStreamingDecoder,
 };
 use std::collections::BTreeMap;
 
@@ -386,7 +386,9 @@ fn zero_projection_keeps_all_states_and_mass_bits_without_merging_full_keys() {
         retired.log_evidence_before.to_bits(),
         retired.log_evidence_after.to_bits()
     );
-    result_bits(&subject.flush().unwrap(), &control.flush().unwrap());
+    let result = subject.flush().unwrap();
+    assert_eq!(result.status, TrellisStatus::Exact);
+    result_bits(&result, &control.flush().unwrap());
 }
 
 #[test]
@@ -491,4 +493,90 @@ fn irreversible_projection_can_regret_and_failure_precedes_bad_rows_until_reset(
         .retire_completed_linear_class(&[mask(&[0])])
         .unwrap();
     assert_eq!(retired.selected_class, mask(&[0]));
+}
+
+#[test]
+fn linear_conditioning_reaches_both_flush_paths_and_reset_starts_exact() {
+    let dem = model(
+        vec![
+            (0.2, vec![], vec![0]),
+            (0.3, vec![], vec![1]),
+            (0.4, vec![0], vec![2]),
+        ],
+        1,
+        3,
+    );
+    for bounded in [false, true] {
+        let mut subject = stream(&dem);
+        assert_eq!(subject.advance().unwrap().columns_processed, 2);
+        let rows = [mask(&[0, 1])];
+        assert_eq!(
+            subject
+                .retire_completed_linear_class(&rows)
+                .unwrap()
+                .removed_states,
+            2
+        );
+        assert_eq!(
+            subject
+                .retire_completed_linear_class(&rows)
+                .unwrap()
+                .removed_states,
+            0
+        );
+        subject.feed_prefix(&[0]).unwrap();
+        let result = if bounded {
+            assert_eq!(subject.begin_bounded_advance().unwrap(), 1);
+            assert!(subject.step_bounded_advance(1).unwrap().1);
+            subject.finish_bounded_flush().unwrap()
+        } else {
+            subject.flush().unwrap()
+        };
+        assert_eq!(
+            result.status,
+            TrellisStatus::Conditioned {
+                k_capped: false,
+                delta_pruned: false
+            }
+        );
+        assert_eq!(result.dropped_states, 0);
+        assert_eq!(result.dropped_log_mass, Some(f64::NEG_INFINITY));
+        subject.reset();
+        subject.feed_prefix(&[0]).unwrap();
+        assert_eq!(subject.flush().unwrap().status, TrellisStatus::Exact);
+    }
+}
+
+#[test]
+fn invalid_projection_requests_name_row_source_and_fix() {
+    let dem = model(vec![(0.2, vec![], vec![7]), (0.3, vec![], vec![7])], 0, 10);
+    let mut subject = stream(&dem);
+    for (rows, fragments) in [
+        (
+            vec![mask(&[]), mask(&[12])],
+            vec!["row 1", "logical index 12", "0..10", "use an index"],
+        ),
+        (
+            vec![mask(&[]), mask(&[7])],
+            vec![
+                "row 1",
+                "logical index 7",
+                "last toggle at processed column 1",
+                "columns_processed is 0",
+                "advance until columns_processed exceeds 1",
+            ],
+        ),
+        (vec![], vec!["empty (0 rows)", "provide at least one"]),
+    ] {
+        for error in [
+            subject.preview_completed_linear_class(&rows).unwrap_err(),
+            subject.retire_completed_linear_class(&rows).unwrap_err(),
+        ] {
+            invalid(&error);
+            let message = error.to_string();
+            for fragment in &fragments {
+                assert!(message.contains(fragment), "{message:?} lacks {fragment:?}");
+            }
+        }
+    }
 }

@@ -108,11 +108,11 @@ mass, and `runner_up_gap` is the log-mass difference between the first two --
 includes a fully exact decode with a single reachable class, so treat a
 missing gap as "no runner-up existed", not as a pruning signal, and handle it
 before comparing.
-With the default float metric, when `status` is `"exact"` (nothing was pruned),
-the masses are the true unnormalized posteriors: a large gap means one logical
-class really was overwhelmingly more likely, and a gap near zero means the
-shot was nearly a coin flip -- a natural candidate for post-selection or a
-soft-output pipeline. Under the integer `maxlog_int` metric (accepted by Python
+With the default float metric, when `status` is `"exact"` (no state was pruned
+or removed by conditional retirement), the masses are the true unnormalized
+posteriors: a large gap means one logical class really was overwhelmingly more
+likely, and a gap near zero means the shot was nearly a coin flip -- a natural
+candidate for post-selection or a soft-output pipeline. Under the integer `maxlog_int` metric (accepted by Python
 `FrontierDecoder` as `metric_mode="maxlog_int"`; `int_metric_scale` sets the
 quantization units per natural-log unit and defaults to 1024; the committee
 remains float-only), each terminal mass is instead the best-route (Viterbi)
@@ -121,6 +121,12 @@ is the winning route mass rather than evidence.
 When the result was pruned, the gap and the masses describe only what the
 search retained, not a certified confidence -- treat them as search
 diagnostics, not posteriors.
+The opt-in Rust streaming retirement API (feature
+`experimental-conditional-retirement`, not exposed in Python) reports
+`TrellisStatus::Conditioned { k_capped, delta_pruned }` once a retirement
+removes a retained state; the flags say whether ordinary pruning also discarded
+states. Those masses, evidence, and predictions are conditional on the retired
+classes, and retirement removals do not count toward the pruning counters.
 
 <!--continuation-->
 ```python
@@ -133,9 +139,9 @@ if result.runner_up_gap is not None:
 
 The remaining fields describe the search itself rather than the answer:
 `log_evidence` (total retained log evidence under the default float metric),
-`status` (`"exact"` when nothing was pruned), `dropped_states` and
-`dropped_log_mass` (the optional discarded-prefix-mass diagnostic),
-`peak_retained_states`, `processed_columns`, `escalation_rungs_used`, and
+`status` (`"exact"` when no state was pruned or removed by conditional
+retirement), `dropped_states` and `dropped_log_mass` (the optional
+discarded-prefix-mass diagnostic), `peak_retained_states`, `processed_columns`, `escalation_rungs_used`, and
 `bp_seconds`. `dropped_log_mass` is `None` by default (`Option<f64>` in Rust,
 `float | None` in Python). Enable `dropped_mass` on the Rust config or pass
 `dropped_mass=True` to a Python detailed decoder constructor to report it. Float

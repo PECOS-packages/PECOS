@@ -6,7 +6,7 @@
 use pecos_trellis::{
     ConditionalLogicalClassPreview, ConditionalLogicalRetirement,
     ConditionalLogicalRetirementDecision, DecoderError, ObsMask, SparseDem, TrellisConfig,
-    TrellisLogicalMass, TrellisResult, TrellisStreamingDecoder,
+    TrellisLogicalMass, TrellisResult, TrellisStatus, TrellisStreamingDecoder,
 };
 use std::collections::BTreeMap;
 
@@ -559,5 +559,62 @@ fn bounded_and_unbounded_decisions_match_every_mass_bit_for_all_toy_syndromes() 
             }
             result_bits(&subject.flush().unwrap(), &control.flush().unwrap());
         }
+    }
+}
+
+#[test]
+fn threshold_decisions_report_conditioning_only_when_states_are_removed() {
+    let dem = model(vec![(0.2, vec![], vec![0]), (1.0, vec![], vec![1])], 0, 2);
+    let mut subject = stream(&dem);
+    subject.advance().unwrap();
+    deferred(
+        subject
+            .try_retire_completed_logical_class(&[0], 0.9)
+            .unwrap(),
+    );
+    assert_eq!(subject.flush().unwrap().status, TrellisStatus::Exact);
+    let sole = retired(
+        subject
+            .try_retire_completed_logical_class(&[1], 1.0)
+            .unwrap(),
+    );
+    assert_eq!(sole.removed_states, 0);
+    assert_eq!(subject.flush().unwrap().status, TrellisStatus::Exact);
+    let chosen = retired(
+        subject
+            .try_retire_completed_logical_class(&[0], 0.7)
+            .unwrap(),
+    );
+    assert_eq!(chosen.removed_states, 1);
+    assert_eq!(
+        subject.flush().unwrap().status,
+        TrellisStatus::Conditioned {
+            k_capped: false,
+            delta_pruned: false
+        }
+    );
+    subject.reset();
+    assert_eq!(subject.flush().unwrap().status, TrellisStatus::Exact);
+}
+
+#[test]
+fn invalid_threshold_names_received_value_and_valid_range() {
+    let dem = model(vec![(0.2, vec![], vec![0])], 0, 1);
+    let mut subject = stream(&dem);
+    subject.advance().unwrap();
+    for threshold in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let error = subject
+            .try_retire_completed_logical_class(&[0], threshold)
+            .unwrap_err();
+        invalid(&error);
+        let message = error.to_string();
+        assert!(
+            message.contains(&format!("threshold {threshold}")),
+            "{message}"
+        );
+        assert!(
+            message.contains("use a finite value within [0, 1]"),
+            "{message}"
+        );
     }
 }

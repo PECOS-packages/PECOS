@@ -251,6 +251,22 @@ fn member_log_evidence(member: CommitteeMember) -> Option<f64> {
 fn frontier_status(status: FrontierStatus) -> &'static str {
     match status {
         FrontierStatus::Exact => "exact",
+        FrontierStatus::Conditioned {
+            k_capped: false,
+            delta_pruned: false,
+        } => "conditioned",
+        FrontierStatus::Conditioned {
+            k_capped: true,
+            delta_pruned: false,
+        } => "conditioned+pruned:k",
+        FrontierStatus::Conditioned {
+            k_capped: false,
+            delta_pruned: true,
+        } => "conditioned+pruned:delta",
+        FrontierStatus::Conditioned {
+            k_capped: true,
+            delta_pruned: true,
+        } => "conditioned+pruned:k+delta",
         FrontierStatus::Pruned {
             k_capped: true,
             delta_pruned: false,

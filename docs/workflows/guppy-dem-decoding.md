@@ -696,13 +696,17 @@ Stage 5 reports predictions and recovery outcomes, but no measure of how close
 the call was. The experimental Frontier and BP-Trellis detailed-result APIs add
 a **complementary gap**: the log-probability margin between the
 winning logical class and the runner-up. When the result's `status` is
-`"exact"` (nothing was pruned), a large gap is a confident shot and a gap near
-zero means the evidence barely favoured the answer -- the natural signal for
+`"exact"` (no state was pruned or removed by conditional retirement), a large
+gap is a confident shot and a gap near zero means the evidence barely favoured
+the answer -- the natural signal for
 post-selection or for feeding a soft-output pipeline. On a pruned result the
 gap describes only what the search retained, so treat it as a diagnostic
 rather than a confidence; the gap is `None` whenever fewer than two logical
 classes survive to the end, which can happen on a fully exact decode too, so a
 missing gap is not a pruning signal.
+Once the opt-in Rust streaming retirement API removes a retained state, the
+result reports `TrellisStatus::Conditioned` instead of `Exact` or `Pruned`, and
+its masses, evidence, and predictions are conditional on the retired classes.
 
 The examples below use strict calls. If using reporting or fallback instead,
 inspect the outcome before accessing confidence fields: no-path reports and

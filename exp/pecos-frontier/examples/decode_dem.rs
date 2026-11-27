@@ -130,6 +130,10 @@ fn telemetry(result: &FrontierCommitteeResult, width: usize) -> Value {
     let selected = &result.selected;
     let status = match selected.status {
         FrontierStatus::Exact => json!({"kind":"exact"}),
+        FrontierStatus::Conditioned {
+            k_capped,
+            delta_pruned,
+        } => json!({"kind":"conditioned","k_capped":k_capped,"delta_pruned":delta_pruned}),
         FrontierStatus::Pruned {
             k_capped,
             delta_pruned,

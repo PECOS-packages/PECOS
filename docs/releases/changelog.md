@@ -44,18 +44,30 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Selene's interactive `next_shot`, now fails instead of continuing.
 
 - **Breaking:** More decoder input errors keep their category, and syndrome
-  length errors convert to one `DecoderError` variant (#1749). A DEM or graph
-  that Stim or PyMatching rejects with `std::invalid_argument`, while PyMatching
-  builds its graph or when the graph is first used for decoding, is now the new
-  `PyMatchingError::InvalidGraph` (`DecoderError::InvalidGraph`, `ValueError`)
-  instead of an FFI error (`RuntimeError`). Examples are a decomposed error with
-  an undetectable component under `pymatching_correlated`, `error(1) D0`, whose
-  weight exceeds upstream's maximum at the first decode, and an edge that
-  `add_edge` or `add_boundary_edge` refuses under `MergeStrategy::Disallow`.
-  Other C++ exceptions stay FFI errors, and a rejected internally generated
-  window or logical sub-DEM stays an internal error.
-  `PyMatchingDecoder::get_edge_weight_normalising_constant` now returns
-  `Result`; before, the same upstream rejection ended the process.
+  length errors convert to one `DecoderError` variant (#1749). PyMatching now
+  classifies upstream Stim and PyMatching failures by the phase that failed. Any
+  failure while it parses or builds a graph from DEM text, creates a graph, adds
+  an edge, sets the boundary, computes the edge weight normalising constant or
+  builds the matcher is the new `PyMatchingError::InvalidGraph`
+  (`DecoderError::InvalidGraph`, `ValueError`) instead of an FFI error
+  (`RuntimeError`), including allocation failures from caller sizes. Examples
+  are a decomposed error with an undetectable component under
+  `pymatching_correlated`, an unterminated `repeat` block, `D4294967295`,
+  `PyMatchingDecoder(2**62)`, `add_edge(2**63, 1, [])`, an edge that `add_edge`
+  or `add_boundary_edge` refuses under `MergeStrategy::Disallow`, and
+  `error(1) D0`, whose weight exceeds upstream's maximum. DEM construction now
+  checks edge weights and rewrite rules, so `from_dem` and the specs built on it
+  reject such a DEM when the decoder is built instead of at its first decode; a
+  graph built edge by edge meets the check when its matcher is first built.
+  Failures while decoding a syndrome, or sampling noise, stay `RuntimeError`,
+  including an odd-parity syndrome with no perfect matching. A rejected
+  internally generated window or logical sub-DEM stays an internal error. These
+  public Rust signatures now return `Result`:
+  `PyMatchingDecoder::get_edge_weight_normalising_constant` and
+  `PyMatchingDecoder::set_boundary`; before, an upstream failure in them ended
+  the process, and `set_boundary` rejects `usize::MAX`.
+  `PyMatchingDecoder::is_boundary_node` returns `false` for a node outside the
+  graph instead of reading past the node list.
   `subgraphs_from_membership`, and the logical-subgraph decoders and partition
   functions built on it, check the prior of every mechanism with a positive prior
   and at least one detector before projecting, so a prior above 0.5 is rejected
@@ -64,8 +76,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   converts to `DecoderError::InvalidDimensions { expected, actual }` ("Invalid
   input dimensions: expected N, got M") on Fusion Blossom (new
   `FusionBlossomError::InvalidDimensions`, also used when converting from
-  `DecoderError`), Relay-BP and min-sum BP (new `RelayBpError::InvalidDimensions`,
-  now only for a syndrome length mismatch), the LDPC flip, union-find,
+  `DecoderError`), Relay-BP and min-sum BP (new `RelayBpError::InvalidDimensions`
+  for a syndrome length mismatch, which was `InvalidSyndrome`), the LDPC flip,
+  union-find,
   BeliefFind and MBP decoders (`LdpcError::InvalidDimensions` instead of
   `InvalidInput`), the loss-DEM `BiasedDecoder` (instead of
   `InvalidConfiguration`) and the experimental windowed frontier decoder. Raw
@@ -81,10 +94,13 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   with a note naming the shot (`decoder failed on shot N`), instead of a
   `RuntimeError` wrapping its text; so does an exception from the wrapped
   `decode()` of `PyForeignDecoder.decode`, whose `PyForeignDecoderError` is now
-  an enum. The experimental `pecos_rslib_exp` decoder specs classify decoder
-  errors like the standard decoders (caller input `ValueError`, internal
-  failures `RuntimeError`) instead of raising `RuntimeError` for every error
-  but malformed DEM text. Negative integers for unsigned Python parameters still
+  an enum. The experimental `pecos_rslib_exp` decoder specs and the direct
+  `BpTrellisDecoder` and `FrontierDecoder` classes (`from_dem`, `from_factors`,
+  `decode_syndrome`, `decode_batch`) classify decoder errors like the standard
+  decoders (caller input `ValueError`, internal failures `RuntimeError`)
+  instead of raising `RuntimeError` for every error but malformed DEM text, and
+  a sparse defect index outside the model (`decode_from_defects`) is now
+  `ValueError`. Negative integers for unsigned Python parameters still
   raise `OverflowError`; the decoder guide now says so.
 
 - `pecos-random` implements `RapidRng`, the generator behind `PecosRng` and

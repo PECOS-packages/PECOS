@@ -273,3 +273,9 @@ def test_incremental_score_rejects_nonfinite_suffix():
     exp.BpTrellisDecoder.from_dem(dem, bp_score_iterations=0)
     with pytest.raises(ValueError, match="incremental_score"):
         exp.BpTrellisDecoder.from_dem(dem, bp_score_iterations=0, incremental_score=True)
+
+
+def test_sparse_defect_outside_the_model_is_value_error():
+    decoder = exp.BpTrellisDecoder.from_dem("error(0.1) D0 L0\ndetector D1\n")
+    with pytest.raises(ValueError, match="Invalid node index 2: must be < 2"):
+        decoder.decode_from_defects([2])

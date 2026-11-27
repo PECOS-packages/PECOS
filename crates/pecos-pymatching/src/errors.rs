@@ -27,9 +27,13 @@ pub enum PyMatchingError {
     #[error("Configuration error: {0}")]
     Configuration(String),
 
-    /// Upstream `PyMatching` or Stim rejected the graph or DEM as input
-    /// (`std::invalid_argument`), while building the graph or when it is first
-    /// used for decoding. Holds the upstream text.
+    /// Upstream `PyMatching` or Stim failed in a graph-phase step, a rejection of
+    /// the graph: parsing or building from DEM text (including its edge weights),
+    /// creating a graph, adding edges, setting the boundary, or building the
+    /// matcher. Any C++ exception there counts, including `std::bad_alloc` and
+    /// `std::length_error`, since the graph's size comes from caller values. A
+    /// decode-phase failure, such as an odd-parity syndrome with no perfect
+    /// matching, stays [`PyMatchingError::Ffi`]. Holds the upstream text.
     #[error("{0}")]
     InvalidGraph(String),
 
@@ -50,7 +54,7 @@ pub enum CheckMatrixError {
 }
 
 impl From<cxx::Exception> for PyMatchingError {
-    /// A C++ exception the bridge marked as a rejection of input becomes
+    /// A C++ exception the bridge marked as a graph-phase failure becomes
     /// [`PyMatchingError::InvalidGraph`] with the upstream text; any other stays
     /// [`PyMatchingError::Ffi`].
     fn from(error: cxx::Exception) -> Self {

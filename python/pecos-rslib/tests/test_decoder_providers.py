@@ -435,6 +435,19 @@ def test_provider_exception_survives_a_failing_note():
     assert caught.value.__notes__ == "not a list"
 
 
+def test_provider_note_base_exception_propagates_with_context():
+    # Only an `Exception` from `add_note` is dropped; a `KeyboardInterrupt` there
+    # propagates, with the decoder's exception as its context.
+    class InterruptingError(KeyError):
+        def add_note(self, note):
+            raise KeyboardInterrupt
+
+    raised = []
+    with pytest.raises(KeyboardInterrupt) as caught:
+        SampleBatch([[1]], [0]).decode(DEM, _failing_provider(1, lambda: InterruptingError("boom"), raised))
+    assert caught.value.__context__ is raised[0]
+
+
 @pytest.mark.parametrize("workers", [1, 2])
 @pytest.mark.parametrize("version", [1, 2])
 def test_provider_result_type_error_reaches_the_caller(version, workers):

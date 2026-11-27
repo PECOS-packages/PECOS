@@ -119,7 +119,7 @@ fn test_boundary_management() {
     let mut decoder = PyMatchingDecoder::new(config).unwrap();
 
     // Set boundary nodes
-    decoder.set_boundary(&[0, 2, 4, 6]);
+    decoder.set_boundary(&[0, 2, 4, 6]).unwrap();
 
     // Check boundary
     assert!(decoder.is_boundary_node(0));
@@ -197,7 +197,7 @@ fn test_extended_decoding() {
         .unwrap();
 
     // Set boundary
-    decoder.set_boundary(&[0, 2]);
+    decoder.set_boundary(&[0, 2]).unwrap();
 
     // Test decoding with a simple syndrome
     // Get the actual number of detectors after setting boundary

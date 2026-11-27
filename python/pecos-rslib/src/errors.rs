@@ -2,7 +2,7 @@
 
 use pecos_core::errors::PecosError;
 use pecos_decoders::batch::ShotDecodeError;
-use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::{PyErr, Python};
 
 /// The Python exception a Python-implemented decoder raised, carried unchanged in
@@ -18,18 +18,25 @@ fn python_exception(error: &pecos_decoder_core::DecoderError) -> Option<PyErr> {
 /// Convert a failed shot. A Python exception the decoder raised reaches the caller
 /// as the same exception object, with the shot index added as a note.
 ///
-/// The note is best effort: if `add_note` itself raises (for example because the
-/// exception's `__notes__` is not a list), the exception is returned without it,
-/// so the caller still receives the decoder's own exception.
+/// The note is best effort: if `add_note` itself raises an `Exception` (for
+/// example because the exception's `__notes__` is not a list), the decoder's
+/// exception is returned without the note. Any other `BaseException` from
+/// `add_note`, such as `KeyboardInterrupt`, is returned instead, with the
+/// decoder's exception as its context, as Python would propagate it.
 pub(crate) fn shot_decode_error(error: &ShotDecodeError) -> PyErr {
     let Some(exception) = python_exception(&error.source) else {
         return decoder_error(&error.source, error.to_string());
     };
     Python::attach(|py| {
         let note = format!("decoder failed on shot {}", error.shot_index);
-        // Best effort, as documented above: a failed note is discarded.
-        let _ = exception.add_note(py, note);
-        exception
+        match exception.add_note(py, note) {
+            Ok(()) => exception,
+            Err(note_error) if note_error.is_instance_of::<PyException>(py) => exception,
+            Err(note_error) => {
+                note_error.set_context(py, Some(exception));
+                note_error
+            }
+        }
     })
 }
 

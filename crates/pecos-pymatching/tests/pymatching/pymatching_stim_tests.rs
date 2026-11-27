@@ -165,9 +165,9 @@ fn test_from_detector_error_model_invalid_formats() {
                 // Expected FFI error for invalid format
                 println!("Test case {i}: Got expected FFI error for invalid DEM");
             }
-            Err(PyMatchingError::InvalidGraph(_)) => {
-                // Upstream rejected the DEM as input
-                println!("Test case {i}: Got expected upstream input error for invalid DEM");
+            Err(PyMatchingError::Configuration(_)) => {
+                // Also acceptable - configuration error
+                println!("Test case {i}: Got expected config error for invalid DEM");
             }
             Ok(_) => {
                 // Some invalid DEMs might still parse (e.g., empty string creates empty graph)

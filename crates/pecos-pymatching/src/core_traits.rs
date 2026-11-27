@@ -276,7 +276,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(decoder.num_detectors(), 3);
-        decoder.set_boundary(&[2]);
+        decoder.set_boundary(&[2]).unwrap();
         assert_eq!(decoder.num_detectors(), 2);
         // As upstream, a dense syndrome may also carry the boundary node's entry.
         for length in [2, 3] {
@@ -306,7 +306,7 @@ mod tests {
         // entry 2 is the only way to address the top detector.
         let mut decoder =
             crate::PyMatchingDecoder::from_dem("error(0.1) D0 D1\nerror(0.1) D1 D2 L0").unwrap();
-        decoder.set_boundary(&[0]);
+        decoder.set_boundary(&[0]).unwrap();
         assert_eq!(decoder.num_detectors(), 2);
         assert_eq!(decoder.num_nodes(), 3);
         // Detector 2 matches to the boundary through D1 D2, which flips L0.
@@ -349,26 +349,109 @@ mod tests {
     }
 
     #[test]
-    fn upstream_rejection_when_the_matcher_is_built_is_an_invalid_graph() {
-        // `error(1)` builds, but its infinite weight is rejected when the matcher
-        // is first built for decoding.
-        let mut decoder =
-            crate::PyMatchingDecoder::from_dem("error(1) D0").expect("the graph builds");
-        let error = decoder
-            .decode(&[1])
-            .expect_err("upstream rejects the edge weight");
+    fn upstream_weight_rejection_is_an_invalid_graph_at_construction() {
+        // `error(1)` has an infinite weight; DEM construction checks weights eagerly.
+        let error = crate::PyMatchingDecoder::from_dem("error(1) D0")
+            .err()
+            .expect("upstream rejects the edge weight when the decoder is built");
         assert!(
             matches!(&error, crate::PyMatchingError::InvalidGraph(message)
-                if message.contains("maximum absolute edge weight")),
+                if message.starts_with("Failed to parse DEM: ")
+                    && message.contains("maximum absolute edge weight")),
             "{error:?}"
         );
     }
 
+    /// A graph built edge by edge whose weight upstream only rejects when it
+    /// builds the matcher, with `num_observables` observables.
+    fn overweight_graph(num_observables: usize) -> crate::PyMatchingDecoder {
+        let mut decoder = crate::PyMatchingDecoder::new(crate::PyMatchingConfig {
+            num_neighbours: None,
+            num_nodes: Some(2),
+            num_observables,
+        })
+        .expect("the graph is created");
+        decoder
+            .add_edge(0, 1, &[0], Some(1e12), None, None)
+            .expect("add_edge stores any finite weight");
+        decoder
+    }
+
+    fn assert_matcher_build_rejected<T: std::fmt::Debug>(result: &crate::errors::Result<T>) {
+        assert!(
+            matches!(result, Err(crate::PyMatchingError::InvalidGraph(message))
+                if message.starts_with("Failed to build the matcher: ")
+                    && message.contains("maximum absolute edge weight")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn matcher_build_rejection_at_decode_is_an_invalid_graph_on_every_entry_point() {
+        let syndrome = [1, 1];
+        assert_matcher_build_rejected(&overweight_graph(1).decode(&syndrome));
+        assert_matcher_build_rejected(&overweight_graph(65).decode(&syndrome));
+        assert_matcher_build_rejected(&overweight_graph(1).decode_to_matched_pairs(&syndrome));
+        assert_matcher_build_rejected(&overweight_graph(1).decode_to_edges(&syndrome));
+        assert_matcher_build_rejected(&overweight_graph(1).decode_batch_with_config(
+            &syndrome,
+            1,
+            2,
+            crate::BatchConfig::default(),
+        ));
+    }
+
+    #[test]
+    fn graph_creation_and_boundary_failures_are_invalid_graphs() {
+        // 2**62 nodes fail the allocation size check at once (`std::length_error`).
+        for num_observables in [1, 65] {
+            let error = crate::PyMatchingDecoder::new(crate::PyMatchingConfig {
+                num_neighbours: None,
+                num_nodes: Some(1 << 62),
+                num_observables,
+            })
+            .err()
+            .expect("the graph is too large to create");
+            assert!(
+                matches!(&error, crate::PyMatchingError::InvalidGraph(message)
+                    if message.starts_with("Failed to create the graph: ")),
+                "{error:?}"
+            );
+        }
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 D1").expect("the graph builds");
+        for node in [usize::MAX, 1 << 62] {
+            let error = decoder
+                .set_boundary(&[node])
+                .expect_err("the boundary node is out of range");
+            assert!(
+                matches!(error, crate::PyMatchingError::InvalidGraph(_)),
+                "{error:?}"
+            );
+        }
+        assert_eq!(decoder.num_nodes(), 2);
+        assert!(!decoder.is_boundary_node(2));
+        assert!(!decoder.is_boundary_node(1 << 40));
+        assert!(decoder.is_boundary_node(usize::MAX));
+    }
+
+    #[test]
+    fn decode_phase_failure_stays_an_ffi_error() {
+        // An odd-parity syndrome with no boundary has no perfect matching.
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 D1").expect("the graph builds");
+        let error = decoder
+            .decode(&[1, 0])
+            .expect_err("no perfect matching exists");
+        assert!(matches!(error, crate::PyMatchingError::Ffi(_)), "{error:?}");
+    }
+
     #[test]
     fn out_of_range_weight_normalising_constant_is_an_invalid_graph() {
-        // Upstream throws `std::invalid_argument` for the infinite weight of
-        // `error(1)`; it must reach Rust as an error, not end the process.
-        let decoder = crate::PyMatchingDecoder::from_dem("error(1) D0").expect("the graph builds");
+        // Upstream throws `std::invalid_argument` for an edge weight above its
+        // maximum; it must reach Rust as an error, not end the process. DEM
+        // construction now rejects such weights, so build the graph edge by edge.
+        let decoder = overweight_graph(1);
         let error = decoder
             .get_edge_weight_normalising_constant(1000)
             .expect_err("upstream rejects the edge weight");

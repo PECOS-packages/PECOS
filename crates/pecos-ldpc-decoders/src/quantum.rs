@@ -556,8 +556,14 @@ mod tests {
         for actual in [5, 7] {
             let syndrome = Array1::zeros(actual);
             let expected = |result| matches!(result, Err(LdpcError::InvalidDimensions { expected: 6, actual: a }) if a == actual);
-            assert!(expected(decoder.decode(&syndrome.view()).map(|_| ())));
-            assert!(expected(decoder.decode_gf4(&syndrome.view()).map(|_| ())));
+            assert!(
+                expected(decoder.decode(&syndrome.view()).map(|_| ())),
+                "decode with a {actual}-entry syndrome must report InvalidDimensions"
+            );
+            assert!(
+                expected(decoder.decode_gf4(&syndrome.view()).map(|_| ())),
+                "decode_gf4 with a {actual}-entry syndrome must report InvalidDimensions"
+            );
         }
     }
 

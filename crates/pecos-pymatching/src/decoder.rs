@@ -509,13 +509,15 @@ impl PyMatchingDecoder {
     /// Create a new decoder from configuration
     ///
     /// # Errors
-    /// Returns an error if `num_nodes` is not specified in the configuration.
+    /// Returns an error if `num_nodes` is not specified in the configuration, or
+    /// [`PyMatchingError::InvalidGraph`] if the graph cannot be created, for
+    /// example a node count too large to allocate.
     pub fn new(config: PyMatchingConfig) -> Result<Self> {
         let graph = if let Some(num_nodes) = config.num_nodes {
             if config.num_observables <= OPTIMIZED_OBSERVABLE_LIMIT {
-                ffi::create_pymatching_graph(num_nodes)
+                ffi::create_pymatching_graph(num_nodes)?
             } else {
-                ffi::create_pymatching_graph_with_observables(num_nodes, config.num_observables)
+                ffi::create_pymatching_graph_with_observables(num_nodes, config.num_observables)?
             }
         } else {
             return Err(PyMatchingError::Configuration(
@@ -679,7 +681,7 @@ impl PyMatchingDecoder {
         if !config.use_virtual_boundary {
             let boundary_nodes: Vec<usize> =
                 (matrix.rows * (config.repetitions - 1)..total_nodes).collect();
-            decoder.set_boundary(&boundary_nodes);
+            decoder.set_boundary(&boundary_nodes)?;
         }
 
         // Group matrix entries by column
@@ -976,18 +978,36 @@ impl PyMatchingDecoder {
             .collect()
     }
 
-    /// Set boundary nodes
-    pub fn set_boundary(&mut self, boundary: &[NodeId]) {
-        // PyMatching will auto-expand nodes as needed
-        ffi::pymatching_set_boundary(self.graph.pin_mut(), boundary);
+    /// Set boundary nodes. `PyMatching` grows the graph to hold every node listed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PyMatchingError::InvalidGraph`] if a node is `usize::MAX`, whose
+    /// node count `usize::MAX + 1` does not exist, or if the graph cannot grow to
+    /// hold a node.
+    pub fn set_boundary(&mut self, boundary: &[NodeId]) -> Result<()> {
+        if boundary.contains(&usize::MAX) {
+            return Err(PyMatchingError::InvalidGraph(format!(
+                "boundary node {} is out of range; boundary nodes must be below usize::MAX",
+                usize::MAX
+            )));
+        }
+        let result = ffi::pymatching_set_boundary(self.graph.pin_mut(), boundary);
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
         self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
+        Ok(result?)
     }
 
-    /// Check if a node is a boundary node
+    /// Check if a node is a boundary node.
+    ///
+    /// A node outside the graph is not a boundary node, as [`Self::has_edge`]
+    /// reports no edge for one; `usize::MAX` is upstream's virtual boundary node.
     #[must_use]
     pub fn is_boundary_node(&self, node: NodeId) -> bool {
-        ffi::pymatching_is_boundary_node(&self.graph, node)
+        // Upstream indexes its node list unchecked, so check the range here.
+        node == usize::MAX
+            || (node < ffi::pymatching_get_num_nodes(&self.graph)
+                && ffi::pymatching_is_boundary_node(&self.graph, node))
     }
 
     /// Reject a dense syndrome width outside the range upstream `PyMatching` accepts.
@@ -1921,7 +1941,7 @@ mod tests {
         decoder
             .add_boundary_edge(4, &[], Some(1.0), None, None)
             .unwrap();
-        decoder.set_boundary(&[4]);
+        decoder.set_boundary(&[4]).unwrap();
 
         // Test unpacked format with valid syndromes: nodes 0..=3 are detectors
         // and node 4 is the boundary.

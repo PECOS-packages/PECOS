@@ -441,3 +441,14 @@ def test_raw_correlated_pymatching_dem_rejection_is_input_error():
 def test_logical_membership_does_not_hide_a_prior_above_half(dem, membership):
     with pytest.raises(ValueError, match=r"DEM error probability 0\.9 is above 0\.5"):
         LogicalSubgraphDecoder.from_membership(dem, membership, "pymatching")
+
+
+# `error(1)` builds, but upstream PyMatching rejects its infinite weight when the
+# matcher is first built for decoding.
+def test_pymatching_rejection_when_first_decoding_is_input_error():
+    with pytest.raises(ValueError, match="maximum absolute edge weight") as caught:
+        SampleBatch([[1]], [0]).decode("error(1) D0", pymatching(correlated=False), workers=1)
+    assert "decoder failed on shot 0" in str(caught.value)
+    decoder = PyMatchingDecoder.from_dem("error(1) D0")
+    with pytest.raises(ValueError, match="maximum absolute edge weight"):
+        decoder.decode_syndrome([1])

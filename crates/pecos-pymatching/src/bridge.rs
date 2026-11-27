@@ -270,10 +270,13 @@ pub(crate) mod ffi {
         // ===== Weight Information =====
 
         /// Get the normalizing constant for edge weights.
+        ///
+        /// Returns a CXX exception if an edge weight is out of range or an edge
+        /// rewrite rule is invalid.
         fn get_edge_weight_normalising_constant(
             graph: &PyMatchingGraph,
             num_distinct_weights: usize,
-        ) -> f64;
+        ) -> Result<f64>;
 
         /// Check if all edges have error probabilities set.
         fn all_edges_have_error_probabilities(graph: &PyMatchingGraph) -> bool;
@@ -320,12 +323,15 @@ pub(crate) mod ffi {
     }
 }
 
-/// Marks a C++ exception as a rejection of caller input.
+/// Marks a C++ exception as an upstream rejection of input.
 ///
 /// The C++ bridge prepends it when Stim or `PyMatching` throws `std::invalid_argument`
-/// while building a graph (DEM parsing or edge insertion); every other C++ exception
-/// carries no marker. [`PyMatchingError`](crate::PyMatchingError) strips it and reports
-/// a configuration error instead of an FFI failure.
+/// in any bridge call that catches upstream exceptions: building a graph (DEM parsing
+/// or edge insertion), building the matcher when the graph is first used for
+/// decoding, decoding and noise sampling. Every other C++ exception carries no
+/// marker. [`PyMatchingError`](crate::PyMatchingError) strips it and reports
+/// [`PyMatchingError::InvalidGraph`](crate::PyMatchingError::InvalidGraph) instead of
+/// an FFI failure.
 pub(crate) const INPUT_ERROR_PREFIX: &str = "pecos-pymatching input error: ";
 
 fn pymatching_input_error_prefix() -> &'static str {

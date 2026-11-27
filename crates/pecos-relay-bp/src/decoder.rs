@@ -195,12 +195,12 @@ fn result(outcome: pecos_bp::RelayOutcome) -> DecodingResult {
     }
 }
 
+/// `copy_syndrome` has already checked the syndrome length against the check
+/// matrix the native decoder was built from, so a native dimension error here is
+/// an internal buffer mismatch and is reported as a decoding failure.
 fn decode_error(error: DecoderError) -> RelayBpError {
     match error {
         DecoderError::InvalidSyndrome(message) => RelayBpError::InvalidSyndrome(message),
-        DecoderError::InvalidDimensions { expected, actual } => {
-            RelayBpError::InvalidDimensions { expected, actual }
-        }
         error => RelayBpError::DecodingFailed(native_message(error)),
     }
 }

@@ -172,6 +172,15 @@ pub fn partition_dem_by_logical(
     partition_dem_by_logical_windowed(dem_str, stab_coords, None)
 }
 
+/// [`partition_dem_by_logical`] with `max_time_radius` padding around each
+/// boundary edge time (see [`MaxTimeRadius`]).
+///
+/// # Errors
+///
+/// Returns an error if the DEM is malformed, if a mechanism with a positive
+/// prior and at least one detector has a prior above 0.5, or if a detector used
+/// in an error mechanism has coordinates that match no stabilizer position in
+/// `stab_coords`.
 pub fn partition_dem_by_logical_windowed(
     dem_str: &str,
     stab_coords: &StabCoords,
@@ -183,11 +192,14 @@ pub fn partition_dem_by_logical_windowed(
     subgraphs_from_membership(&sdem, &membership)
 }
 
-/// Partition an already validated structured DEM without rendering it.
+/// Partition a structured DEM, whose text was already validated when it was
+/// built, without rendering it.
 ///
 /// # Errors
 ///
-/// Returns an error if a used detector's coordinates do not match the supplied
+/// Returns an error if a mechanism with a positive prior and at least one
+/// detector has a prior above 0.5 (structured DEM validation does not check
+/// priors), or if a used detector's coordinates do not match the supplied
 /// stabilizer positions.
 pub fn partition_structured_dem_by_logical_windowed(
     dem: &crate::window::StructuredDem,
@@ -487,7 +499,9 @@ impl LogicalSubgraphDecoder {
     ///
     /// # Errors
     ///
-    /// Returns error if the DEM is malformed or the factory fails.
+    /// Returns error if the DEM is malformed, a mechanism with a positive prior
+    /// and at least one detector has a prior above 0.5, a used detector matches
+    /// no stabilizer position, or the factory fails.
     pub fn from_dem<F>(
         dem: &str,
         stab_coords: &StabCoords,
@@ -501,6 +515,14 @@ impl LogicalSubgraphDecoder {
         Self::from_dem_windowed(dem, stab_coords, None, factory)
     }
 
+    /// [`Self::from_dem`] with `max_time_radius` padding around each boundary edge
+    /// time (see [`MaxTimeRadius`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the DEM is malformed, a mechanism with a positive prior
+    /// and at least one detector has a prior above 0.5, a used detector matches
+    /// no stabilizer position, or the factory fails.
     pub fn from_dem_windowed<F>(
         dem: &str,
         stab_coords: &StabCoords,
@@ -544,7 +566,9 @@ impl LogicalSubgraphDecoder {
     ///
     /// # Errors
     ///
-    /// Returns an error if the DEM is malformed or the factory fails.
+    /// Returns an error if the DEM is malformed, a membership id is out of range,
+    /// a mechanism with a positive prior and at least one detector has a prior
+    /// above 0.5 (whatever the membership), or the factory fails.
     pub fn from_membership<F>(
         dem: &str,
         membership: &[Vec<usize>],
@@ -748,7 +772,9 @@ impl ParallelLogicalSubgraphDecoder {
     ///
     /// # Errors
     ///
-    /// Returns error if the DEM is malformed or the factory fails.
+    /// Returns error if the DEM is malformed, a mechanism with a positive prior
+    /// and at least one detector has a prior above 0.5, a used detector matches
+    /// no stabilizer position, or the factory fails.
     pub fn from_dem<F>(
         dem: &str,
         stab_coords: &StabCoords,

@@ -44,10 +44,30 @@ pub(crate) fn report_no_path(on_no_path: &str) -> PyResult<bool> {
     }
 }
 
+/// Classify a decoder error as caller input (`ValueError`) or an internal failure
+/// (`RuntimeError`).
+///
+/// This mirrors `decoder_error` in `pecos-rslib`'s `errors.rs`, which this crate
+/// cannot depend on; keep the two variant lists in step.
 fn decoder_error_with_message(error: &DecoderError, message: String) -> PyErr {
     match error {
-        DecoderError::InvalidDemSyntax(_) => PyValueError::new_err(message),
-        _ => PyRuntimeError::new_err(message),
+        DecoderError::BackendUnavailable { .. }
+        | DecoderError::InvalidDimensions { .. }
+        | DecoderError::InvalidDemSyntax(_)
+        | DecoderError::InvalidConfiguration(_)
+        | DecoderError::InvalidGraph(_)
+        | DecoderError::MatrixError(_)
+        | DecoderError::BatchSizeMismatch { .. }
+        | DecoderError::InvalidSyndrome(_)
+        | DecoderError::InvalidNodeIndex { .. }
+        | DecoderError::InvalidEdge(_) => PyValueError::new_err(message),
+        DecoderError::InternalError(_)
+        | DecoderError::DecodingFailed(_)
+        | DecoderError::FfiError(_)
+        | DecoderError::ConvergenceFailure { .. }
+        | DecoderError::NotImplemented(_)
+        | DecoderError::IoError(_)
+        | DecoderError::Other(_) => PyRuntimeError::new_err(message),
     }
 }
 

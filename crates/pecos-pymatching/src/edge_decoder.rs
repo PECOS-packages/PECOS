@@ -48,9 +48,13 @@ impl PyMatchingEdgeDecoder {
             correlated,
         )
         .map_err(|error| match error {
-            crate::PyMatchingError::Dem(error) => DecoderError::InternalError(format!(
-                "invalid internally generated window DEM: {error}"
-            )),
+            // The window DEM is generated here, so a grammar or upstream rejection
+            // of its text is internal.
+            crate::PyMatchingError::Dem(_) | crate::PyMatchingError::InvalidGraph(_) => {
+                DecoderError::InternalError(format!(
+                    "invalid internally generated window DEM: {error}"
+                ))
+            }
             error => DecoderError::from(error),
         })?;
         Ok(Self { decoder, edges })

@@ -21,12 +21,15 @@ pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usiz
 
 /// Reject a DEM error mechanism whose own prior is above 0.5.
 ///
-/// A matching edge's weight `ln((1 - p) / p)` is negative above 0.5, so every
-/// mechanism with a one- or two-detector component must have a prior of at most
-/// 0.5, as upstream `PyMatching` requires of each instruction. The check runs per
-/// mechanism, before parallel mechanisms are merged or correlated components
-/// cancel, so it also rejects parallel mechanisms whose independent combination
-/// falls back below 0.5.
+/// A matching edge's weight `ln((1 - p) / p)` is negative above 0.5, so a
+/// mechanism that becomes a matching edge must have a prior of at most 0.5, as
+/// upstream `PyMatching` requires of each instruction. Matching graphs and commit
+/// windows check every mechanism with a one- or two-detector component;
+/// logical-subgraph extraction checks every mechanism with a positive prior and a
+/// detector, before projection, so the result does not depend on the membership.
+/// The check runs per mechanism, before parallel mechanisms are merged or
+/// correlated components cancel, so it also rejects parallel mechanisms whose
+/// independent combination falls back below 0.5.
 pub(crate) fn check_matching_prior(probability: f64) -> Result<(), DecoderError> {
     if probability > 0.5 {
         return Err(DecoderError::InvalidConfiguration(format!(

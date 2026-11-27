@@ -26,7 +26,7 @@ use pecos_frontier::{
     TrellisOrdering, backward_deadline_column_order_for_factors, deadline_column_order_for_factors,
 };
 use pyo3::Borrowed;
-use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyInt, PyList};
 
@@ -72,8 +72,10 @@ pub(crate) fn parse_metric_mode(metric_mode: &str) -> PyResult<MetricMode> {
     }
 }
 
+/// A sparse detector index outside the model is caller input, like
+/// `DecoderError::InvalidNodeIndex`.
 fn sparse_index_error(index: u64, num_detectors: usize) -> PyErr {
-    PyRuntimeError::new_err(format!(
+    PyValueError::new_err(format!(
         "Invalid node index {index}: must be < {num_detectors}"
     ))
 }

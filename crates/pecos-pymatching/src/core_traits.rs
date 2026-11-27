@@ -327,29 +327,60 @@ mod tests {
     }
 
     #[test]
-    fn upstream_dem_rejection_is_a_configuration_error() {
+    fn upstream_dem_rejection_is_an_invalid_graph() {
         // PyMatching throws `std::invalid_argument` for a decomposed error with an
-        // undetectable component; the bridge reports it as caller input.
+        // undetectable component; the bridge reports it as an input rejection.
         let dem = "error(0.1) D0 ^ L0\ndetector D0";
         let error = crate::PyMatchingDecoder::from_dem_with_correlations(dem, true)
             .err()
             .expect("correlated PyMatching rejects an undetectable component");
         assert!(
-            matches!(&error, crate::PyMatchingError::Configuration(message)
+            matches!(&error, crate::PyMatchingError::InvalidGraph(message)
                 if message.starts_with("Failed to parse DEM: ")
                     && message.contains("undetectable component")),
             "{error:?}"
         );
         let error = DecoderError::from(error);
         assert!(
-            matches!(&error, DecoderError::InvalidConfiguration(message)
+            matches!(&error, DecoderError::InvalidGraph(message)
                 if message.contains("undetectable component")),
             "{error:?}"
         );
     }
 
     #[test]
-    fn disallowed_parallel_edge_is_a_configuration_error() {
+    fn upstream_rejection_when_the_matcher_is_built_is_an_invalid_graph() {
+        // `error(1)` builds, but its infinite weight is rejected when the matcher
+        // is first built for decoding.
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(1) D0").expect("the graph builds");
+        let error = decoder
+            .decode(&[1])
+            .expect_err("upstream rejects the edge weight");
+        assert!(
+            matches!(&error, crate::PyMatchingError::InvalidGraph(message)
+                if message.contains("maximum absolute edge weight")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn out_of_range_weight_normalising_constant_is_an_invalid_graph() {
+        // Upstream throws `std::invalid_argument` for the infinite weight of
+        // `error(1)`; it must reach Rust as an error, not end the process.
+        let decoder = crate::PyMatchingDecoder::from_dem("error(1) D0").expect("the graph builds");
+        let error = decoder
+            .get_edge_weight_normalising_constant(1000)
+            .expect_err("upstream rejects the edge weight");
+        assert!(
+            matches!(&error, crate::PyMatchingError::InvalidGraph(message)
+                if message.contains("maximum absolute edge weight")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn disallowed_parallel_edge_is_an_invalid_graph() {
         let mut decoder =
             crate::PyMatchingDecoder::from_dem("error(0.1) D0 D1").expect("valid DEM builds");
         let error = decoder
@@ -363,7 +394,7 @@ mod tests {
             )
             .expect_err("a disallowed parallel edge is rejected");
         assert!(
-            matches!(&error, crate::PyMatchingError::Configuration(message)
+            matches!(&error, crate::PyMatchingError::InvalidGraph(message)
                 if message.starts_with("Failed to add edge: ")
                     && message.contains("already exists")),
             "{error:?}"
@@ -381,7 +412,7 @@ mod tests {
             )
             .expect_err("a disallowed parallel boundary edge is rejected");
         assert!(
-            matches!(&error, crate::PyMatchingError::Configuration(message)
+            matches!(&error, crate::PyMatchingError::InvalidGraph(message)
                 if message.starts_with("Failed to add boundary edge: ")
                     && message.contains("already exists")),
             "{error:?}"

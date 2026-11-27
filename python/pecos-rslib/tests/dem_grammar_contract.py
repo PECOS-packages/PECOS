@@ -43,7 +43,8 @@ def assert_outcome(
         or (
             consumer == "pymatching"
             and text == "error(1) D0"
-            and message == "decoder failed on shot 0: ffi error: maximum absolute edge weight of 16777215 exceeded."
+            and message == "decoder failed on shot 0: invalid graph structure: decoding failed: "
+            "maximum absolute edge weight of 16777215 exceeded."
         )
     )
     if accepted:

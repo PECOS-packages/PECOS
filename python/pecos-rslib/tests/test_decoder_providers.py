@@ -345,15 +345,22 @@ def test_member_access_error_subclasses_are_protocol_errors():
         assert required in message
 
 
-def _failing_provider(version, failure):
-    """A provider whose worker fails on every shot with a fired detector."""
+def _failing_provider(version, failure, raised=None, builds=None):
+    """A provider whose worker fails on every shot with a fired detector.
+
+    `failure` is "result" (a result of the wrong type) or a callable returning a
+    fresh exception for each failing call; each one raised is appended to `raised`.
+    Each worker build is appended to `builds`.
+    """
 
     def answer(syndrome):
         if not syndrome[0]:
             return [0, 0]
         if failure == "result":
             return "not words"
-        raise failure
+        error = failure()
+        raised.append(error)
+        raise error
 
     class FailingWorker(Worker):
         def _pecos_decode_obs(self, syndrome):
@@ -363,15 +370,20 @@ def _failing_provider(version, failure):
             words = answer(syndrome)
             return words, False, None, []
 
+    def build():
+        if builds is not None:
+            builds.append(None)
+        return FailingWorker()
+
     class FailingPrepared:
         def _pecos_build_decoder(self):
-            return FailingWorker()
+            return build()
 
     class FailingProvider(Provider):
         _pecos_decoder_api_version = version
 
         def _pecos_build_decoder(self, dem):
-            return FailingWorker()
+            return build()
 
         def _pecos_prepare_decoder(self, dem):
             return FailingPrepared()
@@ -382,20 +394,45 @@ def _failing_provider(version, failure):
 @pytest.mark.parametrize("workers", [1, 2])
 @pytest.mark.parametrize("version", [1, 2])
 def test_provider_per_shot_exception_reaches_the_caller(version, workers):
-    error = KeyError("boom")
+    # A fresh exception per call: only the one the failing shot raised can match.
+    raised = []
     batch = SampleBatch([[0], [1]], [0, 0])
     with pytest.raises(KeyError) as caught:
-        batch.decode(DEM, _failing_provider(version, error), workers=workers)
-    assert caught.value is error
-    assert error.__notes__ == ["decoder failed on shot 1"]
+        batch.decode(DEM, _failing_provider(version, lambda: KeyError("boom"), raised), workers=workers)
+    assert len(raised) == 1
+    assert caught.value is raised[0]
+    assert caught.value.__notes__ == ["decoder failed on shot 1"]
 
-    error = KeyError("boom")
+    # The sampler hands out chunks of SAMPLING_CHUNK_SHOTS (1024) shots, so
+    # fused_worker_cap allows two workers only from 1025 shots on; 2048 shots give
+    # two full chunks, so workers=2 really builds and runs two workers. Sampler
+    # decoding first builds one decoder to check dimensions; the sequential path
+    # reuses it and the parallel path builds one per worker.
+    raised = []
+    builds = []
     sampler = DemSampler.from_dem_string("error(0.5) D0 L70\n")
+    provider = _failing_provider(version, lambda: KeyError("boom"), raised, builds)
     with pytest.raises(KeyError) as caught:
-        sampler.decode(DEM, 64, _failing_provider(version, error), workers=workers, seed=2)
-    assert caught.value is error
-    assert len(error.__notes__) == 1
-    assert re.fullmatch(r"decoder failed on shot \d+", error.__notes__[0])
+        sampler.decode(DEM, 2048, provider, workers=workers, seed=2)
+    assert len(builds) == (1 if workers == 1 else 1 + workers)
+    assert any(error is caught.value for error in raised)
+    assert len(caught.value.__notes__) == 1
+    assert re.fullmatch(r"decoder failed on shot \d+", caught.value.__notes__[0])
+
+
+def test_provider_exception_survives_a_failing_note():
+    # A non-list `__notes__` makes `add_note` raise; the decoder's own exception
+    # still reaches the caller, without the note.
+    def failure():
+        error = KeyError("boom")
+        error.__notes__ = "not a list"
+        return error
+
+    raised = []
+    with pytest.raises(KeyError) as caught:
+        SampleBatch([[1]], [0]).decode(DEM, _failing_provider(1, failure, raised))
+    assert caught.value is raised[0]
+    assert caught.value.__notes__ == "not a list"
 
 
 @pytest.mark.parametrize("workers", [1, 2])

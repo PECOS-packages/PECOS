@@ -700,7 +700,9 @@ fn test_weight_normalisation() {
     let decoder = PyMatchingDecoder::new(config).unwrap();
 
     // Get normalising constant
-    let norm_const = decoder.get_edge_weight_normalising_constant(1000);
+    let norm_const = decoder
+        .get_edge_weight_normalising_constant(1000)
+        .expect("the graph's weights are in range");
     assert!(norm_const > 0.0);
 }
 

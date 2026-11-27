@@ -1342,9 +1342,16 @@ impl PyMatchingDecoder {
     }
 
     /// Get edge weight normalising constant
-    #[must_use]
-    pub fn get_edge_weight_normalising_constant(&self, num_distinct_weights: usize) -> f64 {
-        ffi::get_edge_weight_normalising_constant(&self.graph, num_distinct_weights)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PyMatchingError::InvalidGraph`] if `PyMatching` rejects the graph,
+    /// for example an edge weight above its maximum absolute edge weight.
+    pub fn get_edge_weight_normalising_constant(&self, num_distinct_weights: usize) -> Result<f64> {
+        Ok(ffi::get_edge_weight_normalising_constant(
+            &self.graph,
+            num_distinct_weights,
+        )?)
     }
 
     /// Check if all edges have error probabilities

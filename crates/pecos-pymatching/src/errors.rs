@@ -27,6 +27,12 @@ pub enum PyMatchingError {
     #[error("Configuration error: {0}")]
     Configuration(String),
 
+    /// Upstream `PyMatching` or Stim rejected the graph or DEM as input
+    /// (`std::invalid_argument`), while building the graph or when it is first
+    /// used for decoding. Holds the upstream text.
+    #[error("{0}")]
+    InvalidGraph(String),
+
     /// File I/O error
     #[error("File I/O error: {0}")]
     FileIo(#[from] std::io::Error),
@@ -44,12 +50,12 @@ pub enum CheckMatrixError {
 }
 
 impl From<cxx::Exception> for PyMatchingError {
-    /// A C++ exception the bridge marked as a rejection of caller input becomes
-    /// [`PyMatchingError::Configuration`] with the upstream text; any other stays
+    /// A C++ exception the bridge marked as a rejection of input becomes
+    /// [`PyMatchingError::InvalidGraph`] with the upstream text; any other stays
     /// [`PyMatchingError::Ffi`].
     fn from(error: cxx::Exception) -> Self {
         match error.what().strip_prefix(crate::bridge::INPUT_ERROR_PREFIX) {
-            Some(message) => PyMatchingError::Configuration(message.to_string()),
+            Some(message) => PyMatchingError::InvalidGraph(message.to_string()),
             None => PyMatchingError::Ffi(error),
         }
     }
@@ -60,6 +66,7 @@ impl From<PyMatchingError> for DecoderError {
         match e {
             PyMatchingError::Dem(error) => error,
             PyMatchingError::Configuration(msg) => DecoderError::InvalidConfiguration(msg),
+            PyMatchingError::InvalidGraph(msg) => DecoderError::InvalidGraph(msg),
             PyMatchingError::InvalidCheckMatrix(check_err) => {
                 DecoderError::MatrixError(check_err.to_string())
             }

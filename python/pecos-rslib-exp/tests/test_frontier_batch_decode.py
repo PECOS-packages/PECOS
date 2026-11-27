@@ -116,7 +116,7 @@ def test_auto_execution_wide_observables_and_count_only():
 @pytest.mark.parametrize("workers", [1, 3])
 def test_invalid_order_and_impossible_syndrome_are_errors(workers):
     batch = SampleBatch([[0, 0, 0]], [0])
-    with pytest.raises(RuntimeError, match="permutation"):
+    with pytest.raises(ValueError, match="permutation"):
         batch.decode(DEM, frontier(column_order=[0, 0, 1, 2]), workers=workers)
     with pytest.raises(RuntimeError, match="unexplainable"):
         SampleBatch([[1]], [0]).decode("detector D0\n", frontier(), workers=workers)

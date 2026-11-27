@@ -540,6 +540,28 @@ mod tests {
     }
 
     #[test]
+    fn test_mbp_wrong_syndrome_length_is_invalid_dimensions() {
+        let checks = steane_checks();
+        let mut decoder = MbpDecoder::new(
+            &checks,
+            &checks,
+            0.1,
+            [1.0; 3],
+            10,
+            BpMethod::ProductSum,
+            1.0,
+            None,
+        )
+        .unwrap();
+        for actual in [5, 7] {
+            let syndrome = Array1::zeros(actual);
+            let expected = |result| matches!(result, Err(LdpcError::InvalidDimensions { expected: 6, actual: a }) if a == actual);
+            assert!(expected(decoder.decode(&syndrome.view()).map(|_| ())));
+            assert!(expected(decoder.decode_gf4(&syndrome.view()).map(|_| ())));
+        }
+    }
+
+    #[test]
     fn test_mbp_rejects_zero_rate() {
         assert_invalid_channel(0.0, [1.0; 3], "error_rate");
         assert_invalid_channel(-0.0, [1.0; 3], "error_rate");

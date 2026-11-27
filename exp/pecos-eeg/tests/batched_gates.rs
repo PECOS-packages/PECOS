@@ -253,7 +253,7 @@ fn forward_eeg_rejects_a_two_qubit_gate_on_an_odd_qubit_count() {
 }
 
 #[test]
-#[should_panic(expected = "acts on 3 qubits, not a multiple of its arity 2")]
+#[should_panic(expected = "EEG: Gate CX requires a multiple of 2 qubits, got 3")]
 fn stabilizer_group_rejects_a_two_qubit_gate_on_an_odd_qubit_count() {
     let _ = StabilizerGroup::from_circuit(&[make_gate(GateType::CX, &[0, 1, 2])], 3);
 }

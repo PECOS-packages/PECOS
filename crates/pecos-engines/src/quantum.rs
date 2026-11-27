@@ -137,6 +137,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
     let mut measurements: Vec<usize> = Vec::new();
     let mut pair_scratch: Vec<(QubitId, QubitId)> = Vec::new();
     let mut mz_qubits: Vec<QubitId> = Vec::new();
+    let mut mz_seen: Vec<bool> = Vec::new();
 
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
@@ -241,6 +242,15 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
             | GateType::MeasureZLeaked
             | GateType::MeasureZLost
             | GateType::MeasureZLeakedLost => {
+                // Clear only the previous group, keeping work linear in measured qubits.
+                if !mz_seen.is_empty() {
+                    for q in &mz_qubits {
+                        mz_seen[q.0] = false;
+                    }
+                    for q in &cmd.qubits {
+                        mz_seen[q.0] = true;
+                    }
+                }
                 mz_qubits.clear();
                 mz_qubits.extend_from_slice(&cmd.qubits);
                 while cmd_idx + 1 < batch.len()
@@ -252,14 +262,23 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                             | GateType::MeasureZLeakedLost
                     )
                 {
+                    let next = &batch[cmd_idx + 1];
+                    validate_dispatch_gate(next)?;
+                    check_qubit_capacity(next.gate_type, &next.qubits, sim.num_qubits())?;
+                    // Allocate flags only when there is a following MZ-family command.
+                    if mz_seen.is_empty() {
+                        mz_seen.resize(sim.num_qubits(), false);
+                        for q in &mz_qubits {
+                            mz_seen[q.0] = true;
+                        }
+                    }
+                    if next.qubits.iter().any(|q| mz_seen[q.0]) {
+                        break;
+                    }
+                    for q in &next.qubits {
+                        mz_seen[q.0] = true;
+                    }
                     cmd_idx += 1;
-                    // Lookahead-consumed commands need the guard too.
-                    validate_dispatch_gate(&batch[cmd_idx])?;
-                    check_qubit_capacity(
-                        batch[cmd_idx].gate_type,
-                        &batch[cmd_idx].qubits,
-                        sim.num_qubits(),
-                    )?;
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
                 let meas_ids = sim.mz(&mz_qubits);
@@ -398,6 +417,7 @@ fn process_general_message<
     let mut measurements: Vec<usize> = Vec::new();
     let mut pair_scratch: Vec<(QubitId, QubitId)> = Vec::new();
     let mut mz_qubits: Vec<QubitId> = Vec::new();
+    let mut mz_seen: Vec<bool> = Vec::new();
 
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
@@ -615,6 +635,15 @@ fn process_general_message<
             | GateType::MeasureZLeaked
             | GateType::MeasureZLost
             | GateType::MeasureZLeakedLost => {
+                // Clear only the previous group, keeping work linear in measured qubits.
+                if !mz_seen.is_empty() {
+                    for q in &mz_qubits {
+                        mz_seen[q.0] = false;
+                    }
+                    for q in &cmd.qubits {
+                        mz_seen[q.0] = true;
+                    }
+                }
                 mz_qubits.clear();
                 mz_qubits.extend_from_slice(&cmd.qubits);
                 while cmd_idx + 1 < batch.len()
@@ -626,14 +655,23 @@ fn process_general_message<
                             | GateType::MeasureZLeakedLost
                     )
                 {
+                    let next = &batch[cmd_idx + 1];
+                    validate_dispatch_gate(next)?;
+                    check_qubit_capacity(next.gate_type, &next.qubits, sim.num_qubits())?;
+                    // Allocate flags only when there is a following MZ-family command.
+                    if mz_seen.is_empty() {
+                        mz_seen.resize(sim.num_qubits(), false);
+                        for q in &mz_qubits {
+                            mz_seen[q.0] = true;
+                        }
+                    }
+                    if next.qubits.iter().any(|q| mz_seen[q.0]) {
+                        break;
+                    }
+                    for q in &next.qubits {
+                        mz_seen[q.0] = true;
+                    }
                     cmd_idx += 1;
-                    // Lookahead-consumed commands need the guard too.
-                    validate_dispatch_gate(&batch[cmd_idx])?;
-                    check_qubit_capacity(
-                        batch[cmd_idx].gate_type,
-                        &batch[cmd_idx].qubits,
-                        sim.num_qubits(),
-                    )?;
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
                 let meas_ids = sim.mz(&mz_qubits);
@@ -925,6 +963,9 @@ where
         let batch = message.quantum_ops()?;
 
         let mut measurements: Vec<usize> = Vec::new();
+
+        let mut mz_qubits: Vec<QubitId> = Vec::new();
+        let mut mz_seen: Vec<bool> = Vec::new();
 
         // Use indexed iteration so we can batch consecutive MZ commands into
         // one simulator call, enabling joint-sampling optimizations.
@@ -1242,8 +1283,18 @@ where
                 | GateType::MeasureZLeaked
                 | GateType::MeasureZLost
                 | GateType::MeasureZLeakedLost => {
-                    // Collect qubits from consecutive MZ or Z-herald commands
-                    let mut mz_qubits: Vec<QubitId> = cmd.qubits.to_vec();
+                    // Clear only the previous group, keeping work linear in measured qubits.
+                    if !mz_seen.is_empty() {
+                        for q in &mz_qubits {
+                            mz_seen[q.0] = false;
+                        }
+                        for q in &cmd.qubits {
+                            mz_seen[q.0] = true;
+                        }
+                    }
+                    mz_qubits.clear();
+                    mz_qubits.extend_from_slice(&cmd.qubits);
+                    // Collect qubits from consecutive MZ or Z-herald commands.
                     while cmd_idx + 1 < batch.len()
                         && matches!(
                             batch[cmd_idx + 1].gate_type,
@@ -1253,13 +1304,27 @@ where
                                 | GateType::MeasureZLeakedLost
                         )
                     {
-                        cmd_idx += 1;
-                        validate_dispatch_gate(&batch[cmd_idx])?;
+                        let next = &batch[cmd_idx + 1];
+                        validate_dispatch_gate(next)?;
                         check_qubit_capacity(
-                            batch[cmd_idx].gate_type,
-                            &batch[cmd_idx].qubits,
+                            next.gate_type,
+                            &next.qubits,
                             self.simulator.num_qubits(),
                         )?;
+                        // Allocate flags only when there is a following MZ-family command.
+                        if mz_seen.is_empty() {
+                            mz_seen.resize(self.simulator.num_qubits(), false);
+                            for q in &mz_qubits {
+                                mz_seen[q.0] = true;
+                            }
+                        }
+                        if next.qubits.iter().any(|q| mz_seen[q.0]) {
+                            break;
+                        }
+                        for q in &next.qubits {
+                            mz_seen[q.0] = true;
+                        }
+                        cmd_idx += 1;
                         mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                     }
 
@@ -1945,6 +2010,162 @@ mod tests {
     use super::*;
     use crate::byte_message::ByteMessageBuilder;
     use std::f64::consts::FRAC_1_SQRT_2;
+
+    #[derive(Clone, Debug)]
+    struct MeasurementRecorder {
+        batches: Vec<Vec<QubitId>>,
+        rng: PecosRng,
+    }
+
+    impl QuantumSimulator for MeasurementRecorder {
+        fn reset(&mut self) -> &mut Self {
+            self.batches.clear();
+            self
+        }
+        fn num_qubits(&self) -> usize {
+            4
+        }
+    }
+
+    impl CliffordGateable for MeasurementRecorder {
+        fn h(&mut self, _: &[QubitId]) -> &mut Self {
+            panic!("unexpected H")
+        }
+        fn sz(&mut self, _: &[QubitId]) -> &mut Self {
+            panic!("unexpected SZ")
+        }
+        fn cx(&mut self, _: &[(QubitId, QubitId)]) -> &mut Self {
+            panic!("unexpected CX")
+        }
+        fn mz(&mut self, qubits: &[QubitId]) -> Vec<pecos_simulators::MeasurementResult> {
+            assert_eq!(
+                pecos_core::duplicate_qubits(qubits.iter().map(|q| q.0)),
+                [] as [usize; 0]
+            );
+            self.batches.push(qubits.to_vec());
+            qubits
+                .iter()
+                .map(|q| pecos_simulators::MeasurementResult {
+                    outcome: q.0 % 2 == 1,
+                    is_deterministic: true,
+                })
+                .collect()
+        }
+    }
+
+    impl ArbitraryRotationGateable for MeasurementRecorder {
+        fn rx(&mut self, _: Angle64, _: &[QubitId]) -> &mut Self {
+            panic!("unexpected RX")
+        }
+        fn rz(&mut self, _: Angle64, _: &[QubitId]) -> &mut Self {
+            panic!("unexpected RZ")
+        }
+        fn rzz(&mut self, _: Angle64, _: &[(QubitId, QubitId)]) -> &mut Self {
+            panic!("unexpected RZZ")
+        }
+    }
+
+    impl ChannelDispatch for MeasurementRecorder {
+        fn apply_channel_expr(&mut self, _: &ChannelExpr) -> Result<(), PecosError> {
+            panic!("unexpected channel")
+        }
+    }
+
+    impl RngManageable for MeasurementRecorder {
+        type Rng = PecosRng;
+        fn rng(&self) -> &Self::Rng {
+            &self.rng
+        }
+        fn rng_mut(&mut self) -> &mut Self::Rng {
+            &mut self.rng
+        }
+        fn set_rng(&mut self, rng: Self::Rng) {
+            self.rng = rng;
+        }
+    }
+
+    impl StateVectorSimulator for MeasurementRecorder {
+        fn create(_: usize) -> Self {
+            Self::create_with_seed(4, 0)
+        }
+        fn create_with_seed(_: usize, seed: u64) -> Self {
+            Self {
+                batches: Vec::new(),
+                rng: PecosRng::seed_from_u64(seed),
+            }
+        }
+    }
+
+    #[test]
+    fn measurement_coalescing_preserves_disjoint_batches_and_order() {
+        for path in 0..3 {
+            for kinds in [
+                [GateType::MZ; 4],
+                [
+                    GateType::MZ,
+                    GateType::MeasureZLeaked,
+                    GateType::MeasureZLost,
+                    GateType::MeasureZLeakedLost,
+                ],
+            ] {
+                // The three- and four-command cases need each later group to look
+                // ahead, so they check that a group's flags are set at its start
+                // and cleared when it ends.
+                for (commands, expected) in [
+                    (vec![vec![0], vec![0]], vec![vec![0], vec![0]]),
+                    (
+                        vec![vec![0, 1], vec![2], vec![1], vec![3]],
+                        vec![vec![0, 1, 2], vec![1, 3]],
+                    ),
+                    (
+                        vec![vec![0], vec![0], vec![0]],
+                        vec![vec![0], vec![0], vec![0]],
+                    ),
+                    (
+                        vec![vec![0], vec![1], vec![0], vec![1]],
+                        vec![vec![0, 1], vec![0, 1]],
+                    ),
+                ] {
+                    let mut builder = ByteMessage::quantum_operations_builder();
+                    for (qubits, kind) in commands.iter().zip(kinds) {
+                        builder.add_gate_command(&Gate::simple(
+                            kind,
+                            qubits.iter().copied().map(QubitId).collect::<Vec<_>>(),
+                        ));
+                    }
+                    let message = builder.build();
+                    let mut recorder = MeasurementRecorder::create(4);
+                    let result = match path {
+                        0 => process_clifford_message(&mut recorder, &message).unwrap(),
+                        1 => process_general_message(&mut recorder, &message).unwrap(),
+                        _ => {
+                            let mut engine = StateVectorEngine {
+                                simulator: recorder,
+                            };
+                            let result = engine.process(message).unwrap();
+                            recorder = engine.simulator;
+                            result
+                        }
+                    };
+                    assert_eq!(
+                        recorder.batches,
+                        expected
+                            .into_iter()
+                            .map(|qs| qs.into_iter().map(QubitId).collect::<Vec<_>>())
+                            .collect::<Vec<_>>()
+                    );
+                    assert_eq!(
+                        result.outcomes().unwrap(),
+                        commands
+                            .iter()
+                            .flatten()
+                            .map(|q| u32::from(q % 2 == 1))
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn scheduled_backend_rejects_detection_after_validation() {

@@ -599,27 +599,35 @@ impl PyPauliProp {
     // Clifford gates
 
     /// Apply Hadamard gate(s)
-    pub fn h(&mut self, qubits: Vec<usize>) {
+    pub fn h(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        crate::simulator_utils::validate_distinct_qubits("H", qubits.iter().copied())?;
         let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.h(&qs);
+        Ok(())
     }
 
     /// Apply S gate(s) (sqrt(Z))
-    pub fn sz(&mut self, qubits: Vec<usize>) {
+    pub fn sz(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        crate::simulator_utils::validate_distinct_qubits("SZ", qubits.iter().copied())?;
         let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sz(&qs);
+        Ok(())
     }
 
     /// Apply sqrt(X) gate(s)
-    pub fn sx(&mut self, qubits: Vec<usize>) {
+    pub fn sx(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        crate::simulator_utils::validate_distinct_qubits("SX", qubits.iter().copied())?;
         let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sx(&qs);
+        Ok(())
     }
 
     /// Apply sqrt(Y) gate(s)
-    pub fn sy(&mut self, qubits: Vec<usize>) {
+    pub fn sy(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        crate::simulator_utils::validate_distinct_qubits("SY", qubits.iter().copied())?;
         let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sy(&qs);
+        Ok(())
     }
 
     /// Apply CNOT/CX gate(s)
@@ -627,6 +635,10 @@ impl PyPauliProp {
         for &(a, b) in &pairs {
             crate::simulator_utils::validate_pair("CX", a, b, self.inner.qubit_capacity())?;
         }
+        crate::simulator_utils::validate_distinct_qubits(
+            "CX",
+            pairs.iter().flat_map(|&(a, b)| [a, b]),
+        )?;
         let ps: Vec<(QubitId, QubitId)> = pairs
             .into_iter()
             .map(|(c, t)| (QubitId(c), QubitId(t)))
@@ -640,6 +652,10 @@ impl PyPauliProp {
         for &(a, b) in &pairs {
             crate::simulator_utils::validate_pair("CY", a, b, self.inner.qubit_capacity())?;
         }
+        crate::simulator_utils::validate_distinct_qubits(
+            "CY",
+            pairs.iter().flat_map(|&(a, b)| [a, b]),
+        )?;
         let ps: Vec<(QubitId, QubitId)> = pairs
             .into_iter()
             .map(|(c, t)| (QubitId(c), QubitId(t)))
@@ -653,6 +669,10 @@ impl PyPauliProp {
         for &(a, b) in &pairs {
             crate::simulator_utils::validate_pair("CZ", a, b, self.inner.qubit_capacity())?;
         }
+        crate::simulator_utils::validate_distinct_qubits(
+            "CZ",
+            pairs.iter().flat_map(|&(a, b)| [a, b]),
+        )?;
         let ps: Vec<(QubitId, QubitId)> = pairs
             .into_iter()
             .map(|(c, t)| (QubitId(c), QubitId(t)))
@@ -666,6 +686,10 @@ impl PyPauliProp {
         for &(a, b) in &pairs {
             crate::simulator_utils::validate_pair("SWAP", a, b, self.inner.qubit_capacity())?;
         }
+        crate::simulator_utils::validate_distinct_qubits(
+            "SWAP",
+            pairs.iter().flat_map(|&(a, b)| [a, b]),
+        )?;
         let ps: Vec<(QubitId, QubitId)> = pairs
             .into_iter()
             .map(|(a, b)| (QubitId(a), QubitId(b)))
@@ -675,9 +699,10 @@ impl PyPauliProp {
     }
 
     /// Measure in Z basis
-    pub fn mz(&mut self, qubits: Vec<usize>) -> Vec<bool> {
+    pub fn mz(&mut self, qubits: Vec<usize>) -> PyResult<Vec<bool>> {
+        crate::simulator_utils::validate_distinct_qubits("MZ", qubits.iter().copied())?;
         let qs: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.mz(&qs).into_iter().map(|r| r.outcome).collect()
+        Ok(self.inner.mz(&qs).into_iter().map(|r| r.outcome).collect())
     }
 
     /// Check if this is the identity operator

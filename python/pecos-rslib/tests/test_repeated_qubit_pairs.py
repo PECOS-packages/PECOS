@@ -337,3 +337,34 @@ def test_single_qubit_operands_are_extracted_once(simulator_class, params):
     simulator.run_gate("X", {qubit}, **params)
     assert qubit.calls == 1
     assert _snapshot(simulator) == _snapshot(expected)
+
+
+@pytest.mark.parametrize("simulator_class", BATCH_CLASSES)
+@pytest.mark.parametrize("params", [{}, {"simulate_gate": True}, {"simulate_gate": False}])
+@pytest.mark.parametrize(
+    ("gate", "locations", "duplicates"),
+    [
+        ("SYY", {(1, 2), (0, 1)}, [1]),
+        ("H", {0, (0,)}, [0]),
+        ("SYY", {(2, 0), (0, 1), (1, 2)}, [0, 1, 2]),
+        ("H", {1, (1,), 0, (0,)}, [0, 1]),
+    ],
+)
+def test_run_gate_overlapping_batch_is_atomic(simulator_class, params, gate, locations, duplicates):
+    simulator = _prepared_simulator(simulator_class)
+    before = _snapshot(simulator)
+    with pytest.raises(ValueError, match="requires distinct qubits") as error:
+        simulator.run_gate(gate, locations, **params)
+    assert str(error.value) == f"{gate} requires distinct qubits; duplicated qubits: {duplicates}"
+    assert _snapshot(simulator) == before
+
+
+@pytest.mark.parametrize("gate", ["h", "sz", "sx", "sy", "mz", "cx", "cy", "cz", "swap"])
+def test_pauli_prop_list_overlap_is_atomic(gate):
+    simulator = _prepared_simulator(PauliProp)
+    before = _snapshot(simulator)
+    qubits = [(1, 2), (0, 1)] if gate in {"cx", "cy", "cz", "swap"} else [0, 1, 1]
+    with pytest.raises(ValueError, match="requires distinct qubits") as error:
+        getattr(simulator, gate)(qubits)
+    assert str(error.value) == f"{gate.upper()} requires distinct qubits; duplicated qubits: [1]"
+    assert _snapshot(simulator) == before

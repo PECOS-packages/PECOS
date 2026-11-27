@@ -27,6 +27,16 @@ use pecos_cuquantum::{
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
+fn validate_distinct_qubits(gate: &str, qubits: &[usize]) -> PyResult<()> {
+    let dups = pecos_core::duplicate_qubits(qubits.iter().copied());
+    if !dups.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate} requires distinct qubits; duplicated qubits: {dups:?}"
+        )));
+    }
+    Ok(())
+}
+
 /// Check if cuQuantum is available on this system.
 ///
 /// Returns True if cuQuantum SDK is installed and accessible.
@@ -134,43 +144,56 @@ impl PyCuStateVec {
     // =========================================================================
 
     /// Apply Hadamard gate to the specified qubits.
-    fn h(&mut self, qubits: Vec<usize>) {
+    fn h(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("H", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.h(&qubits);
+        Ok(())
     }
 
     /// Apply Pauli X gate to the specified qubits.
-    fn x(&mut self, qubits: Vec<usize>) {
+    fn x(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("X", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.x(&qubits);
+        Ok(())
     }
 
     /// Apply Pauli Y gate to the specified qubits.
-    fn y(&mut self, qubits: Vec<usize>) {
+    fn y(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("Y", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.y(&qubits);
+        Ok(())
     }
 
     /// Apply Pauli Z gate to the specified qubits.
-    fn z(&mut self, qubits: Vec<usize>) {
+    fn z(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("Z", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.z(&qubits);
+        Ok(())
     }
 
     /// Apply S gate (sqrt(Z)) to the specified qubits.
-    fn s(&mut self, qubits: Vec<usize>) {
+    fn s(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("S", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sz(&qubits);
+        Ok(())
     }
 
     /// Apply S-dagger gate to the specified qubits.
-    fn sdg(&mut self, qubits: Vec<usize>) {
+    fn sdg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SDG", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.szdg(&qubits);
+        Ok(())
     }
 
     /// Apply CNOT (CX) gate. First qubit is control, second is target.
-    fn cx(&mut self, qubits: Vec<usize>) {
+    fn cx(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("CX", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -178,10 +201,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.cx(&pairs);
+        Ok(())
     }
 
     /// Apply CY gate. First qubit is control, second is target.
-    fn cy(&mut self, qubits: Vec<usize>) {
+    fn cy(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("CY", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -189,10 +214,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.cy(&pairs);
+        Ok(())
     }
 
     /// Apply CZ gate.
-    fn cz(&mut self, qubits: Vec<usize>) {
+    fn cz(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("CZ", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -200,10 +227,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.cz(&pairs);
+        Ok(())
     }
 
     /// Apply SWAP gate.
-    fn swap(&mut self, qubits: Vec<usize>) {
+    fn swap(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SWAP", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -211,10 +240,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.swap(&pairs);
+        Ok(())
     }
 
     /// Apply iSWAP gate.
-    fn iswap(&mut self, qubits: Vec<usize>) {
+    fn iswap(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("ISWAP", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -222,46 +253,60 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.iswap(&pairs);
+        Ok(())
     }
 
     /// Apply sqrt(X) gate.
-    fn sx(&mut self, qubits: Vec<usize>) {
+    fn sx(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SX", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sx(&qubits);
+        Ok(())
     }
 
     /// Apply sqrt(X)-dagger gate.
-    fn sxdg(&mut self, qubits: Vec<usize>) {
+    fn sxdg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SXDG", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sxdg(&qubits);
+        Ok(())
     }
 
     /// Apply sqrt(Y) gate.
-    fn sy(&mut self, qubits: Vec<usize>) {
+    fn sy(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SY", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sy(&qubits);
+        Ok(())
     }
 
     /// Apply sqrt(Y)-dagger gate.
-    fn sydg(&mut self, qubits: Vec<usize>) {
+    fn sydg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SYDG", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sydg(&qubits);
+        Ok(())
     }
 
     /// Apply sqrt(Z) gate (same as S).
-    fn sz(&mut self, qubits: Vec<usize>) {
+    fn sz(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SZ", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.sz(&qubits);
+        Ok(())
     }
 
     /// Apply sqrt(Z)-dagger gate (same as Sdg).
-    fn szdg(&mut self, qubits: Vec<usize>) {
+    fn szdg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SZDG", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.szdg(&qubits);
+        Ok(())
     }
 
     /// Apply sqrt(XX) gate.
-    fn sxx(&mut self, qubits: Vec<usize>) {
+    fn sxx(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SXX", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -269,10 +314,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.sxx(&pairs);
+        Ok(())
     }
 
     /// Apply sqrt(XX)-dagger gate.
-    fn sxxdg(&mut self, qubits: Vec<usize>) {
+    fn sxxdg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SXXDG", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -280,10 +327,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.sxxdg(&pairs);
+        Ok(())
     }
 
     /// Apply sqrt(YY) gate.
-    fn syy(&mut self, qubits: Vec<usize>) {
+    fn syy(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SYY", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -291,10 +340,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.syy(&pairs);
+        Ok(())
     }
 
     /// Apply sqrt(YY)-dagger gate.
-    fn syydg(&mut self, qubits: Vec<usize>) {
+    fn syydg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SYYDG", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -302,10 +353,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.syydg(&pairs);
+        Ok(())
     }
 
     /// Apply sqrt(ZZ) gate.
-    fn szz(&mut self, qubits: Vec<usize>) {
+    fn szz(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SZZ", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -313,10 +366,12 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.szz(&pairs);
+        Ok(())
     }
 
     /// Apply sqrt(ZZ)-dagger gate.
-    fn szzdg(&mut self, qubits: Vec<usize>) {
+    fn szzdg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("SZZDG", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -324,52 +379,68 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.szzdg(&pairs);
+        Ok(())
     }
 
     /// Apply F gate (face rotation X->Y->Z->X).
-    fn f(&mut self, qubits: Vec<usize>) {
+    fn f(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("F", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.f(&qubits);
+        Ok(())
     }
 
     /// Apply F-dagger gate.
-    fn fdg(&mut self, qubits: Vec<usize>) {
+    fn fdg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("FDG", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.fdg(&qubits);
+        Ok(())
     }
 
     /// Apply H2 gate (Z*H*Z).
-    fn h2(&mut self, qubits: Vec<usize>) {
+    fn h2(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("H2", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.h2(&qubits);
+        Ok(())
     }
 
     /// Apply H3 gate.
-    fn h3(&mut self, qubits: Vec<usize>) {
+    fn h3(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("H3", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.h3(&qubits);
+        Ok(())
     }
 
     /// Apply H4 gate.
-    fn h4(&mut self, qubits: Vec<usize>) {
+    fn h4(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("H4", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.h4(&qubits);
+        Ok(())
     }
 
     /// Apply H5 gate.
-    fn h5(&mut self, qubits: Vec<usize>) {
+    fn h5(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("H5", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.h5(&qubits);
+        Ok(())
     }
 
     /// Apply H6 gate.
-    fn h6(&mut self, qubits: Vec<usize>) {
+    fn h6(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("H6", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.h6(&qubits);
+        Ok(())
     }
 
     /// Apply G gate (Quantinuum native two-qubit gate).
-    fn g(&mut self, qubits: Vec<usize>) {
+    fn g(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("G", &qubits)?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
             .as_chunks::<2>()
             .0
@@ -377,6 +448,7 @@ impl PyCuStateVec {
             .map(|c| (QubitId(c[0]), QubitId(c[1])))
             .collect();
         self.inner.g(&pairs);
+        Ok(())
     }
 
     // =========================================================================
@@ -384,19 +456,24 @@ impl PyCuStateVec {
     // =========================================================================
 
     /// Apply T gate (pi/8 gate) to the specified qubits.
-    fn t(&mut self, qubits: Vec<usize>) {
+    fn t(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("T", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.t(&qubits);
+        Ok(())
     }
 
     /// Apply T-dagger gate to the specified qubits.
-    fn tdg(&mut self, qubits: Vec<usize>) {
+    fn tdg(&mut self, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("TDG", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         self.inner.tdg(&qubits);
+        Ok(())
     }
 
     /// Apply RX rotation gate.
     fn rx(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("RX", &qubits)?;
         let angle = Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
@@ -406,6 +483,7 @@ impl PyCuStateVec {
 
     /// Apply RY rotation gate.
     fn ry(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("RY", &qubits)?;
         let angle = Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
@@ -415,6 +493,7 @@ impl PyCuStateVec {
 
     /// Apply RZ rotation gate.
     fn rz(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("RZ", &qubits)?;
         let angle = Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
@@ -424,6 +503,7 @@ impl PyCuStateVec {
 
     /// Apply RXX rotation gate.
     fn rxx(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("RXX", &qubits)?;
         let angle = Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
@@ -438,6 +518,7 @@ impl PyCuStateVec {
 
     /// Apply RYY rotation gate.
     fn ryy(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("RYY", &qubits)?;
         let angle = Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
@@ -452,6 +533,7 @@ impl PyCuStateVec {
 
     /// Apply RZZ rotation gate.
     fn rzz(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("RZZ", &qubits)?;
         let angle = Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let pairs: Vec<(QubitId, QubitId)> = qubits
@@ -466,6 +548,7 @@ impl PyCuStateVec {
 
     /// Apply RXYXY2Q with angles (theta, phi) in radians.
     fn rxyxy2q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("RXYXY2Q", &qubits)?;
         let theta = Angle64::try_from_radians(theta)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let phi = Angle64::try_from_radians(phi)
@@ -482,6 +565,7 @@ impl PyCuStateVec {
 
     /// Apply controlled-RX gate. Pairs of qubits = (control, target).
     fn crx(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("CRX", &qubits)?;
         Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
@@ -499,6 +583,7 @@ impl PyCuStateVec {
 
     /// Apply controlled-RY gate. Pairs of qubits = (control, target).
     fn cry(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("CRY", &qubits)?;
         Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
@@ -516,6 +601,7 @@ impl PyCuStateVec {
 
     /// Apply controlled-RZ gate. Pairs of qubits = (control, target).
     fn crz(&mut self, angle: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("CRZ", &qubits)?;
         Angle64::try_from_radians(angle)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         for pair in qubits.as_chunks::<2>().0 {
@@ -533,6 +619,7 @@ impl PyCuStateVec {
 
     /// Apply U gate (general single-qubit rotation).
     fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("U", &qubits)?;
         let theta = Angle64::try_from_radians(theta)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let phi = Angle64::try_from_radians(phi)
@@ -546,6 +633,7 @@ impl PyCuStateVec {
 
     /// Apply RXY1Q gate (rotation in XY plane).
     fn rxy1q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) -> PyResult<()> {
+        validate_distinct_qubits("RXY1Q", &qubits)?;
         let theta = Angle64::try_from_radians(theta)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         let phi = Angle64::try_from_radians(phi)
@@ -560,40 +648,45 @@ impl PyCuStateVec {
     // =========================================================================
 
     /// Measure qubits in the X basis.
-    fn mx(&mut self, qubits: Vec<usize>) -> Vec<u8> {
+    fn mx(&mut self, qubits: Vec<usize>) -> PyResult<Vec<u8>> {
+        validate_distinct_qubits("MX", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         let results = self.inner.mx(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
+        Ok(results.iter().map(|r| u8::from(r.outcome)).collect())
     }
 
     /// Measure qubits in the -X basis.
-    fn mnx(&mut self, qubits: Vec<usize>) -> Vec<u8> {
+    fn mnx(&mut self, qubits: Vec<usize>) -> PyResult<Vec<u8>> {
+        validate_distinct_qubits("MNX", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         let results = self.inner.mnx(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
+        Ok(results.iter().map(|r| u8::from(r.outcome)).collect())
     }
 
     /// Measure qubits in the Y basis.
-    fn my(&mut self, qubits: Vec<usize>) -> Vec<u8> {
+    fn my(&mut self, qubits: Vec<usize>) -> PyResult<Vec<u8>> {
+        validate_distinct_qubits("MY", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         let results = self.inner.my(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
+        Ok(results.iter().map(|r| u8::from(r.outcome)).collect())
     }
 
     /// Measure qubits in the -Y basis.
-    fn mny(&mut self, qubits: Vec<usize>) -> Vec<u8> {
+    fn mny(&mut self, qubits: Vec<usize>) -> PyResult<Vec<u8>> {
+        validate_distinct_qubits("MNY", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         let results = self.inner.mny(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
+        Ok(results.iter().map(|r| u8::from(r.outcome)).collect())
     }
 
     /// Measure qubits in the Z basis.
     ///
     /// Returns a list of measurement results (0 or 1) for each qubit.
-    fn mz(&mut self, qubits: Vec<usize>) -> Vec<u8> {
+    fn mz(&mut self, qubits: Vec<usize>) -> PyResult<Vec<u8>> {
+        validate_distinct_qubits("MZ", &qubits)?;
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
         let results = self.inner.mz(&qubits);
-        results.iter().map(|r| u8::from(r.outcome)).collect()
+        Ok(results.iter().map(|r| u8::from(r.outcome)).collect())
     }
 
     /// Sample measurement outcomes from the current state without collapsing it.

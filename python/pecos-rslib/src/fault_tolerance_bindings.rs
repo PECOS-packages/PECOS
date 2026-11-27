@@ -2488,8 +2488,10 @@ impl PyDetectorErrorModel {
         }
     }
 
-    /// Construct a DEM from independent Bernoulli mechanisms, without sampling
-    /// thresholds or text rounding. This does not accept categorical branches:
+    /// Construct a DEM from independent Bernoulli mechanisms, keeping each
+    /// probability exactly instead of recovering it from sampler thresholds.
+    /// Mechanisms with the same effect are XOR-combined in ascending probability
+    /// order. This does not accept categorical branches:
     /// callers must first convert those to independent mechanisms.
     #[staticmethod]
     #[pyo3(signature = (mechanisms, *, num_detectors, num_observables, detector_coordinates=None))]

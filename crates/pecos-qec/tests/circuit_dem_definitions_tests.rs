@@ -119,8 +119,8 @@ fn detector_annotations_match_record_metadata_through_tick_builders() {
     let expected =
         DemBuilder::try_from_tick_circuit_with_noise_config(&metadata, noise.clone()).unwrap();
     // Each H contributes a flip with probability 2p/3. Their odd parity is
-    // 2*(1/15)*(14/15) = 28/225, printed as 0.124444.
-    assert_eq!(errors(&expected), ["error(0.124444) D0"]);
+    // 2*(1/15)*(14/15) = 28/225, printed exactly.
+    assert_eq!(errors(&expected), ["error(0.12444444444444444) D0"]);
     for dem in [
         DemBuilder::try_from_tick_circuit(&annotated, 0.1, 0.0, 0.0, 0.0).unwrap(),
         DemBuilder::try_from_tick_circuit_with_noise_config(&annotated, noise.clone()).unwrap(),
@@ -318,7 +318,7 @@ fn stamped_circuit_records_name_emission_positions() {
         let dem = DemBuilder::try_from_circuit_with_noise_config(&dag, noise.clone()).unwrap();
         // First emission is q1 (id 9); only it encounters the two H faults.
         // Each flips with 1/15, giving odd parity 28/225. q0 has no noise.
-        assert_eq!(errors(&dem), ["error(0.124444) D0"]);
+        assert_eq!(errors(&dem), ["error(0.12444444444444444) D0"]);
         assert_eq!(dem.detectors[0].records.as_slice(), [-2]);
         let sampler = DemSampler::from_circuit(&dag, &noise).unwrap();
         assert_eq!(sampler.num_mechanisms(), 1);

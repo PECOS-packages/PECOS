@@ -136,7 +136,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": true,
-        "decoding_weight_hex": "0x1.c2e611de03b4fp+4"
+        "decoding_weight_hex": "0x1.c2e8e4a719550p+4"
       }
     },
     {
@@ -262,7 +262,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": true,
-        "decoding_weight_hex": "0x1.c2e611de03b4fp+4"
+        "decoding_weight_hex": "0x1.c2e8e4a719550p+4"
       }
     },
     {
@@ -388,7 +388,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": true,
-        "decoding_weight_hex": "0x1.c2e611de03b4fp+4"
+        "decoding_weight_hex": "0x1.c2e8e4a719550p+4"
       }
     },
     {
@@ -966,7 +966,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": true,
-        "decoding_weight_hex": "0x1.9897d48bf6bbep+3"
+        "decoding_weight_hex": "0x1.989889ff45144p+3"
       }
     },
     {
@@ -1092,7 +1092,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.3427060b3b549p+4"
+        "decoding_weight_hex": "0x1.342844a9724abp+4"
       }
     },
     {
@@ -1218,7 +1218,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.3427060b3b549p+4"
+        "decoding_weight_hex": "0x1.342844a9724abp+4"
       }
     },
     {
@@ -1344,7 +1344,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.3427060b3b549p+4"
+        "decoding_weight_hex": "0x1.342844a9724abp+4"
       }
     },
     {
@@ -1922,7 +1922,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.64e2901bc88b2p+3"
+        "decoding_weight_hex": "0x1.64e2ffc374678p+3"
       }
     },
     {
@@ -2312,7 +2312,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.13d600971a01dp+5"
+        "decoding_weight_hex": "0x1.13d6bef1cac96p+5"
       }
     },
     {
@@ -2702,7 +2702,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.13d600971a01dp+5"
+        "decoding_weight_hex": "0x1.13d6bef1cac96p+5"
       }
     },
     {
@@ -3092,7 +3092,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.13d600971a01dp+5"
+        "decoding_weight_hex": "0x1.13d6bef1cac96p+5"
       }
     },
     {
@@ -4682,7 +4682,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.2e6852e0f6c15p+4"
+        "decoding_weight_hex": "0x1.2e68ec6d170cdp+4"
       }
     },
     {
@@ -5072,7 +5072,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.10ca5834fff2dp+5"
+        "decoding_weight_hex": "0x1.10cb4096ce826p+5"
       }
     },
     {
@@ -5462,7 +5462,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.10ca5834fff2dp+5"
+        "decoding_weight_hex": "0x1.10cb4096ce826p+5"
       }
     },
     {
@@ -5852,7 +5852,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.10ca5834fff2dp+5"
+        "decoding_weight_hex": "0x1.10cb4096ce826p+5"
       }
     },
     {
@@ -7442,7 +7442,7 @@
         ],
         "logical_x_flip": false,
         "logical_z_flip": false,
-        "decoding_weight_hex": "0x1.2d7f34368c65ap+4"
+        "decoding_weight_hex": "0x1.2d7fd61ebe730p+4"
       }
     }
   ]

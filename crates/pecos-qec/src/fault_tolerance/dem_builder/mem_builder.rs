@@ -19,13 +19,55 @@
 
 use super::DemBuilderError;
 use super::types::{
-    IdleChannelFamilies, MeasurementMechanism, MeasurementNoiseChannelResidual,
-    MeasurementNoiseModel, NoiseChannelKind, NoiseConfig, ReplacementBranchApproximation,
-    fit_exclusive_signatures, is_two_qubit_noise_gate, validate_exclusive_probabilities,
+    ContributionProbabilities, IdleChannelFamilies, MeasurementMechanism,
+    MeasurementNoiseChannelResidual, MeasurementNoiseModel, NoiseChannelKind, NoiseConfig,
+    ReplacementBranchApproximation, combine_independent_prob_set, fit_exclusive_signatures,
+    is_two_qubit_noise_gate, validate_exclusive_probabilities,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
 use smallvec::SmallVec;
+
+/// Mechanisms and residuals gathered while building a [`MeasurementNoiseModel`].
+///
+/// Each mechanism keeps all its contribution probabilities until [`Self::finish`]
+/// combines them in canonical order, so the model does not depend on the order the
+/// fault locations were visited.
+#[derive(Default)]
+struct PendingMeasurementNoise {
+    mechanisms: std::collections::BTreeMap<MeasurementMechanism, ContributionProbabilities>,
+    idle_noise_residuals: Vec<MeasurementNoiseChannelResidual>,
+}
+
+impl PendingMeasurementNoise {
+    fn add_mechanism(&mut self, mechanism: MeasurementMechanism, probability: f64) {
+        if mechanism.is_empty() || probability <= 0.0 {
+            return;
+        }
+        self.mechanisms
+            .entry(mechanism)
+            .or_default()
+            .push(probability);
+    }
+
+    fn add_idle_noise_residual(&mut self, residual: MeasurementNoiseChannelResidual) {
+        self.idle_noise_residuals.push(residual);
+    }
+
+    fn finish(self, num_measurements: usize) -> MeasurementNoiseModel {
+        MeasurementNoiseModel {
+            mechanisms: self
+                .mechanisms
+                .into_iter()
+                .map(|(mechanism, mut probabilities)| {
+                    (mechanism, combine_independent_prob_set(&mut probabilities))
+                })
+                .collect(),
+            num_measurements,
+            idle_noise_residuals: self.idle_noise_residuals,
+        }
+    }
+}
 
 /// Builder for Measurement Noise Models (MNMs).
 pub struct MemBuilder<'a> {
@@ -107,7 +149,7 @@ impl<'a> MemBuilder<'a> {
             )));
         }
         let num_measurements = self.influence_map.measurements.len();
-        let mut mem = MeasurementNoiseModel::new(num_measurements);
+        let mut mem = PendingMeasurementNoise::default();
 
         super::builder::validate_sampler_measurements(self.influence_map)?;
         super::builder::validate_idle_noise_targets(
@@ -185,7 +227,7 @@ impl<'a> MemBuilder<'a> {
             }
         }
 
-        Ok(mem)
+        Ok(mem.finish(num_measurements))
     }
 
     fn process_single_pauli_fault(
@@ -193,7 +235,7 @@ impl<'a> MemBuilder<'a> {
         loc_idx: usize,
         pauli: Pauli,
         prob: f64,
-        mem: &mut MeasurementNoiseModel,
+        mem: &mut PendingMeasurementNoise,
     ) {
         let mechanism = self.compute_mechanism(loc_idx, pauli);
         if !mechanism.is_empty() {
@@ -204,7 +246,7 @@ impl<'a> MemBuilder<'a> {
     fn process_single_qubit_fault(
         &self,
         loc_idx: usize,
-        mem: &mut MeasurementNoiseModel,
+        mem: &mut PendingMeasurementNoise,
     ) -> Result<(), DemBuilderError> {
         let loc = &self.influence_map.locations[loc_idx];
         let probabilities = self
@@ -238,7 +280,7 @@ impl<'a> MemBuilder<'a> {
         &self,
         loc_idx: usize,
         families: IdleChannelFamilies,
-        mem: &mut MeasurementNoiseModel,
+        mem: &mut PendingMeasurementNoise,
     ) -> Result<(), DemBuilderError> {
         let x_mechanism = self.compute_mechanism(loc_idx, Pauli::X);
         let y_mechanism = self.compute_mechanism(loc_idx, Pauli::Y);
@@ -299,7 +341,7 @@ impl<'a> MemBuilder<'a> {
         &self,
         loc1: usize,
         loc2: usize,
-        mem: &mut MeasurementNoiseModel,
+        mem: &mut PendingMeasurementNoise,
     ) -> Result<(), DemBuilderError> {
         let loc = &self.influence_map.locations[loc1];
         let probabilities = self
@@ -357,7 +399,7 @@ impl<'a> MemBuilder<'a> {
         channel_kind: NoiseChannelKind,
         exclusive: std::collections::BTreeMap<MeasurementMechanism, f64>,
         context: &str,
-        mem: &mut MeasurementNoiseModel,
+        mem: &mut PendingMeasurementNoise,
     ) -> Result<(), DemBuilderError> {
         let fit = fit_exclusive_signatures(
             exclusive,

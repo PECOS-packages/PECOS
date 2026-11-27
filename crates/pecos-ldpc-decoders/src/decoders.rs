@@ -882,15 +882,14 @@ impl FlipDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome length doesn't match the check count,
+    /// Returns `LdpcError::InvalidDimensions` if the syndrome length doesn't match the check count,
     /// or `LdpcError::Ldpc` if the C++ decoder encounters an error.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<DecodingResult, LdpcError> {
         if syndrome.len() != self.check_count() {
-            return Err(LdpcError::InvalidInput(format!(
-                "Syndrome length {} does not match check count {}",
-                syndrome.len(),
-                self.check_count()
-            )));
+            return Err(LdpcError::InvalidDimensions {
+                expected: self.check_count(),
+                actual: syndrome.len(),
+            });
         }
 
         let syndrome_vec: Vec<u8> = syndrome.to_vec();
@@ -988,8 +987,9 @@ impl UnionFindDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome or LLR lengths don't match expected sizes
-    /// or an LLR is NaN (infinite LLRs are allowed),
+    /// Returns `LdpcError::InvalidDimensions` if the syndrome length doesn't match the check
+    /// count, `LdpcError::InvalidInput` if the LLR length doesn't match the bit count or an LLR
+    /// is NaN (infinite LLRs are allowed),
     /// or `LdpcError::Ldpc` if the C++ decoder encounters an error.
     pub fn decode(
         &mut self,
@@ -998,11 +998,10 @@ impl UnionFindDecoder {
         bits_per_step: usize,
     ) -> Result<DecodingResult, LdpcError> {
         if syndrome.len() != self.check_count() {
-            return Err(LdpcError::InvalidInput(format!(
-                "Syndrome length {} does not match check count {}",
-                syndrome.len(),
-                self.check_count()
-            )));
+            return Err(LdpcError::InvalidDimensions {
+                expected: self.check_count(),
+                actual: syndrome.len(),
+            });
         }
 
         if !llrs.is_empty() && llrs.len() != self.bit_count() {
@@ -1194,7 +1193,7 @@ impl BeliefFindDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome length doesn't match the check count,
+    /// Returns `LdpcError::InvalidDimensions` if the syndrome length doesn't match the check count,
     /// or `LdpcError::Ldpc` if BP produces a NaN log-probability ratio before
     /// Union Find fallback or either decoding stage fails.
     ///
@@ -1203,11 +1202,10 @@ impl BeliefFindDecoder {
     /// Panics if the log probability ratios array is not contiguous in memory.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<DecodingResult, LdpcError> {
         if syndrome.len() != self.check_count() {
-            return Err(LdpcError::InvalidInput(format!(
-                "Syndrome length {} does not match check count {}",
-                syndrome.len(),
-                self.check_count()
-            )));
+            return Err(LdpcError::InvalidDimensions {
+                expected: self.check_count(),
+                actual: syndrome.len(),
+            });
         }
 
         // First try BP decoding

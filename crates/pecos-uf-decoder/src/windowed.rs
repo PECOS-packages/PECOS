@@ -14,7 +14,9 @@
 
 use pecos_decoder_core::streaming::StreamingDecoder;
 use pecos_decoder_core::window::{CommitColumn, CommitWindow, StructuredDem, min_buffer_rounds};
-use pecos_decoder_core::{DecoderError, EdgeDecoder, ObservableDecoder, obs_mask::ObsMask};
+use pecos_decoder_core::{
+    DecoderError, EdgeDecoder, ObservableDecoder, check_syndrome_length, obs_mask::ObsMask,
+};
 use std::collections::BTreeSet;
 use std::ops::Range;
 
@@ -187,12 +189,7 @@ impl<D: EdgeDecoder> StreamingWindowedDecoder<D> {
     /// # Errors
     /// Returns an error for incorrect width or non-binary input, before changing state.
     pub fn start_shot(&mut self, syndrome: &[u8]) -> Result<(), DecoderError> {
-        if syndrome.len() != self.raw.len() {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.raw.len(),
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.raw.len(), syndrome.len())?;
         if syndrome.iter().any(|&s| s > 1) {
             return Err(DecoderError::InvalidSyndrome(
                 "window input must be binary".into(),

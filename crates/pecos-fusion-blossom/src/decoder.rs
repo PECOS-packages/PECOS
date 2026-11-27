@@ -1147,15 +1147,14 @@ impl FusionBlossomDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`FusionBlossomError::InvalidSyndrome`] if the syndrome length doesn't
+    /// Returns [`FusionBlossomError::InvalidDimensions`] if the syndrome length doesn't
     /// match the number of nodes in the decoder.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<DecodingResult> {
         if syndrome.len() != self.num_nodes {
-            return Err(FusionBlossomError::InvalidSyndrome(format!(
-                "Syndrome length {} doesn't match number of nodes {}",
-                syndrome.len(),
-                self.num_nodes
-            )));
+            return Err(FusionBlossomError::InvalidDimensions {
+                expected: self.num_nodes,
+                actual: syndrome.len(),
+            });
         }
 
         // Find defect vertices

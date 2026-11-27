@@ -1,12 +1,47 @@
 //! Shared Python exception mapping for simulation and decoder operations.
 
 use pecos_core::errors::PecosError;
-use pyo3::PyErr;
+use pecos_decoders::batch::ShotDecodeError;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::{PyErr, Python};
+
+/// The Python exception a Python-implemented decoder raised, carried unchanged in
+/// [`DecoderError::Other`](pecos_decoder_core::DecoderError::Other).
+fn python_exception(error: &pecos_decoder_core::DecoderError) -> Option<PyErr> {
+    let pecos_decoder_core::DecoderError::Other(source) = error else {
+        return None;
+    };
+    let exception = source.downcast_ref::<PyErr>()?;
+    Some(Python::attach(|py| exception.clone_ref(py)))
+}
+
+/// Convert a failed shot. A Python exception the decoder raised reaches the caller
+/// as the same exception object, with the shot index added as a note.
+pub(crate) fn shot_decode_error(error: &ShotDecodeError) -> PyErr {
+    let Some(exception) = python_exception(&error.source) else {
+        return decoder_error(&error.source, error.to_string());
+    };
+    Python::attach(|py| {
+        match exception.add_note(py, format!("decoder failed on shot {}", error.shot_index)) {
+            Ok(()) => exception,
+            // As in Python, a failing `add_note` replaces the exception it was
+            // called on, which becomes the new exception's context.
+            Err(note_error) => {
+                note_error.set_context(py, Some(exception));
+                note_error
+            }
+        }
+    })
+}
 
 /// Classify the original decoder error while retaining boundary-specific context.
+///
+/// A Python exception a Python-implemented decoder raised is returned unchanged.
 pub(crate) fn decoder_error(error: &pecos_decoder_core::DecoderError, message: String) -> PyErr {
     use pecos_decoder_core::DecoderError;
+    if let Some(exception) = python_exception(error) {
+        return exception;
+    }
     match error {
         DecoderError::BackendUnavailable { family: "mwpf", .. } => PyValueError::new_err(
             "MWPF decoder is not available in this build. \

@@ -3,7 +3,7 @@
 
 use pecos_frontier::windowed::{WindowConfig, WindowPlan, WindowedDecoder, ZeroSyndromePolicy};
 use pecos_frontier::{
-    FrontierCommittee, FrontierConfig, MetricMode, SparseDem, deadline_column_order,
+    DecoderError, FrontierCommittee, FrontierConfig, MetricMode, SparseDem, deadline_column_order,
 };
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -208,8 +208,25 @@ fn failed_window_retains_error_then_next_nonzero_shot_starts_fresh() {
     let next = decoder.decode(&[1, 0]).unwrap();
     assert_eq!(next.predicted.to_u64(), Some(1));
     assert!(next.windows[0].committee.is_some());
-    assert!(decoder.decode(&[2, 0]).is_err());
-    assert!(decoder.decode(&[0]).is_err());
+    let nonbinary = decoder.decode(&[2, 0]).unwrap_err();
+    assert!(
+        matches!(&nonbinary.error, DecoderError::InvalidConfiguration(message)
+            if message == "syndrome bit value is invalid"),
+        "{nonbinary:?}"
+    );
+    let short = decoder.decode(&[0]).unwrap_err();
+    assert!(
+        matches!(
+            short.error,
+            DecoderError::InvalidDimensions {
+                expected: 2,
+                actual: 1
+            }
+        ),
+        "{short:?}"
+    );
+    assert_eq!(short.failed_window, None);
+    assert_eq!(short.completed_windows, []);
 }
 
 #[test]

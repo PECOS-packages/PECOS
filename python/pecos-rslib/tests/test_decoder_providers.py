@@ -1,5 +1,6 @@
 """Optional decoder providers use the regular batch planner without native dependencies."""
 
+import re
 import subprocess
 import sys
 import weakref
@@ -344,17 +345,92 @@ def test_member_access_error_subclasses_are_protocol_errors():
         assert required in message
 
 
-def test_provider_per_shot_exception_keeps_shot_context():
+def _failing_provider(version, failure):
+    """A provider whose worker fails on every shot with a fired detector."""
+
+    def answer(syndrome):
+        if not syndrome[0]:
+            return [0, 0]
+        if failure == "result":
+            return "not words"
+        raise failure
+
     class FailingWorker(Worker):
         def _pecos_decode_obs(self, syndrome):
-            raise KeyError("boom")
+            return answer(syndrome)
+
+        def _pecos_decode_outcome(self, syndrome):
+            words = answer(syndrome)
+            return words, False, None, []
+
+    class FailingPrepared:
+        def _pecos_build_decoder(self):
+            return FailingWorker()
 
     class FailingProvider(Provider):
+        _pecos_decoder_api_version = version
+
         def _pecos_build_decoder(self, dem):
             return FailingWorker()
 
-    with pytest.raises(RuntimeError, match="decoder failed on shot 0:.*KeyError.*boom"):
-        SampleBatch([[0]], [0]).decode(DEM, FailingProvider())
+        def _pecos_prepare_decoder(self, dem):
+            return FailingPrepared()
+
+    return FailingProvider()
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("version", [1, 2])
+def test_provider_per_shot_exception_reaches_the_caller(version, workers):
+    error = KeyError("boom")
+    batch = SampleBatch([[0], [1]], [0, 0])
+    with pytest.raises(KeyError) as caught:
+        batch.decode(DEM, _failing_provider(version, error), workers=workers)
+    assert caught.value is error
+    assert error.__notes__ == ["decoder failed on shot 1"]
+
+    error = KeyError("boom")
+    sampler = DemSampler.from_dem_string("error(0.5) D0 L70\n")
+    with pytest.raises(KeyError) as caught:
+        sampler.decode(DEM, 64, _failing_provider(version, error), workers=workers, seed=2)
+    assert caught.value is error
+    assert len(error.__notes__) == 1
+    assert re.fullmatch(r"decoder failed on shot \d+", error.__notes__[0])
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("version", [1, 2])
+def test_provider_result_type_error_reaches_the_caller(version, workers):
+    with pytest.raises(TypeError) as caught:
+        SampleBatch([[0], [1]], [0, 0]).decode(DEM, _failing_provider(version, "result"), workers=workers)
+    assert caught.value.__notes__ == ["decoder failed on shot 1"]
+
+
+def test_foreign_decoder_exception_reaches_the_caller():
+    from pecos_rslib import PyForeignDecoder
+
+    error = KeyError("boom")
+
+    class Failing:
+        def decode(self, syndrome):
+            raise error
+
+        def check_count(self):
+            return 1
+
+        def bit_count(self):
+            return 1
+
+    with pytest.raises(KeyError) as caught:
+        PyForeignDecoder(Failing()).decode([1])
+    assert caught.value is error
+
+    class Malformed(Failing):
+        def decode(self, syndrome):
+            return {"weight": 1.0}
+
+    with pytest.raises(RuntimeError, match="missing 'observable'"):
+        PyForeignDecoder(Malformed()).decode([1])
 
 
 @pytest.mark.parametrize("version", [1, 2])

@@ -398,7 +398,7 @@ def test_raw_pymatching_invalid_error_probability():
     ("decoder_class", "message"),
     [
         (PyMatchingDecoder, "Invalid syndrome: expected length 2, got {length}$"),
-        (FusionBlossomDecoder, "Syndrome length {length} doesn't match number of nodes 2$"),
+        (FusionBlossomDecoder, "Invalid input dimensions: expected 2, got {length}$"),
     ],
 )
 def test_raw_matching_wrong_length(decoder_class, message, length):
@@ -406,3 +406,38 @@ def test_raw_matching_wrong_length(decoder_class, message, length):
     decoder.decode_syndrome([1, 0])
     with pytest.raises(ValueError, match=message.format(length=length)):
         decoder.decode_syndrome([0] * length)
+
+
+# PyMatching rejects a decomposed error with an undetectable component while it
+# builds the correlated graph from DEM text.
+_UNDETECTABLE_COMPONENT_DEM = "error(0.1) D0 ^ L0\ndetector D0"
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_correlated_pymatching_dem_rejection_is_input_error(workers):
+    from pecos_rslib.decoders import DecoderSpec
+
+    with pytest.raises(ValueError, match="undetectable component"):
+        SampleBatch([[0]], [0]).decode(
+            _UNDETECTABLE_COMPONENT_DEM, DecoderSpec.parse("pymatching_correlated"), workers=workers
+        )
+
+
+def test_raw_correlated_pymatching_dem_rejection_is_input_error():
+    with pytest.raises(ValueError, match="undetectable component"):
+        PyMatchingDecoder.from_dem_with_correlations(_UNDETECTABLE_COMPONENT_DEM)
+
+
+# Every caller mechanism's prior is checked before projection, so the membership
+# cannot hide a prior above 0.5.
+@pytest.mark.parametrize(
+    ("dem", "membership"),
+    [
+        pytest.param("error(0.1) D0 L0\nerror(0.9) D1", [[0]], id="projected-away"),
+        pytest.param("error(0.1) D0 L0\nerror(0.9) D1", [[]], id="empty-membership"),
+        pytest.param("error(0.1) D0 L0\nerror(0.9) D1 D2 D3", [[0, 1, 2, 3]], id="three-detectors"),
+    ],
+)
+def test_logical_membership_does_not_hide_a_prior_above_half(dem, membership):
+    with pytest.raises(ValueError, match=r"DEM error probability 0\.9 is above 0\.5"):
+        LogicalSubgraphDecoder.from_membership(dem, membership, "pymatching")

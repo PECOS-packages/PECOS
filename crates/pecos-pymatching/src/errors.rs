@@ -13,7 +13,7 @@ pub enum PyMatchingError {
 
     /// FFI-related errors from the C++ library
     #[error("FFI error: {0}")]
-    Ffi(#[from] cxx::Exception),
+    Ffi(cxx::Exception),
 
     /// Invalid check matrix
     #[error("Invalid check matrix: {0}")]
@@ -41,6 +41,18 @@ pub enum CheckMatrixError {
 
     #[error("Empty check matrix")]
     EmptyMatrix,
+}
+
+impl From<cxx::Exception> for PyMatchingError {
+    /// A C++ exception the bridge marked as a rejection of caller input becomes
+    /// [`PyMatchingError::Configuration`] with the upstream text; any other stays
+    /// [`PyMatchingError::Ffi`].
+    fn from(error: cxx::Exception) -> Self {
+        match error.what().strip_prefix(crate::bridge::INPUT_ERROR_PREFIX) {
+            Some(message) => PyMatchingError::Configuration(message.to_string()),
+            None => PyMatchingError::Ffi(error),
+        }
+    }
 }
 
 impl From<PyMatchingError> for DecoderError {

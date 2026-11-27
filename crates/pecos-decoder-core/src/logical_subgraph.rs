@@ -140,6 +140,12 @@ pub struct LogicalSubgraph {
     pub graph: DemMatchingGraph,
 }
 
+/// Extra time padding around each boundary edge.
+/// `None` = exact boundary edge times only (default, matches lomatching).
+/// `Some(r)` = include detectors at times `t ± r` around each boundary
+/// edge time `t`, for additional matching context.
+pub type MaxTimeRadius = Option<i64>;
+
 /// Partition a DEM into per-logical-operator subgraphs using stabilizer coordinates.
 ///
 /// This is the correct algorithm: uses the physical structure (which detectors
@@ -155,16 +161,10 @@ pub struct LogicalSubgraph {
 ///
 /// # Errors
 ///
-/// Returns an error if the DEM is malformed or if a detector used in an error
-/// mechanism has coordinates that match no stabilizer position in
+/// Returns an error if the DEM is malformed, if a mechanism with a positive
+/// prior and at least one detector has a prior above 0.5, or if a detector used
+/// in an error mechanism has coordinates that match no stabilizer position in
 /// `stab_coords`.
-///
-/// Extra time padding around each boundary edge.
-/// `None` = exact boundary edge times only (default, matches lomatching).
-/// `Some(r)` = include detectors at times `t ± r` around each boundary
-/// edge time `t`, for additional matching context.
-pub type MaxTimeRadius = Option<i64>;
-
 pub fn partition_dem_by_logical(
     dem_str: &str,
     stab_coords: &StabCoords,
@@ -353,13 +353,23 @@ pub fn coordinate_membership_from_dem(
 /// # Errors
 ///
 /// Returns [`DecoderError::InvalidConfiguration`] if a membership id is out of
-/// range, or if a mechanism with a one- or two-detector component has a prior
-/// above 0.5; each mechanism's own prior is checked, before parallel mechanisms
-/// are merged.
+/// range, or if any mechanism with a positive prior and at least one detector
+/// has a prior above 0.5. Every such mechanism of `sdem` is checked once, before
+/// projection and before parallel mechanisms are merged, so the result does not
+/// depend on `membership`.
 pub fn subgraphs_from_membership(
     sdem: &SparseDem,
     membership: &[Vec<usize>],
 ) -> Result<Vec<LogicalSubgraph>, DecoderError> {
+    // Check the caller's priors before projecting: a sub-DEM rendered from a
+    // subgraph holds merged priors, which are at most 0.5 whenever every merged
+    // prior is.
+    for (p, dets, _) in &sdem.mechanisms {
+        if *p > 0.0 && !dets.is_empty() {
+            crate::dem::check_matching_prior(*p)?;
+        }
+    }
+
     let mut subgraphs = Vec::with_capacity(membership.len());
 
     for (obs_idx, detectors) in membership.iter().enumerate() {
@@ -421,10 +431,6 @@ pub fn subgraphs_from_membership(
 
             match sub_dets.len() {
                 1 | 2 => {
-                    // Check the caller's prior before merging: a sub-DEM
-                    // rendered from this graph holds merged priors, which are
-                    // at most 0.5 whenever every merged prior is.
-                    crate::dem::check_matching_prior(*p)?;
                     edges.push(MatchingEdge {
                         node1: sub_dets[0],
                         node2: sub_dets.get(1).copied(),
@@ -961,6 +967,35 @@ mod tests {
             subgraphs_from_membership(&sdem, &[vec![5usize]]),
             Err(DecoderError::InvalidConfiguration(_))
         ));
+    }
+
+    #[test]
+    fn membership_does_not_decide_the_prior_check() {
+        let is_prior_error = |result: Result<Vec<LogicalSubgraph>, DecoderError>| {
+            matches!(result, Err(DecoderError::InvalidConfiguration(message))
+                if message.starts_with("DEM error probability 0.9 is above 0.5"))
+        };
+        // D1's mechanism is projected away by [[0]] and dropped by an empty
+        // membership or by no observables at all.
+        let sdem = SparseDem::from_dem_str("error(0.1) D0 L0\nerror(0.9) D1").unwrap();
+        for membership in [vec![vec![0usize]], vec![vec![]], vec![]] {
+            assert!(
+                is_prior_error(subgraphs_from_membership(&sdem, &membership)),
+                "{membership:?}"
+            );
+        }
+        // A mechanism projected to three detectors is checked too.
+        let sdem = SparseDem::from_dem_str("error(0.1) D0 L0\nerror(0.9) D1 D2 D3").unwrap();
+        assert!(is_prior_error(subgraphs_from_membership(
+            &sdem,
+            &[vec![0, 1, 2, 3]]
+        )));
+
+        // Mechanisms without a positive prior or without detectors stay unchecked.
+        let sdem =
+            SparseDem::from_dem_str("error(0.1) D0 L0\nerror(0) D1\nerror(0.9) L0\ndetector D1")
+                .unwrap();
+        assert!(subgraphs_from_membership(&sdem, &[vec![0]]).is_ok());
     }
 
     #[test]

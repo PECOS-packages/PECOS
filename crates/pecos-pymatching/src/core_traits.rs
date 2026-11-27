@@ -327,6 +327,68 @@ mod tests {
     }
 
     #[test]
+    fn upstream_dem_rejection_is_a_configuration_error() {
+        // PyMatching throws `std::invalid_argument` for a decomposed error with an
+        // undetectable component; the bridge reports it as caller input.
+        let dem = "error(0.1) D0 ^ L0\ndetector D0";
+        let error = crate::PyMatchingDecoder::from_dem_with_correlations(dem, true)
+            .err()
+            .expect("correlated PyMatching rejects an undetectable component");
+        assert!(
+            matches!(&error, crate::PyMatchingError::Configuration(message)
+                if message.starts_with("Failed to parse DEM: ")
+                    && message.contains("undetectable component")),
+            "{error:?}"
+        );
+        let error = DecoderError::from(error);
+        assert!(
+            matches!(&error, DecoderError::InvalidConfiguration(message)
+                if message.contains("undetectable component")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn disallowed_parallel_edge_is_a_configuration_error() {
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 D1").expect("valid DEM builds");
+        let error = decoder
+            .add_edge(
+                0,
+                1,
+                &[],
+                Some(1.0),
+                None,
+                Some(crate::MergeStrategy::Disallow),
+            )
+            .expect_err("a disallowed parallel edge is rejected");
+        assert!(
+            matches!(&error, crate::PyMatchingError::Configuration(message)
+                if message.starts_with("Failed to add edge: ")
+                    && message.contains("already exists")),
+            "{error:?}"
+        );
+        decoder
+            .add_boundary_edge(0, &[], Some(1.0), None, None)
+            .expect("the first boundary edge is added");
+        let error = decoder
+            .add_boundary_edge(
+                0,
+                &[],
+                Some(1.0),
+                None,
+                Some(crate::MergeStrategy::Disallow),
+            )
+            .expect_err("a disallowed parallel boundary edge is rejected");
+        assert!(
+            matches!(&error, crate::PyMatchingError::Configuration(message)
+                if message.starts_with("Failed to add boundary edge: ")
+                    && message.contains("already exists")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
     fn correlated_prior_above_half_is_a_configuration_error() {
         let dem = "error(0.7) D0 L0\nerror(0.1) D0 D1";
         let result = crate::PyMatchingDecoder::from_dem_with_correlations(dem, true);

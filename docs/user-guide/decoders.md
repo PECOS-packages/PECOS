@@ -200,6 +200,11 @@ union-find. The other families treat any nonzero byte as a fired detector.
 PyMatching with boundary nodes accepts dense syndromes of `num_detectors` to
 `num_nodes` entries, as upstream PyMatching does, and ignores the entries at
 boundary nodes. Internal and backend execution failures remain `RuntimeError`.
+An exception that a Python-implemented decoder (`PyForeignDecoder` or a decoder
+provider) raises while decoding reaches the caller unchanged; batch decoding adds
+a note naming the shot. Negative or too-large integers for unsigned parameters
+raise `OverflowError` (Python's integer conversion), except where a parameter's
+documentation says `ValueError`.
 Input errors abort batch decoding.
 `SampleBatch.compare_decoders` raises `ValueError` before decoding if either
 decoder's detector count differs from the batch, and otherwise counts per-shot

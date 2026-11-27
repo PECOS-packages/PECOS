@@ -43,6 +43,34 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   documented caller obligations; reusing a failed instance, for example through
   Selene's interactive `next_shot`, now fails instead of continuing.
 
+- **Breaking:** More decoder input errors keep their category, and length errors
+  share one form (#1749). A DEM that Stim or PyMatching rejects with
+  `std::invalid_argument` while PyMatching builds its graph, for example a
+  decomposed error with an undetectable component under `pymatching_correlated`,
+  is now `PyMatchingError::Configuration` (`ValueError`) instead of an FFI error
+  (`RuntimeError`); so is an edge that `add_edge` or `add_boundary_edge` refuses
+  under `MergeStrategy::Disallow`. Other C++ exceptions stay FFI errors.
+  `subgraphs_from_membership`, and the logical-subgraph decoders and partition
+  functions built on it, check the prior of every mechanism with a positive prior
+  and at least one detector before projecting, so a prior above 0.5 is rejected
+  whatever the membership, including on mechanisms that the membership drops or
+  projects to three or more detectors. A syndrome of the wrong length is now
+  `DecoderError::InvalidDimensions` ("Invalid input dimensions: expected N, got
+  M") on Fusion Blossom (new `FusionBlossomError::InvalidDimensions`, also used
+  when converting from `DecoderError`), Relay-BP and min-sum BP (new
+  `RelayBpError::InvalidDimensions`), the LDPC flip, union-find, BeliefFind and
+  MBP decoders (`LdpcError::InvalidDimensions` instead of `InvalidInput`), the
+  loss-DEM `BiasedDecoder` (instead of `InvalidConfiguration`) and the
+  experimental windowed frontier decoder; nonbinary entries keep their own error.
+  An exception that a Python decoder provider's `_pecos_decode_obs` or
+  `_pecos_decode_outcome` raises, including a `TypeError` for a result of the
+  wrong type, now reaches the caller of `SampleBatch.decode` or `DemSampler`
+  decoding as the same exception object with a note naming the shot (`decoder
+  failed on shot N`), instead of a `RuntimeError` wrapping its text; so does an
+  exception from the wrapped `decode()` of `PyForeignDecoder.decode`, whose
+  `PyForeignDecoderError` is now an enum. Negative integers for unsigned Python
+  parameters still raise `OverflowError`; the decoder guide now says so.
+
 - `pecos-random` implements `RapidRng`, the generator behind `PecosRng` and
   `PecosScalarRng`, itself instead of wrapping the `rapidrand` crate, and exports
   it as `pecos_random::RapidRng`. Seeded `PecosRng` and `PecosScalarRng` streams

@@ -43,10 +43,10 @@ pub use streaming::{StreamingMode, StreamingProgress, TrellisStreamingDecoder};
 
 use factor::{FactorModel, NormalizedFactor, Outcome};
 use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
-use pecos_decoder_core::ObservableDecoder;
 pub use pecos_decoder_core::dem::SparseDem;
 pub use pecos_decoder_core::errors::DecoderError;
 pub use pecos_decoder_core::obs_mask::ObsMask;
+use pecos_decoder_core::{ObservableDecoder, check_syndrome_length};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -2768,12 +2768,7 @@ impl TrellisDecoder {
     /// invalidates the previous shot, including a residual outcome.
     pub fn prepare(&mut self, syndrome: &[u8]) -> Result<TrellisPrepared, DecoderError> {
         self.scratch.prepared = None;
-        if syndrome.len() != self.model.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.model.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.model.num_detectors, syndrome.len())?;
         let observed = syndrome_to_words(syndrome, self.model.detector_words);
         for (word, ((&seen, &forced), &touched)) in observed
             .iter()

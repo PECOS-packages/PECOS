@@ -25,7 +25,7 @@
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
 use pecos_decoder_core::dem::{DemMatchingGraph, MatchingEdge};
-use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::errors::{DecoderError, check_syndrome_length};
 
 /// Compute the quantized spatial midpoint of an edge from detector coordinates.
 ///
@@ -297,9 +297,7 @@ impl CssUfDecoder {
             (x_syndrome.len(), self.x_num_detectors),
             (z_syndrome.len(), self.z_num_detectors),
         ] {
-            if actual != expected {
-                return Err(DecoderError::InvalidDimensions { expected, actual });
-            }
+            check_syndrome_length(expected, actual)?;
         }
         Ok(())
     }
@@ -356,12 +354,7 @@ impl pecos_decoder_core::ObservableDecoder for CssUfDecoder {
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let split = self.x_num_detectors;
         let expected = split + self.z_num_detectors;
-        if syndrome.len() != expected {
-            return Err(DecoderError::InvalidDimensions {
-                expected,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(expected, syndrome.len())?;
         let x_syn = &syndrome[..split];
         let z_syn = &syndrome[split..];
         let (x_obs, z_obs) = self.decode_css(x_syn, z_syn)?;

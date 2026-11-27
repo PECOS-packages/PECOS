@@ -20,6 +20,10 @@ pub enum RelayBpError {
     /// Invalid syndrome pattern
     #[error("Invalid syndrome: {0}")]
     InvalidSyndrome(String),
+
+    /// Syndrome length differs from the check count
+    #[error("Invalid input dimensions: expected {expected}, got {actual}")]
+    InvalidDimensions { expected: usize, actual: usize },
 }
 
 /// Result type for Relay BP operations
@@ -38,6 +42,9 @@ impl From<RelayBpError> for pecos_decoder_core::DecoderError {
             }
             RelayBpError::InvalidSyndrome(msg) => {
                 pecos_decoder_core::DecoderError::InvalidSyndrome(msg)
+            }
+            RelayBpError::InvalidDimensions { expected, actual } => {
+                pecos_decoder_core::DecoderError::InvalidDimensions { expected, actual }
             }
         }
     }

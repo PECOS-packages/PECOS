@@ -19,7 +19,7 @@
 
 use ndarray::ArrayView2;
 use pecos_decoder_core::dem::{DemCheckMatrix, SparseDem};
-use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::errors::{DecoderError, check_syndrome_length};
 
 /// Finite LLR magnitude used to represent certainty throughout native BP.
 pub const LLR_SATURATION: f64 = 30.0;
@@ -416,12 +416,7 @@ pub fn min_sum_bp_into(
     scratch: &mut BpScratch,
     posterior: &mut [f64],
 ) -> Result<(), DecoderError> {
-    if syndrome.len() != graph.num_checks {
-        return Err(DecoderError::InvalidDimensions {
-            expected: graph.num_checks,
-            actual: syndrome.len(),
-        });
-    }
+    check_syndrome_length(graph.num_checks, syndrome.len())?;
     if posterior.len() != graph.num_vars {
         return Err(DecoderError::InvalidDimensions {
             expected: graph.num_vars,

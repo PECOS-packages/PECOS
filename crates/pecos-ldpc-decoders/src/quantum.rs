@@ -156,7 +156,7 @@ impl MbpDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome length doesn't match expected size,
+    /// Returns `LdpcError::InvalidDimensions` if the syndrome length doesn't match expected size,
     /// or `LdpcError::Ldpc` if the C++ decoder encounters an error.
     ///
     /// # Panics
@@ -164,11 +164,10 @@ impl MbpDecoder {
     /// Panics if the syndrome array is not contiguous in memory.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<Array1<PauliError>, LdpcError> {
         if syndrome.len() != self.n_stabs {
-            return Err(LdpcError::InvalidInput(format!(
-                "Syndrome length {} does not match total stabilizers {}",
-                syndrome.len(),
-                self.n_stabs
-            )));
+            return Err(LdpcError::InvalidDimensions {
+                expected: self.n_stabs,
+                actual: syndrome.len(),
+            });
         }
 
         let syndrome_slice = syndrome
@@ -196,7 +195,7 @@ impl MbpDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome length doesn't match expected size,
+    /// Returns `LdpcError::InvalidDimensions` if the syndrome length doesn't match expected size,
     /// or `LdpcError::Ldpc` if the C++ decoder encounters an error.
     ///
     /// # Panics
@@ -204,11 +203,10 @@ impl MbpDecoder {
     /// Panics if the syndrome array is not contiguous in memory.
     pub fn decode_gf4(&mut self, syndrome: &ArrayView1<u8>) -> Result<Array1<u8>, LdpcError> {
         if syndrome.len() != self.n_stabs {
-            return Err(LdpcError::InvalidInput(format!(
-                "Syndrome length {} does not match total stabilizers {}",
-                syndrome.len(),
-                self.n_stabs
-            )));
+            return Err(LdpcError::InvalidDimensions {
+                expected: self.n_stabs,
+                actual: syndrome.len(),
+            });
         }
 
         let syndrome_slice = syndrome

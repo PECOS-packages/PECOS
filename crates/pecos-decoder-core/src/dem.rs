@@ -5,7 +5,7 @@
 
 pub mod grammar;
 
-use crate::errors::DecoderError;
+use crate::errors::{DecoderError, check_syndrome_length};
 use grammar::{Kind, Target, index_u32, parse_line, target_indices, xor_indices};
 
 pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
@@ -399,12 +399,7 @@ impl DemSupport {
         syndrome: &mut [u8],
         num_detectors: usize,
     ) -> Result<(), DecoderError> {
-        if syndrome.len() != num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(num_detectors, syndrome.len())?;
         self.validate_dimensions(num_detectors)?;
         if let Some((index, value)) = syndrome.iter().enumerate().find(|(_, value)| **value > 1) {
             return Err(DecoderError::InvalidSyndrome(format!(
@@ -1066,12 +1061,7 @@ where
         use super::DecodingResultTrait;
 
         // Validate before XOR, including for wrappers constructed without reduction.
-        if syndrome.len() != self.dem.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.dem.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.dem.num_detectors, syndrome.len())?;
         if self.syndrome_arr.len() != self.dem.num_detectors {
             self.syndrome_arr = ndarray::Array1::zeros(self.dem.num_detectors);
         }

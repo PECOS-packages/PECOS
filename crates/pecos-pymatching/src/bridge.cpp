@@ -93,6 +93,9 @@ std::unique_ptr<PyMatchingGraph> PyMatchingGraph::from_dem(
         graph->pimpl_->enable_correlations_ = enable_correlations;
 
         return graph;
+    } catch (const std::invalid_argument& e) {
+        throw std::runtime_error(
+            std::string(pymatching_input_error_prefix()) + "Failed to parse DEM: " + e.what());
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("Failed to parse DEM: ") + e.what());
     }
@@ -139,6 +142,9 @@ void PyMatchingGraph::add_edge(
             pimpl_->user_graph_->add_or_merge_edge(node1, node2, obs_vec, weight, NAN, pm_strategy);
         }
         pimpl_->mwpm_.reset();  // Invalidate cached MWPM
+    } catch (const std::invalid_argument& e) {
+        throw std::runtime_error(
+            std::string(pymatching_input_error_prefix()) + "Failed to add edge: " + e.what());
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("Failed to add edge: ") + e.what());
     }
@@ -180,6 +186,9 @@ void PyMatchingGraph::add_boundary_edge(
             pimpl_->user_graph_->add_or_merge_boundary_edge(node, obs_vec, weight, NAN, pm_strategy);
         }
         pimpl_->mwpm_.reset();  // Invalidate cached MWPM
+    } catch (const std::invalid_argument& e) {
+        throw std::runtime_error(
+            std::string(pymatching_input_error_prefix()) + "Failed to add boundary edge: " + e.what());
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("Failed to add boundary edge: ") + e.what());
     }

@@ -474,7 +474,7 @@ class TestUnionFindDecoder:
 
         H = SparseMatrix([[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1]])
         decoder = UnionFindBuilder(H).build()
-        with pytest.raises(ValueError, match="Syndrome length 2 does not match check count 3"):
+        with pytest.raises(ValueError, match="Invalid input dimensions: expected 3, got 2"):
             decoder.decode_syndrome([0, 1])
 
         dem = "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1"
@@ -656,7 +656,7 @@ def test_relay_family_input_errors_are_value_errors(family: str) -> None:
     decoder = builder([[1, 1]], [0.1, 0.1]).build()
     with pytest.raises(ValueError, match=r"syndrome.*2"):
         decoder.decode([2])
-    with pytest.raises(ValueError, match="syndrome length"):
+    with pytest.raises(ValueError, match="Invalid input dimensions: expected 1, got 2"):
         decoder.decode([0, 0])
     with pytest.raises(ValueError, match="alpha"):
         builder([[1, 1]], [0.1, 0.1]).alpha(-1.0).build()

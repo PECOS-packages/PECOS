@@ -313,4 +313,21 @@ pub(crate) mod ffi {
         /// Returns a CXX exception if the range is invalid.
         fn pymatching_rand_float(from: f64, to: f64) -> Result<f64>;
     }
+
+    extern "Rust" {
+        /// Marker the C++ bridge prepends to a construction-time rejection of caller input.
+        fn pymatching_input_error_prefix() -> &'static str;
+    }
+}
+
+/// Marks a C++ exception as a rejection of caller input.
+///
+/// The C++ bridge prepends it when Stim or `PyMatching` throws `std::invalid_argument`
+/// while building a graph (DEM parsing or edge insertion); every other C++ exception
+/// carries no marker. [`PyMatchingError`](crate::PyMatchingError) strips it and reports
+/// a configuration error instead of an FFI failure.
+pub(crate) const INPUT_ERROR_PREFIX: &str = "pecos-pymatching input error: ";
+
+fn pymatching_input_error_prefix() -> &'static str {
+    INPUT_ERROR_PREFIX
 }

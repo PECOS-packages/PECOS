@@ -441,3 +441,11 @@ def test_manifest_rejects_invalid_qubit_count(harness, monkeypatch, qubits):
     monkeypatch.setattr(harness, "read_json", lambda _path: suite)
     with pytest.raises(ValueError, match="Invalid workload qubit count"):
         harness.manifest()
+
+
+def test_manifest_rejects_invalid_width(harness, monkeypatch):
+    suite = harness.manifest()
+    suite["cases"][-1]["wasm_int_width"] = 16
+    monkeypatch.setattr(harness, "read_json", lambda _path: suite)
+    with pytest.raises(ValueError, match=r"^Invalid workload WASM integer width: 16$"):
+        harness.manifest()

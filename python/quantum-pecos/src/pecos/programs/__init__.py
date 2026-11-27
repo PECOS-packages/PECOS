@@ -57,7 +57,6 @@ Example:
     >>> results = sim(Guppy(my_circuit)).qubits(1).run(1000)
 """
 
-from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -65,6 +64,8 @@ import pecos_rslib
 from pecos_rslib import hugr_lowering
 
 if TYPE_CHECKING:
+    from pecos_selene_wasm import WasmOptions
+
     from pecos.typing import (
         CompiledPhirJson,
         CompiledQasm,
@@ -103,27 +104,26 @@ class HugrPackage(Protocol):
 def _hugr_to_program(
     data: bytes,
     *,
-    wasm_modules: Mapping[str, bytes] | None = None,
-    wasm_int_width: int | str = 64,
-    wasm_timeout_seconds: float = 1.0,
-    wasm_auto_init: bool = True,
-    wasm_state_scope: str = "shot",
-    wasm_async_workers: int = 0,
+    wasm: "WasmOptions | None" = None,
 ) -> "CompiledQis":
     """Lower a HUGR envelope to the shared executable program representation."""
-    if wasm_modules is None:
+    if wasm is None:
+        # Compiler-boundary tests monkeypatch a callable accepting one positional argument.
         return pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(data))
-    return pecos_rslib.Qis(
-        hugr_lowering.compile_hugr_to_qis(
-            data,
-            wasm_modules=wasm_modules,
-            wasm_int_width=wasm_int_width,
-            wasm_timeout_seconds=wasm_timeout_seconds,
-            wasm_auto_init=wasm_auto_init,
-            wasm_state_scope=wasm_state_scope,
-            wasm_async_workers=wasm_async_workers,
-        ),
-    )
+    return pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(data, wasm=wasm))
+
+
+def _check_wasm(wasm: "WasmOptions | None") -> None:
+    """Check the optional object without importing the plugin for ordinary programs."""
+    if wasm is not None:
+        try:
+            from pecos_selene_wasm import WasmOptions
+        except ImportError as error:
+            msg = "Guppy WASM lowering requires the pecos-selene-wasm package (quantum-pecos[wasm])"
+            raise ImportError(msg) from error
+        if not isinstance(wasm, WasmOptions):
+            msg = f"wasm must be a WasmOptions; got {type(wasm).__name__}; pass wasm=WasmOptions(modules)"
+            raise TypeError(msg)
 
 
 class Guppy:
@@ -152,41 +152,17 @@ class Guppy:
         self,
         func: GuppyFunction,
         *,
-        wasm_modules: Mapping[str, bytes] | None = None,
-        wasm_int_width: int | str = 64,
-        wasm_timeout_seconds: float = 1.0,
-        wasm_auto_init: bool = True,
-        wasm_state_scope: str = "shot",
-        wasm_async_workers: int = 0,
+        wasm: "WasmOptions | None" = None,
     ) -> None:
-        """Initialize with a Guppy function and optional explicit WASM module bytes.
+        """Initialize with a Guppy function and optional validated WASM options.
 
-        Keys in ``wasm_modules`` are the module identifiers used by Guppy's
-        ``@wasm_module`` declarations. Requires ``quantum-pecos[wasm]``.
-        ``wasm_int_width="auto"`` selects each integer lane from its native export.
-        ``wasm_int_width=32`` selects exact i32 signatures for all WASM modules
-        (Guppy H2 mode); the default requires i64.
-        ``wasm_timeout_seconds`` sets a positive finite per-call execution limit
-        (default one second), also applied to module start and optional init.
-        ``wasm_auto_init=False`` skips optional exported init, never WASM start.
-        ``wasm_state_scope="worker"`` retains mutable WASM state across shots on
-        each execution worker; the default "shot" creates fresh instances.
-        ``wasm_async_workers`` enables a pool of 1..64 threads per execution
-        worker; default 0 executes inline. Overlap requires deferred result reads.
+        Requires ``quantum-pecos[wasm]`` when ``wasm`` is supplied. Module keys
+        match Guppy's ``@wasm_module`` identifiers.
         """
         self._func = func
         self._wasm_hugr_bytes = None
-        hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
-        hugr_lowering.validate_wasm_auto_init(wasm_auto_init, wasm_modules)
-        hugr_lowering.validate_wasm_state_scope(wasm_state_scope, wasm_modules)
-        hugr_lowering.validate_wasm_async_workers(wasm_async_workers, wasm_modules)
-        wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
-        self._wasm_timeout_seconds = wasm_timeout_seconds
-        self._wasm_auto_init = wasm_auto_init
-        self._wasm_state_scope = wasm_state_scope
-        self._wasm_async_workers = wasm_async_workers
-        self._wasm_int_width = wasm_int_width
-        self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
+        _check_wasm(wasm)
+        self._wasm = wasm
         self._program = None
 
     @property
@@ -199,7 +175,7 @@ class Guppy:
         """The compiled HUGR envelope, using the safe frontend for WASM."""
         from pecos._compilation import guppy_to_hugr
 
-        if self._wasm_modules is not None:
+        if self._wasm is not None:
             if self._wasm_hugr_bytes is None:
                 self._wasm_hugr_bytes = guppy_to_hugr(self._func, wasm=True)
             return self._wasm_hugr_bytes
@@ -208,15 +184,7 @@ class Guppy:
     def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            self._program = _hugr_to_program(
-                self.hugr_bytes,
-                wasm_modules=self._wasm_modules,
-                wasm_int_width=self._wasm_int_width,
-                wasm_timeout_seconds=self._wasm_timeout_seconds,
-                wasm_auto_init=self._wasm_auto_init,
-                wasm_state_scope=self._wasm_state_scope,
-                wasm_async_workers=self._wasm_async_workers,
-            )
+            self._program = _hugr_to_program(self.hugr_bytes, wasm=self._wasm)
         return self._program
 
 
@@ -241,26 +209,12 @@ class Hugr:
         self,
         data: bytes,
         *,
-        wasm_modules: Mapping[str, bytes] | None = None,
-        wasm_int_width: int | str = 64,
-        wasm_timeout_seconds: float = 1.0,
-        wasm_auto_init: bool = True,
-        wasm_state_scope: str = "shot",
-        wasm_async_workers: int = 0,
+        wasm: "WasmOptions | None" = None,
     ) -> None:
-        """Initialize with HUGR bytes and optional explicit WASM module bytes."""
+        """Initialize with HUGR bytes and optional validated WASM options."""
         self._data = data
-        hugr_lowering.validate_wasm_options(wasm_modules, wasm_int_width)
-        hugr_lowering.validate_wasm_auto_init(wasm_auto_init, wasm_modules)
-        hugr_lowering.validate_wasm_state_scope(wasm_state_scope, wasm_modules)
-        hugr_lowering.validate_wasm_async_workers(wasm_async_workers, wasm_modules)
-        wasm_timeout_seconds = hugr_lowering.validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
-        self._wasm_timeout_seconds = wasm_timeout_seconds
-        self._wasm_auto_init = wasm_auto_init
-        self._wasm_state_scope = wasm_state_scope
-        self._wasm_async_workers = wasm_async_workers
-        self._wasm_int_width = wasm_int_width
-        self._wasm_modules = None if wasm_modules is None else dict(wasm_modules)
+        _check_wasm(wasm)
+        self._wasm = wasm
         self._program = None
 
     @property
@@ -273,63 +227,29 @@ class Hugr:
         cls,
         path: str | Path,
         *,
-        wasm_modules: Mapping[str, bytes] | None = None,
-        wasm_int_width: int | str = 64,
-        wasm_timeout_seconds: float = 1.0,
-        wasm_auto_init: bool = True,
-        wasm_state_scope: str = "shot",
-        wasm_async_workers: int = 0,
+        wasm: "WasmOptions | None" = None,
     ) -> "Hugr":
         """Create from a HUGR file."""
         with Path(path).open("rb") as f:
-            return cls(
-                f.read(),
-                wasm_modules=wasm_modules,
-                wasm_int_width=wasm_int_width,
-                wasm_timeout_seconds=wasm_timeout_seconds,
-                wasm_auto_init=wasm_auto_init,
-                wasm_state_scope=wasm_state_scope,
-                wasm_async_workers=wasm_async_workers,
-            )
+            return cls(f.read(), wasm=wasm)
 
     @classmethod
     def from_bytes(
         cls,
         data: bytes,
         *,
-        wasm_modules: Mapping[str, bytes] | None = None,
-        wasm_int_width: int | str = 64,
-        wasm_timeout_seconds: float = 1.0,
-        wasm_auto_init: bool = True,
-        wasm_state_scope: str = "shot",
-        wasm_async_workers: int = 0,
+        wasm: "WasmOptions | None" = None,
     ) -> "Hugr":
         """Create from HUGR bytes.
 
         This is an alias for the constructor.
         """
-        return cls(
-            data,
-            wasm_modules=wasm_modules,
-            wasm_int_width=wasm_int_width,
-            wasm_timeout_seconds=wasm_timeout_seconds,
-            wasm_auto_init=wasm_auto_init,
-            wasm_state_scope=wasm_state_scope,
-            wasm_async_workers=wasm_async_workers,
-        )
+        return cls(data, wasm=wasm)
 
     def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            self._program = _hugr_to_program(
-                self._data,
-                wasm_modules=self._wasm_modules,
-                wasm_int_width=self._wasm_int_width,
-                wasm_timeout_seconds=self._wasm_timeout_seconds,
-                wasm_auto_init=self._wasm_auto_init,
-                wasm_state_scope=self._wasm_state_scope,
-                wasm_async_workers=self._wasm_async_workers,
-            )
+            self._program = _hugr_to_program(self._data, wasm=self._wasm)
         return self._program
 
 

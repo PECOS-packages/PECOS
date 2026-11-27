@@ -9,9 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import heapq
-import math
 import re
-import reprlib
 import struct
 from typing import TYPE_CHECKING
 
@@ -19,9 +17,9 @@ from hugr.hugr import Hugr
 from hugr.package import Package
 from selene_hugr_qis_compiler import compile_to_llvm_ir
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from pecos_selene_wasm.options import WasmOptions
 
+if TYPE_CHECKING:
     from guppylang.defs import GuppyFunctionDefinition
 
 _I64 = {
@@ -395,8 +393,8 @@ def _adapter(
     symbol: str,
     operation: dict,
     unique: str,
-    wasm_int_width: int | str = 64,
-    wasm_async_workers: int = 0,
+    int_width: int | str,
+    async_workers: int,
 ) -> str:
     name, args = operation["name"], operation["args"]
     inputs, outputs = _validate(operation)
@@ -417,9 +415,9 @@ entry:
             data = args[0]["arg"].encode("utf-8")
             constants = _constant(unique, data)
             lookup = f"@pecos_wasm_v1_lookup(i64 %module, ptr @{unique}, i64 {len(data)}, i64 {inputs}, i64 {outputs})"
-        if name == "lookup_by_id" or "double" in in_types + out_types or wasm_int_width != 64:
-            integer_tag = {64: 0, 32: 2, "auto": 3}[wasm_int_width]
-            version = 3 if wasm_int_width == "auto" else 2
+        if name == "lookup_by_id" or "double" in in_types + out_types or int_width != 64:
+            integer_tag = {64: 0, 32: 2, "auto": 3}[int_width]
+            version = 3 if int_width == "auto" else 2
             constants += _constant(
                 unique + "_inputs",
                 bytes(1 if ty == "double" else integer_tag for ty in in_types),
@@ -461,8 +459,8 @@ entry:
                 f"  store i64 {value}, ptr %ptr{i}\n"
             )
         target = (
-            f"@pecos_wasm_v2_call(i64 %context, i64 %function, ptr %args, i64 {inputs}, i64 {wasm_async_workers})"
-            if wasm_async_workers
+            f"@pecos_wasm_v2_call(i64 %context, i64 %function, ptr %args, i64 {inputs}, i64 {async_workers})"
+            if async_workers
             else f"@pecos_wasm_v1_call(i64 %context, i64 %function, ptr %args, i64 {inputs})"
         )
         return f"""define i64 {symbol}(i64 %context, i64 %function{parameters}) {{
@@ -493,31 +491,13 @@ entry:
 """
 
 
-def _describe_value(value: object) -> str:
-    """Return a short repr of a rejected option for an error message; never raise.
-
-    reprlib bounds the length. Formatting can still fail (an int longer than
-    ``sys.get_int_max_str_digits()`` before Python 3.14, or a hostile object), and that
-    must not replace the validation error, so any failure yields a fixed placeholder.
-    """
-    try:
-        return reprlib.repr(value)
-    except Exception:  # noqa: BLE001 - a diagnostic must never replace the error it reports
-        return "<unprintable value>"
-
-
 def compile_wasm(
     program: bytes | Package | GuppyFunctionDefinition,
-    modules: Mapping[str, bytes],
+    options: WasmOptions,
     *,
     platform: str = "helios",
     opt_level: int = 2,
     emit_debug: bool = False,
-    wasm_int_width: int | str = 64,
-    wasm_timeout_seconds: float = 1.0,
-    wasm_auto_init: bool = True,
-    wasm_state_scope: str = "shot",
-    wasm_async_workers: int = 0,
 ) -> str:
     """Compile with the public HUGR/QIS compiler and scalar WASM ABI.
 
@@ -525,50 +505,29 @@ def compile_wasm(
     Precompiled input should come directly from ``compile_guppy`` without
     additional optimization.
 
-    ``modules`` maps exact module identifiers to caller-supplied WAT or WASM
-    bytes. ``wasm_int_width`` selects exact native integer signatures (64 by
+    ``options.modules`` maps exact module identifiers to caller-supplied WAT or WASM
+    bytes. ``int_width`` selects exact native integer signatures (64 by
     default; use 32 for Guppy H2 declarations). i32 arguments wrap to their low
     32 bits and results are sign-extended. Use "auto" to infer each integer lane
     from its actual WASM export signature, allowing mixed i32/i64 exports.
-    ``wasm_timeout_seconds`` is a positive finite per-start/init/call limit,
+    ``timeout_seconds`` is a positive finite per-start/init/call limit,
     defaulting to one second, with approximately 10 ms clock resolution.
     The result requires the Selene WASM utility or WASM-enabled QIS FFI;
     nondefault timeouts require native ``pecos_wasm_v2_register`` support.
-    ``wasm_state_scope="worker"`` retains mutable instances across clean shots
+    ``state_scope="worker"`` retains mutable instances across clean shots
     on one execution thread. Custom hosts own that thread/session lifetime.
-    ``wasm_auto_init=False`` skips optional exported init (not WASM start),
+    ``auto_init=False`` skips optional exported init (not WASM start),
     requiring ``pecos_wasm_v3_register``. The default preserves automatic init.
     """
-    if type(wasm_auto_init) is not bool:
-        msg = f"wasm_auto_init must be True or False; got {_describe_value(wasm_auto_init)}"
-        raise ValueError(msg)
-    try:
-        valid_timeout = (
-            type(wasm_timeout_seconds) in (int, float)
-            and math.isfinite(wasm_timeout_seconds)
-            and wasm_timeout_seconds > 0
-        )
-    except OverflowError:
-        valid_timeout = False
-    if not valid_timeout:
-        msg = (
-            "wasm_timeout_seconds must be a positive finite number of seconds; "
-            f"got {_describe_value(wasm_timeout_seconds)}"
-        )
-        raise ValueError(msg)
-    wasm_timeout_seconds = float(wasm_timeout_seconds)
-    if not (
-        (type(wasm_int_width) is int and wasm_int_width in (32, 64))
-        or (type(wasm_int_width) is str and wasm_int_width == "auto")
-    ):
-        msg = f"wasm_int_width must be 32 or 64, or 'auto'; got {_describe_value(wasm_int_width)}"
-        raise ValueError(msg)
-    if type(wasm_state_scope) is not str or wasm_state_scope not in ("shot", "worker"):
-        msg = f"wasm_state_scope must be 'shot' or 'worker'; got {_describe_value(wasm_state_scope)}"
-        raise ValueError(msg)
-    if type(wasm_async_workers) is not int or not 0 <= wasm_async_workers <= 64:
-        msg = f"wasm_async_workers must be an integer between 0 and 64; got {_describe_value(wasm_async_workers)}"
-        raise ValueError(msg)
+    if not isinstance(options, WasmOptions):
+        msg = f"options must be a WasmOptions; got {type(options).__name__}"
+        raise TypeError(msg)
+    modules = options.modules
+    int_width = options.int_width
+    timeout_seconds = options.timeout_seconds
+    auto_init = options.auto_init
+    state_scope = options.state_scope
+    async_workers = options.async_workers
     if struct.calcsize("P") != 8:
         msg = "Public WASM ABI v1 requires a 64-bit host"
         raise ValueError(msg)
@@ -619,9 +578,6 @@ def compile_wasm(
             if identifier not in modules:
                 msg = f"Supply bytes for WASM module {identifier!r}"
                 raise ValueError(msg)
-            if not isinstance(modules[identifier], bytes):
-                msg = "WASM modules must be explicit bytes, not paths"
-                raise TypeError(msg)
             module_id = module_ids.setdefault(identifier, len(module_ids))
             node["v"] = {
                 "v": "Extension",
@@ -667,7 +623,7 @@ def compile_wasm(
         for name, operation in adapters.items():
             if re.fullmatch(r'@"?__hugr__\.' + re.escape(name) + r'(?:\.\d+)?"?', symbol):
                 remaining.discard(name)
-                return _adapter(symbol, operation, name + "_name", wasm_int_width, wasm_async_workers)
+                return _adapter(symbol, operation, name + "_name", int_width, async_workers)
         return match[0]
 
     llvm = declarations.sub(replace, llvm)
@@ -680,16 +636,16 @@ def compile_wasm(
     if not re.search(r"^declare void @panic\(i32, ptr\)", llvm, re.MULTILINE):
         llvm += "\ndeclare void @panic(i32, ptr)\n"
     llvm += _ABI
-    if wasm_async_workers:
+    if async_workers:
         llvm += "\ndeclare i32 @pecos_wasm_v2_call(i64, i64, ptr, i64, i64)\n"
-    if wasm_int_width == "auto":
+    if int_width == "auto":
         llvm += "\ndeclare i64 @pecos_wasm_v3_lookup(i64, ptr, i64, ptr, i64, ptr, i64)\n"
         llvm += "declare i64 @pecos_wasm_v3_lookup_by_id(i64, i64, ptr, i64, ptr, i64)\n"
-    if not wasm_auto_init:
+    if not auto_init:
         llvm += "\ndeclare i32 @pecos_wasm_v3_register(i64, ptr, i64, double, i32)\n"
-    elif wasm_timeout_seconds != 1.0:
+    elif timeout_seconds != 1.0:
         llvm += "\ndeclare i32 @pecos_wasm_v2_register(i64, ptr, i64, double)\n"
-    if wasm_state_scope == "worker":
+    if state_scope == "worker":
         # Length-prefix every field. Include module order because numeric module
         # identifiers address retained instances; a program hash is not a batch ID.
         key = hashlib.sha256()
@@ -700,10 +656,10 @@ def compile_wasm(
                     platform,
                     opt_level,
                     emit_debug,
-                    wasm_int_width,
-                    wasm_timeout_seconds,
-                    wasm_auto_init,
-                    wasm_async_workers,
+                    int_width,
+                    timeout_seconds,
+                    auto_init,
+                    async_workers,
                 ),
             ).encode(),
         ]
@@ -725,19 +681,19 @@ def compile_wasm(
         global_name = f"pecos_wasm_module_{digest}_{module_id}"
         llvm += _constant(global_name, data)
         status = f"wasm_module_{module_id}"
-        if not wasm_auto_init:
-            timeout_literal = "0x" + struct.pack(">d", wasm_timeout_seconds).hex().upper()
+        if not auto_init:
+            timeout_literal = "0x" + struct.pack(">d", timeout_seconds).hex().upper()
             setup += (
                 f"  %{status} = call i32 @pecos_wasm_v3_register(i64 {module_id}, "
                 f"ptr @{global_name}, i64 {len(data)}, double {timeout_literal}, i32 1)\n"
             )
-        elif wasm_timeout_seconds == 1.0:
+        elif timeout_seconds == 1.0:
             setup += (
                 f"  %{status} = call i32 @pecos_wasm_v1_register(i64 {module_id}, "
                 f"ptr @{global_name}, i64 {len(data)})\n"
             )
         else:
-            timeout_literal = "0x" + struct.pack(">d", wasm_timeout_seconds).hex().upper()
+            timeout_literal = "0x" + struct.pack(">d", timeout_seconds).hex().upper()
             setup += (
                 f"  %{status} = call i32 @pecos_wasm_v2_register(i64 {module_id}, "
                 f"ptr @{global_name}, i64 {len(data)}, double {timeout_literal})\n"
@@ -755,7 +711,7 @@ def compile_wasm(
 
         def finish_return(ret: re.Match) -> str:
             nonlocal return_number
-            if wasm_state_scope == "shot":
+            if state_scope == "shot":
                 return "  call i32 @pecos_wasm_v1_reset()\n" + ret[0]
             status = f"wasm_finish_{return_number}"
             return_number += 1

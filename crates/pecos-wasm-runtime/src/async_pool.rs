@@ -85,7 +85,7 @@ impl Pool {
     ) -> Result<Self, String> {
         if !(1..=MAX_WORKERS).contains(&count) {
             return Err(format!(
-                "WASM async worker count must be between 1 and {MAX_WORKERS}"
+                "WASM async worker count must be between 1 and {MAX_WORKERS}; got {count}"
             ));
         }
         let (sender, receiver) = mpsc::channel::<Job>();
@@ -412,8 +412,14 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(exited.load(Ordering::Acquire));
-        assert!(Pool::new(0).is_err());
-        assert!(Pool::new(MAX_WORKERS + 1).is_err());
+        assert_eq!(
+            Pool::new(0).err().unwrap(),
+            "WASM async worker count must be between 1 and 64; got 0"
+        );
+        assert_eq!(
+            Pool::new(MAX_WORKERS + 1).err().unwrap(),
+            "WASM async worker count must be between 1 and 64; got 65"
+        );
     }
 }
 

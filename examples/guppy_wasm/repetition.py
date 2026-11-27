@@ -79,11 +79,11 @@ def main() -> None:
     args = parser.parse_args()
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
     if args.backend == "selene":
-        from pecos_selene_wasm import build
+        from pecos_selene_wasm import WasmOptions, build
         from selene_sim import Quest
 
         with TemporaryDirectory() as directory:
-            runner = build(correct_each_position, modules, build_dir=Path(directory))
+            runner = build(correct_each_position, WasmOptions(modules), build_dir=Path(directory))
             shots = [
                 dict(shot)
                 for shot in runner.run_shots(
@@ -99,7 +99,7 @@ def main() -> None:
         import pecos as pc
 
         results = (
-            pc.sim(pc.Guppy(correct_each_position, wasm_modules=modules))
+            pc.sim(pc.Guppy(correct_each_position, wasm=pc.WasmOptions(modules)))
             .qubits(5)
             .quantum(pc.state_vector())
             .seed(42)

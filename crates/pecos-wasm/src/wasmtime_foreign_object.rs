@@ -49,6 +49,17 @@ pub enum WasmScalarType {
     IntegerAuto,
 }
 
+impl WasmScalarType {
+    fn name(self) -> &'static str {
+        match self {
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::F64 => "f64",
+            Self::IntegerAuto => "i32|i64",
+        }
+    }
+}
+
 /// Length of each tick in milliseconds (10ms per tick)
 const WASM_EXECUTION_TICK_LENGTH_MS: u64 = 10;
 // One engine per statically linked copy of this crate. Initialization failures
@@ -160,6 +171,26 @@ enum Lane {
     F32,
     F64,
     Other,
+}
+
+fn format_lanes<T: Copy>(lanes: &[T], name: fn(T) -> &'static str) -> String {
+    lanes
+        .iter()
+        .map(|lane| name(*lane))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+impl Lane {
+    fn name(self) -> &'static str {
+        match self {
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::F64 => "f64",
+            Self::F32 => "f32",
+            Self::Other => "other",
+        }
+    }
 }
 
 impl From<wasmtime::ValType> for Lane {
@@ -622,7 +653,10 @@ impl WasmForeignObject {
                 .all(|ty| *ty == Lane::I64)
         {
             return Err(PecosError::Input(format!(
-                "WASM i64 signature mismatch for {name}"
+                "WASM i64 signature mismatch for {name}: export ({}) -> ({}); \
+                 expected {inputs} i64 inputs, {outputs} i64 outputs",
+                format_lanes(&signature.params, Lane::name),
+                format_lanes(&signature.results, Lane::name)
             )));
         }
         Ok(())
@@ -666,7 +700,14 @@ impl WasmForeignObject {
                 .all(|(a, b)| matches(a, b))
         {
             return Err(PecosError::Input(format!(
-                "WASM scalar signature mismatch for {name}"
+                "WASM scalar signature mismatch for {name}: {} argument{}; export ({}) -> ({}); \
+                 expected ({}) -> ({})",
+                arguments.len(),
+                if arguments.len() == 1 { "" } else { "s" },
+                format_lanes(&signature.params, Lane::name),
+                format_lanes(&signature.results, Lane::name),
+                format_lanes(inputs, WasmScalarType::name),
+                format_lanes(outputs, WasmScalarType::name)
             )));
         }
         self.raw.resize(

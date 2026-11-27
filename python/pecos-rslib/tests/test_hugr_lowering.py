@@ -6,9 +6,6 @@ import sys
 import pytest
 from pecos_rslib import hugr_lowering
 
-# Every "requires explicit wasm_modules" error ends with this fix.
-PASS_MODULES = re.escape("pass wasm_modules={module_name: wasm_bytes}")
-
 
 def test_missing_compiler_names_optional_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", None)
@@ -47,19 +44,6 @@ def test_valid_compiler_options_are_forwarded(monkeypatch: pytest.MonkeyPatch, o
     monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", SimpleNamespace(compile_to_llvm_ir=compile_recorded))
     assert hugr_lowering.compile_hugr_to_qis(b"package", opt_level=opt_level, platform=platform) == "; compiled"
     assert calls == [(b"package", {"opt_level": opt_level, "platform": platform, "emit_debug": False})]
-
-
-@pytest.mark.parametrize("width", [16, 32.0, True, "32", "AUTO", None])
-def test_invalid_wasm_int_width_names_the_value(width: object) -> None:
-    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64, or 'auto'; got ") as error:
-        hugr_lowering.validate_wasm_options({"m": b""}, width)
-    assert str(error.value).endswith(repr(width))
-
-
-def test_nondefault_wasm_int_width_requires_modules(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", None)
-    with pytest.raises(ValueError, match=rf"^wasm_int_width=32 requires explicit wasm_modules; {PASS_MODULES}$"):
-        hugr_lowering.compile_hugr_to_qis(b"unused", wasm_int_width=32)
 
 
 class _FailingRepr:
@@ -105,23 +89,55 @@ def test_rejected_option_errors_survive_unprintable_values(
 ) -> None:
     monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", None)
     checks = [
-        ("wasm_int_width must be 32 or 64, or 'auto'; got ", lambda: hugr_lowering.validate_wasm_options({}, value)),
-        ("wasm_auto_init must be True or False; got ", lambda: hugr_lowering.validate_wasm_auto_init(value, {})),
-        (
-            "wasm_state_scope must be 'shot' or 'worker'; got ",
-            lambda: hugr_lowering.validate_wasm_state_scope(value, {}),
-        ),
-        (
-            "wasm_async_workers must be an integer between 0 and 64; got ",
-            lambda: hugr_lowering.validate_wasm_async_workers(value, {}),
-        ),
-        (
-            "wasm_timeout_seconds must be a positive finite number of seconds; got ",
-            lambda: hugr_lowering.validate_wasm_timeout_seconds(value, {}),
-        ),
         ("opt_level must be one of 0, 1, 2, 3; got ", lambda: hugr_lowering.compile_hugr_to_qis(b"", opt_level=value)),
         ("platform must be 'helios' or 'sol'; got ", lambda: hugr_lowering.compile_hugr_to_qis(b"", platform=value)),
     ]
     for prefix, check in checks:
         with pytest.raises(ValueError, match=f"^{re.escape(prefix)}{described}$"):
             check()
+
+
+@pytest.mark.parametrize("value", [{}, 1, True, "modules"])
+def test_lowering_requires_wasm_options(value):
+    pytest.importorskip("pecos_selene_wasm")
+    message = f"wasm must be a WasmOptions; got {type(value).__name__}; pass wasm=WasmOptions(modules)"
+    with pytest.raises(TypeError, match=f"^{re.escape(message)}$"):
+        hugr_lowering.compile_hugr_to_qis(b"unused", wasm=value)
+
+
+def test_wasm_import_order_and_guidance(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", None)
+    monkeypatch.setitem(sys.modules, "pecos_selene_wasm", None)
+    with pytest.raises(ImportError) as error:
+        hugr_lowering.compile_hugr_to_qis(b"unused", wasm={})
+    assert str(error.value) == "HUGR -> QIS lowering requires the selene-hugr-qis-compiler package"
+    monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", SimpleNamespace(compile_to_llvm_ir=None))
+    with pytest.raises(ImportError) as error:
+        hugr_lowering.compile_hugr_to_qis(b"unused", wasm={})
+    assert str(error.value) == "Guppy WASM lowering requires the pecos-selene-wasm package (quantum-pecos[wasm])"
+
+
+def test_lowering_forwards_options_without_revalidation(monkeypatch):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    options = plugin.WasmOptions(
+        {"m": b"payload"}, int_width="auto", timeout_seconds=2.5, auto_init=False, state_scope="worker", async_workers=2
+    )
+    calls = []
+
+    def record(program, wasm, **kwargs):
+        assert wasm is options
+        calls.append((program, kwargs))
+        return "; compiled WASM"
+
+    def reject_revalidation(_self):
+        pytest.fail("options were reconstructed")
+
+    monkeypatch.setattr(plugin, "compile_wasm", record)
+    monkeypatch.setattr(plugin.WasmOptions, "__post_init__", reject_revalidation)
+    assert (
+        hugr_lowering.compile_hugr_to_qis(b"package", wasm=options, platform="sol", opt_level=3, emit_debug=True)
+        == "; compiled WASM"
+    )
+    assert calls == [(b"package", {"platform": "sol", "opt_level": 3, "emit_debug": True})]

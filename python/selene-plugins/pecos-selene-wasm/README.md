@@ -5,14 +5,14 @@ Utility plugin backed by Wasmtime. It supports signed integer and double-precisi
 with zero or one scalar result and explicit module bytes. Exports can be selected
 by name or zero-based position in the complete export list (`@wasm(index)`). Branches and loops run
 with the released public compiler; no upstream source changes are required.
-Integer signatures default to strict i64. Select `wasm_int_width=32` for strict
-i32, or `wasm_int_width="auto"` to resolve each integer lane from the actual
+Integer signatures default to strict i64. Select `WasmOptions(modules, int_width=32)` for strict
+i32, or `WasmOptions(modules, int_width="auto")` to resolve each integer lane from the actual
 export signature, including programs that call both i32 and i64 exports.
 
 ```python
-from pecos_selene_wasm import build
+from pecos_selene_wasm import WasmOptions, build
 
-runner = build(program, {module_identifier: wasm_bytes})
+runner = build(program, WasmOptions({module_identifier: wasm_bytes}))
 ```
 
 Pass a Guppy function directly so the plugin selects its safe frontend. For
@@ -23,7 +23,7 @@ Guppy optimization; unprepared mixed-extern loop packages are rejected.
 
 Use the runner's normal Selene `run_shots` API. No PECOS simulator or Python
 bindings are required for standalone Selene execution. PECOS `sim()` uses the
-same lowering and runtime through `Guppy(program, wasm_modules=modules)`.
+same lowering and runtime through `Guppy(program, wasm=WasmOptions(modules))`.
 
 From the PECOS checkout, install this package with
 `uv pip install -e 'python/selene-plugins/pecos-selene-wasm[test]'`. Building from
@@ -67,8 +67,8 @@ not an end-to-end Guppy throughput or full-stack parity claim.
 
 ## Initialization policy
 
-`build(..., wasm_auto_init=False)` and `compile_wasm(..., wasm_auto_init=False)`
-skip automatic validation and invocation of the optional exported `init` function.
+Pass `WasmOptions(modules, auto_init=False)` as the second argument to `build`
+or `compile_wasm` to skip automatic validation and invocation of the optional exported `init` function.
 The default remains `True`. WASM start functions always run, and explicit Guppy
 calls to `init` work with either policy. The setting applies independently to each
 instance; compiled code can still be shared across initialization policies.
@@ -86,13 +86,13 @@ GC payload that also work with older Guppy frontends. Linear-memory limits do
 not cover the managed heap.
 
 
-Use `wasm_state_scope="worker"` to retain WASM state across successful shots on
+Use `WasmOptions(modules, state_scope="worker")` to retain WASM state across successful shots on
 one execution worker. The default `"shot"` creates fresh instances. Each worker
 has independent state, so results can depend on worker count and scheduling.
 New `run_shots` batches start fresh. Custom native callers control their worker
 lifetime and can explicitly reset it. See the user guide for lifecycle details.
 
-Use `wasm_async_workers=2` to overlap calls on independent WASM contexts when
+Use `WasmOptions(modules, async_workers=2)` to overlap calls on independent WASM contexts when
 the input program launches them before reading their results. The default `0`
 executes inline; `1` through `64` enables a thread pool per execution worker.
 Ordinary Guppy calls generally read results immediately. The public

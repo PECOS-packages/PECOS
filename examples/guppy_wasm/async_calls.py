@@ -136,16 +136,14 @@ def main() -> None:
         expected.update(second=expected_value(2 * iterations + 1), measured=True)
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
     if args.backend == "selene":
-        from pecos_selene_wasm import build
+        from pecos_selene_wasm import WasmOptions, build
         from selene_sim import Quest
 
         with TemporaryDirectory() as directory:
             runner = build(
                 program,
-                modules,
+                WasmOptions(modules, async_workers=args.async_workers, timeout_seconds=10.0),
                 build_dir=Path(directory),
-                wasm_async_workers=args.async_workers,
-                wasm_timeout_seconds=10.0,
             )
             [observed] = [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
     else:
@@ -153,9 +151,7 @@ def main() -> None:
 
         program = pc.Hugr.from_bytes(
             program.to_bytes(),
-            wasm_modules=modules,
-            wasm_async_workers=args.async_workers,
-            wasm_timeout_seconds=10.0,
+            wasm=pc.WasmOptions(modules, async_workers=args.async_workers, timeout_seconds=10.0),
         )
         output = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(1).run(1).to_dict()
         observed = {key: values[0] for key, values in output.items()}

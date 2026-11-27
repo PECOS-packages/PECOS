@@ -30,6 +30,9 @@ except PackageNotFoundError:
 import sys
 from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from pecos_selene_wasm import WasmOptions
+
 import pecos_rslib
 from pecos_rslib import (
     AngleSource,  # Angle source specification for gate decomposition
@@ -239,6 +242,13 @@ from pecos import (
 
 
 def __getattr__(name: str):
+    if name == "WasmOptions":
+        try:
+            from pecos_selene_wasm import WasmOptions
+        except ImportError as error:
+            msg = "Guppy WASM lowering requires the pecos-selene-wasm package (quantum-pecos[wasm])"
+            raise ImportError(msg) from error
+        return WasmOptions
     if name == "tools":
         # Lazy import -- tools/__init__.py emits the deprecation warning
         import importlib

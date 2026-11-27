@@ -65,17 +65,17 @@ def main() -> None:
     program = explicit_initialization if args.explicit_init else memory_operations
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
     if args.backend == "selene":
-        from pecos_selene_wasm import build
+        from pecos_selene_wasm import WasmOptions, build
         from selene_sim import Quest
 
         with TemporaryDirectory() as directory:
-            runner = build(program, modules, wasm_auto_init=args.auto_init, build_dir=Path(directory))
+            runner = build(program, WasmOptions(modules, auto_init=args.auto_init), build_dir=Path(directory))
             print([dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4)])
     else:
         import pecos as pc
 
         print(
-            pc.sim(pc.Guppy(program, wasm_modules=modules, wasm_auto_init=args.auto_init))
+            pc.sim(pc.Guppy(program, wasm=pc.WasmOptions(modules, auto_init=args.auto_init)))
             .qubits(1)
             .quantum(pc.state_vector())
             .run(4)

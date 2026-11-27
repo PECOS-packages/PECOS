@@ -563,7 +563,7 @@ fn execute(
 pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize) -> Result<i32> {
     if !(1..=async_pool::MAX_WORKERS).contains(&workers) {
         return Err(format!(
-            "WASM async worker count must be between 1 and {}",
+            "WASM async worker count must be between 1 and {}; got {workers}",
             async_pool::MAX_WORKERS
         ));
     }
@@ -586,8 +586,12 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
         if !context.leased || context.pending.is_some() {
             return Err("WASM context is not leased or has an unread result".into());
         }
-        if async_workers.is_some_and(|count| count != workers) {
-            return Err("WASM async worker count changed without reset".into());
+        if let Some(count) = *async_workers
+            && count != workers
+        {
+            return Err(format!(
+                "WASM async worker count changed without reset: {count} -> {workers}"
+            ));
         }
         let prepared = if context.modules.contains_key(&function.module) {
             None
@@ -1632,8 +1636,14 @@ mod tests {
         for (context, expected) in contexts.into_iter().rev() {
             assert_eq!(read(context, 1).unwrap(), [expected]);
         }
-        assert!(call_async(0, add, &[], 0).is_err());
-        assert!(call_async(0, add, &[], 65).is_err());
+        assert_eq!(
+            call_async(0, add, &[], 0).unwrap_err(),
+            "WASM async worker count must be between 1 and 64; got 0"
+        );
+        assert_eq!(
+            call_async(0, add, &[], 65).unwrap_err(),
+            "WASM async worker count must be between 1 and 64; got 65"
+        );
         reset().unwrap();
     }
 

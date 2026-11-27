@@ -142,17 +142,53 @@ fn unchecked_scalar_lanes_preserve_bits_and_validation() {
             wasm.exec_scalar_bits("void", &[], &[], &[]).unwrap(),
             Vec::<i64>::new()
         );
-        for (name, inputs, outputs, args) in [
-            ("int", vec![Ty::I64], vec![Ty::I32], vec![1]),
-            ("int", vec![Ty::I32], vec![Ty::F64], vec![1]),
-            ("int", vec![Ty::I32], vec![Ty::I32], vec![]),
-            ("int", vec![], vec![Ty::I32], vec![]),
-            ("int", vec![Ty::I32], vec![], vec![1]),
-            ("float32", vec![Ty::F64], vec![Ty::F64], vec![1]),
+        for (name, inputs, outputs, args, detail) in [
+            (
+                "int",
+                vec![Ty::I64],
+                vec![Ty::I32],
+                vec![1],
+                "1 argument; export (i32) -> (i32); expected (i64) -> (i32)",
+            ),
+            (
+                "int",
+                vec![Ty::I32],
+                vec![Ty::F64],
+                vec![1],
+                "1 argument; export (i32) -> (i32); expected (i32) -> (f64)",
+            ),
+            (
+                "int",
+                vec![Ty::I32],
+                vec![Ty::I32],
+                vec![],
+                "0 arguments; export (i32) -> (i32); expected (i32) -> (i32)",
+            ),
+            (
+                "int",
+                vec![],
+                vec![Ty::I32],
+                vec![],
+                "0 arguments; export (i32) -> (i32); expected () -> (i32)",
+            ),
+            (
+                "int",
+                vec![Ty::I32],
+                vec![],
+                vec![1],
+                "1 argument; export (i32) -> (i32); expected (i32) -> ()",
+            ),
+            (
+                "float32",
+                vec![Ty::F64],
+                vec![Ty::F64],
+                vec![1],
+                "1 argument; export (f32) -> (f32); expected (f64) -> (f64)",
+            ),
         ] {
             input(
                 wasm.exec_scalar_bits(name, &inputs, &outputs, &args),
-                &format!("WASM scalar signature mismatch for {name}"),
+                &format!("WASM scalar signature mismatch for {name}: {detail}"),
             );
         }
     }
@@ -196,9 +232,12 @@ fn cached_export_queries_keep_errors_and_positions() {
         assert!(!wasm.has_func("missing"));
         wasm.validate_i64_signature("int", 1, 1).unwrap();
         for (name, inputs, outputs) in [("int", 0, 1), ("int", 1, 0), ("float", 1, 1)] {
+            let lane = if name == "int" { "i64" } else { "f64" };
             input(
                 wasm.validate_i64_signature(name, inputs, outputs),
-                &format!("WASM i64 signature mismatch for {name}"),
+                &format!(
+                    "WASM i64 signature mismatch for {name}: export ({lane}) -> ({lane}); expected {inputs} i64 inputs, {outputs} i64 outputs"
+                ),
             );
         }
         for name in ["missing", "memory"] {
@@ -262,7 +301,7 @@ fn compiled_instances_share_export_metadata() {
         wasm.validate_i64_signature("identity", 1, 1).unwrap();
         input(
             wasm.validate_i64_signature("float", 1, 1),
-            "WASM i64 signature mismatch for float",
+            "WASM i64 signature mismatch for float: export (f64) -> (f64); expected 1 i64 inputs, 1 i64 outputs",
         );
         input(
             wasm.validate_i64_signature("memory", 0, 0),

@@ -36,15 +36,14 @@ def records_to_shot(records) -> dict:
 @contextmanager
 def selene(program, modules, settings, build_dir):
     import selene_sim
-    from pecos_selene_wasm import build
+    from pecos_selene_wasm import WasmOptions, build
     from selene_sim.exceptions import SelenePanicError
 
     runner = build(
         program,
-        modules,
+        WasmOptions(modules, int_width=settings.get("wasm_int_width", 64)),
         platform=settings["platform"],
         build_dir=build_dir,
-        wasm_int_width=settings.get("wasm_int_width", 64),
     )
 
     def run():
@@ -72,7 +71,7 @@ def pecos(program, modules, settings, _build_dir):
     import pecos as pc
 
     runner = (
-        pc.sim(pc.Guppy(program, wasm_modules=modules, wasm_int_width=settings.get("wasm_int_width", 64)))
+        pc.sim(pc.Guppy(program, wasm=pc.WasmOptions(modules, int_width=settings.get("wasm_int_width", 64))))
         .qubits(settings["qubits"])
         .quantum(pc.state_vector())
         .seed(settings["seed"])

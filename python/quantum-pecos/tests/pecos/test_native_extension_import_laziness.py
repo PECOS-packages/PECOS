@@ -101,3 +101,29 @@ def test_lowering_import_does_not_require_high_level_package_or_compiler() -> No
         "import pecos_rslib.hugr_lowering; "
         "assert callable(pecos_rslib.hugr_lowering.compile_hugr_to_qis)",
     )
+
+
+def test_import_pecos_does_not_load_wasm_plugin() -> None:
+    _run_fresh_interpreter(
+        "import sys; import pecos; "
+        "assert 'pecos_selene_wasm' not in sys.modules; "
+        "from pecos_selene_wasm import WasmOptions; "
+        "assert pecos.WasmOptions is WasmOptions; "
+        "assert 'WasmOptions' not in vars(pecos)",
+    )
+
+
+def test_import_pecos_and_star_work_without_wasm_plugin() -> None:
+    _run_fresh_interpreter(textwrap.dedent("""
+        import sys
+        sys.modules['pecos_selene_wasm'] = None
+        import pecos
+        from pecos import *
+        for resolve in (lambda: pecos.WasmOptions, lambda: hasattr(pecos, 'WasmOptions')):
+            try:
+                resolve()
+            except ImportError as error:
+                assert str(error) == 'Guppy WASM lowering requires the pecos-selene-wasm package (quantum-pecos[wasm])'
+            else:
+                raise AssertionError('missing WASM extra did not raise ImportError')
+        """))

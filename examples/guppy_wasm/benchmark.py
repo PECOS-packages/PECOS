@@ -52,7 +52,7 @@ def measure(backend: str, calls: int, shots: int, repeats: int, directory: Path)
     spec = importlib.util.spec_from_file_location(source.stem, source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    from pecos_selene_wasm import compile_guppy
+    from pecos_selene_wasm import WasmOptions, compile_guppy
 
     start = time.perf_counter()
     package = compile_guppy(module.main) if calls else module.main.compile()
@@ -68,7 +68,7 @@ def measure(backend: str, calls: int, shots: int, repeats: int, directory: Path)
     start = time.perf_counter()
     if backend == "selene":
         options = {"build_dir": directory / f"build_{calls}"}
-        runner = build(package, modules, **options) if calls else selene_sim.build(package, **options)
+        runner = build(package, WasmOptions(modules), **options) if calls else selene_sim.build(package, **options)
 
         def run() -> list[int]:
             return [
@@ -83,7 +83,7 @@ def measure(backend: str, calls: int, shots: int, repeats: int, directory: Path)
             ]
 
     else:
-        program = pc.Hugr(package.to_bytes(), wasm_modules=modules if calls else None)
+        program = pc.Hugr(package.to_bytes(), wasm=pc.WasmOptions(modules) if calls else None)
         runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).seed(42).workers(1).build()
 
         def run() -> list[int]:

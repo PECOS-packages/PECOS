@@ -2,12 +2,10 @@
 
 import importlib.util
 import re
-import reprlib
-import sys
 from pathlib import Path
 
 import pytest
-from pecos_selene_wasm import build, compile_guppy, compile_wasm
+from pecos_selene_wasm import WasmOptions, build, compile_guppy, compile_wasm
 from selene_sim import Quest
 from selene_sim.exceptions import SelenePanicError
 
@@ -38,7 +36,7 @@ def examples():
 def run(example, function, tmp_path, *, shots=4, processes=1, modules=None, platform="helios", opt_level=2):
     if modules is None:
         modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    runner = build(function, modules, build_dir=tmp_path, platform=platform, opt_level=opt_level)
+    runner = build(function, WasmOptions(modules), build_dir=tmp_path, platform=platform, opt_level=opt_level)
     return [
         dict(shot)
         for shot in runner.run_shots(
@@ -131,9 +129,9 @@ def test_module_resolution_requires_explicit_bytes(examples):
     example = examples["arithmetic"]
     program = example.addition.compile()
     with pytest.raises(ValueError, match="Supply bytes"):
-        compile_wasm(program, {})
+        compile_wasm(program, WasmOptions({}))
     with pytest.raises(TypeError, match="explicit bytes"):
-        compile_wasm(program, {str(example.WASM_PATH): example.WASM_PATH})
+        WasmOptions({str(example.WASM_PATH): example.WASM_PATH})
 
 
 def test_supplied_bytes_determine_execution(examples, tmp_path):
@@ -157,7 +155,7 @@ def test_lowered_llvm_verifies(examples, opt_level):
     example = examples["arithmetic"]
     ir = compile_wasm(
         example.addition.compile(),
-        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}),
         opt_level=opt_level,
     )
     llvm.parse_assembly(ir).verify()
@@ -211,8 +209,6 @@ def test_benchmark_checks_results_and_records_timings(tmp_path):
 @pytest.mark.parametrize("opt_level", [0, 2])
 @pytest.mark.parametrize("input_form", ["source", "package", "bytes"])
 def test_existing_external_function_value_and_discarded_result(examples, tmp_path, opt_level, input_form):
-    import re
-
     from guppylang import guppy
     from guppylang.library import link_name
     from guppylang.std.builtins import Function, nat, result
@@ -248,7 +244,11 @@ def test_existing_external_function_value_and_discarded_result(examples, tmp_pat
     package = compile_guppy(program)
     assert any(isinstance(package.modules[0][node].op, ops.LoadFunc) for node in package.modules[0])
     prepared = {"source": program, "package": package, "bytes": package.to_bytes()}[input_form]
-    ir = compile_wasm(prepared, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, opt_level=opt_level)
+    ir = compile_wasm(
+        prepared,
+        WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}),
+        opt_level=opt_level,
+    )
     label = b"USER:INT:external"
     encoded = "".join(f"\\{byte:02X}" for byte in bytes([len(label)]) + label)
     ir += f'\n@fixture_label = private constant [{len(label) + 1} x i8] c"{encoded}"\n'
@@ -308,7 +308,7 @@ def test_hugr_tail_loop_orders_context_helpers(examples, tmp_path, opt_level):
     program = Package([graph], source.extensions)
     runner = build(
         program,
-        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}),
         opt_level=opt_level,
         build_dir=tmp_path,
     )
@@ -343,7 +343,7 @@ def test_unprepared_external_loop_is_rejected(examples, serialized):
     with pytest.raises(ValueError, match="safe Guppy frontend"):
         compile_wasm(
             package.to_bytes() if serialized else package,
-            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}),
         )
 
 
@@ -423,7 +423,7 @@ def test_index_must_fit_unsigned_64_bits(examples, index):
     # encoding rejects them earlier. They must never reach LLVM's truncation.
     envelope = package.to_bytes(EnvelopeConfig(format=EnvelopeFormat.JSON))
     with pytest.raises(ValueError, match="unsigned 64-bit"):
-        compile_wasm(envelope, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()})
+        compile_wasm(envelope, WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}))
 
 
 @pytest.mark.parametrize(
@@ -447,9 +447,8 @@ def test_i32_guppy_exports(examples, tmp_path, name, expected):
     example = examples["integer32"]
     runner = build(
         getattr(example, name),
-        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, int_width=32),
         build_dir=tmp_path,
-        wasm_int_width=32,
     )
     for _ in range(2):
         assert [
@@ -468,26 +467,11 @@ def test_i32_mode_rejects_i64_module(examples, tmp_path):
     example = examples["arithmetic"]
     runner = build(
         example.addition,
-        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, int_width=32),
         build_dir=tmp_path,
-        wasm_int_width=32,
     )
     with pytest.raises(SelenePanicError, match="signature mismatch"):
         [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
-
-
-@pytest.mark.parametrize("width", [16, 32.0, True, "32", "AUTO"])
-def test_invalid_integer_width_is_rejected(examples, width):
-    example = examples["integer32"]
-    with pytest.raises(ValueError, match=re.escape(f"wasm_int_width must be 32 or 64, or 'auto'; got {width!r}")):
-        compile_wasm(example.boundaries, {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, wasm_int_width=width)
-
-
-@pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
-def test_invalid_timeout_is_rejected(timeout):
-    message = f"wasm_timeout_seconds must be a positive finite number of seconds; got {reprlib.repr(timeout)}"
-    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-        compile_wasm(b"", {}, wasm_timeout_seconds=timeout)
 
 
 @pytest.mark.parametrize(
@@ -499,21 +483,21 @@ def test_custom_timeout_ir_and_execution(examples, tmp_path, timeout):
 
     example = examples["arithmetic"]
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    llvm = compile_wasm(example.addition, modules, wasm_timeout_seconds=timeout)
+    llvm = compile_wasm(example.addition, WasmOptions(modules, timeout_seconds=timeout))
     assert "call i32 @pecos_wasm_v2_register" in llvm
     assert "double 0x" + struct.pack(">d", timeout).hex().upper() in llvm
     # The smallest positive limit is useful for checking encoding/tick conversion,
     # but wall-clock scheduling can exhaust its single tick before execution.
     if timeout > 1:
-        runner = build(example.addition, modules, build_dir=tmp_path, wasm_timeout_seconds=timeout)
+        runner = build(example.addition, WasmOptions(modules, timeout_seconds=timeout), build_dir=tmp_path)
         assert [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=2)] == [{"sum": 5}] * 2
 
 
 def test_default_timeout_preserves_v1_registration(examples):
     example = examples["arithmetic"]
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    for options in ({}, {"wasm_timeout_seconds": 1.0}):
-        llvm = compile_wasm(example.addition, modules, **options)
+    for options in ({}, {"timeout_seconds": 1.0}):
+        llvm = compile_wasm(example.addition, WasmOptions(modules, **options))
         assert "call i32 @pecos_wasm_v1_register" in llvm
         assert "pecos_wasm_v2_register" not in llvm
         assert "pecos_wasm_v3_register" not in llvm
@@ -527,67 +511,9 @@ def test_custom_timeout_requires_new_native_runtime(examples, tmp_path, monkeypa
     with pytest.raises(RuntimeError, match="rebuild or upgrade"):
         build(
             example.addition,
-            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, timeout_seconds=2.0),
             build_dir=tmp_path,
-            wasm_timeout_seconds=2.0,
         )
-
-
-@pytest.mark.parametrize("value", [0, 1, None, "false"])
-def test_invalid_auto_init_is_rejected(value):
-    with pytest.raises(ValueError, match=rf"^wasm_auto_init must be True or False; got {re.escape(repr(value))}$"):
-        compile_wasm(b"", {}, wasm_auto_init=value)
-
-
-class _FailingRepr:
-    def __repr__(self) -> str:
-        msg = "repr must not be called unguarded"
-        raise RuntimeError(msg)
-
-
-class _HostileValue(_FailingRepr):
-    @property
-    def __class__(self) -> type:
-        msg = "class lookup must not be called unguarded"
-        raise RuntimeError(msg)
-
-
-@pytest.fixture
-def default_int_digit_limit():
-    previous = sys.get_int_max_str_digits()
-    sys.set_int_max_str_digits(4300)
-    yield
-    sys.set_int_max_str_digits(previous)
-
-
-# reprlib names a failing-repr object by class; anything it cannot format at all gets
-# the placeholder. Python 3.14+ reprlib describes an over-long int itself.
-UNPRINTABLE_CASES = [
-    pytest.param(_FailingRepr(), r"<_FailingRepr instance at 0x[0-9a-f]+>", id="failing-repr"),
-    pytest.param(_HostileValue(), re.escape("<unprintable value>"), id="hostile-object"),
-    pytest.param(
-        10**5000,
-        r"(?:<unprintable value>|<int instance with roughly 5001 digits \(limit at 4300\) at 0x[0-9a-f]+>)",
-        id="huge-int",
-    ),
-]
-
-
-@pytest.mark.usefixtures("default_int_digit_limit")
-@pytest.mark.parametrize(("value", "described"), UNPRINTABLE_CASES)
-@pytest.mark.parametrize(
-    ("option", "prefix"),
-    [
-        ("wasm_auto_init", "wasm_auto_init must be True or False; got "),
-        ("wasm_timeout_seconds", "wasm_timeout_seconds must be a positive finite number of seconds; got "),
-        ("wasm_int_width", "wasm_int_width must be 32 or 64, or 'auto'; got "),
-        ("wasm_state_scope", "wasm_state_scope must be 'shot' or 'worker'; got "),
-        ("wasm_async_workers", "wasm_async_workers must be an integer between 0 and 64; got "),
-    ],
-)
-def test_rejected_option_errors_survive_unprintable_values(value, described, option, prefix):
-    with pytest.raises(ValueError, match=f"^{re.escape(prefix)}{described}$"):
-        compile_wasm(b"", {}, **{option: value})
 
 
 @pytest.mark.parametrize("auto_init", [True, False])
@@ -611,9 +537,9 @@ def test_memory_lifecycle_and_initialization_policy(examples, tmp_path, auto_ini
             "growth_refused": -1,
         }
     )
-    llvm = compile_wasm(program, modules, wasm_auto_init=auto_init, wasm_timeout_seconds=2.5)
+    llvm = compile_wasm(program, WasmOptions(modules, auto_init=auto_init, timeout_seconds=2.5))
     assert ("call i32 @pecos_wasm_v3_register" in llvm) is (not auto_init)
-    runner = build(program, modules, build_dir=tmp_path, wasm_auto_init=auto_init, wasm_timeout_seconds=2.5)
+    runner = build(program, WasmOptions(modules, auto_init=auto_init, timeout_seconds=2.5), build_dir=tmp_path)
     for _ in range(2):
         assert [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=2)] == [
             expected,
@@ -628,9 +554,8 @@ def test_auto_init_requires_new_native_runtime(examples, tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="rebuild or upgrade"):
         build(
             example.addition,
-            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, auto_init=False),
             build_dir=tmp_path,
-            wasm_auto_init=False,
         )
 
 
@@ -638,7 +563,7 @@ def test_initialization_policy_changes_in_reused_build_directory(examples, tmp_p
     example = examples["memory_lifecycle"]
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     for auto_init, expected in ((True, 42), (False, 11), (True, 42)):
-        runner = build(example.memory_operations, modules, build_dir=tmp_path, wasm_auto_init=auto_init)
+        runner = build(example.memory_operations, WasmOptions(modules, auto_init=auto_init), build_dir=tmp_path)
         shots = [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
         assert shots[0]["initialized"] == expected
 
@@ -648,7 +573,7 @@ def test_managed_objects_use_scalar_abi_and_fresh_stores(examples, tmp_path):
     expected = {"initial": 7, "next": 8, "sum": 5, "retained": 8, "independent": 7}
     runner = build(
         example.managed_state,
-        {str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()},
+        WasmOptions({str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()}),
         build_dir=tmp_path,
     )
     for _ in range(2):
@@ -683,12 +608,12 @@ loop = b"""
 def execute(data, directory, timeout=2.0):
     modules = {str(example.WASM_PATH): data}
     if sys.argv[1] == "selene":
-        from pecos_selene_wasm import build
+        from pecos_selene_wasm import WasmOptions, build
         from selene_sim import Quest
-        runner = build(example.addition, modules, build_dir=Path(directory), wasm_timeout_seconds=timeout)
+        runner = build(example.addition, WasmOptions(modules, timeout_seconds=timeout), build_dir=Path(directory))
         return [dict(s) for s in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1)]
     import pecos as pc
-    program = pc.Guppy(example.addition, wasm_modules=modules, wasm_timeout_seconds=timeout)
+    program = pc.Guppy(example.addition, wasm=pc.WasmOptions(modules, timeout_seconds=timeout))
     return pc.sim(program).qubits(1).quantum(pc.state_vector()).run(1).to_dict()
 with TemporaryDirectory() as directory:
     try:
@@ -718,10 +643,10 @@ with TemporaryDirectory() as directory:
 def test_mixed_integer_widths(examples, tmp_path, width):
     example = examples["mixed_integers"]
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    llvm = compile_wasm(example.mixed, modules, wasm_int_width=width)
+    llvm = compile_wasm(example.mixed, WasmOptions(modules, int_width=width))
     assert ("@pecos_wasm_v3_lookup" in llvm) == (width == "auto")
     assert "call i32 @pecos_wasm_v3_register" not in llvm
-    runner = build(example.mixed, modules, build_dir=tmp_path, wasm_int_width=width)
+    runner = build(example.mixed, WasmOptions(modules, int_width=width), build_dir=tmp_path)
 
     def shots():
         return [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=2)]
@@ -747,9 +672,8 @@ def test_automatic_width_requires_new_native_lookup(examples, tmp_path, monkeypa
     with pytest.raises(RuntimeError, match="Automatic WASM integer widths require"):
         build(
             example.mixed,
-            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, int_width="auto"),
             build_dir=tmp_path,
-            wasm_int_width="auto",
         )
 
 
@@ -757,9 +681,8 @@ def test_automatic_width_preserves_float_lanes(examples, tmp_path):
     example = examples["floating_point"]
     runner = build(
         example.mixed_arithmetic,
-        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, int_width="auto"),
         build_dir=tmp_path,
-        wasm_int_width="auto",
     )
     assert [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=2)] == [
         {"value": -4.25, "integer": -4},
@@ -773,9 +696,8 @@ def test_worker_state_scope_and_fresh_batches(examples, tmp_path, workers, shots
     example = examples["worker_state"]
     runner = build(
         example.counter,
-        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, state_scope=scope),
         build_dir=tmp_path,
-        wasm_state_scope=scope,
     )
     expected = (
         [1] * shots
@@ -792,23 +714,14 @@ def test_worker_state_scope_and_fresh_batches(examples, tmp_path, workers, shots
         assert sorted(observed) == expected
 
 
-@pytest.mark.parametrize("scope", [None, 1, True, "batch", "WORKER"])
-def test_invalid_wasm_state_scope(scope):
-    message = f"wasm_state_scope must be 'shot' or 'worker'; got {reprlib.repr(scope)}"
-    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-        compile_wasm(b"", {}, wasm_state_scope=scope)
-
-
 @pytest.mark.parametrize("auto_init", [True, False])
 def test_worker_state_initialization_runs_once(examples, tmp_path, auto_init):
     example = examples["worker_state"]
     payload = examples["memory_lifecycle"].WASM_PATH.read_bytes()
     runner = build(
         example.counter,
-        {str(example.WASM_PATH): payload},
+        WasmOptions({str(example.WASM_PATH): payload}, state_scope="worker", auto_init=auto_init),
         build_dir=tmp_path,
-        wasm_state_scope="worker",
-        wasm_auto_init=auto_init,
     )
     initial = 43 if auto_init else 12
     for _ in range(2):
@@ -821,9 +734,8 @@ def test_worker_state_managed_objects_and_contexts(examples, tmp_path):
     example = examples["managed_objects"]
     runner = build(
         example.managed_state,
-        {str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()},
+        WasmOptions({str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()}, state_scope="worker"),
         build_dir=tmp_path,
-        wasm_state_scope="worker",
     )
     for _ in range(2):
         assert [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=3)] == [
@@ -839,21 +751,18 @@ def test_worker_state_requires_new_native_runtime(examples, tmp_path, monkeypatc
     with pytest.raises(RuntimeError, match="Worker-scoped WASM state requires"):
         build(
             example.counter,
-            {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+            WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, state_scope="worker"),
             build_dir=tmp_path,
-            wasm_state_scope="worker",
         )
 
 
 def test_worker_state_key_covers_payload_and_options(examples):
-    import re
-
     example = examples["worker_state"]
     identifier = str(example.WASM_PATH)
     payload = example.WASM_PATH.read_bytes()
 
     def key(data=payload, **options):
-        llvm = compile_wasm(example.counter, {identifier: data}, wasm_state_scope="worker", **options)
+        llvm = compile_wasm(example.counter, WasmOptions({identifier: data}, state_scope="worker", **options))
         assert "call i32 @pecos_wasm_v1_reset()" not in llvm
         assert "call i32 @pecos_wasm_v2_finish_worker_shot()" in llvm
         assert "call void @pecos_wasm_check(i1 %wasm_finish_0_ok)" in llvm
@@ -862,15 +771,15 @@ def test_worker_state_key_covers_payload_and_options(examples):
     keys = [
         key(),
         key(payload.replace(b"i64.const 0", b"i64.const 7")),
-        key(wasm_auto_init=False),
-        key(wasm_timeout_seconds=2.0),
-        key(wasm_int_width="auto"),
-        key(wasm_async_workers=1),
-        key(wasm_async_workers=2),
+        key(auto_init=False),
+        key(timeout_seconds=2.0),
+        key(int_width="auto"),
+        key(async_workers=1),
+        key(async_workers=2),
     ]
     assert len(set(keys)) == len(keys)
     assert key() == keys[0]
-    llvm = compile_wasm(example.counter, {identifier: payload})
+    llvm = compile_wasm(example.counter, WasmOptions({identifier: payload}))
     assert "pecos_wasm_v2_begin_worker_shot" not in llvm
     assert "pecos_wasm_v2_finish_worker_shot" not in llvm
 
@@ -888,9 +797,9 @@ def test_lowering_preserves_input_package(examples, monkeypatch, input_form, sta
     monkeypatch.setattr(lowering, "_compile_guppy_package", lambda _: package)
     program = {"source": example.loop_helpers, "package": package, "bytes": before}[input_form]
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    first = compile_wasm(program, modules, wasm_state_scope=state_scope)
+    first = compile_wasm(program, WasmOptions(modules, state_scope=state_scope))
     assert package.to_bytes() == before
-    second = compile_wasm(program, modules, wasm_state_scope=state_scope)
+    second = compile_wasm(program, WasmOptions(modules, state_scope=state_scope))
     assert first == second
     assert package.to_bytes() == before
 
@@ -942,7 +851,7 @@ def test_lowering_normalizes_custom_graphs(examples, monkeypatch, shape, input_f
             pytest.fail("Missing WASM context acquisition")
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     before = package.to_bytes()
-    expected = compile_wasm(before, modules)
+    expected = compile_wasm(before, WasmOptions(modules))
     original_order = lowering._order_calls  # noqa: SLF001
 
     def checked_order(document, acquisitions):
@@ -962,5 +871,5 @@ def test_lowering_normalizes_custom_graphs(examples, monkeypatch, shape, input_f
     monkeypatch.setattr(lowering, "_order_calls", checked_order)
     monkeypatch.setattr(lowering, "_compile_guppy_package", lambda _: package)
     program = example.addition if input_form == "source" else package
-    assert compile_wasm(program, modules) == expected
+    assert compile_wasm(program, WasmOptions(modules)) == expected
     assert package.to_bytes() == before

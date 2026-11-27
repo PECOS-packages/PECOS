@@ -256,12 +256,13 @@ def test_parametric_definition_compiles_as_library(monkeypatch: pytest.MonkeyPat
     assert calls == [parametric_coin]
 
 
-@pytest.mark.parametrize("wasm_modules", [None, {}])
-def test_guppy_wrapper_requires_parameterless_entry_point(wasm_modules) -> None:
+@pytest.mark.parametrize("use_wasm", [False, True])
+def test_guppy_wrapper_requires_parameterless_entry_point(use_wasm) -> None:
     from pecos import Guppy, sim
 
+    wasm = pytest.importorskip("pecos_selene_wasm").WasmOptions({}) if use_wasm else None
     with pytest.raises(RuntimeError, match="a runnable entry point without parameters is required"):
-        sim(Guppy(parametric_coin, wasm_modules=wasm_modules))
+        sim(Guppy(parametric_coin, wasm=wasm))
 
 
 @pytest.mark.parametrize("wrapped", [False, True])

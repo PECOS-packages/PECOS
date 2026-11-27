@@ -31,16 +31,14 @@ def abort_after_mutation() -> None:
 def test_runtime_panic_after_wasm_mutation_leaves_fresh_batches(backend, tmp_path, async_workers):
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
     if backend == "selene":
-        from pecos_selene_wasm import build
+        from pecos_selene_wasm import WasmOptions, build
         from selene_sim import Quest
         from selene_sim.exceptions import SelenePanicError
 
         runner = build(
             abort_after_mutation,
-            modules,
+            WasmOptions(modules, state_scope="worker", async_workers=async_workers),
             build_dir=tmp_path,
-            wasm_state_scope="worker",
-            wasm_async_workers=async_workers,
         )
         for _ in range(2):
             with pytest.raises(SelenePanicError, match="worker-state abort"):
@@ -51,9 +49,7 @@ def test_runtime_panic_after_wasm_mutation_leaves_fresh_batches(backend, tmp_pat
             pc.sim(
                 pc.Guppy(
                     abort_after_mutation,
-                    wasm_modules=modules,
-                    wasm_state_scope="worker",
-                    wasm_async_workers=async_workers,
+                    wasm=pc.WasmOptions(modules, state_scope="worker", async_workers=async_workers),
                 ),
             )
             .qubits(1)

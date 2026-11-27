@@ -6,6 +6,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+- **Changed:** Guppy/HUGR/Selene WASM options are now one frozen `WasmOptions` object.
+
 - **Changed:** The PECOS Selene runtime (`pecos-selene-runtime`) now rejects every
   call except `exit` after any call fails, with a message naming the first error,
   and `shot_start` rejects a shot that was never ended with `shot_end`. Both were

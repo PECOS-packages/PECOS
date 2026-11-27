@@ -299,9 +299,9 @@ incurred — the ground truth that decoder predictions are scored against.
     ```
 
 In Rust, `sample_shots` returns the decodable `SampleBatch` that Python's
-`sample_batch` returns; Rust's own `sample_batch` returns plain rows. The Rust
-sampler is built from the DEM text, whose probabilities are rounded, so its
-shots need not match the Python tab's.
+`sample_batch` returns; Rust's own `sample_batch` returns plain rows. The DEM
+text keeps every probability exactly, so the Rust sampler built from it draws the
+same shots as the Python tab for the same seed.
 
 ## 4b. Or generate shots by simulating the program
 

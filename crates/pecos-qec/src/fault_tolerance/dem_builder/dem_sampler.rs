@@ -74,10 +74,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use wide::u64x4;
 
 use super::types::{
-    FaultMechanism, IdleChannelFamilies, NoiseChannelKind, NoiseChannelResidual, NoiseConfig,
-    PauliProbs, PauliWeights, PerGateTypeNoise, ReplacementBranchApproximation,
-    combine_probabilities, fit_exclusive_signatures, is_two_qubit_noise_gate,
-    validate_exclusive_probabilities, validate_idle_probabilities,
+    ContributionProbabilities, FaultMechanism, IdleChannelFamilies, NoiseChannelKind,
+    NoiseChannelResidual, NoiseConfig, PauliProbs, PauliWeights, PerGateTypeNoise,
+    ReplacementBranchApproximation, combine_independent_prob_set, fit_exclusive_signatures,
+    is_two_qubit_noise_gate, validate_exclusive_probabilities, validate_idle_probabilities,
 };
 
 // ============================================================================
@@ -504,7 +504,7 @@ impl SamplingEngine {
         }
         super::builder::validate_idle_noise_targets(influence_map, noise.idle_noise_request())?;
 
-        let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
+        let mut aggregated: BTreeMap<DemMechanism, ContributionProbabilities> = BTreeMap::new();
         let mut idle_noise_residuals = Vec::new();
 
         let gate_locs = influence_map.gate_fault_locations();
@@ -591,12 +591,7 @@ impl SamplingEngine {
                             super::DemBuilderError::ConfigurationError(error.to_string())
                         })?;
                     for (mechanism, probability) in fit.mechanisms {
-                        aggregated
-                            .entry(mechanism)
-                            .and_modify(|held| {
-                                *held = combine_probabilities(*held, probability);
-                            })
-                            .or_insert(probability);
+                        aggregated.entry(mechanism).or_default().push(probability);
                     }
                     if let Some((mechanism, magnitude)) = fit.residual {
                         idle_noise_residuals.push(NoiseChannelResidual {
@@ -618,12 +613,7 @@ impl SamplingEngine {
                         if mechanism.is_empty() || probability == 0.0 {
                             continue;
                         }
-                        aggregated
-                            .entry(mechanism)
-                            .and_modify(|held| {
-                                *held = combine_probabilities(*held, probability);
-                            })
-                            .or_insert(probability);
+                        aggregated.entry(mechanism).or_default().push(probability);
                     }
                 }
                 continue;
@@ -693,10 +683,7 @@ impl SamplingEngine {
             let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &context)
                 .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             for (mechanism, probability) in fit.mechanisms {
-                aggregated
-                    .entry(mechanism)
-                    .and_modify(|held| *held = combine_probabilities(*held, probability))
-                    .or_insert(probability);
+                aggregated.entry(mechanism).or_default().push(probability);
             }
             if let Some((mechanism, magnitude)) = fit.residual {
                 idle_noise_residuals.push(NoiseChannelResidual {
@@ -713,9 +700,13 @@ impl SamplingEngine {
         let num_detectors = influence_map.detectors.len();
         let num_dem_outputs = influence_map.num_dem_outputs();
 
-        let mechanisms = aggregated
-            .into_iter()
-            .map(|(mech, prob)| (prob, mech.detectors.to_vec(), mech.dem_outputs.to_vec()));
+        let mechanisms = aggregated.into_iter().map(|(mech, mut probabilities)| {
+            (
+                combine_independent_prob_set(&mut probabilities),
+                mech.detectors.to_vec(),
+                mech.dem_outputs.to_vec(),
+            )
+        });
 
         let mut engine = Self::from_mechanisms(mechanisms, num_detectors, num_dem_outputs);
         engine.idle_noise_residuals = idle_noise_residuals;
@@ -2307,7 +2298,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         };
 
         // Aggregation map: mechanism -> probability
-        let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
+        let mut aggregated: BTreeMap<DemMechanism, ContributionProbabilities> = BTreeMap::new();
         let mut idle_noise_residuals = Vec::new();
 
         // Group two-qubit gate locations by node for paired processing
@@ -2481,7 +2472,8 @@ impl<'a> SamplingEngineBuilder<'a> {
 
         let mut inv_log_1_minus_p = Vec::with_capacity(num_mechanisms);
 
-        for (mech, prob) in aggregated {
+        for (mech, mut probabilities) in aggregated {
+            let prob = combine_independent_prob_set(&mut probabilities);
             // Precompute u64 threshold: p * u64::MAX
             // This avoids f64 comparison during sampling
             #[allow(
@@ -2531,7 +2523,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         pauli: Pauli,
         prob: f64,
         context: &FaultMechanismContext<'_>,
-        aggregated: &mut BTreeMap<DemMechanism, f64>,
+        aggregated: &mut BTreeMap<DemMechanism, ContributionProbabilities>,
     ) {
         let mechanism = self.compute_mechanism(
             loc_idx,
@@ -2540,8 +2532,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             context.num_measurements,
         );
         if !mechanism.is_empty() {
-            let entry = aggregated.entry(mechanism).or_insert(0.0);
-            *entry = combine_probabilities(*entry, prob);
+            aggregated.entry(mechanism).or_default().push(prob);
         }
     }
 
@@ -2683,7 +2674,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         loc_idx: usize,
         rates: [f64; 3],
         context: &FaultMechanismContext<'_>,
-        aggregated: &mut BTreeMap<DemMechanism, f64>,
+        aggregated: &mut BTreeMap<DemMechanism, ContributionProbabilities>,
         residuals: &mut Vec<NoiseChannelResidual>,
     ) -> Result<(), super::DemBuilderError> {
         let gate_type = self.influence_map.locations[loc_idx].gate_type;
@@ -2707,10 +2698,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
             .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         for (mechanism, probability) in fit.mechanisms {
-            aggregated
-                .entry(mechanism)
-                .and_modify(|held| *held = combine_probabilities(*held, probability))
-                .or_insert(probability);
+            aggregated.entry(mechanism).or_default().push(probability);
         }
         if let Some((mechanism, magnitude)) = fit.residual {
             residuals.push(NoiseChannelResidual {
@@ -2730,7 +2718,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         loc_idx: usize,
         families: IdleChannelFamilies,
         context: &FaultMechanismContext<'_>,
-        aggregated: &mut BTreeMap<DemMechanism, f64>,
+        aggregated: &mut BTreeMap<DemMechanism, ContributionProbabilities>,
         residuals: &mut Vec<NoiseChannelResidual>,
     ) -> Result<(), super::DemBuilderError> {
         let x_mechanism = self.compute_mechanism(
@@ -2753,17 +2741,15 @@ impl<'a> SamplingEngineBuilder<'a> {
         );
         debug_assert_eq!(y_mechanism, x_mechanism.xor(&z_mechanism));
 
-        let add = |mechanism: DemMechanism,
-                   probability: f64,
-                   aggregated: &mut BTreeMap<DemMechanism, f64>| {
-            if mechanism.is_empty() || probability == 0.0 {
-                return;
-            }
-            aggregated
-                .entry(mechanism)
-                .and_modify(|held| *held = combine_probabilities(*held, probability))
-                .or_insert(probability);
-        };
+        let add =
+            |mechanism: DemMechanism,
+             probability: f64,
+             aggregated: &mut BTreeMap<DemMechanism, ContributionProbabilities>| {
+                if mechanism.is_empty() || probability == 0.0 {
+                    return;
+                }
+                aggregated.entry(mechanism).or_default().push(probability);
+            };
 
         for (family_index, probabilities) in families.exclusive.into_iter().enumerate() {
             let channel_weight = probabilities.total();
@@ -2815,7 +2801,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         loc2: usize,
         rates: [f64; 15],
         context: &FaultMechanismContext<'_>,
-        aggregated: &mut BTreeMap<DemMechanism, f64>,
+        aggregated: &mut BTreeMap<DemMechanism, ContributionProbabilities>,
         residuals: &mut Vec<NoiseChannelResidual>,
     ) -> Result<(), super::DemBuilderError> {
         let gate_type = self.influence_map.locations[loc1].gate_type;
@@ -2876,10 +2862,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
             .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         for (mechanism, probability) in fit.mechanisms {
-            aggregated
-                .entry(mechanism)
-                .and_modify(|held| *held = combine_probabilities(*held, probability))
-                .or_insert(probability);
+            aggregated.entry(mechanism).or_default().push(probability);
         }
         if let Some((mechanism, magnitude)) = fit.residual {
             residuals.push(NoiseChannelResidual {

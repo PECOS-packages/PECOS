@@ -901,8 +901,9 @@ fn identical_idle_configuration_produces_byte_identical_dem_text() {
     let expected = build();
     assert_eq!(
         expected,
-        "detector D0\ndetector D1\nerror(0.002001) D0\nerror(0.003011) D0 D1\nerror(0.005019) D1",
-        "this full dimension-two DEM text is pinned to commit 79e8aa833",
+        "detector D0\ndetector D1\nerror(0.002000955040586616) D0\n\
+         error(0.003011095091214222) D0 D1\nerror(0.005019131070643723) D1",
+        "this full dimension-two DEM text is pinned to commit 79e8aa833, with exact priors",
     );
     let dem = build_synthetic_idle_dem(&influence, noise.clone()).expect("valid pinned DEM");
     let probabilities = idle_signature_contributions(&dem)

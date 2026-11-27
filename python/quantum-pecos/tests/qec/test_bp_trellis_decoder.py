@@ -147,11 +147,12 @@ def test_no_path_reports_across_direct_methods(observable: int) -> None:
         with pytest.raises(RuntimeError, match=r"shot 1:.*detector 5 has a residual"):
             decoder.decode_batch(shots, workers=workers, on_no_path="raise")
         for policy in ("raise", "report"):
-            with pytest.raises(RuntimeError, match="shot 1:"):
+            # An empty syndrome has the wrong length, which is caller input.
+            with pytest.raises(ValueError, match="shot 1:"):
                 decoder.decode_batch([shots[0], []], workers=workers, on_no_path=policy)
-            with pytest.raises(RuntimeError):
+            with pytest.raises(ValueError, match="Invalid input dimensions"):
                 decoder.decode_syndrome([], on_no_path=policy)
-        with pytest.raises(RuntimeError, match="shot 2:"):
+        with pytest.raises(ValueError, match="shot 2:"):
             decoder.decode_batch([shots[0], shots[1], []], workers=workers, on_no_path="report")
         with pytest.raises(ValueError, match="on_no_path"):
             decoder.decode_batch([], workers=workers, on_no_path="unknown")

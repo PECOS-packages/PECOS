@@ -8,6 +8,19 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - **Changed:** Guppy/HUGR/Selene WASM options are now one frozen `WasmOptions` object.
 
+- **Changed:** A batch that repeats a qubit no longer reaches a simulator through
+  the engines or the Python wrappers (#1605). The engines stop merging consecutive
+  MZ-family commands into one simulator call when the next command repeats a
+  measured qubit; `run_gate` on SparseStab, Stabilizer, StabVec, PauliProp,
+  StateVec and SparseSim, the PauliProp list methods and the CUDA
+  `CuStateVec` list methods raise `ValueError` ("requires distinct qubits;
+  duplicated qubits: [...]") for a qubit repeated anywhere in the batch, for
+  example `run_gate("SYY", {(1, 2), (0, 1)})`. StateVec, SparseSim and the CUDA
+  `crx`/`cry`/`crz` methods applied such input one location at a time before; it
+  is now rejected like every other batch. EEG `StabilizerGroup::from_circuit`
+  validates each gate before running it, so it now also rejects an `Idle` gate
+  without a duration.
+
 - **Changed:** The PECOS Selene runtime (`pecos-selene-runtime`) now rejects every
   call except `exit` after any call fails, with a message naming the first error,
   and `shot_start` rejects a shot that was never ended with `shot_end`. Both were

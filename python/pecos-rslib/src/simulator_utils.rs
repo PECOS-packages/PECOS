@@ -58,6 +58,20 @@ pub(crate) fn validate_qubit(gate: &str, qubit: usize, capacity: Option<usize>) 
     Ok(())
 }
 
+/// Reject overlap across an entire batch before any simulator dispatch.
+pub(crate) fn validate_distinct_qubits(
+    gate: &str,
+    qubits: impl IntoIterator<Item = usize>,
+) -> PyResult<()> {
+    let dups = pecos_core::duplicate_qubits(qubits);
+    if !dups.is_empty() {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{gate} requires distinct qubits; duplicated qubits: {dups:?}"
+        )));
+    }
+    Ok(())
+}
+
 /// Extract a single caller-supplied index with an actionable error.
 pub(crate) fn extract_qubit(gate: &str, location: &Bound<'_, PyAny>) -> PyResult<usize> {
     location.extract().map_err(|_| {
@@ -126,13 +140,15 @@ fn collect_validated_pairs(
     locations: &Bound<'_, PyAny>,
     capacity: Option<usize>,
 ) -> PyResult<Vec<(QubitId, QubitId)>> {
-    named_locations_iter(symbol, locations)?
+    let pairs = named_locations_iter(symbol, locations)?
         .map(|location| {
             let (a, b) = extract_pair(symbol, &location?)?;
             validate_pair(symbol, a.0, b.0, capacity)?;
             Ok((a, b))
         })
-        .collect()
+        .collect::<PyResult<Vec<_>>>()?;
+    validate_distinct_qubits(symbol, pairs.iter().flat_map(|(a, b)| [a.0, b.0]))?;
+    Ok(pairs)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1172,6 +1188,7 @@ pub(crate) fn validate_gate_locations(
             .iter()
             .map(|location| extract_validated_single(symbol, &location, capacity))
             .collect::<PyResult<Vec<_>>>()?;
+        validate_distinct_qubits(symbol, qubits.iter().copied())?;
         return Ok(ValidatedLocations {
             qubits,
             pairs: None,

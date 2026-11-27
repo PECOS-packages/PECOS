@@ -41,12 +41,16 @@ impl StabilizerGroup {
     /// Run the Clifford skeleton of the noiseless circuit on SparseStab.
     ///
     /// # Panics
-    /// Panics for unsupported gate types or an odd two-qubit operand count.
+    /// Panics for a gate that fails `Gate::validate` (for example a repeated qubit,
+    /// an odd two-qubit operand count, or an `Idle` without a duration) and for
+    /// unsupported gate types.
     #[must_use]
     pub fn from_circuit(gates: &[Gate], num_qubits: usize) -> Self {
         let mut sim = SparseStab::with_seed(num_qubits, 0);
 
         for gate in gates {
+            gate.validate()
+                .unwrap_or_else(|error| panic!("EEG: {error}"));
             let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
             match gate.gate_type {
@@ -222,6 +226,22 @@ mod tests {
             meas_ids: pecos_core::GateMeasIds::new(),
             channel: None,
         }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "EEG: Gate SYY requires distinct qubits within one gate command; duplicated qubits: [1]"
+    )]
+    fn rejects_overlapping_pairs() {
+        let _ = StabilizerGroup::from_circuit(&[gate(GateType::SYY, &[1, 2, 0, 1])], 3);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "EEG: Gate H requires distinct qubits within one gate command; duplicated qubits: [0]"
+    )]
+    fn rejects_repeated_single_qubits() {
+        let _ = StabilizerGroup::from_circuit(&[gate(GateType::H, &[0, 0])], 1);
     }
 
     #[test]

@@ -77,3 +77,73 @@ def test_constructors_report_missing_sdk(pecos_rslib_cuda, name, args) -> None:
 
     with pytest.raises(RuntimeError, match="cuQuantum SDK not available"):
         getattr(pecos_rslib_cuda, name)(*args)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize(
+    ("gate", "args", "qubits"),
+    [
+        (name, (), [0, 0])
+        for name in [
+            "h",
+            "x",
+            "y",
+            "z",
+            "s",
+            "sdg",
+            "sx",
+            "sxdg",
+            "sy",
+            "sydg",
+            "sz",
+            "szdg",
+            "f",
+            "fdg",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "t",
+            "tdg",
+            "mx",
+            "mnx",
+            "my",
+            "mny",
+            "mz",
+        ]
+    ]
+    + [
+        (name, (), [1, 2, 0, 1])
+        for name in [
+            "cx",
+            "cy",
+            "cz",
+            "swap",
+            "iswap",
+            "sxx",
+            "sxxdg",
+            "syy",
+            "syydg",
+            "szz",
+            "szzdg",
+            "g",
+        ]
+    ]
+    + [(name, (0.25,), [1, 2, 0, 1]) for name in ["rx", "ry", "rz", "rxx", "ryy", "rzz", "crx", "cry", "crz"]]
+    + [
+        ("rxyxy2q", (0.25, 0.5), [1, 2, 0, 1]),
+        ("rxy1q", (0.25, 0.5), [0, 0]),
+        ("u", (0.25, 0.5, 0.75), [0, 0]),
+    ],
+)
+def test_custatevec_rejects_overlapping_batches(pecos_rslib_cuda, gate, args, qubits):
+    if not pecos_rslib_cuda.is_custatevec_usable():
+        pytest.skip("cuStateVec GPU backend not available")
+    sim = pecos_rslib_cuda.CuStateVec(3)
+    sim.x([0])
+    with pytest.raises(ValueError, match="requires distinct qubits") as error:
+        getattr(sim, gate)(*args, qubits)
+    duplicate = 0 if qubits == [0, 0] else 1
+    assert str(error.value) == f"{gate.upper()} requires distinct qubits; duplicated qubits: [{duplicate}]"
+    assert sim.mz([0, 1, 2]) == [1, 0, 0]

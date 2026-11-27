@@ -49,7 +49,10 @@ impl PyMatchingEdgeDecoder {
         )
         .map_err(|error| match error {
             // The window DEM is generated here, so a grammar or upstream rejection
-            // of its text is internal.
+            // of its text is internal. Edge weights are checked only when the
+            // matcher is first built, at decode, and are not remapped; a window
+            // cannot fail that check because commit windows reject every prior
+            // above 0.5 with `check_matching_prior`.
             crate::PyMatchingError::Dem(_) | crate::PyMatchingError::InvalidGraph(_) => {
                 DecoderError::InternalError(format!(
                     "invalid internally generated window DEM: {error}"

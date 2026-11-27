@@ -367,8 +367,9 @@ mod tests {
 
     #[test]
     fn error_probability_override_replaces_an_out_of_range_dem_weight() {
-        // The override rewrites every weight before the matcher is built, so the
-        // DEM's own infinite weight is never checked.
+        // The override rewrites every edge weight before the matcher is built, so
+        // the DEM's own infinite weight is never checked. (Implied correlation
+        // weights are kept from the DEM; this graph is uncorrelated.)
         let mut decoder =
             crate::PyMatchingDecoder::from_dem_with_error_probability("error(1) D0", 0.1)
                 .expect("the graph builds");

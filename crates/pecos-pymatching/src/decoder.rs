@@ -1053,6 +1053,8 @@ impl PyMatchingDecoder {
     /// [`Self::num_detectors`] and [`Self::num_nodes`] entries.
     /// Entry `i` is node `i`, so with a boundary node below the highest
     /// detector, the entries past `num_detectors` address the top detectors.
+    /// Returns [`PyMatchingError::InvalidGraph`] if upstream rejects the graph when
+    /// the matcher is first built, for example an edge weight above its maximum.
     /// Also returns an error if decoding fails.
     ///
     /// # Panics

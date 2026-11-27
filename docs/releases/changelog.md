@@ -55,7 +55,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `pymatching_correlated`, an unterminated `repeat` block, `add_edge(2**63, 1,
   [])`, an edge that `add_edge` or `add_boundary_edge` refuses under
   `MergeStrategy::Disallow`, and `error(1) D0`, whose weight exceeds upstream's
-  maximum when the matcher is first built for decoding.
+  maximum when the matcher is first built for decoding (a batch with no shots
+  never builds it).
   `PyMatchingDecoder(2**62)` raises `ValueError` instead of ending the process.
   Failures while decoding a syndrome, or sampling noise, stay `RuntimeError`,
   including an odd-parity syndrome with no perfect matching. A rejected

@@ -451,6 +451,11 @@ def test_logical_membership_does_not_hide_a_prior_above_half(dem, membership):
     [
         pytest.param("repeat 2 {\nerror(0.1) D0", id="unterminated-repeat"),
         pytest.param("error(0.1) D0\n}", id="uninitiated-repeat"),
+        # The largest index the grammar accepts; its node vector exceeds the
+        # allocation size limit at once (`length_error`). A smaller index such as
+        # D4294967295 asks for about 137 GB, which may succeed or be OOM-killed
+        # depending on the machine.
+        pytest.param("error(0.1) D0 D1152921504606846975", id="huge-detector"),
     ],
 )
 def test_pymatching_graph_phase_rejection_is_input_error(dem):
@@ -463,6 +468,9 @@ def test_pymatching_weight_rejection_happens_when_the_matcher_is_built():
     # first built for decoding, which is still a rejection of the graph.
     with pytest.raises(ValueError, match="decoder failed on shot 0:.*maximum absolute edge weight"):
         SampleBatch([[1]], [0]).decode("error(1) D0", pymatching(correlated=False), workers=1)
+    decoder = PyMatchingDecoder.from_dem("error(1) D0")
+    with pytest.raises(ValueError, match="Failed to build the matcher: maximum absolute edge weight"):
+        decoder.decode_syndrome([1])
 
 
 def test_pymatching_error_probability_override_replaces_an_out_of_range_dem_weight():

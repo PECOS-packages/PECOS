@@ -145,6 +145,8 @@ fields.
 When enabled, `dropped_log_mass` counts only the mass states carried when they
 were pruned -- a state dropped early would have branched through later columns,
 so it is not a bound on the probability the answer is missing.
+Opt-in `incremental_score` carries suffix scores for binary float decoding, speeding up wide boundaries; rounding can change near-tie pruning outside snapshot/reference guarantees, while unpruned results are unchanged.
+With incremental scoring enabled, construction fails for non-finite static suffix values when BP scoring is off; fixed-lag streaming rejects this option, and it can be slower on narrow models with few active detectors.
 
 ## Decoding a hyperedge model with a matching decoder
 

@@ -47,4 +47,12 @@ pub mod wasmtime_foreign_object;
 pub use foreign_object::{DummyForeignObject, ForeignObject};
 
 #[cfg(feature = "wasm")]
-pub use wasmtime_foreign_object::{CompiledWasmModule, WasmForeignObject, WasmScalarType};
+pub use wasmtime_foreign_object::{
+    CompiledWasmModule, WasmForeignObject, WasmScalarType, fork_generation,
+};
+
+#[cfg(feature = "wasm")]
+mod runtime_library;
+
+#[cfg(all(test, feature = "wasm"))]
+mod call_tests;

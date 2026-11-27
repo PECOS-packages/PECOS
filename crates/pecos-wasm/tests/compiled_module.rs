@@ -1,7 +1,7 @@
 use pecos_wasm::{CompiledWasmModule, ForeignObject};
 
 #[test]
-fn compiled_instances_have_independent_limits_and_clocks_survive_teardown() {
+fn compiled_instances_have_independent_limits_and_timeouts_survive_other_drops() {
     let module = CompiledWasmModule::new(
         br#"(module
             (memory 1)
@@ -16,8 +16,8 @@ fn compiled_instances_have_independent_limits_and_clocks_survive_teardown() {
     small.teardown();
     drop(small);
     drop(module);
-    // Dropping the compilation/cache owner or another instance must not stop
-    // this instance's clock. An infinite loop must still produce a timeout.
+    // Timeouts must still fire after another instance and the compiled artifact
+    // are dropped.
     assert!(large.exec("spin", &[]).is_err());
 }
 

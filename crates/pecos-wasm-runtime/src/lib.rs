@@ -6,16 +6,24 @@
 //! C entry points return a status; they never unwind or transfer control while
 //! Rust frames own resources. The generated caller handles errors afterwards.
 //!
-//! Fork is not supported: a forked child must not call the runtime from a thread
-//! that already made WASM calls. Its async workers and the timeout clocks of its
-//! cached modules are threads, and fork does not copy them.
+//! Fork is supported through the C ABI. A child discards all of the forking
+//! thread's per-thread runtime state: registrations, function handles, contexts,
+//! retained worker-scope instances and pending results. It must start a new shot
+//! and register again; inherited pending results fail as unknown contexts.
+//! Compiled code is kept, and timeouts and traps keep working. Fork requires
+//! that no other thread is performing a Wasmtime host-side operation (compiling,
+//! instantiating, creating the Engine, dropping stores or modules, or handling a
+//! trap). A worker parked in guest code is fine. Forks that skip `pthread_atfork`
+//! handlers (raw `clone`/`clone3`, `vfork`, or glibc `_Fork`) are unsupported.
+//! On Apple targets the runtime's own waits survive fork, but std thread parking
+//! does not: a forking thread that parked before the fork (for example in a
+//! contended std lock or an `mpsc` receive) can crash if it parks again in the child.
 
 use pecos_wasm::{CompiledWasmModule, ForeignObject, WasmForeignObject, WasmScalarType};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::mpsc;
 
 mod async_pool;
 #[cfg(test)]
@@ -29,7 +37,7 @@ type AsyncReply = (ModuleInstances, Result<Vec<i64>>);
 
 enum Pending {
     Ready(Vec<i64>),
-    Async(mpsc::Receiver<AsyncReply>),
+    Async(async_pool::ReplyReceiver<AsyncReply>),
 }
 
 #[derive(Default)]
@@ -121,6 +129,9 @@ impl CompilationCache {
 }
 
 thread_local! {
+    // No destructor: remains readable while STATE, COMPILED and POOL are destroyed.
+    #[cfg(unix)]
+    static GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
     static STATE: tls::Value<RefCell<State>> = tls::Value::new(RefCell::default());
     // Immutable code survives shot reset; stores and instances never do.
     static COMPILED: tls::Value<RefCell<CompilationCache>> = tls::Value::new(RefCell::default());
@@ -129,6 +140,14 @@ thread_local! {
     static POOL: tls::Value<RefCell<Option<async_pool::Pool>>> = const { tls::Value::new(RefCell::new(None)) };
     // QIS panic uses a length-prefixed byte string (at most 255 bytes).
     static ERROR: RefCell<Vec<u8>> = RefCell::new(vec![0]);
+}
+
+#[cfg(unix)]
+fn inherited() -> bool {
+    GENERATION.with(|generation| {
+        let recorded = generation.get();
+        recorded != u64::MAX && recorded != pecos_wasm::fork_generation()
+    })
 }
 
 // Access only the calling thread's executor; workers and destructors never use TLS.
@@ -149,6 +168,17 @@ fn set_error(message: &str) {
 
 /// Execute an operation without allowing a Rust panic to cross the ABI.
 pub fn boundary<T: Copy>(failure: T, operation: impl FnOnce() -> Result<T>) -> T {
+    #[cfg(unix)]
+    {
+        if inherited() {
+            // Sibling threads vanished at fork. Even dropping their channels or
+            // instances may take locks they held, so deliberately leak this state.
+            POOL.with(|pool| std::mem::forget(pool.borrow_mut().take()));
+            STATE.with(|state| std::mem::forget(std::mem::take(&mut *state.borrow_mut())));
+            // COMPILED remains valid on the shared Engine and is reused normally.
+        }
+        GENERATION.with(|generation| generation.set(pecos_wasm::fork_generation()));
+    }
     match catch_unwind(AssertUnwindSafe(operation)) {
         Ok(Ok(value)) => value,
         Ok(Err(message)) => {
@@ -533,7 +563,7 @@ fn execute(
 pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize) -> Result<i32> {
     if !(1..=async_pool::MAX_WORKERS).contains(&workers) {
         return Err(format!(
-            "WASM async worker count must be between 1 and {}",
+            "WASM async worker count must be between 1 and {}; got {workers}",
             async_pool::MAX_WORKERS
         ));
     }
@@ -556,8 +586,12 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
         if !context.leased || context.pending.is_some() {
             return Err("WASM context is not leased or has an unread result".into());
         }
-        if async_workers.is_some_and(|count| count != workers) {
-            return Err("WASM async worker count changed without reset".into());
+        if let Some(count) = *async_workers
+            && count != workers
+        {
+            return Err(format!(
+                "WASM async worker count changed without reset: {count} -> {workers}"
+            ));
         }
         let prepared = if context.modules.contains_key(&function.module) {
             None
@@ -589,7 +623,7 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
         *async_workers = Some(workers);
         let arguments = arguments.to_vec();
         let mut instances = std::mem::take(&mut context.modules);
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = async_pool::reply();
         let job = Box::new(move || {
             let result = (|| {
                 if let Some((compiled, timeout, auto_init)) = prepared {
@@ -610,7 +644,7 @@ pub fn call_async(context: u64, function: u64, arguments: &[i64], workers: usize
                 execute(object, &function, &arguments)
             })();
             // An abandoned receiver must never block executor shutdown.
-            let _ = sender.send((instances, result));
+            sender.send((instances, result));
         });
         with_pool(|pool| pool.ok_or("WASM async executor unavailable")?.submit(job))?;
         context.pending = Some(Pending::Async(receiver));
@@ -635,8 +669,7 @@ pub fn read(context: u64, count: usize) -> Result<Vec<i64>> {
         let values = match context.pending.take().ok_or("No pending WASM result")? {
             Pending::Ready(values) => values,
             Pending::Async(receiver) => {
-                let (instances, result) =
-                    receiver.recv().map_err(|_| "WASM async job disconnected")?;
+                let (instances, result) = receiver.recv().ok_or("WASM async job disconnected")?;
                 context.modules = instances;
                 result?
             }
@@ -994,6 +1027,8 @@ macro_rules! export_wasm_runtime {
 mod tests {
     use super::*;
     mod async_tests;
+    #[cfg(unix)]
+    mod fork_tests;
 
     #[test]
     fn compilation_cache_reuses_exact_bytes_and_evicts_lru() {
@@ -1601,8 +1636,14 @@ mod tests {
         for (context, expected) in contexts.into_iter().rev() {
             assert_eq!(read(context, 1).unwrap(), [expected]);
         }
-        assert!(call_async(0, add, &[], 0).is_err());
-        assert!(call_async(0, add, &[], 65).is_err());
+        assert_eq!(
+            call_async(0, add, &[], 0).unwrap_err(),
+            "WASM async worker count must be between 1 and 64; got 0"
+        );
+        assert_eq!(
+            call_async(0, add, &[], 65).unwrap_err(),
+            "WASM async worker count must be between 1 and 64; got 65"
+        );
         reset().unwrap();
     }
 

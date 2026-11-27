@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_support::watchdog;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -142,7 +142,10 @@ fn worker_count_follows_state_lifetime() {
             let function = lookup(0, "increment", 0, 1).unwrap();
             assert_eq!(
                 call_async(context, function, &[], count + 1).unwrap_err(),
-                "WASM async worker count changed without reset"
+                format!(
+                    "WASM async worker count changed without reset: {count} -> {}",
+                    count + 1
+                )
             );
             release(context).unwrap();
         }
@@ -283,7 +286,7 @@ fn owner_thread_exit_joins_pool() {
     }
 }
 
-mod abi {
+pub(crate) mod abi {
     crate::export_wasm_runtime!();
 }
 
@@ -325,4 +328,29 @@ fn public_abi_failures_clean_up_without_reset() {
         initialize(1);
         reset().unwrap();
     }
+}
+
+#[test]
+fn signature_error_keeps_export_name_when_truncated() {
+    reset().unwrap();
+    let name = "long_export_".repeat(7);
+    assert!(name.len() <= 100);
+    let params = ["i64"; 80].join(" ");
+    let source = format!("(module (func (export \"{name}\") (param {params})))");
+    let mut object = pecos_wasm::WasmForeignObject::from_bytes(source.as_bytes()).unwrap();
+    let message = object
+        .exec_scalar_bits(&name, &[pecos_wasm::WasmScalarType::I32; 80], &[], &[0; 80])
+        .unwrap_err()
+        .to_string();
+    assert!(message.len() > 255);
+    assert_eq!(boundary(-1, || Err(message.clone())), -1);
+    ERROR.with(|error| {
+        let error = error.borrow();
+        assert_eq!(error[0], 255);
+        assert_eq!(&error[1..], &message.as_bytes()[..255]);
+        let text = std::str::from_utf8(&error[1..]).unwrap();
+        assert!(text.contains(&format!(
+            "WASM scalar signature mismatch for {name}: 80 arguments; export ("
+        )));
+    });
 }

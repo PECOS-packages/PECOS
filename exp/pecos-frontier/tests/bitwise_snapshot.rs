@@ -196,6 +196,7 @@ fn collect_snapshot() -> SnapshotFile {
                     metric_mode: pecos_frontier::MetricMode::default(),
                     int_metric_scale: 1024,
                     dropped_mass: false,
+                    incremental_score: false,
                 },
             ),
             (
@@ -210,6 +211,7 @@ fn collect_snapshot() -> SnapshotFile {
                     metric_mode: pecos_frontier::MetricMode::default(),
                     int_metric_scale: 1024,
                     dropped_mass: false,
+                    incremental_score: false,
                 },
             ),
         ] {
@@ -256,6 +258,7 @@ fn collect_snapshot() -> SnapshotFile {
                 metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
                 dropped_mass: false,
+                incremental_score: false,
             },
         )
         .expect("fixture committee construction must succeed");
@@ -316,6 +319,7 @@ fn parallel_committee_matches_sequential_committee_bitwise() {
             &dem,
             FrontierConfig {
                 dropped_mass: true,
+                incremental_score: false,
                 k: fixture.pruned.k,
                 delta: fixture.pruned.delta,
                 score_alpha: 0.8,
@@ -370,6 +374,7 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
         );
         let off_config = FrontierConfig {
             dropped_mass: true,
+            incremental_score: false,
             k: usize::MAX,
             delta: f64::INFINITY,
             score_alpha: 0.8,

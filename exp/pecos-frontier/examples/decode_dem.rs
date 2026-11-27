@@ -26,6 +26,7 @@ const COLUMN_BUDGET: usize = 32;
 fn settings() -> FrontierConfig {
     FrontierConfig {
         dropped_mass: true,
+        incremental_score: false,
         k: 512,
         delta: 1_000_000_000.0,
         score_alpha: 0.8,

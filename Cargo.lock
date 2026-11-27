@@ -4266,6 +4266,7 @@ dependencies = [
 name = "pecos-frontier"
 version = "0.2.0-dev.0"
 dependencies = [
+ "criterion 0.8.2",
  "libm",
  "pecos-decoder-core",
  "pecos-trellis",
@@ -4970,6 +4971,7 @@ dependencies = [
 name = "pecos-wasm"
 version = "0.2.0-dev.0"
 dependencies = [
+ "libc",
  "log",
  "parking_lot",
  "pecos-core",
@@ -4980,6 +4982,7 @@ dependencies = [
 name = "pecos-wasm-runtime"
 version = "0.2.0-dev.0"
 dependencies = [
+ "libc",
  "pecos-wasm",
 ]
 

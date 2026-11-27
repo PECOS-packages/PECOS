@@ -1,6 +1,6 @@
 # WebAssembly Foreign Objects
 
-For Guppy programs, use the explicit `wasm_modules` mapping described in
+For Guppy programs, use the `WasmOptions` object described in
 [Guppy WASM calls](guppy-wasm.md). This guide covers the QASM/PHIR foreign-object API.
 
 This guide covers using WebAssembly (WASM) modules for classical computation within PECOS quantum simulations. WASM foreign objects allow you to execute custom classical logic alongside quantum operations in QASM and PHIR programs.
@@ -653,7 +653,7 @@ You can retrieve the compiled WASM bytes from a foreign object:
 2. **Init**: `init()` creates an instance and calls the module's `init` function
 3. **Execute**: `exec()` calls functions on the instance
 4. **Reset** (optional): `shot_reinit()` resets state between shots
-5. **Teardown**: `teardown()` cleans up resources (called automatically on drop)
+5. **Teardown**: `teardown()` is a compatibility no-op. Object resources are released on drop; the shared epoch ticker runs for the lifetime of the process.
 
 ### Resetting State
 

@@ -88,14 +88,18 @@ def main() -> None:
             import pecos as pc
 
             data = (
-                pc.sim(pc.Guppy(function, wasm_modules=modules)).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
+                pc.sim(pc.Guppy(function, wasm=pc.WasmOptions(modules)))
+                .qubits(1)
+                .quantum(pc.state_vector())
+                .run(4)
+                .to_dict()
             )
         else:
-            from pecos_selene_wasm import build
+            from pecos_selene_wasm import WasmOptions, build
             from selene_sim import Quest
 
             with TemporaryDirectory(prefix="pecos-wasm-float-") as directory:
-                runner = build(function, modules, build_dir=Path(directory))
+                runner = build(function, WasmOptions(modules), build_dir=Path(directory))
                 data = [
                     dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=1)
                 ]

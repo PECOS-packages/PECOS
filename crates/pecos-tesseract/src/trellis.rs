@@ -13,7 +13,9 @@
 //! detectors. Each is rejected at construction with upstream's own message.
 
 use super::bridge::ffi;
-use super::decoder::{TesseractError, fired_detectors, reject_repeated_detections};
+use super::decoder::{
+    TesseractError, checked_detections, fired_detectors, validate_syndrome_length,
+};
 use cxx::UniquePtr;
 use ndarray::ArrayView1;
 use pecos_decoder_core::{Decoder, DecodingResultTrait};
@@ -197,27 +199,16 @@ impl TesseractTrellisDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`TesseractError::InvalidInput`] if the detection array is not
-    /// contiguous, repeats a detector, or names a detector at or beyond
-    /// `num_detectors`, or [`TesseractError::DecodingFailed`] if the C++
+    /// Returns [`TesseractError::Dem`] carrying
+    /// [`DecoderError::InvalidSyndrome`](pecos_decoder_core::DecoderError::InvalidSyndrome)
+    /// if the detection array is not contiguous, repeats a detector, or names a
+    /// detector at or beyond `num_detectors`, or [`TesseractError::DecodingFailed`] if the C++
     /// decoder fails.
     pub fn decode_detections(
         &mut self,
         detections: &ArrayView1<u64>,
     ) -> Result<TesseractTrellisResult, TesseractError> {
-        let detections_slice = detections.as_slice().ok_or_else(|| {
-            TesseractError::InvalidInput("Detection array is not contiguous".to_string())
-        })?;
-        if let Some(&bad) = detections_slice
-            .iter()
-            .find(|&&d| d >= self.num_detectors as u64)
-        {
-            return Err(TesseractError::InvalidInput(format!(
-                "detector {bad} is out of range for a model with {} detectors",
-                self.num_detectors
-            )));
-        }
-        reject_repeated_detections(detections_slice)?;
+        let detections_slice = checked_detections(detections, self.num_detectors)?;
         let result = ffi::trellis_decode_detections(self.inner.pin_mut(), detections_slice)
             .map_err(|e| TesseractError::DecodingFailed(e.what().to_string()))?;
         Ok(TesseractTrellisResult {
@@ -262,9 +253,10 @@ impl pecos_decoder_core::ObservableDecoder for TesseractTrellisDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
+        validate_syndrome_length(syndrome.len(), self.num_detectors)?;
         let result = self
             .decode_detections(&fired_detectors(syndrome.iter()).view())
-            .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
         Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
             result.observables_mask,
         ))
@@ -276,6 +268,7 @@ impl Decoder for TesseractTrellisDecoder {
     type Error = TesseractError;
 
     fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
+        validate_syndrome_length(input.len(), self.num_detectors).map_err(TesseractError::Dem)?;
         self.decode_detections(&fired_detectors(input.iter()).view())
     }
 
@@ -291,6 +284,32 @@ impl Decoder for TesseractTrellisDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::Array1;
+    use pecos_decoder_core::DecoderError;
+
+    #[test]
+    fn dense_decode_rejects_wrong_lengths() {
+        let mut decoder = TesseractTrellisDecoder::new(
+            "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1",
+            TesseractTrellisConfig::default(),
+        )
+        .expect("valid two-detector DEM");
+        for length in [0, 1, 3] {
+            let syndrome = Array1::<u8>::zeros(length);
+            assert!(matches!(
+                Decoder::decode(&mut decoder, &syndrome.view()),
+                Err(TesseractError::Dem(DecoderError::InvalidDimensions { expected: 2, actual }))
+                    if actual == length
+            ));
+        }
+        assert!(Decoder::decode(&mut decoder, &Array1::from_vec(vec![1, 0]).view()).is_ok());
+        for length in [0, 1, 3] {
+            assert!(matches!(
+                pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &vec![0; length]),
+                Err(DecoderError::InvalidDimensions { expected: 2, actual }) if actual == length
+            ));
+        }
+    }
 
     #[test]
     fn dem_validation_precedes_backend_parsing() {

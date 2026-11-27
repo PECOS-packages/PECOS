@@ -9,6 +9,7 @@ import json
 import linecache
 import math
 import re
+import reprlib
 import statistics
 import sys
 import time
@@ -90,7 +91,7 @@ def manifest() -> dict:
         qubits = case.get("qubits", 1)
         require(type(qubits) is int and qubits > 0, "Invalid workload qubit count")
         width = case.get("wasm_int_width", 64)
-        require(type(width) is int and width in (32, 64), "Invalid workload WASM integer width")
+        require(type(width) is int and width in (32, 64), f"Invalid workload WASM integer width: {reprlib.repr(width)}")
         require(isinstance(case["id"], str) and re.fullmatch(r"[a-z0-9-]+", case["id"]), "Invalid workload ID")
         require(case["id"] not in seen, "Duplicate workload ID")
         seen.add(case["id"])

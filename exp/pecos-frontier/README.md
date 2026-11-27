@@ -23,6 +23,8 @@ maximum.
 `dropped_log_mass` is `Option<f64>` in Rust and `float | None` in Python.
 The flag applies to every entry point and never changes predictions, retained
 logical masses, evidence, or other result fields.
+Opt-in `incremental_score` carries suffix scores for binary float decoding, speeding up wide boundaries; rounding can change near-tie pruning outside snapshot/reference guarantees, while unpruned results are unchanged.
+With incremental scoring enabled, construction fails for non-finite static suffix values when BP scoring is off; fixed-lag streaming rejects this option, and it can be slower on narrow models with few active detectors.
 
 Deterministic ordering and tie-breaking are bitwise reproducible, and the
 engine's `libm` transcendentals make outputs bit-identical across platforms.
@@ -116,3 +118,28 @@ before event decoding; only `summary.json` indicates a completed cohort.
 To inspect geometry without running DP, use `resolve-windows MODEL CONFIG OUTPUT`.
 To decode the entire DEM, use `full-dem MODEL EVENTS OUTPUT`. These are local native
 interfaces; native per-call durations are not controller or WASM latency measurements.
+
+## Benchmarks
+
+Run the Criterion decode benchmark from the repository root:
+
+```sh
+cargo bench -p pecos-frontier --bench decode
+# Filter by any part of the benchmark id (DEM, regime, or flag):
+cargo bench -p pecos-frontier --bench decode -- 'd7_z_stim/k-capped'
+cargo bench -p pecos-frontier --bench decode -- committee
+```
+
+Each iteration decodes all 32 deterministically sampled shots (Xoshiro256PlusPlus,
+seed `0x5eed`) from a committed surface-code DEM. Decoder cases use d5 and d7 Z
+Stim DEMs, crossing `dropped_mass=false/true` with `wide` (default K and delta),
+`k-capped` (K=8, delta=infinity), and `delta-capped` (K=65536, delta=2).
+The committee group uses d5 with default settings and both flag values.
+Construction, sampling, and setup validation are outside timing. Setup reports
+dropped-state totals and decode-error counts and checks flag parity; failed shots
+remain in the timed workload. Decoder totals include no-path attempts; committee
+totals cover only selected successful legs. Criterion reports time per 32-shot
+batch and throughput in shots/second; divide batch time by 32 for time per shot.
+
+Latency numbers must not be taken with the `pecos-trellis/runtime-checks` feature
+enabled: it adds reference-path validation work. This bench is not run in CI.

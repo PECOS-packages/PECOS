@@ -302,6 +302,7 @@ fn frontier(
 ) -> PyResult<PyExperimentalDecoderSpec> {
     let config = FrontierConfig {
         dropped_mass: false,
+        incremental_score: false,
         k,
         delta,
         score_alpha,
@@ -409,6 +410,7 @@ fn bp_trellis(
 ) -> PyResult<PyExperimentalDecoderSpec> {
     let config = BpTrellisConfig {
         dropped_mass: false,
+        incremental_score: false,
         k,
         delta,
         score_alpha,

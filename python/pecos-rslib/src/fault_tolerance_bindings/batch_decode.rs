@@ -42,7 +42,7 @@ impl BatchExecutionError {
                 "DemSampler has {sampler_detectors} detectors, but the decoder model has \
                  {decoder_detectors}"
             )),
-            Self::Decode(error) => PyRuntimeError::new_err(error.to_string()),
+            Self::Decode(error) => crate::errors::decoder_error(&error.source, error.to_string()),
             Self::Runtime(message) => PyRuntimeError::new_err(message),
         }
     }
@@ -270,7 +270,10 @@ pub(super) fn batch_error_to_py(error: BatchDecodeError<DecoderBuildError>) -> P
         BatchDecodeError::Plan(_) | BatchDecodeError::Dimension { .. } => {
             PyValueError::new_err(error.to_string())
         }
-        // Missing detector dimension, indexed decode failures, runtime
+        BatchDecodeError::Decode(error) => {
+            crate::errors::decoder_error(&error.source, error.to_string())
+        }
+        // Missing detector dimension, runtime
         // failures, and any executor failure added later.
         _ => PyRuntimeError::new_err(error.to_string()),
     }

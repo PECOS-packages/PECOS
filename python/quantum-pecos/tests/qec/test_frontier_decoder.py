@@ -494,3 +494,26 @@ def test_factor_dropped_mass_is_opt_in() -> None:
     assert default.observable_flips.mask == enabled.observable_flips.mask
     assert default.logical_masses == enabled.logical_masses
     assert default.log_evidence == enabled.log_evidence
+
+
+@pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
+def test_incremental_score_is_opt_in(decoder_class) -> None:
+    dem = "error(0.1) D0 L0\nerror(0.2) D0\n"
+    default = decoder_class.from_dem(dem, k=1).decode_syndrome([1])
+    enabled = decoder_class.from_dem(dem, k=1, incremental_score=True).decode_syndrome([1])
+    assert default.observable_flips.mask == enabled.observable_flips.mask
+    assert default.log_evidence == pytest.approx(enabled.log_evidence, abs=1e-6)
+
+
+@pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
+def test_incremental_score_rejects_nonfinite_suffix(decoder_class) -> None:
+    dem = "error(0.1) D0 L0\nerror(1e-17) D0"
+    decoder_class.from_dem(dem)
+    with pytest.raises(RuntimeError, match="incremental_score"):
+        decoder_class.from_dem(dem, incremental_score=True)
+
+
+def test_incremental_score_rejects_nary_factors() -> None:
+    factors = [[(0.5, [], []), (0.3, [], [0]), (0.2, [], [1])]]
+    with pytest.raises(RuntimeError, match="incremental_score"):
+        FrontierDecoder.from_factors(factors, 0, 2, incremental_score=True)

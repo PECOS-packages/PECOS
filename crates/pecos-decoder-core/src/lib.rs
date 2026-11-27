@@ -69,7 +69,9 @@ pub use dem::{
     CheckMatrixObservableDecoder, DemCheckMatrix, DemConfig, DemConfigBuilder, DemDecoder, DemInfo,
     DemMatchingGraph, DemSupport, DetectorCoord, MatchingEdge, parse_detector_coords,
 };
-pub use errors::{ConfigError, DecoderError, ErrorConvert, GraphError, MatrixError};
+pub use errors::{
+    ConfigError, DecoderError, ErrorConvert, GraphError, MatrixError, check_syndrome_length,
+};
 pub use matrix::{CheckMatrixConfig, CheckMatrixDecoder, SparseCheckMatrix};
 pub use results::{
     BatchDecodingResult, DecodingResultTrait, ResultBuilder, StandardDecodingResult,

@@ -56,18 +56,18 @@ def main() -> None:
     args = parser.parse_args()
     modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
     if args.backend == "selene":
-        from pecos_selene_wasm import build
+        from pecos_selene_wasm import WasmOptions, build
         from selene_sim import Quest
 
         with TemporaryDirectory() as directory:
-            runner = build(long_call, modules, build_dir=Path(directory), wasm_timeout_seconds=args.timeout)
+            runner = build(long_call, WasmOptions(modules, timeout_seconds=args.timeout), build_dir=Path(directory))
             shots = [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=1, timeout=60.0)]
             observed = shots[0]["value"]
     else:
         import pecos as pc
 
         observed = (
-            pc.sim(pc.Guppy(long_call, wasm_modules=modules, wasm_timeout_seconds=args.timeout))
+            pc.sim(pc.Guppy(long_call, wasm=pc.WasmOptions(modules, timeout_seconds=args.timeout)))
             .qubits(1)
             .quantum(pc.state_vector())
             .run(1)

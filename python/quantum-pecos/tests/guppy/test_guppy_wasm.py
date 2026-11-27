@@ -2,7 +2,6 @@
 
 import importlib.util
 import re
-import reprlib
 import subprocess
 import sys
 from collections import Counter
@@ -19,8 +18,6 @@ from hugr import ops
 from hugr.package import Package
 
 EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
-# Every "requires explicit wasm_modules" error ends with this fix.
-PASS_MODULES = re.escape("pass wasm_modules={module_name: wasm_bytes}")
 
 
 @pytest.fixture(scope="module")
@@ -101,13 +98,6 @@ def test_guppy_wasm_hugr_roundtrip(examples, name, exports) -> None:
     assert [op.args[0].value for op in wasm_ops if op.op_def().name == "lookup_by_name"] == exports
 
 
-def test_program_wasm_options_are_validated_on_construction() -> None:
-    with pytest.raises(ValueError, match=r"^wasm_int_width must be 32 or 64, or 'auto'; got 16$"):
-        pc.Hugr(b"unused", wasm_modules={"m": b""}, wasm_int_width=16)
-    with pytest.raises(ValueError, match=rf"^wasm_int_width=32 requires explicit wasm_modules; {PASS_MODULES}$"):
-        pc.Hugr.from_bytes(b"unused", wasm_int_width=32)
-
-
 def test_missing_export_is_rejected(examples) -> None:
     with pytest.raises(GuppyError, match="isn't exported"):
 
@@ -150,12 +140,9 @@ def test_pecos_wasm_execution(examples, name, label, expected, wrapper):
     function = getattr(example, name)
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     program = (
-        pc.Guppy(function, wasm_modules=modules)
+        pc.Guppy(function, wasm=pc.WasmOptions(modules))
         if wrapper == "guppy"
-        else pc.Hugr(
-            function.compile().to_bytes(),
-            wasm_modules=modules,
-        )
+        else pc.Hugr(function.compile().to_bytes(), wasm=pc.WasmOptions(modules))
     )
     data = pc.sim(program).qubits(1).quantum(pc.state_vector()).seed(42).run(4).to_dict()
     assert data[label] == [expected] * 4
@@ -167,7 +154,13 @@ def test_pecos_state_and_error_recovery(examples):
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
 
     def run(function):
-        return pc.sim(pc.Guppy(function, wasm_modules=modules)).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
+        return (
+            pc.sim(pc.Guppy(function, wasm=pc.WasmOptions(modules)))
+            .qubits(1)
+            .quantum(pc.state_vector())
+            .run(4)
+            .to_dict()
+        )
 
     for _ in range(2):
         data = run(example.stateful_calls)
@@ -247,9 +240,9 @@ def test_pecos_float_wasm(examples, wrapper, name, expected):
     function = getattr(example, name)
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     program = (
-        pc.Guppy(function, wasm_modules=modules)
+        pc.Guppy(function, wasm=pc.WasmOptions(modules))
         if wrapper == "guppy"
-        else pc.Hugr(function.compile().to_bytes(), wasm_modules=modules)
+        else pc.Hugr(function.compile().to_bytes(), wasm=pc.WasmOptions(modules))
     )
     data = pc.sim(program).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
     assert data == expected
@@ -270,9 +263,9 @@ def test_pecos_wasm_loops(examples, wrapper, name, expected):
     function = getattr(example, name)
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     program = (
-        pc.Guppy(function, wasm_modules=modules)
+        pc.Guppy(function, wasm=pc.WasmOptions(modules))
         if wrapper == "guppy"
-        else pc.Hugr(function.compile().to_bytes(), wasm_modules=modules)
+        else pc.Hugr(function.compile().to_bytes(), wasm=pc.WasmOptions(modules))
     )
     data = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).run(4).to_dict()
     assert data == {label: [value] * 4 for label, value in expected.items()}
@@ -305,7 +298,7 @@ def test_external_loop_uses_safe_frontend_after_normal_cache(examples, monkeypat
     # Populate the ordinary per-definition cache first. WASM must not reuse it.
     normal = pc.Guppy(program).hugr_bytes
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    prepared = pc.Guppy(program, wasm_modules=modules)
+    prepared = pc.Guppy(program, wasm=pc.WasmOptions(modules))
     safe_bytes = prepared.hugr_bytes
     assert safe_bytes is prepared.hugr_bytes
     assert pc.Guppy(program).hugr_bytes is normal
@@ -326,7 +319,7 @@ def test_external_loop_uses_safe_frontend_after_normal_cache(examples, monkeypat
         return ir
 
     monkeypatch.setattr(plugin, "compile_wasm", compile_with_native_fixture)
-    executable = prepared if wrapper == "guppy" else pc.Hugr(safe_bytes, wasm_modules=modules)
+    executable = prepared if wrapper == "guppy" else pc.Hugr(safe_bytes, wasm=pc.WasmOptions(modules))
     data = pc.sim(executable).qubits(1).quantum(pc.state_vector()).run(2).to_dict()
     assert data == {"counter": [1, 1], "total": [3, 3]}
 
@@ -334,7 +327,7 @@ def test_external_loop_uses_safe_frontend_after_normal_cache(examples, monkeypat
 def test_missing_wasm_extra_has_install_guidance(monkeypatch):
     monkeypatch.setitem(sys.modules, "pecos_selene_wasm", None)
     with pytest.raises(ImportError, match=r"quantum-pecos\[wasm\]"):
-        _ = pc.Guppy(control_without_wasm, wasm_modules={}).hugr_bytes
+        _ = pc.WasmOptions
 
 
 @pytest.mark.parametrize("wrapper", ["guppy", "hugr"])
@@ -352,9 +345,9 @@ def test_pecos_indexed_exports(examples, wrapper, name, expected):
     function = getattr(example, name)
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     program = (
-        pc.Guppy(function, wasm_modules=modules)
+        pc.Guppy(function, wasm=pc.WasmOptions(modules))
         if wrapper == "guppy"
-        else pc.Hugr(plugin.compile_guppy(function).to_bytes(), wasm_modules=modules)
+        else pc.Hugr(plugin.compile_guppy(function).to_bytes(), wasm=pc.WasmOptions(modules))
     )
     data = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).run(4).to_dict()
     assert data == {label: [value] * 4 for label, value in expected.items()}
@@ -365,10 +358,12 @@ def test_pecos_indexed_export_error_recovery(examples):
     example = examples["indexed_exports"]
     bad_modules = {str(example.WASM_PATH): b'(module (func (export "only")))'}
     with pytest.raises(RuntimeError, match=r"out of range|2001"):
-        pc.sim(pc.Guppy(example.indexed_feedback, wasm_modules=bad_modules)).qubits(1).quantum(pc.state_vector()).run(1)
+        pc.sim(pc.Guppy(example.indexed_feedback, wasm=pc.WasmOptions(bad_modules))).qubits(1).quantum(
+            pc.state_vector(),
+        ).run(1)
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     data = (
-        pc.sim(pc.Guppy(example.indexed_feedback, wasm_modules=modules))
+        pc.sim(pc.Guppy(example.indexed_feedback, wasm=pc.WasmOptions(modules)))
         .qubits(1)
         .quantum(pc.state_vector())
         .run(2)
@@ -437,7 +432,7 @@ def test_pecos_i32_guppy_exports(examples, name, expected):
     example = examples["integer32"]
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     runner = (
-        pc.sim(pc.Guppy(getattr(example, name), wasm_modules=modules, wasm_int_width=32))
+        pc.sim(pc.Guppy(getattr(example, name), wasm=pc.WasmOptions(modules, int_width=32)))
         .qubits(1)
         .quantum(pc.state_vector())
         .workers(2)
@@ -457,29 +452,12 @@ def test_pecos_i32_precompiled_hugr(examples, tmp_path):
     path.write_bytes(data)
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     for program in (
-        pc.Hugr.from_file(path, wasm_modules=modules, wasm_int_width=32),
-        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_int_width=32),
+        pc.Hugr.from_file(path, wasm=pc.WasmOptions(modules, int_width=32)),
+        pc.Hugr.from_bytes(data, wasm=pc.WasmOptions(modules, int_width=32)),
     ):
         output = pc.sim(program).qubits(1).quantum(pc.state_vector()).run(1).to_dict()
         assert output["overflow"] == [-2147483648]
         assert output["wide"] == [5]
-
-
-@pytest.mark.parametrize("timeout", [True, "2", None, 0, -1, float("nan"), float("inf"), 10**400])
-def test_pecos_rejects_invalid_wasm_timeout(timeout):
-    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        message = f"wasm_timeout_seconds must be a positive finite number of seconds; got {reprlib.repr(timeout)}"
-        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-            constructor(source, wasm_modules={}, wasm_timeout_seconds=timeout)
-
-
-def test_nondefault_wasm_timeout_requires_modules():
-    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        with pytest.raises(
-            ValueError,
-            match=rf"^wasm_timeout_seconds=2\.0 requires explicit wasm_modules; {PASS_MODULES}$",
-        ):
-            constructor(source, wasm_timeout_seconds=2.0)
 
 
 def test_pecos_timeout_propagates_through_guppy_and_hugr(examples, tmp_path, monkeypatch):
@@ -490,7 +468,7 @@ def test_pecos_timeout_propagates_through_guppy_and_hugr(examples, tmp_path, mon
     emitted = []
 
     def record(*args, **kwargs):
-        assert kwargs["wasm_timeout_seconds"] == 2.5
+        assert kwargs["wasm"].timeout_seconds == 2.5
         llvm = original(*args, **kwargs)
         assert "call i32 @pecos_wasm_v2_register" in llvm
         assert "double 0x4004000000000000" in llvm
@@ -503,27 +481,14 @@ def test_pecos_timeout_propagates_through_guppy_and_hugr(examples, tmp_path, mon
     data = plugin.compile_guppy(example.addition).to_bytes()
     path = tmp_path / "program.hugr"
     path.write_bytes(data)
-    options = {"wasm_modules": modules, "wasm_timeout_seconds": 2.5}
+    options = pc.WasmOptions(modules, timeout_seconds=2.5)
     for program in (
-        pc.Guppy(example.addition, **options),
-        pc.Hugr.from_bytes(data, **options),
-        pc.Hugr.from_file(path, **options),
+        pc.Guppy(example.addition, wasm=options),
+        pc.Hugr.from_bytes(data, wasm=options),
+        pc.Hugr.from_file(path, wasm=options),
     ):
         assert pc.sim(program).qubits(1).quantum(pc.state_vector()).run(2).to_dict() == {"sum": [5, 5]}
     assert len(emitted) == 3
-
-
-@pytest.mark.parametrize("value", [0, 1, None, "false"])
-def test_pecos_rejects_invalid_auto_init(value):
-    for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match=rf"^wasm_auto_init must be True or False; got {re.escape(repr(value))}$"):
-            constructor(source, wasm_modules={}, wasm_auto_init=value)
-
-
-def test_auto_init_opt_out_requires_modules():
-    for constructor, source in ((pc.Guppy, object()), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match=rf"^wasm_auto_init=False requires explicit wasm_modules; {PASS_MODULES}$"):
-            constructor(source, wasm_auto_init=False)
 
 
 @pytest.mark.parametrize("auto_init", [True, False])
@@ -535,11 +500,11 @@ def test_pecos_memory_lifecycle_initialization(examples, tmp_path, auto_init, ex
     data = plugin.compile_guppy(function).to_bytes()
     path = tmp_path / "memory.hugr"
     path.write_bytes(data)
-    options = {
-        "wasm_modules": {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
-        "wasm_auto_init": auto_init,
-        "wasm_timeout_seconds": 2.5,
-    }
+    options = pc.WasmOptions(
+        {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
+        auto_init=auto_init,
+        timeout_seconds=2.5,
+    )
     initial = 42 if auto_init else 11
     expected = (
         {"before": initial, "after": initial + 31}
@@ -556,9 +521,9 @@ def test_pecos_memory_lifecycle_initialization(examples, tmp_path, auto_init, ex
         }
     )
     for program in (
-        pc.Guppy(function, **options),
-        pc.Hugr.from_bytes(data, **options),
-        pc.Hugr.from_file(path, **options),
+        pc.Guppy(function, wasm=options),
+        pc.Hugr.from_bytes(data, wasm=options),
+        pc.Hugr.from_file(path, wasm=options),
     ):
         runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).build()
         for _ in range(2):
@@ -572,7 +537,7 @@ def test_pecos_managed_objects_use_fresh_stores(examples):
         pc.sim(
             pc.Guppy(
                 example.managed_state,
-                wasm_modules={str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()},
+                wasm=pc.WasmOptions({str(example.WASM_PATH): example.RUNTIME_WASM_PATH.read_bytes()}),
             ),
         )
         .qubits(1)
@@ -592,30 +557,15 @@ def test_pecos_mixed_integer_widths(examples, tmp_path):
     path = tmp_path / "mixed.hugr"
     path.write_bytes(data)
     programs = (
-        pc.Guppy(example.mixed, wasm_modules=modules, wasm_int_width="auto"),
-        pc.Hugr.from_file(path, wasm_modules=modules, wasm_int_width="auto"),
-        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_int_width="auto"),
+        pc.Guppy(example.mixed, wasm=pc.WasmOptions(modules, int_width="auto")),
+        pc.Hugr.from_file(path, wasm=pc.WasmOptions(modules, int_width="auto")),
+        pc.Hugr.from_bytes(data, wasm=pc.WasmOptions(modules, int_width="auto")),
     )
     expected = {"small": -2147483648, "large": 4294967308, "small_indexed": -3, "large_indexed": 4294967293}
     for program in programs:
         runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(2).build()
         for _ in range(2):
             assert runner.run(4).to_dict() == {key: [value] * 4 for key, value in expected.items()}
-
-
-@pytest.mark.parametrize("width", [True, 32.0, 64.0, "32", "AUTO", None])
-def test_pecos_rejects_invalid_integer_width(width):
-    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        message = f"wasm_int_width must be 32 or 64, or 'auto'; got {reprlib.repr(width)}"
-        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-            constructor(source, wasm_modules={}, wasm_int_width=width)
-
-
-def test_pecos_auto_integer_width_requires_modules():
-    message = rf"^wasm_int_width='auto' requires explicit wasm_modules; {PASS_MODULES}$"
-    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match=message):
-            constructor(source, wasm_int_width="auto")
 
 
 @pytest.mark.parametrize("workers", [1, 2, 3])
@@ -628,8 +578,7 @@ def test_pecos_worker_state_scope_and_fresh_batches(examples, workers, shots, sc
         pc.sim(
             pc.Guppy(
                 example.counter,
-                wasm_modules={str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
-                wasm_state_scope=scope,
+                wasm=pc.WasmOptions({str(example.WASM_PATH): example.WASM_PATH.read_bytes()}, state_scope=scope),
             ),
         )
         .qubits(1)
@@ -657,9 +606,7 @@ def test_pecos_worker_state_initialization_runs_once(examples, auto_init):
         pc.sim(
             pc.Guppy(
                 example.counter,
-                wasm_modules={str(example.WASM_PATH): payload},
-                wasm_state_scope="worker",
-                wasm_auto_init=auto_init,
+                wasm=pc.WasmOptions({str(example.WASM_PATH): payload}, state_scope="worker", auto_init=auto_init),
             ),
         )
         .qubits(1)
@@ -680,24 +627,86 @@ def test_pecos_worker_state_precompiled_hugr(examples, tmp_path):
     path.write_bytes(data)
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     for program in (
-        pc.Hugr.from_file(path, wasm_modules=modules, wasm_state_scope="worker"),
-        pc.Hugr.from_bytes(data, wasm_modules=modules, wasm_state_scope="worker"),
+        pc.Hugr.from_file(path, wasm=pc.WasmOptions(modules, state_scope="worker")),
+        pc.Hugr.from_bytes(data, wasm=pc.WasmOptions(modules, state_scope="worker")),
     ):
         runner = pc.sim(program).qubits(1).quantum(pc.state_vector()).workers(1).build()
         for _ in range(2):
             assert runner.run(4).to_dict()["count"] == [1, 2, 3, 4]
 
 
-@pytest.mark.parametrize("scope", [None, 1, True, "batch", "WORKER"])
-def test_pecos_invalid_wasm_state_scope(scope):
-    message = f"wasm_state_scope must be 'shot' or 'worker'; got {reprlib.repr(scope)}"
-    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-            constructor(source, wasm_modules={}, wasm_state_scope=scope)
+@pytest.mark.parametrize("constructor", [pc.Guppy, pc.Hugr, pc.Hugr.from_bytes, pc.Hugr.from_file])
+@pytest.mark.parametrize("value", [{}, 1, True, "modules"])
+def test_wrappers_reject_non_options(constructor, value, tmp_path):
+    pytest.importorskip("pecos_selene_wasm")
+    path = tmp_path / "program.hugr"
+    path.write_bytes(b"unused")
+    source = path if constructor == pc.Hugr.from_file else b"unused"
+    message = f"wasm must be a WasmOptions; got {type(value).__name__}; pass wasm=WasmOptions(modules)"
+    with pytest.raises(TypeError, match=f"^{re.escape(message)}$"):
+        constructor(source, wasm=value)
 
 
-def test_pecos_worker_state_requires_modules():
-    message = rf"^wasm_state_scope='worker' requires explicit wasm_modules; {PASS_MODULES}$"
-    for constructor, source in ((pc.Guppy, None), (pc.Hugr, b"")):
-        with pytest.raises(ValueError, match=message):
-            constructor(source, wasm_state_scope="worker")
+@pytest.mark.parametrize("constructor", [pc.Guppy, pc.Hugr, pc.Hugr.from_bytes, pc.Hugr.from_file])
+def test_wrappers_preserve_options_identity(constructor, tmp_path, monkeypatch):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    from pecos_rslib import hugr_lowering
+
+    options = plugin.WasmOptions({})
+    path = tmp_path / "program.hugr"
+    path.write_bytes(b"unused")
+    source = (
+        path if constructor == pc.Hugr.from_file else control_without_wasm if constructor == pc.Guppy else b"unused"
+    )
+
+    def reject_revalidation(_self):
+        pytest.fail("options were reconstructed")
+
+    def record(_data, *, wasm):
+        assert wasm is options
+        msg = "reached lowering with original options"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(plugin.WasmOptions, "__post_init__", reject_revalidation)
+    monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", record)
+    program = constructor(source, wasm=options)
+    with pytest.raises(RuntimeError, match="reached lowering with original options"):
+        pc.sim(program)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_empty_options_select_safe_frontend(enabled, monkeypatch):
+    plugin = pytest.importorskip("pecos_selene_wasm")
+    import pecos._compilation as compilation
+
+    calls = []
+
+    def record(function, **kwargs):
+        assert function is control_without_wasm
+        calls.append(kwargs)
+        return b"compiled"
+
+    monkeypatch.setattr(compilation, "guppy_to_hugr", record)
+    program = pc.Guppy(control_without_wasm, wasm=plugin.WasmOptions({}) if enabled else None)
+    assert program.hugr_bytes == b"compiled"
+    assert calls == [{"wasm": True} if enabled else {}]
+
+
+@pytest.mark.parametrize("constructor", [pc.Guppy, pc.Hugr, pc.Hugr.from_bytes, pc.Hugr.from_file])
+def test_wrapper_missing_plugin_precedes_type_check(constructor, tmp_path, monkeypatch):
+    path = tmp_path / "program.hugr"
+    path.write_bytes(b"unused")
+    monkeypatch.setitem(sys.modules, "pecos_selene_wasm", None)
+    source = path if constructor == pc.Hugr.from_file else b"unused"
+    with pytest.raises(ImportError) as error:
+        constructor(source, wasm={})
+    assert str(error.value) == "Guppy WASM lowering requires the pecos-selene-wasm package (quantum-pecos[wasm])"
+
+
+def test_direct_safe_frontend_missing_plugin_guidance(monkeypatch):
+    from pecos._compilation import guppy_to_hugr
+
+    monkeypatch.setitem(sys.modules, "pecos_selene_wasm", None)
+    with pytest.raises(ImportError) as error:
+        guppy_to_hugr(control_without_wasm, wasm=True)
+    assert str(error.value) == "Guppy WASM lowering requires the pecos-selene-wasm package (quantum-pecos[wasm])"

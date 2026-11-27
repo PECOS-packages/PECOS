@@ -5,16 +5,16 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
+from dataclasses import fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from selene_core import Utility
 
 from pecos_selene_wasm.lowering import compile_guppy, compile_wasm
+from pecos_selene_wasm.options import WasmOptions
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from guppylang.defs import GuppyFunctionDefinition
     from hugr.package import Package
     from selene_sim import SeleneInstance
@@ -48,16 +48,11 @@ class WasmPlugin(Utility):
 
 def build(
     program: bytes | Package | GuppyFunctionDefinition,
-    modules: Mapping[str, bytes],
+    options: WasmOptions,
     *,
     platform: str = "helios",
     opt_level: int = 2,
     emit_debug: bool = False,
-    wasm_int_width: int | str = 64,
-    wasm_timeout_seconds: float = 1.0,
-    wasm_auto_init: bool = True,
-    wasm_state_scope: str = "shot",
-    wasm_async_workers: int = 0,
     **kwargs: object,
 ) -> SeleneInstance:
     """Build Selene with explicit WASM bytes and safe compilation of Guppy source.
@@ -65,28 +60,33 @@ def build(
     Precompiled input should come directly from ``compile_guppy`` without
     additional optimization.
     """
+    if not isinstance(options, WasmOptions):
+        msg = f"options must be a WasmOptions; got {type(options).__name__}"
+        raise TypeError(msg)
+    names = {field.name for field in fields(WasmOptions)}
+    misplaced = kwargs.keys() & (names | {f"wasm_{name}" for name in names})
+    if misplaced:
+        corrections = {name if name in names else name.removeprefix("wasm_") for name in misplaced}
+        arguments = ", ".join(f"{name}=..." for name in sorted(corrections))
+        msg = f"Pass {arguments} in WasmOptions(...), not as build keyword arguments"
+        raise TypeError(msg)
     # Standalone Selene is optional when this package supplies PECOS lowering.
     from selene_sim import build as selene_build  # noqa: PLC0415
 
     utilities = [*kwargs.pop("utilities", []), WasmPlugin()]
     llvm = compile_wasm(
         program,
-        modules,
+        options,
         platform=platform,
         opt_level=opt_level,
         emit_debug=emit_debug,
-        wasm_int_width=wasm_int_width,
-        wasm_timeout_seconds=wasm_timeout_seconds,
-        wasm_auto_init=wasm_auto_init,
-        wasm_state_scope=wasm_state_scope,
-        wasm_async_workers=wasm_async_workers,
     )
-    if wasm_async_workers:
+    if options.async_workers:
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         if not hasattr(runtime, "pecos_wasm_v2_call"):
             msg = "Asynchronous WASM calls require an updated native runtime; rebuild or upgrade pecos-selene-wasm"
             raise RuntimeError(msg)
-    if wasm_state_scope == "worker":
+    if options.state_scope == "worker":
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         if not all(
             hasattr(runtime, name)
@@ -97,7 +97,7 @@ def build(
         ):
             msg = "Worker-scoped WASM state requires an updated native runtime; rebuild or upgrade pecos-selene-wasm"
             raise RuntimeError(msg)
-    if wasm_int_width == "auto":
+    if options.int_width == "auto":
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         for symbol in ("pecos_wasm_v3_lookup", "pecos_wasm_v3_lookup_by_id"):
             if f"call i64 @{symbol}(" in llvm and not hasattr(runtime, symbol):
@@ -106,14 +106,14 @@ def build(
                     "rebuild or upgrade pecos-selene-wasm"
                 )
                 raise RuntimeError(msg)
-    if not wasm_auto_init:
+    if not options.auto_init:
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         if not hasattr(runtime, "pecos_wasm_v3_register"):
             msg = (
                 "Disabling WASM auto-init requires an updated native WASM runtime; rebuild or upgrade pecos-selene-wasm"
             )
             raise RuntimeError(msg)
-    elif wasm_timeout_seconds != 1.0:
+    elif options.timeout_seconds != 1.0:
         runtime = ctypes.CDLL(str(utilities[-1].library_file))
         if not hasattr(runtime, "pecos_wasm_v2_register"):
             msg = "Custom WASM timeouts require an updated native WASM runtime; rebuild or upgrade pecos-selene-wasm"
@@ -128,4 +128,4 @@ def build(
     )
 
 
-__all__ = ["WasmPlugin", "build", "compile_guppy", "compile_wasm"]
+__all__ = ["WasmOptions", "WasmPlugin", "build", "compile_guppy", "compile_wasm"]

@@ -2,13 +2,12 @@
 
 import importlib.util
 import re
-import reprlib
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from pecos_selene_wasm import build, compile_guppy, compile_wasm
+from pecos_selene_wasm import WasmOptions, build, compile_guppy, compile_wasm
 from selene_sim import Quest
 
 EXAMPLES = Path(__file__).resolve().parents[4] / "examples/guppy_wasm"
@@ -27,7 +26,7 @@ def examples():
 
 def prepare(backend, program, modules, directory, *, execution_workers=1, **options):
     if backend == "selene":
-        runner = build(program, modules, build_dir=directory, **options)
+        runner = build(program, WasmOptions(modules, **options), build_dir=directory)
 
         def run(shots):
             return [
@@ -47,7 +46,7 @@ def prepare(backend, program, modules, directory, *, execution_workers=1, **opti
             program = program.to_bytes()
             constructor = pc.Hugr.from_bytes
         runner = (
-            pc.sim(constructor(program, wasm_modules=modules, **options))
+            pc.sim(constructor(program, wasm=pc.WasmOptions(modules, **options)))
             .qubits(1)
             .quantum(pc.state_vector())
             .workers(execution_workers)
@@ -74,7 +73,7 @@ def test_deferred_calls_and_precompiled_bytes(examples, tmp_path, backend, worke
         {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
         tmp_path,
         execution_workers=execution_workers,
-        wasm_async_workers=workers,
+        async_workers=workers,
     )
     expected = {"first": example.expected_value(1000000), "second": example.expected_value(2000000)}
     if feedback:
@@ -95,8 +94,8 @@ def test_async_worker_state_and_fresh_batches(examples, tmp_path, backend, scope
         {str(example.WASM_PATH): example.WASM_PATH.read_bytes()},
         tmp_path,
         execution_workers=execution_workers,
-        wasm_async_workers=2,
-        wasm_state_scope=scope,
+        async_workers=2,
+        state_scope=scope,
     )
     expected = (
         [1] * shots
@@ -133,34 +132,10 @@ def test_async_scalar_and_managed_state(examples, tmp_path, backend, name, funct
         getattr(example, function),
         {str(example.WASM_PATH): payload},
         tmp_path,
-        wasm_async_workers=2,
-        wasm_int_width=width,
+        async_workers=2,
+        int_width=width,
     )
     assert run(3) == [expected] * 3
-
-
-@pytest.mark.parametrize("workers", [-1, 65, True, 2.0, "2", None])
-def test_invalid_async_worker_count(workers):
-    message = f"wasm_async_workers must be an integer between 0 and 64; got {reprlib.repr(workers)}"
-    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-        compile_wasm(b"", {}, wasm_async_workers=workers)
-
-
-@pytest.mark.parametrize("workers", [-1, 65, True, 2.0, "2", None])
-def test_pecos_rejects_invalid_async_worker_count(workers):
-    pc = pytest.importorskip("pecos")
-    message = f"wasm_async_workers must be an integer between 0 and 64; got {reprlib.repr(workers)}"
-    for constructor in (pc.Guppy, pc.Hugr.from_bytes):
-        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-            constructor(b"", wasm_modules={}, wasm_async_workers=workers)
-
-
-def test_pecos_async_workers_require_explicit_modules():
-    pc = pytest.importorskip("pecos")
-    message = "wasm_async_workers=2 requires explicit wasm_modules; pass wasm_modules={module_name: wasm_bytes}"
-    for constructor in (pc.Guppy, pc.Hugr.from_bytes):
-        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-            constructor(b"", wasm_async_workers=2)
 
 
 def test_async_symbol_is_opt_in_and_preflighted(examples, tmp_path, monkeypatch):
@@ -168,13 +143,13 @@ def test_async_symbol_is_opt_in_and_preflighted(examples, tmp_path, monkeypatch)
 
     example = examples["arithmetic"]
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
-    default = compile_wasm(example.addition, modules)
+    default = compile_wasm(example.addition, WasmOptions(modules))
     assert "pecos_wasm_v2_call" not in default
-    enabled = compile_wasm(example.addition, modules, wasm_async_workers=2)
+    enabled = compile_wasm(example.addition, WasmOptions(modules, async_workers=2))
     assert "call i32 @pecos_wasm_v2_call" in enabled
     monkeypatch.setattr(pecos_selene_wasm.ctypes, "CDLL", lambda _path: object())
     with pytest.raises(RuntimeError, match="Asynchronous WASM calls require"):
-        build(example.addition, modules, build_dir=tmp_path, wasm_async_workers=2)
+        build(example.addition, WasmOptions(modules, async_workers=2), build_dir=tmp_path)
 
 
 @pytest.mark.parametrize("backend", ["selene", "pecos"])
@@ -202,8 +177,8 @@ payload = ('(module (func (export "work") (param i64) (result i64) '
            + trap + " (loop br 0) i64.const 0))").encode()
 with TemporaryDirectory() as directory:
     run = helper.prepare({backend!r}, example.deferred_program().to_bytes(),
-        {{str(example.WASM_PATH): payload}}, Path(directory) / "bad", wasm_async_workers={workers},
-        wasm_timeout_seconds=0.05)
+        {{str(example.WASM_PATH): payload}}, Path(directory) / "bad", async_workers={workers},
+        timeout_seconds=0.05)
     try:
         run(1)
     except Exception as error:
@@ -213,7 +188,7 @@ with TemporaryDirectory() as directory:
         raise AssertionError("Expected WASM failure")
     run = helper.prepare({backend!r}, healthy.addition,
         {{str(healthy.WASM_PATH): healthy.WASM_PATH.read_bytes()}}, Path(directory) / "good",
-        wasm_async_workers={workers})
+        async_workers={workers})
     assert run(2) == [{{"sum": 5}}] * 2
 """
     path = tmp_path / "probe.py"
@@ -249,9 +224,9 @@ def test_deferred_adapter_order_in_lowered_and_written_ir(examples, tmp_path):
     program = example.deferred_program()
     modules = {str(example.WASM_PATH): example.WASM_PATH.read_bytes()}
     # Keep the public default opt_level=2.
-    llvm = compile_wasm(program, modules, wasm_async_workers=2)
+    llvm = compile_wasm(program, WasmOptions(modules, async_workers=2))
     assert_deferred_adapter_order(llvm)
-    build(program, modules, build_dir=tmp_path, wasm_async_workers=2)
+    build(program, WasmOptions(modules, async_workers=2), build_dir=tmp_path)
     # This is the real IR consumed by Selene's zig cc -c step. The installed
     # build writes the supplied IR verbatim; it emits no later optimized IR.
     written = (tmp_path / "artifacts" / "program.helios.ll").read_text()

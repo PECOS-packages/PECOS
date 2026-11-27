@@ -167,15 +167,15 @@ def test_decode_predictions_return_python_ints() -> None:
 def test_matching_decoders_fail_loud_on_wide_dem(decoder_type: str) -> None:
     # The graphlike matching decoders pack observables into a u64 (1 << index), so
     # they support at most 64 observables. On a >64-observable DEM they must raise a
-    # clean RuntimeError directing to a wide decoder -- NOT overflow-panic. (A panic
-    # surfaces as a pyo3 PanicException, a BaseException that pytest.raises(RuntimeError)
+    # clean ValueError directing to a wide decoder -- NOT overflow-panic. (A panic
+    # surfaces as a pyo3 PanicException, a BaseException that pytest.raises(ValueError)
     # would not catch, so this test fails if the guard regresses to a panic.)
     n = 70
     dem, _ = _wide_dem(n)
     syn = [0] * n
     syn[69] = 1
     batch = SampleBatch([syn, syn], [1 << 69, 1 << 69])
-    with pytest.raises(RuntimeError, match="64"):
+    with pytest.raises(ValueError, match="64"):
         _ = batch.decode(dem, decoder_type).num_errors
 
 
@@ -188,13 +188,13 @@ def test_fusion_blossom_direct_constructors_reject_wide() -> None:
 
     h = np.zeros((1, 65), dtype=np.uint8)
     h[0, 64] = 1  # observable (column) 64 -> would overflow `1 << 64`
-    with pytest.raises(RuntimeError, match="64"):
+    with pytest.raises(ValueError, match="64"):
         FusionBlossomDecoder.from_check_matrix(h)
 
     d = FusionBlossomDecoder(num_nodes=2, num_observables=65)
-    with pytest.raises(RuntimeError, match="64"):
+    with pytest.raises(ValueError, match="64"):
         d.add_edge(0, 1, [64], 1.0)
-    with pytest.raises(RuntimeError, match="64"):
+    with pytest.raises(ValueError, match="64"):
         d.add_boundary_edge(0, [64], 1.0)
 
     # The 64-observable boundary (indices 0..63) must still construct fine.

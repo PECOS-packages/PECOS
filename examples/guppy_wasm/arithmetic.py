@@ -81,7 +81,7 @@ def run_pecos(function, shots: int = 4) -> dict:
     import pecos as pc
 
     return (
-        pc.sim(pc.Guppy(function, wasm_modules={str(WASM_PATH): WASM_PATH.read_bytes()}))
+        pc.sim(pc.Guppy(function, wasm=pc.WasmOptions({str(WASM_PATH): WASM_PATH.read_bytes()})))
         .qubits(1)
         .quantum(pc.state_vector())
         .seed(42)
@@ -93,10 +93,10 @@ def run_pecos(function, shots: int = 4) -> dict:
 def run_selene(function, shots: int = 4) -> dict:
     """Execute through public Selene with the public WASM utility plugin."""
     import selene_sim
-    from pecos_selene_wasm import build
+    from pecos_selene_wasm import WasmOptions, build
 
     with TemporaryDirectory(prefix="pecos-guppy-wasm-") as build_dir:
-        instance = build(function, {str(WASM_PATH): WASM_PATH.read_bytes()}, build_dir=Path(build_dir))
+        instance = build(function, WasmOptions({str(WASM_PATH): WASM_PATH.read_bytes()}), build_dir=Path(build_dir))
         results = {}
         for shot in instance.run_shots(
             simulator=selene_sim.Quest(),

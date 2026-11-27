@@ -1071,13 +1071,27 @@ pub struct WeightedUnionFindDecoder {
 
 impl WeightedUnionFindDecoder {
     /// Wrap a Union-Find decoder with DEM priors and observable mappings.
-    #[must_use]
+    ///
+    /// `llrs` is either empty (unweighted growth) or holds one weight per
+    /// decoder bit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LdpcError::InvalidInput`] if `llrs` is non-empty and its
+    /// length differs from `decoder.bit_count()`.
     pub fn new(
         decoder: UnionFindDecoder,
         dem: pecos_decoder_core::DemCheckMatrix,
         llrs: Vec<f64>,
-    ) -> Self {
-        Self { decoder, dem, llrs }
+    ) -> Result<Self, LdpcError> {
+        let bit_count = decoder.bit_count();
+        if !llrs.is_empty() && llrs.len() != bit_count {
+            return Err(LdpcError::InvalidInput(format!(
+                "llrs has length {}, but the union-find decoder has {bit_count} bits; pass one LLR per bit or an empty vector for unweighted decoding",
+                llrs.len()
+            )));
+        }
+        Ok(Self { decoder, dem, llrs })
     }
 }
 
@@ -1087,12 +1101,12 @@ impl pecos_decoder_core::ObservableDecoder for WeightedUnionFindDecoder {
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         let syndrome = Array1::from_vec(syndrome.to_vec());
-        // Grow one bit at a time in LLR order. Zero means all candidates per
-        // step and is translated at the Rust boundary since the segfault fix.
+        // With LLRs, grow one bit at a time in LLR order; with empty LLRs
+        // (unweighted), the C++ growth adds all candidates per step.
         let result = self
             .decoder
             .decode(&syndrome.view(), &self.llrs, 1)
-            .map_err(|error| pecos_decoder_core::DecoderError::DecodingFailed(error.to_string()))?;
+            .map_err(pecos_decoder_core::DecoderError::from)?;
         Ok(self
             .dem
             .observables_obsmask_from_correction(result.decoding.as_slice().unwrap_or(&[])))

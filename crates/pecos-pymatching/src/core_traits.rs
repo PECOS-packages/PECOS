@@ -192,9 +192,8 @@ impl ObservableDecoder for PyMatchingDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        let result = self
-            .decode(syndrome)
-            .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+        // `decode` rejects a length outside upstream PyMatching's dense range.
+        let result = self.decode(syndrome).map_err(DecoderError::from)?;
         let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
         for (i, &v) in result.observable.iter().enumerate() {
             if v != 0 {
@@ -211,6 +210,7 @@ impl ObservableDecoder for PyMatchingDecoder {
         num_detectors: usize,
     ) -> Result<Vec<pecos_decoder_core::obs_mask::ObsMask>, DecoderError> {
         use crate::decoder::BatchConfig;
+        // `decode_batch_with_config` validates the width, even for zero shots.
         let config = BatchConfig {
             bit_packed_input: false,
             bit_packed_output: true,
@@ -218,7 +218,7 @@ impl ObservableDecoder for PyMatchingDecoder {
         };
         let result = self
             .decode_batch_with_config(shots, num_shots, num_detectors, config)
-            .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+            .map_err(DecoderError::from)?;
 
         // Convert each bit-packed prediction into little-endian words. The
         // bridge already emits every observable byte, including above bit 63.
@@ -238,6 +238,127 @@ impl ObservableDecoder for PyMatchingDecoder {
 mod tests {
     use super::*;
     use ndarray::{Array1, Array2};
+
+    fn assert_wrong_length(
+        result: &Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError>,
+        expected: usize,
+        actual: usize,
+    ) {
+        assert!(
+            matches!(
+                result,
+                Err(DecoderError::InvalidDimensions { expected: e, actual: a })
+                    if *e == expected && *a == actual
+            ),
+            "expected InvalidDimensions {{ expected: {expected}, actual: {actual} }}, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn observable_decode_rejects_short_and_long_syndromes() {
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 L0\nerror(0.1) D0 D1\ndetector D2")
+                .unwrap();
+        for length in [0, 2, 4] {
+            assert_wrong_length(
+                &pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &vec![0; length]),
+                3,
+                length,
+            );
+        }
+        assert!(pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &[0; 3]).is_ok());
+    }
+
+    #[test]
+    fn set_boundary_refreshes_detector_count() {
+        let mut decoder = crate::PyMatchingDecoder::from_dem(
+            "error(0.1) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1 D2",
+        )
+        .unwrap();
+        assert_eq!(decoder.num_detectors(), 3);
+        decoder.set_boundary(&[2]);
+        assert_eq!(decoder.num_detectors(), 2);
+        // As upstream, a dense syndrome may also carry the boundary node's entry.
+        for length in [2, 3] {
+            let mut syndrome = vec![0; length];
+            syndrome[0] = 1;
+            assert!(
+                pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &syndrome).is_ok()
+            );
+        }
+        for length in [1, 4] {
+            let result =
+                pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &vec![0; length]);
+            assert!(
+                matches!(
+                    &result,
+                    Err(DecoderError::InvalidSyndrome(message))
+                        if message == &format!("dense syndrome has {length} entries, but this graph accepts 2 (one per detector) to 3 (one per node, boundary nodes included)")
+                ),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_trailing_boundary_leaves_every_detector_addressable() {
+        // Node 0 is the boundary, so the detectors are nodes 1 and 2 and dense
+        // entry 2 is the only way to address the top detector.
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 D1\nerror(0.1) D1 D2 L0").unwrap();
+        decoder.set_boundary(&[0]);
+        assert_eq!(decoder.num_detectors(), 2);
+        assert_eq!(decoder.num_nodes(), 3);
+        // Detector 2 matches to the boundary through D1 D2, which flips L0.
+        assert_eq!(decoder.decode(&[0, 0, 1]).unwrap().observable, vec![1]);
+        let mask =
+            pecos_decoder_core::ObservableDecoder::decode_obs(&mut decoder, &[0, 0, 1]).unwrap();
+        assert!(mask.get(0));
+        let batch = pecos_decoder_core::ObservableDecoder::decode_batch_to_observables(
+            &mut decoder,
+            &[0, 0, 1],
+            1,
+            3,
+        )
+        .unwrap();
+        assert!(batch[0].get(0));
+        // Detector 1 alone matches straight to the boundary.
+        assert_eq!(decoder.decode(&[0, 1]).unwrap().observable, vec![0]);
+    }
+
+    #[test]
+    fn correlated_prior_above_half_is_a_configuration_error() {
+        let dem = "error(0.7) D0 L0\nerror(0.1) D0 D1";
+        let result = crate::PyMatchingDecoder::from_dem_with_correlations(dem, true);
+        assert!(
+            matches!(
+                &result,
+                Err(crate::PyMatchingError::Configuration(message))
+                    if message.starts_with("DEM error probability 0.7 is above 0.5")
+            ),
+            "{:?}",
+            result.err()
+        );
+        assert!(crate::PyMatchingDecoder::from_dem_with_correlations(dem, false).is_ok());
+    }
+
+    #[test]
+    fn observable_batch_rejects_short_stride() {
+        let mut decoder =
+            crate::PyMatchingDecoder::from_dem("error(0.1) D0 L0\ndetector D2").unwrap();
+        assert!(matches!(
+            pecos_decoder_core::ObservableDecoder::decode_batch_to_observables(
+                &mut decoder,
+                &[0],
+                1,
+                1
+            ),
+            Err(pecos_decoder_core::DecoderError::InvalidDimensions {
+                expected: 3,
+                actual: 1
+            })
+        ));
+    }
 
     #[test]
     fn test_decoder_trait_implementation() {

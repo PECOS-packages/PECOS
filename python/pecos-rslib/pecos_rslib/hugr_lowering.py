@@ -6,12 +6,14 @@ Importing this module loads neither that compiler nor quantum-pecos; the
 compiler is imported lazily when compile_hugr_to_qis is called.
 """
 
-import math
 import re
 import reprlib
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pecos_selene_wasm import WasmOptions
 
 # These PECOS runtime helper ABIs must match the extern signatures in
 # crates/pecos-qis-ffi/src/ffi.rs.
@@ -348,109 +350,13 @@ def _describe_value(value: object) -> str:
         return "<unprintable value>"
 
 
-def validate_wasm_options(wasm_modules: Mapping[str, bytes] | None, wasm_int_width: object) -> None:
-    """Reject a WASM integer width other than 32, 64 or 'auto', or a non-default width without modules.
-
-    Raises:
-        ValueError: If ``wasm_int_width`` is not the int 32 or 64 or the string 'auto',
-            or is not 64 while ``wasm_modules`` is None.
-    """
-    if not (
-        (type(wasm_int_width) is int and wasm_int_width in (32, 64))
-        or (type(wasm_int_width) is str and wasm_int_width == "auto")
-    ):
-        msg = f"wasm_int_width must be 32 or 64, or 'auto'; got {_describe_value(wasm_int_width)}"
-        raise ValueError(msg)
-    if wasm_modules is None and wasm_int_width != 64:
-        msg = (
-            f"wasm_int_width={wasm_int_width!r} requires explicit wasm_modules; "
-            "pass wasm_modules={module_name: wasm_bytes}"
-        )
-        raise ValueError(msg)
-
-
-def validate_wasm_async_workers(value: object, modules: Mapping[str, bytes] | None) -> None:
-    """Require an int from 0 to 64, and explicit modules for a nonzero count.
-
-    Raises:
-        ValueError: If ``value`` is not an int from 0 to 64, or is nonzero while
-            ``modules`` is None.
-    """
-    if type(value) is not int or not 0 <= value <= 64:
-        msg = f"wasm_async_workers must be an integer between 0 and 64; got {_describe_value(value)}"
-        raise ValueError(msg)
-    if modules is None and value != 0:
-        msg = (
-            f"wasm_async_workers={value} requires explicit wasm_modules; pass wasm_modules={{module_name: wasm_bytes}}"
-        )
-        raise ValueError(msg)
-
-
-def validate_wasm_state_scope(value: object, modules: Mapping[str, bytes] | None) -> None:
-    """Require 'shot' or 'worker', and explicit modules for worker-scoped state.
-
-    Raises:
-        ValueError: If ``value`` is not 'shot' or 'worker', or is 'worker' while
-            ``modules`` is None.
-    """
-    if type(value) is not str or value not in ("shot", "worker"):
-        msg = f"wasm_state_scope must be 'shot' or 'worker'; got {_describe_value(value)}"
-        raise ValueError(msg)
-    if modules is None and value != "shot":
-        msg = "wasm_state_scope='worker' requires explicit wasm_modules; pass wasm_modules={module_name: wasm_bytes}"
-        raise ValueError(msg)
-
-
-def validate_wasm_auto_init(value: object, modules: Mapping[str, bytes] | None) -> None:
-    """Require a bool, and explicit modules when opting out of automatic init.
-
-    Raises:
-        ValueError: If ``value`` is not a bool, or is False while ``modules`` is None.
-    """
-    if type(value) is not bool:
-        msg = f"wasm_auto_init must be True or False; got {_describe_value(value)}"
-        raise ValueError(msg)
-    if not value and modules is None:
-        msg = "wasm_auto_init=False requires explicit wasm_modules; pass wasm_modules={module_name: wasm_bytes}"
-        raise ValueError(msg)
-
-
-def validate_wasm_timeout_seconds(value: object, modules: Mapping[str, bytes] | None) -> float:
-    """Normalize a positive finite timeout; a non-default timeout needs explicit modules.
-
-    Raises:
-        ValueError: If ``value`` is not a positive finite int or float (bools and
-            ints too large for a float are rejected), or is not 1 while ``modules``
-            is None.
-    """
-    try:
-        valid = type(value) in (int, float) and math.isfinite(value) and value > 0
-    except OverflowError:
-        valid = False
-    if not valid:
-        msg = f"wasm_timeout_seconds must be a positive finite number of seconds; got {_describe_value(value)}"
-        raise ValueError(msg)
-    if modules is None and value != 1:
-        msg = (
-            f"wasm_timeout_seconds={value!r} requires explicit wasm_modules; "
-            "pass wasm_modules={module_name: wasm_bytes}"
-        )
-        raise ValueError(msg)
-    return float(value)
-
-
 def compile_hugr_to_qis(
     hugr_bytes: bytes,
     *,
     platform: str = "helios",
     opt_level: int = 2,
     emit_debug: bool = False,
-    wasm_modules: Mapping[str, bytes] | None = None,
-    wasm_int_width: int | str = 64,
-    wasm_timeout_seconds: float = 1.0,
-    wasm_auto_init: bool = True,
-    wasm_state_scope: str = "shot",
-    wasm_async_workers: int = 0,
+    wasm: "WasmOptions | None" = None,
 ) -> str:
     """Lower a HUGR envelope with Selene and normalize PECOS runtime helpers.
 
@@ -459,18 +365,15 @@ def compile_hugr_to_qis(
         platform: Target QSystem platform ("helios" or "sol").
         opt_level: LLVM optimization level.
         emit_debug: Whether to emit debug information.
-        wasm_modules: Explicit module identifier to WAT/WASM bytes mapping.
-        wasm_int_width: Native WASM integer width: 32, 64 (default), or "auto"
-            to select each integer lane from the actual export signature.
-        wasm_timeout_seconds: Positive finite per-execution WASM limit (default 1).
-        wasm_auto_init: Automatically invoke optional init exports (default True).
-        wasm_state_scope: Fresh state per "shot" (default), or retained per "worker".
+        wasm: Optional validated WASM modules and execution policy.
 
     Returns:
         LLVM IR with PECOS's public helper symbols.
 
     Raises:
-        ImportError: If selene-hugr-qis-compiler is not installed.
+        ImportError: If selene-hugr-qis-compiler is not installed, or WASM
+            lowering is requested without pecos-selene-wasm installed.
+        TypeError: If wasm is neither None nor a WasmOptions object.
         ValueError: If compiler options are invalid or helper validation fails.
 
     Compiler exceptions, including HugrReadError and TypeError, propagate unchanged.
@@ -481,35 +384,28 @@ def compile_hugr_to_qis(
     if platform not in ("helios", "sol"):
         msg = f"platform must be 'helios' or 'sol'; got {_describe_value(platform)}"
         raise ValueError(msg)
-    validate_wasm_options(wasm_modules, wasm_int_width)
     try:
         from selene_hugr_qis_compiler import compile_to_llvm_ir
     except ImportError as error:
         msg = "HUGR -> QIS lowering requires the selene-hugr-qis-compiler package"
         raise ImportError(msg) from error
 
-    validate_wasm_auto_init(wasm_auto_init, wasm_modules)
-    validate_wasm_state_scope(wasm_state_scope, wasm_modules)
-    validate_wasm_async_workers(wasm_async_workers, wasm_modules)
-    wasm_timeout_seconds = validate_wasm_timeout_seconds(wasm_timeout_seconds, wasm_modules)
-    if wasm_modules is not None:
+    if wasm is not None:
         try:
-            from pecos_selene_wasm import compile_wasm
+            from pecos_selene_wasm import WasmOptions, compile_wasm
         except ImportError as error:
             msg = "Guppy WASM lowering requires the pecos-selene-wasm package (quantum-pecos[wasm])"
             raise ImportError(msg) from error
+        if not isinstance(wasm, WasmOptions):
+            msg = f"wasm must be a WasmOptions; got {type(wasm).__name__}; pass wasm=WasmOptions(modules)"
+            raise TypeError(msg)
         return normalize_pecos_helper_symbols(
             compile_wasm(
                 hugr_bytes,
-                wasm_modules,
+                wasm,
                 platform=platform,
                 opt_level=opt_level,
                 emit_debug=emit_debug,
-                wasm_int_width=wasm_int_width,
-                wasm_timeout_seconds=wasm_timeout_seconds,
-                wasm_auto_init=wasm_auto_init,
-                wasm_state_scope=wasm_state_scope,
-                wasm_async_workers=wasm_async_workers,
             ),
         )
 

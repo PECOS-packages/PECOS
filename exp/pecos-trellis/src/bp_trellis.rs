@@ -125,6 +125,11 @@ pub struct BpTrellisConfig {
     /// Accumulate and report the discarded-prefix-mass diagnostic at extra pruning cost.
     /// Defaults to false; never changes predictions or any other result field.
     pub dropped_mass: bool,
+    /// Carry suffix scores as documented by [`TrellisConfig::incremental_score`].
+    /// With incremental scoring enabled, construction fails for non-finite static suffix values
+    /// when BP scoring is off; fixed-lag streaming rejects this option, and it can be slower on
+    /// narrow models with few active detectors.
+    pub incremental_score: bool,
 }
 
 impl BpTrellisConfig {
@@ -164,6 +169,7 @@ impl BpTrellisConfig {
     fn trellis_config(&self) -> TrellisConfig {
         TrellisConfig {
             dropped_mass: self.dropped_mass,
+            incremental_score: self.incremental_score,
             k: self.k,
             delta: self.delta,
             score_alpha: self.score_alpha,
@@ -188,6 +194,7 @@ impl Default for BpTrellisConfig {
             ordering: TrellisOrdering::Deadline,
             escalation: Vec::new(),
             dropped_mass: false,
+            incremental_score: false,
         }
     }
 }

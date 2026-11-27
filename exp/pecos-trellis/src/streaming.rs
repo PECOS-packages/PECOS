@@ -197,8 +197,14 @@ impl TrellisStreamingDecoder {
     ///
     /// # Errors
     /// Returns `InvalidConfiguration` after shot processing has started or for
-    /// invalid bounds/window size. A failed selection preserves the old mode.
+    /// invalid bounds/window size, or when `incremental_score` is enabled with
+    /// `FixedLag`. A failed selection preserves the old mode.
     pub fn set_streaming_mode(&mut self, mode: StreamingMode) -> Result<(), DecoderError> {
+        if self.model.config.incremental_score && matches!(mode, StreamingMode::FixedLag { .. }) {
+            return Err(DecoderError::InvalidConfiguration(
+                "incremental_score cannot use FixedLag masked rows; use DependencyDriven or disable incremental_score".into(),
+            ));
+        }
         self.ensure_no_bounded_advance()?;
         if self.arrived_count != 0 || self.next_column != 0 || self.arrived_round != 0 {
             return Err(DecoderError::InvalidConfiguration(
@@ -470,10 +476,9 @@ impl TrellisStreamingDecoder {
                 .get(self.arrived_round)
                 .and_then(|plan| plan.for_range(known_count, self.next_column..end))
         });
-        if let Err(failure) = self.model.process_binary_range_with_prefixes(
+        if let Err(failure) = self.model.dispatch_binary_range_with_prefixes(
             &mut self.progress,
-            &self.observed,
-            &self.model.suffix_values,
+            (&self.observed, &self.model.suffix_values),
             self.next_column..end,
             crate::PruneParams {
                 k: self.model.config.k,
@@ -619,10 +624,9 @@ impl TrellisStreamingDecoder {
             .scoring_prefix_plans
             .get(self.arrived_round)
             .and_then(|plan| plan.for_range(self.arrived_count, self.next_column..end));
-        if let Err(failure) = self.model.process_binary_range_with_prefixes(
+        if let Err(failure) = self.model.dispatch_binary_range_with_prefixes(
             &mut self.progress,
-            &self.observed,
-            &self.model.suffix_values,
+            (&self.observed, &self.model.suffix_values),
             self.next_column..end,
             crate::PruneParams {
                 k: self.model.config.k,
@@ -762,7 +766,13 @@ impl TrellisStreamingDecoder {
         self.pending_commitments.clear();
         self.failure = None;
         self.bounded_advance = None;
-        self.progress.reset(&self.model);
+        self.progress.reset(
+            &self.model,
+            crate::PruneParams {
+                k: self.model.config.k,
+                delta: self.model.config.delta,
+            },
+        );
         self.check_commitments();
     }
 
@@ -1154,5 +1164,86 @@ mod dropped_mass_tests {
     #[test]
     fn bounded_streaming_flush_dropped_mass_flag_controls_accumulation() {
         check_accumulation(true);
+    }
+}
+
+#[cfg(test)]
+mod incremental_score_tests {
+    use super::*;
+
+    #[test]
+    fn integer_incremental_preserves_streaming_metric_error() {
+        let dem = SparseDem::from_dem_str("error(0.1) D0 L0").unwrap();
+        let error = TrellisStreamingDecoder::from_sparse_dem(
+            &dem,
+            TrellisConfig {
+                incremental_score: true,
+                metric_mode: MetricMode::MaxLogInt,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap_err();
+        let DecoderError::InvalidConfiguration(message) = error else {
+            panic!("expected InvalidConfiguration");
+        };
+        assert_eq!(message, "streaming v1 supports the LogSumExpFloat metric");
+    }
+
+    #[test]
+    fn fixed_lag_rejection_preserves_dependency_driven_and_split_bits() {
+        let dem = SparseDem::from_dem_str("error(1) D130\nerror(0.1) D0 L0\nerror(0.2) D0 D70\nerror(0.3) D70 D130 L1\nerror(0.15) D130\n").unwrap();
+        let config = TrellisConfig {
+            incremental_score: true,
+            k: 2,
+            delta: 12.0,
+            dropped_mass: true,
+            ..TrellisConfig::default()
+        };
+        let mut batch = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+        let mut stream = TrellisStreamingDecoder::from_sparse_dem(&dem, config).unwrap();
+        for bounds in [vec![], vec![0, 70, 131]] {
+            let error = stream
+                .set_streaming_mode(StreamingMode::FixedLag {
+                    detector_round_bounds: bounds,
+                    window_size: 2,
+                })
+                .unwrap_err();
+            assert!(matches!(error, DecoderError::InvalidConfiguration(_)));
+            assert!(error.to_string().contains("incremental_score"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("DependencyDriven or disable incremental_score")
+            );
+            assert_eq!(stream.mode, StreamingMode::DependencyDriven);
+        }
+        for bits in 0..8 {
+            let mut shot = vec![0; dem.num_detectors];
+            for (i, d) in [0, 70, 130].into_iter().enumerate() {
+                shot[d] = u8::from(bits & (1 << i) != 0);
+            }
+            let expected = batch.decode(&shot).unwrap();
+            for bounded in [false, true] {
+                stream.reset();
+                for chunk in shot.chunks(17) {
+                    stream.feed_prefix(chunk).unwrap();
+                    if bounded {
+                        stream.begin_bounded_advance().unwrap();
+                        while stream.bounded_columns_remaining().unwrap() > 0 {
+                            stream.step_bounded_advance(1).unwrap();
+                        }
+                        stream.finish_bounded_advance().unwrap();
+                    } else {
+                        stream.advance_prediction().unwrap();
+                    }
+                }
+                let actual = stream.flush().unwrap();
+                crate::incremental_score_tests::assert_bits(&expected, &actual);
+                assert_eq!(
+                    stream.progress.frontier.parent.suffix_sums,
+                    batch.scratch.float_progress.frontier.parent.suffix_sums
+                );
+            }
+        }
     }
 }

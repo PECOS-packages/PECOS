@@ -84,18 +84,26 @@ match the exact module identifier in the HUGR, including a path if Guppy used
 one. The lowering does not read files named by a HUGR program. Both WAT bytes
 and binary WASM bytes are accepted.
 
+`WasmOptions` is a frozen configuration containing an immutable snapshot of the
+module mapping, plus keyword-only `int_width`, `timeout_seconds`, `auto_init`,
+`state_scope`, and `async_workers` fields. Construct it once and share it across
+Guppy, HUGR, and Selene calls; `dataclasses.replace` creates and validates a modified
+copy. Import it from `pecos_selene_wasm`, or lazily from `pecos` with the `[wasm]`
+extra installed. Without that extra, `hasattr(pecos, "WasmOptions")` raises
+`ImportError` with install guidance.
+
 ## PECOS `sim()`
 
 <!--continuation-->
 ```python
 import pecos as pc
 
-data = pc.sim(pc.Guppy(addition, wasm_modules=modules)).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
+data = pc.sim(pc.Guppy(addition, wasm=pc.WasmOptions(modules))).qubits(1).quantum(pc.state_vector()).run(4).to_dict()
 assert data["sum"] == [5, 5, 5, 5]
 ```
 
 For precompiled HUGR, use `from pecos_selene_wasm import compile_guppy` and
-`pc.Hugr(compile_guppy(addition).to_bytes(), wasm_modules=modules)`, including the
+`pc.Hugr(compile_guppy(addition).to_bytes(), wasm=pc.WasmOptions(modules))`, including the
 `Hugr.from_bytes` and `Hugr.from_file` constructors. Supply modules when creating
 the wrapper, before `sim()` lowers the program.
 
@@ -103,10 +111,10 @@ the wrapper, before `sim()` lowers the program.
 
 <!--continuation-->
 ```python
-from pecos_selene_wasm import build
+from pecos_selene_wasm import WasmOptions, build
 from selene_sim import Quest
 
-runner = build(addition, modules)
+runner = build(addition, WasmOptions(modules))
 shots = [
     dict(shot)
     for shot in runner.run_shots(
@@ -120,7 +128,7 @@ assert shots == [{"sum": 5}] * 4
 ```
 
 Consume each shot's streamed records before advancing to the next shot.
-For lower-level integration, `compile_wasm(program, modules)` returns LLVM;
+For lower-level integration, `compile_wasm(program, WasmOptions(modules))` returns LLVM;
 pass that LLVM to `selene_sim.build(..., utilities=[WasmPlugin()])`.
 The utility supplies classical WASM calls and works alongside Selene's normal
 quantum runtime and simulator plugins.
@@ -169,12 +177,12 @@ first used; the next section describes how to turn this off.
 
 ## Choosing initialization behavior
 
-Pass `wasm_auto_init=False` to `pc.Guppy`, `pc.Hugr` (including its file/bytes
-constructors), `pecos_selene_wasm.build`, or `compile_wasm` when your program
-controls initialization explicitly. `compile_hugr_to_qis` accepts the same option.
+Use `WasmOptions(modules, auto_init=False)` when your program controls
+initialization explicitly. Pass the object as `wasm=options` to `Guppy`, `Hugr`
+(including its file/bytes constructors), or `compile_hugr_to_qis`, and as the
+second argument to `pecos_selene_wasm.build` or `compile_wasm`.
 The default is `True`, preserving automatic execution of an optional `init` export.
-The option must be a boolean and applies to every supplied module. PECOS requires
-an explicit `wasm_modules` mapping when opting out.
+The option must be a boolean and applies to every supplied module.
 
 With automatic initialization disabled, the runtime neither validates nor calls
 an export named `init` merely because the instance was created. Guppy can still
@@ -314,10 +322,9 @@ signatures and operations fail explicitly. Traps and runtime signature errors
 propagate as simulation errors. Calls default to a one-second execution timeout;
 memory limits are currently the Wasmtime wrapper's default.
 
-For longer classical calculations, pass `wasm_timeout_seconds=10.0` to
-`pecos_selene_wasm.build(...)` or to `pc.Guppy(..., wasm_modules=modules)`.
-The same option is available on `compile_wasm`, `Hugr`, `Hugr.from_bytes`, and
-`Hugr.from_file`. Nondefault limits require explicit WASM module mappings.
+For longer classical calculations, use `WasmOptions(modules, timeout_seconds=10.0)`.
+Pass it as the second argument to `build` or `compile_wasm`, or as `wasm=options`
+to `Guppy`, `Hugr`, `Hugr.from_bytes`, or `Hugr.from_file`.
 
 The timeout must be a positive finite number of seconds. It applies separately
 to the module start function, optional `init`, and each exported call, not to
@@ -348,8 +355,8 @@ public barrier and indirect-call operations. This avoids a released-compiler
 constant-analysis bug that otherwise replaces loop results with initial values.
 The same protection is used by PECOS and standalone Selene.
 
-Pass Guppy source directly to `Guppy(function, wasm_modules=modules)` or
-`pecos_selene_wasm.build(function, modules)`. Both use Guppy's minimal-optimization
+Pass Guppy source directly to `Guppy(function, wasm=WasmOptions(modules))` or
+`pecos_selene_wasm.build(function, WasmOptions(modules))`. Both use Guppy's minimal-optimization
 frontend before applying the lowering. Normal Guppy compilation can already
 miscompile loops containing ordinary `@guppy.declare` external calls; LLVM
 optimization settings cannot repair those results.
@@ -374,7 +381,7 @@ Run `python examples/guppy_wasm/integer32.py --backend selene` or use
 `--backend pecos` for the PECOS stack.
 
 Guppy's `WasmPlatform.H2` declaration mode accepts `i32` exports. Select
-`wasm_int_width=32` when executing these declarations through either public
+`WasmOptions(modules, int_width=32)` when executing these declarations through either public
 backend. This selects the WASM integer width; it does not change the quantum
 platform or the 64-bit host requirement.
 
@@ -385,7 +392,7 @@ from guppylang.std.builtins import nat, result
 from guppylang_internals.decorator import wasm, wasm_module
 from guppylang_internals.std._internal.wasm import WasmPlatform
 from pecos import Guppy, sim, state_vector
-from pecos_selene_wasm import build
+from pecos_selene_wasm import WasmOptions, build
 from selene_sim import Quest
 
 # Run from the PECOS checkout root, using the example's public WASM module.
@@ -407,10 +414,10 @@ def addition32() -> None:
 
 
 modules = {str(WASM_PATH): WASM_PATH.read_bytes()}
-runner = build(addition32, modules, wasm_int_width=32)
+runner = build(addition32, WasmOptions(modules, int_width=32))
 shots = [dict(shot) for shot in runner.run_shots(simulator=Quest(), n_qubits=1, n_shots=4, n_processes=1)]
 assert shots == [{"sum": 5}] * 4
-results = sim(Guppy(addition32, wasm_modules=modules, wasm_int_width=32)).qubits(1).quantum(state_vector()).run(4)
+results = sim(Guppy(addition32, wasm=WasmOptions(modules, int_width=32))).qubits(1).quantum(state_vector()).run(4)
 assert results.to_dict()["sum"] == [5] * 4
 ```
 
@@ -425,15 +432,15 @@ Guppy's integer type. Thus `2147483647 + 1` returns `-2147483648`, and passing
 foreign-object API's clamping behavior.
 
 The width applies to every integer WASM signature in the program, including
-precompiled programs supplied through `Hugr(..., wasm_int_width=32)` or
-`compile_wasm(..., wasm_int_width=32)`. Use `wasm_int_width="auto"` for mixed 32/64-bit exports in one program. The default remains 64: supplying an
+precompiled programs supplied through `Hugr(data, wasm=WasmOptions(modules, int_width=32))`
+or `compile_wasm(data, WasmOptions(modules, int_width=32))`. Use `WasmOptions(modules, int_width="auto")` for mixed 32/64-bit exports in one program. The default remains 64: supplying an
 `i32` export to a default-width program, or an `i64` export in 32-bit mode, fails
 signature validation. Float signatures retain their existing `f64` behavior.
 
 ### Mixed integer widths
 
 Run `python examples/guppy_wasm/mixed_integers.py --backend selene` (or
-`--backend pecos`). Pass `wasm_int_width="auto"` to `build`, `compile_wasm`,
+`--backend pecos`). Pass `WasmOptions(modules, int_width="auto")` to `build`, `compile_wasm`,
 `Guppy`, or `Hugr` to select each integer argument and result width from the
 actual WASM export signature. Named and indexed calls both support this mode.
 For example, the same program can call an i32 addition returning `-2147483648`
@@ -450,7 +457,7 @@ The default remains strict 64-bit mode.
 ## Retain WASM state across shots
 
 By default, each shot creates fresh WASM instances. Opt into
-`wasm_state_scope="worker"` through `build`, `compile_wasm`, `Guppy`, or `Hugr`
+`WasmOptions(modules, state_scope="worker")` through `build`, `compile_wasm`, `Guppy`, or `Hugr`
 to retain globals, linear memories, tables and managed objects on each execution
 worker. Run `python examples/guppy_wasm/worker_state.py --backend selene` (or
 `--backend pecos`): one worker returns counter values `1, 2, 3, 4`. With
@@ -470,16 +477,31 @@ directly own the execution thread's lifetime; call `pecos_wasm_v1_reset` on that
 thread to begin a fresh session. The program/configuration key is not a batch ID.
 Rebuild the native utility and QIS FFI for the worker-lifecycle ABI.
 
+### Fork
+
+Fork is supported through the native C ABI. A child discards all of the forking
+thread's runtime state: registrations, function handles, contexts, retained
+worker-scope instances and pending results. Start a new shot and register again
+in the child. Compiled code is kept; timeouts and traps continue to work.
+
+No other thread may be performing Wasmtime host-side work at the fork:
+compiling, instantiating, creating the Engine, dropping stores or modules, or
+handling a trap. A worker parked in guest code is fine. Forks that skip
+`pthread_atfork` handlers (raw `clone`/`clone3`, `vfork`, or glibc `_Fork`) are
+unsupported.
+
 ## Overlap independent WASM calls
 
-Pass `wasm_async_workers=2` to `build`, `compile_wasm`, `Guppy`, or `Hugr` to
+Pass `WasmOptions(modules, async_workers=2)` to `build`, `compile_wasm`, `Guppy`, or `Hugr` to
 execute independent contexts on a pool of two threads per execution worker.
 The default `0` executes inline; integer values from `1` through `64` enable
-the pool. PECOS constructors require explicit `wasm_modules` when enabling it.
+the pool.
 Rebuild both the native utility and PECOS QIS FFI for the async call ABI.
 Building this runtime requires Rust 1.98 or newer, including its Windows
-thread-local cleanup fix. Custom native hosts must reset live worker state
-before unloading the runtime library.
+thread-local cleanup fix. Custom native hosts must still reset live worker state
+when they are done: worker threads and thread-local state run library code.
+Once the runtime has created its WASM engine, unloading the runtime library is
+a no-op on Linux, macOS and Windows; it stays loaded for the life of the process.
 
 Calls enqueue work and their result reads wait for completion. Results remain
 associated with their contexts, including when read in a different order.

@@ -38,17 +38,17 @@ fn observed(plan: &SamplingPlan, seeds: &[u64], coverage: &mut Coverage) -> Vec<
             let mut values = [false; 2];
             let mut outcomes_by_value = [[false; 2]; 2];
             for &id in ids {
-                let shot = &sampler.shots[id];
-                negatives[usize::from(op.sign.evaluate(&shot.noise, &shot.measurements))] = true;
+                let (noise, measurements) =
+                    (sampler.shots.noise(id), sampler.shots.measurements(id));
+                negatives[usize::from(op.sign.evaluate(noise, measurements))] = true;
                 if let Instruction::Measurement {
                     symbol, projection, ..
                 } = &op.instruction
                 {
-                    let outcome = usize::from(shot.measurements[*symbol]);
+                    let outcome = usize::from(measurements[*symbol]);
                     outcomes[outcome] = true;
                     if let Some(projection) = projection {
-                        let value =
-                            usize::from(projection.value.evaluate(&shot.noise, &shot.measurements));
+                        let value = usize::from(projection.value.evaluate(noise, measurements));
                         values[value] = true;
                         outcomes_by_value[value][outcome] = true;
                     }
@@ -233,15 +233,16 @@ fn active_measurement_shares_value_across_opposite_outcomes() {
             let mut negatives = [false; 2];
             let mut outcomes = [false; 2];
             let mut values = [false; 2];
-            for shot in &sampler.shots {
+            for id in 0..seeds.len() {
+                let (noise, measurements) =
+                    (sampler.shots.noise(id), sampler.shots.measurements(id));
                 negatives[usize::from(
                     plan.operations[operation]
                         .sign
-                        .evaluate(&shot.noise, &shot.measurements),
+                        .evaluate(noise, measurements),
                 )] = true;
-                outcomes[usize::from(shot.measurements[0])] = true;
-                values[usize::from(projection.value.evaluate(&shot.noise, &shot.measurements))] =
-                    true;
+                outcomes[usize::from(measurements[0])] = true;
+                values[usize::from(projection.value.evaluate(noise, measurements))] = true;
             }
             assert_eq!(negatives, [true; 2]);
             assert_eq!(outcomes, [true; 2]);
@@ -305,4 +306,29 @@ fn chunk_arithmetic_and_empty_input() {
         assert_eq!(plan.run_batch(&seeds, budget), expected);
         assert_eq!(plan.par_run_batch(&seeds, budget), expected);
     }
+}
+
+#[test]
+fn shot_state_caps_chunk_length() {
+    // 1000 measurements give about 2.2 KB of state per shot, so the state cap,
+    // not the unlimited amplitude budget, decides the chunk length.
+    let mut circuit = TickCircuit::new();
+    circuit.tick().h(&[0, 1]);
+    circuit.tick().t(&[0]);
+    circuit.tick().cx(&[(0, 1)]);
+    for _ in 0..500 {
+        circuit.tick().mz(&[0, 1]);
+    }
+    let plan = HeisenbergProgram::compile(&circuit)
+        .unwrap()
+        .plan(26)
+        .unwrap();
+    let state_cap = (4 << 20) / plan.shot_state_bytes();
+    assert_eq!(plan.chunk_len(usize::MAX), state_cap);
+    let lane = size_of::<Complex64>() << plan.peak;
+    assert_eq!(plan.chunk_len(3 * lane), 3);
+    let seeds: Vec<_> = (0..2 * state_cap as u64 + 5).collect();
+    let expected: Vec<_> = seeds.iter().map(|&seed| plan.run(seed)).collect();
+    assert_eq!(plan.run_batch(&seeds, usize::MAX), expected);
+    assert_eq!(plan.par_run_batch(&seeds, usize::MAX), expected);
 }

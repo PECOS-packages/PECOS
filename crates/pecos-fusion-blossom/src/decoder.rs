@@ -310,6 +310,7 @@ impl FusionBlossomDecoder {
             solver_type,
             max_tree_size: None,
         };
+        Self::check_matching_graph_priors(graph)?;
         let mut decoder = Self::new(config)?;
         for edge in &graph.edges {
             let obs: Vec<usize> = edge.observables.iter().map(|&o| o as usize).collect();
@@ -324,6 +325,21 @@ impl FusionBlossomDecoder {
         }
         decoder.build_obs_masks();
         Ok(decoder)
+    }
+
+    /// Reject a DEM matching graph holding an edge whose prior gives a negative weight.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FusionBlossomError::Configuration`] naming the first edge
+    /// probability above 0.5.
+    pub fn check_matching_graph_priors(
+        graph: &pecos_decoder_core::dem::DemMatchingGraph,
+    ) -> Result<()> {
+        graph
+            .edges
+            .iter()
+            .try_for_each(|edge| check_prior_weight(edge.probability))
     }
 
     /// Create decoder from a DEM string.
@@ -351,7 +367,9 @@ impl FusionBlossomDecoder {
     ///
     /// # Errors
     ///
-    /// Returns error if the DEM is malformed.
+    /// Returns error if the DEM is malformed, or a
+    /// [`FusionBlossomError::Configuration`] if a graphlike mechanism's prior
+    /// is above 0.5.
     pub fn parse_correlated_dem(dem: &str) -> Result<ParsedCorrelatedDem> {
         use pecos_decoder_core::dem::DemCheckMatrix;
 
@@ -372,12 +390,17 @@ impl FusionBlossomDecoder {
                 .filter(|&o| dcm.observable_matrix[[o, m]] != 0)
                 .collect();
 
-            let weight = if p < 1.0 { ((1.0 - p) / p).ln() } else { 0.0 };
-
             // Only graphlike (1-2 detector) mechanisms.
-            if detectors.len() <= 2 {
-                mechanisms.push((detectors, obs, weight));
+            if detectors.len() > 2 {
+                continue;
             }
+            // Check the prior itself: a weight cannot represent p = 1, and
+            // perturbation clamps negative weights to a positive floor.
+            if !detectors.is_empty() {
+                check_prior_weight(p)?;
+            }
+            let weight = if p < 1.0 { ((1.0 - p) / p).ln() } else { 0.0 };
+            mechanisms.push((detectors, obs, weight));
         }
 
         Ok(ParsedCorrelatedDem {
@@ -390,12 +413,16 @@ impl FusionBlossomDecoder {
     /// Build a correlated FB decoder from pre-parsed data with optional weight perturbation.
     ///
     /// `weight_factors[i]` multiplies the i-th mechanism's weight. Pass `None` for no perturbation.
-    /// Duplicate edges (same endpoints) are merged by keeping the lowest weight
-    /// (highest probability) mechanism's observable — matching PM's INDEPENDENT strategy.
+    /// Mechanisms on the same endpoints are merged as independent events,
+    /// `p1 * (1 - p2) + p2 * (1 - p1)`, matching PM's INDEPENDENT strategy, and
+    /// the edge keeps the highest-probability mechanism's observables (the
+    /// first such mechanism's on ties).
     ///
     /// # Errors
     ///
-    /// Returns error if construction fails.
+    /// Returns error if construction fails, or a
+    /// [`FusionBlossomError::Configuration`] if a mechanism's unperturbed prior
+    /// is above 0.5.
     pub fn from_parsed_correlated(
         parsed: &ParsedCorrelatedDem,
         weight_factors: Option<&[f64]>,
@@ -417,24 +444,12 @@ impl FusionBlossomDecoder {
         };
         let mut decoder = Self::new(config)?;
 
-        // Deduplicate edges: merge by independent-union probability,
-        // first-observable-wins (stable under perturbation).
+        // Deduplicate edges: merge probabilities as independent (XOR) events and
+        // keep the highest-probability mechanism's observables, the first on ties.
         // Key: (min_node, max_node, is_boundary). Value: (obs, prob, best_prob).
         let mut edge_map: BTreeMap<(usize, usize, bool), ParsedEdgeInfo> = BTreeMap::new();
 
         for (i, (detectors, obs, base_weight)) in parsed.mechanisms.iter().enumerate() {
-            let weight = if let Some(factors) = weight_factors {
-                if i < factors.len() {
-                    (base_weight * factors[i]).max(0.01)
-                } else {
-                    *base_weight
-                }
-            } else {
-                *base_weight
-            };
-            // Convert weight to probability for merging.
-            let prob = 1.0 / (1.0 + weight.exp());
-
             let key = match detectors.len() {
                 1 => (detectors[0], usize::MAX, true),
                 2 => {
@@ -447,20 +462,43 @@ impl FusionBlossomDecoder {
                 }
                 _ => continue,
             };
+            // Check the unperturbed prior: the weight floor below would turn a
+            // negative weight (prior above 0.5) into a positive one.
+            check_prior_weight(1.0 / (1.0 + base_weight.exp()))?;
 
-            let entry = edge_map.entry(key).or_insert_with(|| ParsedEdgeInfo {
-                obs: obs.clone(),
-                prob,
-                best_prob: prob,
-            });
-            // Independent union: P(A or B) = P(A) + P(B) - P(A)*P(B)
-            entry.prob = entry.prob + prob - entry.prob * prob;
-            if prob > entry.best_prob {
-                entry.obs.clone_from(obs);
-                entry.best_prob = prob;
+            let weight = if let Some(factors) = weight_factors {
+                if i < factors.len() {
+                    (base_weight * factors[i]).max(0.01)
+                } else {
+                    *base_weight
+                }
+            } else {
+                *base_weight
+            };
+            // Convert weight to probability for merging.
+            let prob = 1.0 / (1.0 + weight.exp());
+
+            match edge_map.entry(key) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(ParsedEdgeInfo {
+                        obs: obs.clone(),
+                        prob,
+                        best_prob: prob,
+                    });
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    let entry = entry.get_mut();
+                    entry.prob =
+                        pecos_decoder_core::correlation_table::bernoulli_xor(entry.prob, prob);
+                    if prob > entry.best_prob {
+                        entry.obs.clone_from(obs);
+                        entry.best_prob = prob;
+                    }
+                }
             }
         }
 
+        // Every merged prior is at most 0.5: each input is, and so is their XOR.
         for ((n1, n2, is_boundary), info) in &edge_map {
             // Convert combined probability back to weight.
             let p = info.prob.clamp(1e-15, 1.0 - 1e-15);
@@ -522,6 +560,9 @@ impl FusionBlossomDecoder {
             {
                 weight *= factors[m];
                 weight = weight.max(0.01);
+            }
+            if matches!(detectors.len(), 1 | 2) {
+                check_prior_weight(p)?;
             }
 
             match detectors.len() {
@@ -600,6 +641,9 @@ impl FusionBlossomDecoder {
                 .collect();
 
             let weight = if p < 1.0 { ((1.0 - p) / p).ln() } else { 0.0 };
+            if matches!(detectors.len(), 1 | 2) {
+                check_prior_weight(p)?;
+            }
 
             match detectors.len() {
                 1 => {
@@ -1266,9 +1310,169 @@ impl FusionBlossomDecoder {
     }
 }
 
+/// Reject a DEM prior whose matching weight `ln((1 - p) / p)` is negative.
+///
+/// The prior comes from the caller's DEM, so this is a configuration error,
+/// not a malformed graph.
+fn check_prior_weight(probability: f64) -> Result<()> {
+    if probability > 0.5 {
+        return Err(FusionBlossomError::Configuration(format!(
+            "DEM edge probability {probability} is above 0.5, which gives a negative matching \
+             weight; Fusion Blossom accepts only non-negative weights, so keep each edge's \
+             probability (merged parallel mechanisms combine) at most 0.5"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_and_perturbed_priors_are_rejected_before_weight_clamping() {
+        for probability in [0.7, 1.0] {
+            let dem = format!("error({probability}) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1");
+            let matrix = pecos_decoder_core::DemCheckMatrix::from_dem_str(&dem).unwrap();
+            let factors = vec![1.0; matrix.num_mechanisms];
+            for factors in [None, Some(factors.as_slice())] {
+                assert!(
+                    matches!(
+                        FusionBlossomDecoder::from_check_matrix_correlated(&matrix, factors),
+                        Err(FusionBlossomError::Configuration(_))
+                    ),
+                    "probability={probability}, factors={factors:?}"
+                );
+            }
+            assert!(matches!(
+                FusionBlossomDecoder::from_dem_correlated(&dem),
+                Err(FusionBlossomError::Configuration(_))
+            ));
+            assert!(matches!(
+                FusionBlossomDecoder::from_dem(&dem),
+                Err(FusionBlossomError::Configuration(_))
+            ));
+            let factors = vec![1.0; 3];
+            for factors in [None, Some(factors.as_slice())] {
+                assert!(
+                    matches!(
+                        FusionBlossomDecoder::parse_correlated_dem(&dem).and_then(|parsed| {
+                            FusionBlossomDecoder::from_parsed_correlated(&parsed, factors)
+                        }),
+                        Err(FusionBlossomError::Configuration(_))
+                    ),
+                    "probability={probability}, factors={factors:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parsed_negative_weight_is_rejected_before_perturbation_clamps_it() {
+        // p = 0.7 as a weight; the 0.01 perturbation floor would make it positive.
+        let parsed = ParsedCorrelatedDem {
+            num_detectors: 2,
+            num_observables: 1,
+            mechanisms: vec![
+                (vec![0], vec![0], (0.3_f64 / 0.7).ln()),
+                (vec![0, 1], vec![], (0.9_f64 / 0.1).ln()),
+            ],
+        };
+        for factors in [None, Some([1.0, 1.0].as_slice())] {
+            match FusionBlossomDecoder::from_parsed_correlated(&parsed, factors) {
+                Err(FusionBlossomError::Configuration(message)) => {
+                    assert!(
+                        message.starts_with("DEM edge probability 0.7 is above 0.5"),
+                        "{message}"
+                    );
+                }
+                Err(error) => panic!("expected a configuration error, got {error:?}"),
+                Ok(_) => panic!("expected a configuration error for factors={factors:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parsed_correlated_merges_each_mechanism_once() {
+        // One mechanism keeps its prior; two combine as independent events,
+        // 0.1 * 0.9 + 0.1 * 0.9 = 0.18.
+        for (dem, prior) in [
+            ("error(0.1) D0 D1", 0.1_f64),
+            ("error(0.1) D0 D1\nerror(0.1) D0 D1", 0.18),
+        ] {
+            let parsed = FusionBlossomDecoder::parse_correlated_dem(dem).unwrap();
+            let decoder = FusionBlossomDecoder::from_parsed_correlated(&parsed, None).unwrap();
+            let mut expected = FusionBlossomDecoder::new(FusionBlossomConfig {
+                num_nodes: Some(2),
+                ..Default::default()
+            })
+            .unwrap();
+            expected
+                .add_edge(0, 1, &[], Some(((1.0 - prior) / prior).ln()))
+                .unwrap();
+            assert_eq!(decoder.num_edges(), 1, "{dem}");
+            assert_eq!(
+                decoder.edge_endpoints(0),
+                expected.edge_endpoints(0),
+                "{dem}"
+            );
+        }
+    }
+
+    #[test]
+    fn parsed_correlated_merges_parallel_mechanisms_as_independent_events() {
+        // XOR gives 0.42, a legal prior; OR would give 0.51 and reject the model.
+        let parsed =
+            FusionBlossomDecoder::parse_correlated_dem("error(0.3) D0 D1\nerror(0.3) D0 D1 L0")
+                .unwrap();
+        let decoder = FusionBlossomDecoder::from_parsed_correlated(&parsed, None).unwrap();
+        assert_eq!(decoder.num_edges(), 1);
+    }
+
+    #[test]
+    fn parallel_mechanisms_above_half_are_rejected_before_merging() {
+        // Each prior is above 0.5, though their XOR, 0.42, is not.
+        let dem = "error(0.7) D0 D1\nerror(0.7) D0 D1";
+        match FusionBlossomDecoder::from_dem(dem) {
+            Err(FusionBlossomError::Configuration(message)) => {
+                assert!(
+                    message.starts_with("DEM error probability 0.7 is above 0.5"),
+                    "{message}"
+                );
+            }
+            Err(error) => panic!("expected a configuration error, got {error:?}"),
+            Ok(_) => panic!("expected a configuration error"),
+        }
+    }
+
+    #[test]
+    fn dem_prior_above_half_is_a_configuration_error() {
+        let dem = "error(0.7) D0 L0\nerror(0.1) D0 D1\nerror(0.1) D1";
+        let check = |result: Result<FusionBlossomDecoder>, prefix: &str| match result {
+            Err(FusionBlossomError::Configuration(message)) => {
+                assert!(
+                    message.starts_with(&format!("{prefix} probability 0.7 is above 0.5")),
+                    "{message}"
+                );
+            }
+            Err(error) => panic!("expected a configuration error, got {error:?}"),
+            Ok(_) => panic!("expected a configuration error, got a decoder"),
+        };
+        // The matching-graph parser checks each mechanism's prior itself.
+        check(FusionBlossomDecoder::from_dem(dem), "DEM error");
+        check(FusionBlossomDecoder::from_dem_correlated(dem), "DEM edge");
+        check(
+            FusionBlossomDecoder::parse_correlated_dem(dem)
+                .and_then(|parsed| FusionBlossomDecoder::from_parsed_correlated(&parsed, None)),
+            "DEM edge",
+        );
+        let dcm = pecos_decoder_core::dem::DemCheckMatrix::from_dem_str(dem).unwrap();
+        check(
+            FusionBlossomDecoder::from_check_matrix_correlated(&dcm, None),
+            "DEM edge",
+        );
+        assert!(FusionBlossomDecoder::from_dem("error(0.5) D0 L0\nerror(0.1) D0 D1").is_ok());
+    }
 
     #[test]
     fn serial_max_tree_size_override_reaches_solver() {

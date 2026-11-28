@@ -39,6 +39,11 @@ mod incremental_score_tests;
 mod prune_wide_delta_tests;
 
 pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
+#[cfg(feature = "experimental-conditional-retirement")]
+pub use streaming::{
+    ConditionalLinearClassPreview, ConditionalLinearRetirement, ConditionalLogicalClassPreview,
+    ConditionalLogicalRetirement, ConditionalLogicalRetirementDecision,
+};
 pub use streaming::{StreamingMode, StreamingProgress, TrellisStreamingDecoder};
 
 use factor::{FactorModel, NormalizedFactor, Outcome};
@@ -393,10 +398,19 @@ pub struct TrellisLogicalMass {
 /// only when the decoder has an actual budget mechanism.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrellisStatus {
-    /// No state was discarded by pruning, so the retained result is exact.
+    /// No state was discarded by pruning or conditional retirement, so the result is exact.
     Exact,
-    /// At least one state was discarded by pruning.
+    /// Pruning discarded at least one state and no conditional retirement removed a state.
     Pruned {
+        /// Whether the configured frontier-width cap discarded any state.
+        k_capped: bool,
+        /// Whether the configured log-mass window discarded any state.
+        delta_pruned: bool,
+    },
+    /// At least one opt-in conditional retirement removed a retained state this
+    /// shot. Masses, evidence, and prediction are conditional on the retired
+    /// classes; the flags indicate whether ordinary pruning also discarded states.
+    Conditioned {
         /// Whether the configured frontier-width cap discarded any state.
         k_capped: bool,
         /// Whether the configured log-mass window discarded any state.
@@ -460,9 +474,10 @@ pub struct TrellisResult {
     /// Zero means the base decode succeeded. [`TrellisDecoder`] results and
     /// successful ladder-free `BpTrellis` decodes also report zero.
     pub escalation_rungs_used: u32,
-    /// Whether the successful decode was exact or which pruning mechanisms
-    /// discarded at least one state. For an escalated `BpTrellis` result, this
-    /// is the successful rung's status.
+    /// Whether the successful decode was exact, pruned without conditioning, or
+    /// conditioned by retirement, including which pruning mechanisms discarded
+    /// states. For an escalated `BpTrellis` result, this is the successful rung's
+    /// status.
     pub status: TrellisStatus,
     /// Retained terminal masses, ordered by mass descending and numeric label
     /// ascending. Under `maxlog_int`, each entry is the label's best-route
@@ -2179,6 +2194,7 @@ struct BinaryProgress {
     dropped_log_mass: f64,
     k_capped: bool,
     delta_pruned: bool,
+    conditioned: bool,
     peak_retained_states: usize,
 }
 
@@ -2193,6 +2209,7 @@ impl Default for BinaryProgress {
             dropped_log_mass: f64::NEG_INFINITY,
             k_capped: false,
             delta_pruned: false,
+            conditioned: false,
             peak_retained_states,
         }
     }
@@ -2214,6 +2231,7 @@ impl BinaryProgress {
         self.dropped_log_mass = f64::NEG_INFINITY;
         self.k_capped = false;
         self.delta_pruned = false;
+        self.conditioned = false;
         self.peak_retained_states = self.frontier.parent.masses.len();
     }
 }
@@ -3253,6 +3271,7 @@ impl TrellisModel {
             k_capped,
             delta_pruned,
             peak_retained_states,
+            conditioned: _,
         } = progress;
         let Kernel::Binary(columns) = &self.kernel else {
             unreachable!("binary decode called with N-ary kernel");
@@ -3475,6 +3494,7 @@ impl TrellisModel {
             dropped_log_mass,
             k_capped,
             delta_pruned,
+            conditioned,
             peak_retained_states,
         } = *progress;
 
@@ -3506,7 +3526,12 @@ impl TrellisModel {
                 log_mass: candidate.log_mass,
             })
             .collect();
-        let status = if dropped_states == 0 {
+        let status = if conditioned {
+            TrellisStatus::Conditioned {
+                k_capped,
+                delta_pruned,
+            }
+        } else if dropped_states == 0 {
             TrellisStatus::Exact
         } else {
             TrellisStatus::Pruned {

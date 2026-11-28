@@ -12,6 +12,9 @@ categories.workspace = true
 description = "Frontier approximate logical maximum-likelihood decoder for PECOS"
 publish = false
 
+[features]
+experimental-conditional-retirement = ["pecos-trellis/experimental-conditional-retirement"]
+
 [dependencies]
 pecos-decoder-core.workspace = true
 pecos-trellis.workspace = true

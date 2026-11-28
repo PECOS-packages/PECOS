@@ -331,6 +331,22 @@ impl PyBpTrellisResult {
     fn status(&self) -> &'static str {
         match self.inner.status {
             TrellisStatus::Exact => "exact",
+            TrellisStatus::Conditioned {
+                k_capped: false,
+                delta_pruned: false,
+            } => "conditioned",
+            TrellisStatus::Conditioned {
+                k_capped: true,
+                delta_pruned: false,
+            } => "conditioned+pruned:k",
+            TrellisStatus::Conditioned {
+                k_capped: false,
+                delta_pruned: true,
+            } => "conditioned+pruned:delta",
+            TrellisStatus::Conditioned {
+                k_capped: true,
+                delta_pruned: true,
+            } => "conditioned+pruned:k+delta",
             TrellisStatus::Pruned {
                 k_capped: true,
                 delta_pruned: false,

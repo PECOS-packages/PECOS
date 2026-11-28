@@ -130,6 +130,22 @@ fn snapshot_result(result: TrellisResult) -> SnapshotOutcome {
         escalation_rungs_used: result.escalation_rungs_used,
         status: match result.status {
             TrellisStatus::Exact => "exact",
+            TrellisStatus::Conditioned {
+                k_capped: false,
+                delta_pruned: false,
+            } => "conditioned",
+            TrellisStatus::Conditioned {
+                k_capped: true,
+                delta_pruned: false,
+            } => "conditioned+pruned:k",
+            TrellisStatus::Conditioned {
+                k_capped: false,
+                delta_pruned: true,
+            } => "conditioned+pruned:delta",
+            TrellisStatus::Conditioned {
+                k_capped: true,
+                delta_pruned: true,
+            } => "conditioned+pruned:k+delta",
             TrellisStatus::Pruned {
                 k_capped: true,
                 delta_pruned: false,

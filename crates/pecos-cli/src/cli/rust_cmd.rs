@@ -517,8 +517,9 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
 
     // The trellis scalar-reference oracles compile into the library only with
     // runtime-checks, so this run applies them to the Frontier integration
-    // tests and the bitwise snapshots as well as the trellis unit tests.
-    println!("Testing Frontier with trellis runtime checks...");
+    // tests and the bitwise snapshots as well as the trellis unit tests. Enable
+    // conditional retirement too so its feature-gated tests run in this lane.
+    println!("Testing Frontier with trellis runtime checks and conditional-retirement tests...");
     let mut frontier_args: Vec<&str> = vec![
         "test",
         "-p",
@@ -527,12 +528,12 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         "pecos-frontier",
         "-p",
         "pecos-frontier-wasm",
-        "--features=pecos-trellis/runtime-checks",
+        "--features=pecos-trellis/runtime-checks,pecos-trellis/experimental-conditional-retirement",
     ];
     frontier_args.extend(profile_args);
     if !run(&frontier_args) {
         return Err(Error::Config(
-            "cargo test (Frontier with trellis runtime-checks) failed".to_string(),
+            "cargo test (Frontier with trellis runtime-checks and conditional-retirement tests) failed".to_string(),
         ));
     }
 

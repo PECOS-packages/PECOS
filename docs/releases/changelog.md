@@ -50,7 +50,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   and upstream wrote past it. `DecodeBuffer::new` and
   `PyMatchingDecoder::create_decode_buffer` now return `Result`, with
   `PyMatchingError::InvalidGraph` when the observable buffer cannot be
-  allocated.
+  allocated. The check-matrix constructors reject `weights` or
+  `error_probabilities` longer than the column count with
+  `PyMatchingError::Configuration` (`ValueError`); before, the extra entries
+  were ignored.
 
 - **Fixed:** PyMatching inputs that ended the process now raise errors (#1771).
   `add_edge`, `add_edge_with_config`, `add_boundary_edge`, the builder and
@@ -67,9 +70,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   `from_check_matrix_with_config` (Python
   `from_check_matrix_with_repetitions`) rejects `repetitions=0`, a rows times
   repetitions product that overflows, per-column `weights` or
-  `error_probabilities` of the wrong length, and a column count too large to
-  allocate with `Configuration` (`ValueError`) instead of panicking or
-  aborting. `get_shortest_path` no longer returns an empty path on an upstream
+  `error_probabilities` shorter than the column count, and a column count too
+  large to allocate with `Configuration` (`ValueError`) instead of panicking or
+  aborting, and a matrix with no rows no longer loops over every repetition. `get_shortest_path` no longer returns an empty path on an upstream
   failure: a matcher-build failure such as an edge weight above upstream's
   maximum is `InvalidGraph`; two boundary nodes, and a target reachable only
   through a boundary node (which segfaulted), are `Configuration`. When one node

@@ -584,7 +584,10 @@ def test_pymatching_batch_rows_too_many_for_memory_are_an_input_error(pytester):
     output = _value_error_in_subprocess(
         pytester, "PyMatchingDecoder(0).decode_batch([], num_shots=4_000_000)", setup=setup
     )
-    assert "ValueError: Configuration error: cannot allocate 4000000 output rows; pass a smaller num_shots" in output
+    assert (
+        "ValueError: Configuration error: cannot allocate the contents of 4000000 output rows; pass a smaller num_shots"
+        in output
+    )
 
 
 @pytest.mark.parametrize(

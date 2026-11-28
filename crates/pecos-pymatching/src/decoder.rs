@@ -390,6 +390,24 @@ pub(crate) fn zeroed_rows<T: Copy + Default>(
     )))
 }
 
+/// Allocate one zeroed row of `row_len` entries, sized by the graph's count of
+/// `row_unit`s, for the C++ bridge to fill.
+///
+/// # Errors
+///
+/// Returns [`PyMatchingError::InvalidGraph`] if the row cannot be allocated.
+pub(crate) fn zeroed_row<T: Copy + Default>(row_len: usize, row_unit: &str) -> Result<Vec<T>> {
+    let mut row = Vec::new();
+    row.try_reserve_exact(row_len).map_err(|_| {
+        PyMatchingError::InvalidGraph(format!(
+            "cannot allocate one row of {row_len} output entries, sized by the graph's \
+             {row_unit} count; build the graph with fewer {row_unit}s"
+        ))
+    })?;
+    row.resize(row_len, T::default());
+    Ok(row)
+}
+
 /// Split `flat`, `rows` rows of `row_len` entries, into one `Vec` per row that
 /// keeps the first `width` entries.
 ///
@@ -407,11 +425,15 @@ fn split_rows<T: Copy>(
     rows: usize,
     rows_name: &str,
 ) -> Result<Vec<Vec<T>>> {
+    let mut split = Vec::new();
+    split.try_reserve_exact(rows).map_err(|_| {
+        PyMatchingError::Configuration(format!(
+            "cannot allocate the list of {rows} output rows; pass a smaller {rows_name}"
+        ))
+    })?;
     // Free the rows split so far before the error message is allocated.
-    let split = || -> Option<Vec<Vec<T>>> {
+    let fill = |mut split: Vec<Vec<T>>| -> Option<Vec<Vec<T>>> {
         let kept = width.min(row_len);
-        let mut split = Vec::new();
-        split.try_reserve_exact(rows).ok()?;
         for index in 0..rows {
             let mut row = Vec::new();
             row.try_reserve_exact(kept).ok()?;
@@ -420,9 +442,9 @@ fn split_rows<T: Copy>(
         }
         Some(split)
     };
-    split().ok_or_else(|| {
+    fill(split).ok_or_else(|| {
         PyMatchingError::Configuration(format!(
-            "cannot allocate {rows} output rows; pass a smaller {rows_name}"
+            "cannot allocate the contents of {rows} output rows; pass a smaller {rows_name}"
         ))
     })
 }
@@ -562,6 +584,12 @@ impl PyMatchingDecoder {
                 m_errors.len(),
                 num_rows
             )));
+        }
+
+        // Without rows there are no timelike edges; returning here keeps a huge
+        // `repetitions` from looping over empty rounds.
+        if num_rows == 0 {
+            return Ok(());
         }
 
         // Add timelike edges between consecutive rounds
@@ -1259,7 +1287,7 @@ impl PyMatchingDecoder {
                 weight: result.weight,
             })
         } else {
-            let mut observable = zeroed_rows(self.num_observables(), 1, "observable", "num_shots")?;
+            let mut observable = zeroed_row(self.num_observables(), "observable")?;
             let weight = ffi::decode_detection_events_extended(
                 self.graph.pin_mut(),
                 detection_events,

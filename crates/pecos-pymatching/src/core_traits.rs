@@ -815,6 +815,20 @@ mod tests {
     }
 
     #[test]
+    fn check_matrix_without_rows_does_not_loop_over_repetitions() {
+        // Zero rows pass the product check for any count, so a loop over the
+        // empty rounds would not finish.
+        let matrix = CheckMatrix::new(0, 1, vec![], vec![]);
+        let config = CheckMatrixConfig {
+            repetitions: 1 << 62,
+            ..Default::default()
+        };
+        let decoder = PyMatchingDecoder::from_check_matrix_with_config(&matrix, config)
+            .expect("a matrix without rows builds an empty graph");
+        assert_eq!(decoder.num_nodes(), 0);
+    }
+
+    #[test]
     fn add_noise_syndrome_covers_nodes_past_the_detector_count() {
         // Boundary node 0 leaves 3 detectors, but the edge flips nodes 2 and 3.
         let mut decoder = decoder_with_nodes(4);

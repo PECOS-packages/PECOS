@@ -1,6 +1,6 @@
 //! Zero-copy and buffer reuse utilities for `PyMatching` decoder
 
-use super::decoder::{DecodingResult, PyMatchingDecoder, zeroed_rows};
+use super::decoder::{DecodingResult, PyMatchingDecoder, zeroed_row};
 use super::errors::Result;
 
 /// A reusable buffer for decoding operations
@@ -24,12 +24,7 @@ impl DecodeBuffer {
     pub fn new(decoder: &PyMatchingDecoder) -> Result<Self> {
         Ok(Self {
             syndrome_buffer: Vec::new(),
-            observable_buffer: zeroed_rows(
-                decoder.num_decoded_observables(),
-                1,
-                "observable",
-                "num_shots",
-            )?,
+            observable_buffer: zeroed_row(decoder.num_decoded_observables(), "observable")?,
         })
     }
 

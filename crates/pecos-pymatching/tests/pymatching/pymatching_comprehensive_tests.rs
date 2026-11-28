@@ -351,7 +351,9 @@ fn test_weight_normalisation_constant() {
     decoder.add_edge(1, 2, &[0], Some(1.5), None, None).unwrap();
     decoder.add_edge(0, 2, &[0], Some(2.5), None, None).unwrap();
 
-    let norm_const = decoder.get_edge_weight_normalising_constant(1000);
+    let norm_const = decoder
+        .get_edge_weight_normalising_constant(1000)
+        .expect("the graph's weights are in range");
     assert!(norm_const > 0.0);
     assert!(norm_const.is_finite());
 }

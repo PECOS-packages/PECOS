@@ -13,12 +13,10 @@
 //! detectors. Each is rejected at construction with upstream's own message.
 
 use super::bridge::ffi;
-use super::decoder::{
-    TesseractError, checked_detections, fired_detectors, validate_syndrome_length,
-};
+use super::decoder::{TesseractError, checked_detections, fired_detectors};
 use cxx::UniquePtr;
 use ndarray::ArrayView1;
-use pecos_decoder_core::{Decoder, DecodingResultTrait};
+use pecos_decoder_core::{Decoder, DecodingResultTrait, check_syndrome_length};
 
 /// Rule for ranking beam states when truncating a trellis layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -253,7 +251,7 @@ impl pecos_decoder_core::ObservableDecoder for TesseractTrellisDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
-        validate_syndrome_length(syndrome.len(), self.num_detectors)?;
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         let result = self
             .decode_detections(&fired_detectors(syndrome.iter()).view())
             .map_err(pecos_decoder_core::DecoderError::from)?;
@@ -268,7 +266,7 @@ impl Decoder for TesseractTrellisDecoder {
     type Error = TesseractError;
 
     fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
-        validate_syndrome_length(input.len(), self.num_detectors).map_err(TesseractError::Dem)?;
+        check_syndrome_length(self.num_detectors, input.len()).map_err(TesseractError::Dem)?;
         self.decode_detections(&fired_detectors(input.iter()).view())
     }
 

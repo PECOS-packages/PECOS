@@ -156,7 +156,7 @@ impl MbpDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome length doesn't match expected size,
+    /// Returns `LdpcError::InvalidDimensions` if the syndrome length doesn't match expected size,
     /// or `LdpcError::Ldpc` if the C++ decoder encounters an error.
     ///
     /// # Panics
@@ -164,11 +164,10 @@ impl MbpDecoder {
     /// Panics if the syndrome array is not contiguous in memory.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<Array1<PauliError>, LdpcError> {
         if syndrome.len() != self.n_stabs {
-            return Err(LdpcError::InvalidInput(format!(
-                "Syndrome length {} does not match total stabilizers {}",
-                syndrome.len(),
-                self.n_stabs
-            )));
+            return Err(LdpcError::InvalidDimensions {
+                expected: self.n_stabs,
+                actual: syndrome.len(),
+            });
         }
 
         let syndrome_slice = syndrome
@@ -196,7 +195,7 @@ impl MbpDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `LdpcError::InvalidInput` if the syndrome length doesn't match expected size,
+    /// Returns `LdpcError::InvalidDimensions` if the syndrome length doesn't match expected size,
     /// or `LdpcError::Ldpc` if the C++ decoder encounters an error.
     ///
     /// # Panics
@@ -204,11 +203,10 @@ impl MbpDecoder {
     /// Panics if the syndrome array is not contiguous in memory.
     pub fn decode_gf4(&mut self, syndrome: &ArrayView1<u8>) -> Result<Array1<u8>, LdpcError> {
         if syndrome.len() != self.n_stabs {
-            return Err(LdpcError::InvalidInput(format!(
-                "Syndrome length {} does not match total stabilizers {}",
-                syndrome.len(),
-                self.n_stabs
-            )));
+            return Err(LdpcError::InvalidDimensions {
+                expected: self.n_stabs,
+                actual: syndrome.len(),
+            });
         }
 
         let syndrome_slice = syndrome
@@ -539,6 +537,34 @@ mod tests {
             matches!(result, Err(LdpcError::InvalidInput(ref message)) if message.contains(expected)),
             "rate={rate}, bias={bias:?}, expected {expected}"
         );
+    }
+
+    #[test]
+    fn test_mbp_wrong_syndrome_length_is_invalid_dimensions() {
+        let checks = steane_checks();
+        let mut decoder = MbpDecoder::new(
+            &checks,
+            &checks,
+            0.1,
+            [1.0; 3],
+            10,
+            BpMethod::ProductSum,
+            1.0,
+            None,
+        )
+        .unwrap();
+        for actual in [5, 7] {
+            let syndrome = Array1::zeros(actual);
+            let expected = |result| matches!(result, Err(LdpcError::InvalidDimensions { expected: 6, actual: a }) if a == actual);
+            assert!(
+                expected(decoder.decode(&syndrome.view()).map(|_| ())),
+                "decode with a {actual}-entry syndrome must report InvalidDimensions"
+            );
+            assert!(
+                expected(decoder.decode_gf4(&syndrome.view()).map(|_| ())),
+                "decode_gf4 with a {actual}-entry syndrome must report InvalidDimensions"
+            );
+        }
     }
 
     #[test]

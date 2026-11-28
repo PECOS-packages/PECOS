@@ -91,9 +91,9 @@ def test_impossible_syndrome_has_flagged_zero_prediction(fallback):
     assert result.failure.cause == "residual"
     assert result.failure.detector == 0
     assert result.deltas_tried == []
-    with pytest.raises(RuntimeError, match="dimensions"):
+    with pytest.raises(ValueError, match="dimensions"):
         engine.decode_syndrome([], on_no_path="fallback")
-    with pytest.raises(RuntimeError, match="shot 1"):
+    with pytest.raises(ValueError, match="shot 1"):
         engine.decode_batch([[1], []], on_no_path="fallback", workers=2)
 
 
@@ -111,7 +111,7 @@ def test_explicit_fallback_configuration_and_categorical_limits():
     with pytest.raises(ValueError, match=r"delta_max 8\.0 must be finite and at least the base delta 16\.0"):
         exp.FrontierDecoder.from_dem(DEM, delta=16).decode_batch([], delta_max=8)
     factors = [[(0.5, [], []), (0.3, [0, 1], [0]), (0.2, [0, 1], [])]]
-    with pytest.raises(RuntimeError, match="independent binary DEM"):
+    with pytest.raises(ValueError, match="independent binary DEM"):
         exp.FrontierDecoder.from_factors(factors, 2, 1, fallback="feasible_then_zero")
     engine = exp.FrontierDecoder.from_factors(factors, 2, 1, fallback="zero")
     result = engine.decode_syndrome([0, 1], on_no_path="fallback", delta_max=100)

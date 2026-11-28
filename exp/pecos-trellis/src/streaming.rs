@@ -17,6 +17,7 @@ use crate::{
     TrellisConfig, TrellisDecoder, TrellisModel, TrellisResult, WORD_BITS, factor::FactorModel,
     set_bit, set_bits,
 };
+use pecos_decoder_core::check_syndrome_length;
 use std::sync::Arc;
 
 /// Scheduling policy. Dependency-driven is the backward-compatible default.
@@ -368,12 +369,7 @@ impl TrellisStreamingDecoder {
             return Err(failure.error());
         }
         self.ensure_no_bounded_advance()?;
-        if syndrome.len() != self.model.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.model.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.model.num_detectors, syndrome.len())?;
         if let StreamingMode::FixedLag {
             detector_round_bounds,
             ..

@@ -16,7 +16,7 @@
 //! independent column basis, then solves in that basis. An explanation certifies
 //! only consistency with the supplied DEM, not with the underlying circuit.
 
-use crate::{DecoderError, dem::SparseDem, obs_mask::ObsMask};
+use crate::{DecoderError, check_syndrome_length, dem::SparseDem, obs_mask::ObsMask};
 
 #[derive(Clone, Debug)]
 struct Column {
@@ -140,12 +140,7 @@ impl DemFeasibility {
     /// # Errors
     /// Rejects dimension mismatches; a failed internal witness check is an error.
     pub fn solve(&self, syndrome: &[u8]) -> Result<Option<FeasibleExplanation>, DecoderError> {
-        if syndrome.len() != self.dem.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.dem.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.dem.num_detectors, syndrome.len())?;
         let mut residual = self.baseline_syndrome.clone();
         for (d, &bit) in syndrome.iter().enumerate() {
             if bit != 0 {

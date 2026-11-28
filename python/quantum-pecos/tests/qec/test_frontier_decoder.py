@@ -87,7 +87,7 @@ def test_column_order_variants_and_validation() -> None:
         FrontierDecoder.from_dem(SMALL_DEM, column_order="not_an_order")
     with pytest.raises(ValueError, match="column_order must be"):
         FrontierDecoder.from_dem(SMALL_DEM, column_order=object())
-    with pytest.raises(RuntimeError, match="permutation"):
+    with pytest.raises(ValueError, match="permutation"):
         FrontierDecoder.from_dem(SMALL_DEM, column_order=[0, 0])
 
 
@@ -179,7 +179,7 @@ def test_metric_and_factor_model_error_paths() -> None:
             column_order="not_an_order",
             metric_mode="not_a_metric",
         )
-    with pytest.raises(RuntimeError, match="integer max-log metric is not supported"):
+    with pytest.raises(ValueError, match="integer max-log metric is not supported"):
         FrontierCommitteeDecoder.from_dem(SMALL_DEM, metric_mode="maxlog_int")
     with pytest.raises(ValueError, match="delta must be finite under maxlog_int"):
         FrontierDecoder.from_dem(
@@ -187,21 +187,21 @@ def test_metric_and_factor_model_error_paths() -> None:
             delta=float("inf"),
             metric_mode="maxlog_int",
         )
-    with pytest.raises(RuntimeError, match="BP-guided pruning requires a binary model"):
+    with pytest.raises(ValueError, match="BP-guided pruning requires a binary model"):
         FrontierDecoder.from_factors(
             N1_FACTORS,
             1,
             1,
             bp_score_iterations=1,
         )
-    with pytest.raises(RuntimeError, match="outcome probabilities must sum to 1"):
+    with pytest.raises(ValueError, match="outcome probabilities must sum to 1"):
         FrontierDecoder.from_factors(
             [[(0.6, [], []), (0.3, [0], [])]],
             1,
             0,
         )
     with pytest.raises(
-        RuntimeError,
+        ValueError,
         match="num_detectors 1000000000000000 exceeds the u32 index-addressable width 4294967296",
     ):
         FrontierDecoder.from_factors(
@@ -336,12 +336,12 @@ def test_pruning_telemetry_and_status_strings() -> None:
     assert both.decode_syndrome([]).status == "pruned:k+delta"
 
 
-def test_unexplainable_and_out_of_range_syndromes_raise_runtime_error() -> None:
+def test_unexplainable_syndrome_is_runtime_error_and_out_of_range_defect_is_value_error() -> None:
     decoder = FrontierDecoder.from_dem("error(0.1) D0 D1\n")
 
     with pytest.raises(RuntimeError, match="unexplainable"):
         decoder.decode_syndrome([1, 0])
-    with pytest.raises(RuntimeError, match="Invalid node index"):
+    with pytest.raises(ValueError, match="Invalid node index"):
         decoder.decode_from_defects([2])
 
 
@@ -424,9 +424,11 @@ def test_decode_batch_rejects_invalid_workers(
 @pytest.mark.parametrize("shot", [[0], [0, 1]])
 def test_decode_batch_preserves_individual_errors(decoder_class, workers: int, shot: list[int]) -> None:
     decoder = decoder_class.from_dem("error(0.1) D0 L0\ndetector D1\n")
-    with pytest.raises(RuntimeError) as individual_error:
+    # A short syndrome is caller input; a full-length unexplainable one is a decode failure.
+    error = ValueError if len(shot) < 2 else RuntimeError
+    with pytest.raises(error) as individual_error:
         decoder.decode_syndrome(shot)
-    with pytest.raises(RuntimeError) as batch_error:
+    with pytest.raises(error) as batch_error:
         decoder.decode_batch([[0, 0], shot, [1]], workers=workers)
     assert str(batch_error.value) == f"shot 1: {individual_error.value}"
 
@@ -509,11 +511,11 @@ def test_incremental_score_is_opt_in(decoder_class) -> None:
 def test_incremental_score_rejects_nonfinite_suffix(decoder_class) -> None:
     dem = "error(0.1) D0 L0\nerror(1e-17) D0"
     decoder_class.from_dem(dem)
-    with pytest.raises(RuntimeError, match="incremental_score"):
+    with pytest.raises(ValueError, match="incremental_score"):
         decoder_class.from_dem(dem, incremental_score=True)
 
 
 def test_incremental_score_rejects_nary_factors() -> None:
     factors = [[(0.5, [], []), (0.3, [], [0]), (0.2, [], [1])]]
-    with pytest.raises(RuntimeError, match="incremental_score"):
+    with pytest.raises(ValueError, match="incremental_score"):
         FrontierDecoder.from_factors(factors, 0, 2, incremental_score=True)

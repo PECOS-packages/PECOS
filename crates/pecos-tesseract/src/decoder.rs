@@ -3,7 +3,7 @@
 use super::bridge::ffi;
 use cxx::UniquePtr;
 use ndarray::{Array1, ArrayView1};
-use pecos_decoder_core::{Decoder, DecodingResultTrait};
+use pecos_decoder_core::{Decoder, DecodingResultTrait, check_syndrome_length};
 use std::error::Error;
 use std::fmt;
 
@@ -489,17 +489,6 @@ pub(crate) fn invalid_detections(message: String) -> TesseractError {
     TesseractError::Dem(pecos_decoder_core::DecoderError::InvalidSyndrome(message))
 }
 
-/// Validate the dense dimension before converting a syndrome to sparse detections.
-pub(crate) fn validate_syndrome_length(
-    actual: usize,
-    expected: usize,
-) -> Result<(), pecos_decoder_core::DecoderError> {
-    if actual != expected {
-        return Err(pecos_decoder_core::DecoderError::InvalidDimensions { expected, actual });
-    }
-    Ok(())
-}
-
 /// Indices of the nonzero entries of a dense syndrome, as sparse detections.
 pub(crate) fn fired_detectors<'a>(syndrome: impl IntoIterator<Item = &'a u8>) -> Array1<u64> {
     Array1::from_iter(
@@ -516,7 +505,7 @@ impl pecos_decoder_core::ObservableDecoder for TesseractDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
-        validate_syndrome_length(syndrome.len(), self.num_detectors)?;
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         let result = self
             .decode_detections(&fired_detectors(syndrome.iter()).view())
             .map_err(pecos_decoder_core::DecoderError::from)?;
@@ -531,7 +520,7 @@ impl Decoder for TesseractDecoder {
     type Error = TesseractError;
 
     fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
-        validate_syndrome_length(input.len(), self.num_detectors).map_err(TesseractError::Dem)?;
+        check_syndrome_length(self.num_detectors, input.len()).map_err(TesseractError::Dem)?;
         self.decode_detections(&fired_detectors(input.iter()).view())
     }
 

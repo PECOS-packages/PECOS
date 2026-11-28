@@ -24,6 +24,10 @@ pub enum FusionBlossomError {
     #[error("Invalid syndrome pattern: {0}")]
     InvalidSyndrome(String),
 
+    /// Syndrome length differs from the decoder's node count
+    #[error("Invalid input dimensions: expected {expected}, got {actual}")]
+    InvalidDimensions { expected: usize, actual: usize },
+
     /// Invalid check matrix
     #[error("Invalid check matrix: {0}")]
     InvalidCheckMatrix(String),
@@ -47,9 +51,12 @@ impl From<pecos_decoder_core::DecoderError> for FusionBlossomError {
             DecoderError::InvalidGraph(_)
             | DecoderError::InvalidNodeIndex { .. }
             | DecoderError::InvalidEdge(_) => Self::InvalidGraph(error.to_string()),
-            DecoderError::InvalidDimensions { .. }
-            | DecoderError::BatchSizeMismatch { .. }
-            | DecoderError::InvalidSyndrome(_) => Self::InvalidSyndrome(error.to_string()),
+            DecoderError::InvalidDimensions { expected, actual } => {
+                Self::InvalidDimensions { expected, actual }
+            }
+            DecoderError::BatchSizeMismatch { .. } | DecoderError::InvalidSyndrome(_) => {
+                Self::InvalidSyndrome(error.to_string())
+            }
             DecoderError::MatrixError(_) => Self::InvalidCheckMatrix(error.to_string()),
             DecoderError::DecodingFailed(_) | DecoderError::ConvergenceFailure { .. } => {
                 Self::DecodingFailed(error.to_string())
@@ -79,6 +86,9 @@ impl From<FusionBlossomError> for pecos_decoder_core::DecoderError {
             }
             FusionBlossomError::InvalidSyndrome(msg) => {
                 pecos_decoder_core::DecoderError::InvalidSyndrome(msg)
+            }
+            FusionBlossomError::InvalidDimensions { expected, actual } => {
+                pecos_decoder_core::DecoderError::InvalidDimensions { expected, actual }
             }
             FusionBlossomError::InvalidCheckMatrix(msg) => {
                 pecos_decoder_core::DecoderError::MatrixError(msg)

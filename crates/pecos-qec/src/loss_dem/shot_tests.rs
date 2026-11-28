@@ -611,6 +611,19 @@ fn oracle4_backends_and_normalisation() {
     )
     .unwrap();
     assert_eq!(decoder.decode_obs(&[1, 0]).unwrap(), shot.observable_bias);
+    for actual in [1, 3] {
+        let error = decoder.decode_obs(&vec![0; actual]).unwrap_err();
+        assert!(
+            matches!(error, pecos_decoder_core::DecoderError::InvalidDimensions { expected: 2, actual: a } if a == actual),
+            "{error:?}"
+        );
+    }
+    let error = decoder.decode_obs(&[2, 0]).unwrap_err();
+    assert!(
+        matches!(&error, pecos_decoder_core::DecoderError::InvalidConfiguration(message)
+            if message == "syndrome entries must be binary; nonbinary entries: [(0, 2)]"),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -1588,10 +1601,7 @@ fn r1_errors_and_large_posterior_groups() {
     )
     .unwrap();
     let error = decoder.decode_obs(&[0]).unwrap_err().to_string();
-    assert!(
-        error.contains("length 1") && error.contains("width 2"),
-        "{error}"
-    );
+    assert_eq!(error, "Invalid input dimensions: expected 2, got 1");
     let error = decoder.decode_obs(&[0, 3]).unwrap_err().to_string();
     assert!(error.contains("(1, 3)"), "{error}");
     let catalog = ambiguous_regions(1);

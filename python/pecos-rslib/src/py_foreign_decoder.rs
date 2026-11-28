@@ -11,15 +11,30 @@ use std::fmt;
 
 /// Error from a Python-implemented decoder.
 #[derive(Debug)]
-pub struct PyForeignDecoderError(pub String);
+pub enum PyForeignDecoderError {
+    /// The Python `decode()` call raised this exception.
+    Decode(PyErr),
+    /// The result `decode()` returned is malformed.
+    Result(String),
+}
 
 impl fmt::Display for PyForeignDecoderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Python decoder error: {}", self.0)
+        match self {
+            Self::Decode(error) => write!(f, "Python decoder error: decode() failed: {error}"),
+            Self::Result(message) => write!(f, "Python decoder error: {message}"),
+        }
     }
 }
 
-impl std::error::Error for PyForeignDecoderError {}
+impl std::error::Error for PyForeignDecoderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Decode(error) => Some(error),
+            Self::Result(_) => None,
+        }
+    }
+}
 
 /// Decoded result from a Python decoder.
 #[derive(Debug, Clone)]
@@ -102,10 +117,17 @@ impl PyForeignDecoder {
     }
 
     /// Decode a syndrome, returning a dict with `observable`, `weight`, and optionally `converged`.
+    ///
+    /// An exception the wrapped `decode()` raises reaches the caller unchanged; a
+    /// malformed result raises `RuntimeError`.
     fn decode(&mut self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Py<PyAny>> {
         let arr = ndarray::Array1::from_vec(syndrome);
-        let result = Decoder::decode(self, &arr.view())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let result = Decoder::decode(self, &arr.view()).map_err(|error| match error {
+            PyForeignDecoderError::Decode(error) => error,
+            error @ PyForeignDecoderError::Result(_) => {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(error.to_string())
+            }
+        })?;
 
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("observable", &result.observable)?;
@@ -146,21 +168,23 @@ impl Decoder for PyForeignDecoder {
             let result = self
                 .inner
                 .call_method1(py, "decode", (py_bytes,))
-                .map_err(|e| PyForeignDecoderError(format!("decode() failed: {e}")))?;
+                .map_err(PyForeignDecoderError::Decode)?;
 
             let result_bound = result.bind(py);
 
             let observable: Vec<u8> = result_bound
                 .get_item("observable")
-                .map_err(|e| PyForeignDecoderError(format!("missing 'observable': {e}")))?
+                .map_err(|e| PyForeignDecoderError::Result(format!("missing 'observable': {e}")))?
                 .extract::<Vec<u8>>()
-                .map_err(|e| PyForeignDecoderError(format!("'observable' not bytes: {e}")))?;
+                .map_err(|e| {
+                    PyForeignDecoderError::Result(format!("'observable' not bytes: {e}"))
+                })?;
 
             let weight: f64 = result_bound
                 .get_item("weight")
-                .map_err(|e| PyForeignDecoderError(format!("missing 'weight': {e}")))?
+                .map_err(|e| PyForeignDecoderError::Result(format!("missing 'weight': {e}")))?
                 .extract::<f64>()
-                .map_err(|e| PyForeignDecoderError(format!("'weight' not float: {e}")))?;
+                .map_err(|e| PyForeignDecoderError::Result(format!("'weight' not float: {e}")))?;
 
             let converged: Option<bool> = result_bound
                 .get_item("converged")

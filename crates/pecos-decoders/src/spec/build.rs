@@ -6,7 +6,7 @@ use super::config::{
 };
 use super::{DecodeModel, DecoderSpec};
 use pecos_decoder_core::window::StructuredDem;
-use pecos_decoder_core::{DecoderError, ObservableDecoder};
+use pecos_decoder_core::{DecoderError, ObservableDecoder, check_syndrome_length};
 
 #[cfg(feature = "ldpc")]
 use super::config::BpSchedule as SpecBpSchedule;
@@ -123,18 +123,6 @@ struct ModelDimensionDecoder {
     num_detectors: usize,
 }
 
-impl ModelDimensionDecoder {
-    fn validate_length(&self, actual: usize) -> Result<(), DecoderError> {
-        if actual != self.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual,
-            });
-        }
-        Ok(())
-    }
-}
-
 impl ObservableDecoder for ModelDimensionDecoder {
     fn num_detectors(&self) -> Option<usize> {
         Some(self.num_detectors)
@@ -144,7 +132,7 @@ impl ObservableDecoder for ModelDimensionDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        self.validate_length(syndrome.len())?;
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         self.inner.decode_obs(syndrome)
     }
 
@@ -154,7 +142,7 @@ impl ObservableDecoder for ModelDimensionDecoder {
         num_shots: usize,
         num_detectors: usize,
     ) -> Result<Vec<pecos_decoder_core::obs_mask::ObsMask>, DecoderError> {
-        self.validate_length(num_detectors)?;
+        check_syndrome_length(self.num_detectors, num_detectors)?;
         let expected = num_shots.checked_mul(num_detectors).ok_or_else(|| {
             DecoderError::InvalidSyndrome(format!(
                 "num_shots {num_shots} times num_detectors {num_detectors} overflows usize; the shots buffer holds {} bytes",
@@ -174,7 +162,7 @@ impl ObservableDecoder for ModelDimensionDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         // Forward rather than inherit the trait default: an inner decoder that
         // overrides this method must keep its own semantics when wrapped.
-        self.validate_length(syndrome.len())?;
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         self.inner.decode_to_observables(syndrome)
     }
 }

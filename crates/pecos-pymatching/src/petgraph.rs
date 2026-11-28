@@ -115,7 +115,7 @@ pub fn pymatching_from_petgraph<S: std::hash::BuildHasher>(
     }
 
     if !all_boundary_ids.is_empty() {
-        decoder.set_boundary(&all_boundary_ids);
+        decoder.set_boundary(&all_boundary_ids)?;
     }
 
     Ok(decoder)

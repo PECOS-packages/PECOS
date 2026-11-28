@@ -23,7 +23,7 @@
 
 use crate::correlated_decoder::MatchingDecoder;
 use crate::correlation_table::CorrelationTable;
-use crate::errors::DecoderError;
+use crate::errors::{DecoderError, check_syndrome_length};
 
 /// Trait for providing BP-adjusted weights per syndrome.
 pub trait BpWeightProvider {
@@ -88,12 +88,7 @@ impl<M: MatchingDecoder, B: BpWeightProvider> BpMatchingDecoder<M, B> {
 
 impl<M: MatchingDecoder, B: BpWeightProvider> crate::ObservableDecoder for BpMatchingDecoder<M, B> {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
-        if syndrome.len() != self.bp.check_count() {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.bp.check_count(),
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.bp.check_count(), syndrome.len())?;
 
         // Predecoder fast path: only for zero-defect syndromes.
         // At d>=5, always use full MWPM (predecoder can be suboptimal).

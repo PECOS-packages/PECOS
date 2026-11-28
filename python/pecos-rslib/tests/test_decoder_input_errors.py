@@ -398,7 +398,7 @@ def test_raw_pymatching_invalid_error_probability():
     ("decoder_class", "message"),
     [
         (PyMatchingDecoder, "Invalid syndrome: expected length 2, got {length}$"),
-        (FusionBlossomDecoder, "Syndrome length {length} doesn't match number of nodes 2$"),
+        (FusionBlossomDecoder, "Invalid input dimensions: expected 2, got {length}$"),
     ],
 )
 def test_raw_matching_wrong_length(decoder_class, message, length):
@@ -406,3 +406,99 @@ def test_raw_matching_wrong_length(decoder_class, message, length):
     decoder.decode_syndrome([1, 0])
     with pytest.raises(ValueError, match=message.format(length=length)):
         decoder.decode_syndrome([0] * length)
+
+
+# PyMatching rejects a decomposed error with an undetectable component while it
+# builds the correlated graph from DEM text.
+_UNDETECTABLE_COMPONENT_DEM = "error(0.1) D0 ^ L0\ndetector D0"
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_correlated_pymatching_dem_rejection_is_input_error(workers):
+    from pecos_rslib.decoders import DecoderSpec
+
+    with pytest.raises(ValueError, match="undetectable component"):
+        SampleBatch([[0]], [0]).decode(
+            _UNDETECTABLE_COMPONENT_DEM, DecoderSpec.parse("pymatching_correlated"), workers=workers
+        )
+
+
+def test_raw_correlated_pymatching_dem_rejection_is_input_error():
+    with pytest.raises(ValueError, match="undetectable component"):
+        PyMatchingDecoder.from_dem_with_correlations(_UNDETECTABLE_COMPONENT_DEM)
+
+
+# Every caller mechanism's prior is checked before projection, so the membership
+# cannot hide a prior above 0.5.
+@pytest.mark.parametrize(
+    ("dem", "membership"),
+    [
+        pytest.param("error(0.1) D0 L0\nerror(0.9) D1", [[0]], id="projected-away"),
+        pytest.param("error(0.1) D0 L0\nerror(0.9) D1", [[]], id="empty-membership"),
+        pytest.param("error(0.1) D0 L0\nerror(0.9) D1 D2 D3", [[0, 1, 2, 3]], id="three-detectors"),
+    ],
+)
+def test_logical_membership_does_not_hide_a_prior_above_half(dem, membership):
+    with pytest.raises(ValueError, match=r"DEM error probability 0\.9 is above 0\.5"):
+        LogicalSubgraphDecoder.from_membership(dem, membership, "pymatching")
+
+
+# PyMatching classifies upstream failures by phase: anything that fails while it
+# parses DEM text or builds the graph or matcher is a rejection of the graph
+# (`ValueError`); a failure while decoding a syndrome stays `RuntimeError`.
+@pytest.mark.parametrize(
+    "dem",
+    [
+        pytest.param("repeat 2 {\nerror(0.1) D0", id="unterminated-repeat"),
+        pytest.param("error(0.1) D0\n}", id="uninitiated-repeat"),
+        # The largest index the grammar accepts; its node vector exceeds the
+        # allocation size limit at once (`length_error`). A smaller index such as
+        # D4294967295 asks for about 137 GB, which may succeed or be OOM-killed
+        # depending on the machine.
+        pytest.param("error(0.1) D0 D1152921504606846975", id="huge-detector"),
+    ],
+)
+def test_pymatching_graph_phase_rejection_is_input_error(dem):
+    with pytest.raises(ValueError, match="Failed to parse DEM"):
+        PyMatchingDecoder.from_dem(dem)
+
+
+def test_pymatching_weight_rejection_happens_when_the_matcher_is_built():
+    # The graph builds; upstream rejects the infinite weight when the matcher is
+    # first built for decoding, which is still a rejection of the graph.
+    with pytest.raises(ValueError, match="decoder failed on shot 0:.*maximum absolute edge weight"):
+        SampleBatch([[1]], [0]).decode("error(1) D0", pymatching(correlated=False), workers=1)
+    decoder = PyMatchingDecoder.from_dem("error(1) D0")
+    with pytest.raises(ValueError, match="Failed to build the matcher: maximum absolute edge weight"):
+        decoder.decode_syndrome([1])
+
+
+def test_pymatching_error_probability_override_replaces_an_out_of_range_dem_weight():
+    decoder = PyMatchingDecoder.from_dem("error(1) D0", error_probability=0.1)
+    decoder.decode_syndrome([1])
+    SampleBatch([[1]], [0]).decode("error(1) D0", pymatching(correlated=False, error_probability=0.1), workers=1)
+
+
+def test_pymatching_graph_size_rejection_is_input_error():
+    # 2**62 nodes and node 2**63 fail the allocation size check at once.
+    with pytest.raises(ValueError, match="Failed to create the graph"):
+        PyMatchingDecoder(2**62)
+    decoder = PyMatchingDecoder(2)
+    with pytest.raises(ValueError, match="Failed to add edge"):
+        decoder.add_edge(2**63, 1, [])
+
+
+def test_pymatching_matcher_build_rejection_is_input_error():
+    # add_edge stores any finite weight; upstream rejects it when it builds the
+    # matcher for the first decode.
+    decoder = PyMatchingDecoder(2)
+    decoder.add_edge(0, 1, [0], weight=1e12)
+    with pytest.raises(ValueError, match="Failed to build the matcher: maximum absolute edge weight"):
+        decoder.decode_syndrome([1, 1])
+
+
+def test_pymatching_decode_phase_failure_stays_runtime_error():
+    # An odd-parity syndrome with no boundary has no perfect matching.
+    decoder = PyMatchingDecoder.from_dem("error(0.1) D0 D1")
+    with pytest.raises(RuntimeError, match="No perfect matching"):
+        decoder.decode_syndrome([1, 0])

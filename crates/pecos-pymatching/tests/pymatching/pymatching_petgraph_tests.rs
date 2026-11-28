@@ -188,7 +188,7 @@ fn test_round_trip_preservation() {
         .unwrap();
 
     // Set some boundary nodes
-    decoder1.set_boundary(&[0, 3]);
+    decoder1.set_boundary(&[0, 3]).unwrap();
 
     // Convert to petgraph and back
     let (graph, _node_map) = pymatching_to_petgraph(&decoder1);

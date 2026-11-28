@@ -404,7 +404,7 @@ fn test_observable_count_persistence() {
     assert!(decoder.num_observables() >= initial_count);
 
     // Set boundary
-    decoder.set_boundary(&[0, 1, 2, 3]);
+    decoder.set_boundary(&[0, 1, 2, 3]).unwrap();
 
     // Count should still not decrease
     assert!(decoder.num_observables() >= initial_count);
@@ -773,7 +773,7 @@ fn test_observable_boundary_interactions() {
     let mut decoder = PyMatchingDecoder::new(config).unwrap();
 
     // Set some boundary nodes
-    decoder.set_boundary(&[0, 5]);
+    decoder.set_boundary(&[0, 5]).unwrap();
 
     // Add edges between boundary and non-boundary nodes
     decoder

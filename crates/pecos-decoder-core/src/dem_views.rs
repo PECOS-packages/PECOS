@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use crate::dem::SparseDem;
-use crate::errors::DecoderError;
+use crate::errors::{DecoderError, check_syndrome_length};
 
 type Mechanism = (f64, Vec<u32>, Vec<u32>);
 type ColumnKey = (Vec<u32>, Vec<u32>);
@@ -77,12 +77,7 @@ impl InitDetsView {
     /// Returns [`DecoderError::InvalidDimensions`] when `syndrome` does not
     /// have the detector width of the original DEM.
     pub fn project_syndrome(&self, syndrome: &[u8]) -> Result<Vec<u8>, DecoderError> {
-        if syndrome.len() != self.original_num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.original_num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.original_num_detectors, syndrome.len())?;
         Ok(self
             .detector_index
             .iter()
@@ -159,12 +154,7 @@ impl GariModel {
     /// Returns [`DecoderError::InvalidDimensions`] when `syndrome` does not
     /// have the detector width of the original DEM.
     pub fn extend_syndrome(&self, syndrome: &[u8]) -> Result<Vec<u8>, DecoderError> {
-        if syndrome.len() != self.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.num_detectors, syndrome.len())?;
         let mut extended = vec![0; self.dem.num_detectors];
         extended[..self.num_detectors].copy_from_slice(syndrome);
         Ok(extended)

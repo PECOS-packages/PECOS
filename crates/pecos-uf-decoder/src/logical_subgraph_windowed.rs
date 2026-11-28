@@ -72,8 +72,10 @@ impl WindowedLogicalSubgraphDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `DecoderError` if the DEM is malformed or a subgraph decoder
-    /// fails to build.
+    /// Returns `DecoderError` if the DEM is malformed, a mechanism with a
+    /// positive prior and at least one detector has a prior above 0.5, a used
+    /// detector matches no stabilizer position, or a subgraph decoder fails to
+    /// build.
     pub fn from_dem(
         dem: &str,
         stab_coords: &StabCoords,
@@ -99,8 +101,9 @@ impl WindowedLogicalSubgraphDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `DecoderError` if detector coordinates cannot be assigned to an
-    /// observing region or a subgraph decoder fails to build.
+    /// Returns `DecoderError` if a mechanism with a positive prior and at least
+    /// one detector has a prior above 0.5, detector coordinates cannot be
+    /// assigned to an observing region, or a subgraph decoder fails to build.
     pub fn from_structured_dem(
         dem: &StructuredDem,
         stab_coords: &StabCoords,

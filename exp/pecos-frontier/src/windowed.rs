@@ -42,6 +42,7 @@ use crate::{
     FrontierCommitteeResult, FrontierConfig, FrontierResumableCommittee, ObsMask, SparseDem,
     deadline_column_order,
 };
+use pecos_decoder_core::check_syndrome_length;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -503,12 +504,14 @@ impl WindowedDecoder {
         for decoder in &mut self.decoders {
             decoder.cancel();
         }
-        if syndrome.len() != self.plan.num_detectors || syndrome.iter().any(|&bit| bit > 1) {
-            return Err(WindowDecodeError {
-                error: invalid("syndrome dimension or bit value is invalid"),
-                failed_window: None,
-                completed_windows: Vec::new(),
-            });
+        let invalid_input = |error| WindowDecodeError {
+            error,
+            failed_window: None,
+            completed_windows: Vec::new(),
+        };
+        check_syndrome_length(self.plan.num_detectors, syndrome.len()).map_err(invalid_input)?;
+        if syndrome.iter().any(|&bit| bit > 1) {
+            return Err(invalid_input(invalid("syndrome bit value is invalid")));
         }
         let mut residual = syndrome.to_vec();
         let mut predicted = ObsMask::new();

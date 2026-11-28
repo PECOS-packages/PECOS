@@ -68,8 +68,9 @@ impl RelayBpDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`RelayBpError::InvalidSyndrome`] if the syndrome length doesn't
-    /// match the number of checks, or an entry is not binary.
+    /// Returns [`RelayBpError::InvalidDimensions`] if the syndrome length doesn't
+    /// match the number of checks, or [`RelayBpError::InvalidSyndrome`] if an entry
+    /// is not binary.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<DecodingResult> {
         copy_syndrome(syndrome, self.num_checks, &mut self.syndrome)?;
         let seed = syndrome_seed(self.seed, &self.syndrome);
@@ -150,8 +151,9 @@ impl MinSumBpDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`RelayBpError::InvalidSyndrome`] if the syndrome length doesn't
-    /// match the number of checks, or an entry is not binary.
+    /// Returns [`RelayBpError::InvalidDimensions`] if the syndrome length doesn't
+    /// match the number of checks, or [`RelayBpError::InvalidSyndrome`] if an entry
+    /// is not binary.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<DecodingResult> {
         copy_syndrome(syndrome, self.num_checks, &mut self.syndrome)?;
         self.inner
@@ -193,22 +195,22 @@ fn result(outcome: pecos_bp::RelayOutcome) -> DecodingResult {
     }
 }
 
+/// `copy_syndrome` has already checked the syndrome length against the check
+/// matrix the native decoder was built from, so a native dimension error here is
+/// an internal buffer mismatch and is reported as a decoding failure.
 fn decode_error(error: DecoderError) -> RelayBpError {
     match error {
         DecoderError::InvalidSyndrome(message) => RelayBpError::InvalidSyndrome(message),
-        DecoderError::InvalidDimensions { expected, actual } => RelayBpError::InvalidSyndrome(
-            format!("syndrome length {actual} does not match check count {expected}"),
-        ),
         error => RelayBpError::DecodingFailed(native_message(error)),
     }
 }
 
 fn copy_syndrome(view: &ArrayView1<u8>, checks: usize, buffer: &mut Vec<u8>) -> Result<()> {
     if view.len() != checks {
-        return Err(RelayBpError::InvalidSyndrome(format!(
-            "syndrome length {} does not match check count {checks}",
-            view.len()
-        )));
+        return Err(RelayBpError::InvalidDimensions {
+            expected: checks,
+            actual: view.len(),
+        });
     }
     buffer.clear();
     for (index, &value) in view.iter().enumerate() {

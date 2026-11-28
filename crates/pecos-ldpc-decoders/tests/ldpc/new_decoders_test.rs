@@ -5,6 +5,43 @@ use pecos_ldpc_decoders::{
     FlipDecoder, LdpcError, SparseMatrix, UfMethod, UnionFindDecoder, WeightedUnionFindDecoder,
 };
 
+#[test]
+fn wrong_syndrome_length_is_invalid_dimensions() {
+    use pecos_ldpc_decoders::{BeliefFindDecoder, BpMethod, BpSchedule};
+
+    fn assert_dimensions<T>(result: &Result<T, LdpcError>, actual: usize) {
+        assert!(
+            matches!(result, Err(LdpcError::InvalidDimensions { expected: 3, actual: a }) if *a == actual),
+            "actual={actual}"
+        );
+    }
+
+    let pcm = repetition_code(4);
+    let mut flip = FlipDecoder::new(&pcm, 10, 0, 0).unwrap();
+    let mut union_find = UnionFindDecoder::new(&pcm, UfMethod::Inversion).unwrap();
+    let mut belief_find = BeliefFindDecoder::new(
+        &pcm,
+        Some(0.1),
+        None,
+        10,
+        BpMethod::MinimumSum,
+        0.625,
+        BpSchedule::Parallel,
+        None,
+        None,
+        None,
+        UfMethod::Inversion,
+        0,
+    )
+    .unwrap();
+    for actual in [2, 4] {
+        let syndrome = Array1::zeros(actual);
+        assert_dimensions(&flip.decode(&syndrome.view()), actual);
+        assert_dimensions(&union_find.decode(&syndrome.view(), &[], 0), actual);
+        assert_dimensions(&belief_find.decode(&syndrome.view()), actual);
+    }
+}
+
 /// Create a repetition code parity check matrix
 fn repetition_code(n: usize) -> SparseMatrix {
     let mut row_indices = Vec::new();

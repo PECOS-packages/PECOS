@@ -3539,7 +3539,12 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
 /// `error_rate=0` model leaves no uncertain mechanism in the reduced support,
 /// and a matching backend cannot weight a prior above 0.5). Backends report
 /// such prior errors as configuration errors. Any other failure means the generated
-/// text or graph was rejected, which is an internal error.
+/// text or graph was rejected, which is an internal error; this includes an upstream
+/// PyMatching or Stim rejection, which PyMatching reports as `InvalidGraph`.
+/// PyMatching checks edge weights only when the matcher is first built, at decode,
+/// so that check is not remapped here. A generated sub-DEM cannot fail it: the
+/// only weight it rejects needs a prior of 1, and `subgraphs_from_membership`
+/// rejects every caller prior above 0.5 with `check_matching_prior` before projecting.
 fn build_subdem_decoder(
     sub_dem: &str,
     spec: &pecos_decoders::DecoderSpec,

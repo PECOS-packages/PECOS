@@ -779,21 +779,30 @@ fn check_matrix_decoder_default_priors() {
 
 #[test]
 fn invalid_syndrome_length_min_sum() {
+    use pecos_relay_bp::RelayBpError;
+
     let h = repetition_3_matrix();
     let config = MinSumConfig::new(default_priors(3));
     let mut decoder = MinSumBpDecoder::new(&h.view(), &config).unwrap();
 
-    // Too long
-    let syndrome = Array1::from_vec(vec![1u8, 0, 1]);
-    assert!(decoder.decode(&syndrome.view()).is_err());
-
-    // Too short
-    let syndrome = Array1::from_vec(vec![1u8]);
-    assert!(decoder.decode(&syndrome.view()).is_err());
+    for actual in [3, 1] {
+        let syndrome = Array1::from_vec(vec![0u8; actual]);
+        let error = decoder.decode(&syndrome.view()).unwrap_err();
+        assert!(
+            matches!(error, RelayBpError::InvalidDimensions { expected: 2, actual: a } if a == actual),
+            "{error:?}"
+        );
+        assert!(matches!(
+            pecos_decoder_core::DecoderError::from(error),
+            pecos_decoder_core::DecoderError::InvalidDimensions { expected: 2, actual: a } if a == actual
+        ));
+    }
 }
 
 #[test]
 fn invalid_syndrome_length_relay() {
+    use pecos_relay_bp::RelayBpError;
+
     let h = repetition_3_matrix();
     let ms_config = MinSumConfig::new(default_priors(3));
     let relay_config = RelayConfig::default();
@@ -801,7 +810,17 @@ fn invalid_syndrome_length_relay() {
         RelayBpDecoder::new(&h.view(), &ms_config.error_priors, &relay_config).unwrap();
 
     let syndrome = Array1::from_vec(vec![1u8, 0, 1, 0]);
-    assert!(decoder.decode(&syndrome.view()).is_err());
+    let error = decoder.decode(&syndrome.view()).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            RelayBpError::InvalidDimensions {
+                expected: 2,
+                actual: 4
+            }
+        ),
+        "{error:?}"
+    );
 }
 
 #[test]

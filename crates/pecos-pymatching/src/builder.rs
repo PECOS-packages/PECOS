@@ -256,6 +256,7 @@ impl PyMatchingBuilder {
     /// - The decoder creation fails
     /// - Adding an edge fails (e.g., invalid node indices)
     /// - Adding a boundary edge fails
+    /// - Setting the boundary nodes fails
     pub fn build(self) -> Result<PyMatchingDecoder> {
         let config = PyMatchingConfig {
             num_nodes: self.num_nodes,
@@ -291,7 +292,7 @@ impl PyMatchingBuilder {
         // Set boundary nodes
         if !self.boundary_nodes.is_empty() {
             let boundary: Vec<_> = self.boundary_nodes.into_iter().collect();
-            decoder.set_boundary(&boundary);
+            decoder.set_boundary(&boundary)?;
         }
 
         Ok(decoder)

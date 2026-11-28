@@ -6,7 +6,9 @@ use super::{
     ShotDem, ShotDemBuilder, ShotLimits, TickRunner, invalid,
 };
 use pecos_core::BitSet;
-use pecos_decoder_core::{DecoderError, ObservableDecoder, obs_mask::ObsMask};
+use pecos_decoder_core::{
+    DecoderError, ObservableDecoder, check_syndrome_length, obs_mask::ObsMask,
+};
 use pecos_decoders::{DecodeModel, DecoderSpec};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -121,11 +123,10 @@ impl ObservableDecoder for BiasedDecoder {
     }
 
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        if syndrome.len() != self.detector_bias.len() || syndrome.iter().any(|&b| b > 1) {
+        check_syndrome_length(self.detector_bias.len(), syndrome.len())?;
+        if syndrome.iter().any(|&b| b > 1) {
             return Err(DecoderError::InvalidConfiguration(format!(
-                "syndrome length {} must match shot DEM width {}; nonbinary entries: {:?}",
-                syndrome.len(),
-                self.detector_bias.len(),
+                "syndrome entries must be binary; nonbinary entries: {:?}",
                 syndrome
                     .iter()
                     .enumerate()

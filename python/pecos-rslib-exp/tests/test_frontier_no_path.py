@@ -41,12 +41,12 @@ def test_mixed_batch_retains_order_and_matches_individual_attempts(metric_mode, 
 def test_reporting_does_not_swallow_invalid_shots(workers):
     decoder = exp.FrontierDecoder.from_dem("error(0.1) D0 D1")
     # A no-path before an invalid row must not hide that row's error.
-    with pytest.raises(RuntimeError) as single:
+    with pytest.raises(ValueError, match="dimensions") as single:
         decoder.decode_syndrome([1], on_no_path="report")
-    with pytest.raises(RuntimeError) as batch:
+    with pytest.raises(ValueError, match="dimensions") as batch:
         decoder.decode_batch([[1, 0], [1], [0, 0]], workers=workers, on_no_path="report")
     assert str(batch.value) == f"shot 1: {single.value}"
-    with pytest.raises(RuntimeError, match="Invalid node index"):
+    with pytest.raises(ValueError, match="Invalid node index"):
         decoder.decode_from_defects([2], on_no_path="report")
 
 

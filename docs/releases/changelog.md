@@ -43,6 +43,66 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   documented caller obligations; reusing a failed instance, for example through
   Selene's interactive `next_shot`, now fails instead of continuing.
 
+- **Breaking:** More decoder input errors keep their category, and syndrome
+  length errors convert to one `DecoderError` variant (#1749). PyMatching now
+  classifies upstream Stim and PyMatching failures by the phase that failed. Any
+  failure while it parses or builds a graph from DEM text, creates a graph, adds
+  an edge, sets the boundary, computes the edge weight normalising constant or
+  builds the matcher is the new `PyMatchingError::InvalidGraph`
+  (`DecoderError::InvalidGraph`, `ValueError`) instead of an FFI error
+  (`RuntimeError`), including allocation failures from caller sizes. Examples
+  are a decomposed error with an undetectable component under
+  `pymatching_correlated`, an unterminated `repeat` block, `add_edge(2**63, 1,
+  [])`, an edge that `add_edge` or `add_boundary_edge` refuses under
+  `MergeStrategy::Disallow`, and `error(1) D0`, whose weight exceeds upstream's
+  maximum when the matcher is first built for decoding (a batch with no shots
+  never builds it).
+  `PyMatchingDecoder(2**62)` raises `ValueError` instead of ending the process.
+  Failures while decoding a syndrome, or sampling noise, stay `RuntimeError`,
+  including an odd-parity syndrome with no perfect matching. A rejected
+  internally generated window or logical sub-DEM is reported as an internal
+  error when its decoder is built. These public Rust signatures now return
+  `Result`:
+  `PyMatchingDecoder::get_edge_weight_normalising_constant` and
+  `PyMatchingDecoder::set_boundary`; before, an upstream failure in them ended
+  the process, and `set_boundary` rejects `usize::MAX`.
+  `PyMatchingDecoder::is_boundary_node` returns `false` for a node outside the
+  graph instead of reading past the node list.
+  `subgraphs_from_membership`, and the logical-subgraph decoders and partition
+  functions built on it, check the prior of every mechanism with a positive prior
+  and at least one detector before projecting, so a prior above 0.5 is rejected
+  whatever the membership, including on mechanisms that the membership drops or
+  projects to three or more detectors. A dense syndrome of the wrong length now
+  converts to `DecoderError::InvalidDimensions { expected, actual }` ("Invalid
+  input dimensions: expected N, got M") on Fusion Blossom (new
+  `FusionBlossomError::InvalidDimensions`, also used when converting from
+  `DecoderError`), Relay-BP and min-sum BP (new `RelayBpError::InvalidDimensions`
+  for a syndrome length mismatch, which was `InvalidSyndrome`), the LDPC flip,
+  union-find,
+  BeliefFind and MBP decoders (`LdpcError::InvalidDimensions` instead of
+  `InvalidInput`), the loss-DEM `BiasedDecoder` (instead of
+  `InvalidConfiguration`) and the experimental windowed frontier decoder. Raw
+  backend errors keep their own messages, for example PyMatching's `Invalid
+  syndrome: expected length N, got M` and MWPF's `Invalid syndrome length:
+  expected N detectors, got M`.
+  Nonbinary entries keep their own error, with new messages: `syndrome entries
+  must be binary; nonbinary entries: [...]` on `BiasedDecoder` and `syndrome bit
+  value is invalid` on the windowed frontier decoder. An exception that a Python
+  decoder provider's `_pecos_decode_obs` or `_pecos_decode_outcome` raises,
+  including a `TypeError` for a result of the wrong type, now reaches the caller
+  of `SampleBatch.decode` or `DemSampler` decoding as the same exception object
+  with a note naming the shot (`decoder failed on shot N`), instead of a
+  `RuntimeError` wrapping its text; so does an exception from the wrapped
+  `decode()` of `PyForeignDecoder.decode`, whose `PyForeignDecoderError` is now
+  an enum. The experimental `pecos_rslib_exp` decoder specs and the direct
+  `BpTrellisDecoder` and `FrontierDecoder` classes (`from_dem`, `from_factors`,
+  `decode_syndrome`, `decode_batch`) classify decoder errors like the standard
+  decoders (caller input `ValueError`, internal failures `RuntimeError`)
+  instead of raising `RuntimeError` for every error but malformed DEM text, and
+  a sparse defect index outside the model (`decode_from_defects`) is now
+  `ValueError`. Negative integers for unsigned Python parameters still
+  raise `OverflowError`; the decoder guide now says so.
+
 - `pecos-random` implements `RapidRng`, the generator behind `PecosRng` and
   `PecosScalarRng`, itself instead of wrapping the `rapidrand` crate, and exports
   it as `pecos_random::RapidRng`. Seeded `PecosRng` and `PecosScalarRng` streams
@@ -228,11 +288,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   families rejected them in their BP stage, already as `ValueError`, and now
   report the matching prior. Each DEM mechanism's own prior must be at most
   0.5, as upstream PyMatching requires of each instruction when correlations
-  are enabled. `DemMatchingGraph::from_dem_str`, commit windows and
-  logical-subgraph extraction now check every mechanism with a one- or
-  two-detector component before parallel mechanisms are merged, so two
-  `error(0.7) D0 D1`, whose merged prior is 0.42, are now rejected by
-  `FusionBlossomDecoder::from_dem`, the uncorrelated spec Fusion Blossom
+  are enabled. `DemMatchingGraph::from_dem_str` and commit windows now check
+  every mechanism with a one- or two-detector component, and logical-subgraph
+  extraction every mechanism with a detector, before parallel mechanisms are
+  merged, so two `error(0.7) D0 D1`, whose merged prior is 0.42, are now
+  rejected by `FusionBlossomDecoder::from_dem`, the uncorrelated spec Fusion Blossom
   families and `k_mwpm`, the `belief_matching` families, the union-find, A*
   and windowed decoders, and logical-subgraph decoders whatever their inner
   decoder. The correlated Fusion Blossom paths already checked each mechanism.

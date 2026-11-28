@@ -455,7 +455,7 @@ fn create_simple_grid_decoder(size: usize) -> PyMatchingDecoder {
     }
 
     // Set first and last as boundary
-    decoder.set_boundary(&[0, size - 1]);
+    decoder.set_boundary(&[0, size - 1]).unwrap();
 
     decoder
 }

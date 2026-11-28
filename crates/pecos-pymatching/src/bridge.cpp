@@ -24,6 +24,39 @@
 // Global mutex to protect PyMatching's global RNG state
 static std::mutex g_pymatching_rng_mutex;
 
+// Errors are classified by the phase that failed, not by exception type.
+//
+// Graph phase: parsing or building a graph from DEM text, creating a graph,
+// adding edges, setting the boundary, computing the edge weight normalising
+// constant, and building the matcher. These depend only on the caller's graph
+// or DEM content and arguments, so any std::exception here is a rejection of the
+// graph. That includes std::bad_alloc and std::length_error, since the graph's
+// size comes from caller values. rethrow_graph_error marks it with
+// pymatching_input_error_prefix(), which the Rust side reports as
+// PyMatchingError::InvalidGraph.
+//
+// Decode phase: the decode calls and noise sampling. They fail because of the
+// syndrome (for example an odd-parity syndrome with no perfect matching) or an
+// upstream invariant, so rethrow_decode_error leaves them unmarked; they stay
+// FFI errors.
+//
+// Both must be called from inside a catch block for a std::exception.
+[[noreturn]] static void rethrow_graph_error(const std::string& context) {
+    try {
+        throw;
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string(pymatching_input_error_prefix()) + context + e.what());
+    }
+}
+
+[[noreturn]] static void rethrow_decode_error(const std::string& context) {
+    try {
+        throw;
+    } catch (const std::exception& e) {
+        throw std::runtime_error(context + e.what());
+    }
+}
+
 // Implementation class using PIMPL pattern
 class PyMatchingGraph::Impl {
 public:
@@ -52,6 +85,16 @@ public:
 
             // Search flooder is included when requested
             search_flooder_ = include_search_graph ? &mwpm_->search_flooder : nullptr;
+        }
+    }
+
+    // Build the matcher if needed, as a graph-phase step: a failure here is a
+    // rejection of the graph, not of the syndrome being decoded.
+    void build_matcher(bool include_search_graph) {
+        try {
+            ensure_mwpm(include_search_graph);
+        } catch (const std::exception&) {
+            rethrow_graph_error("Failed to build the matcher: ");
         }
     }
 
@@ -93,8 +136,8 @@ std::unique_ptr<PyMatchingGraph> PyMatchingGraph::from_dem(
         graph->pimpl_->enable_correlations_ = enable_correlations;
 
         return graph;
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("Failed to parse DEM: ") + e.what());
+    } catch (const std::exception&) {
+        rethrow_graph_error("Failed to parse DEM: ");
     }
 }
 
@@ -139,8 +182,8 @@ void PyMatchingGraph::add_edge(
             pimpl_->user_graph_->add_or_merge_edge(node1, node2, obs_vec, weight, NAN, pm_strategy);
         }
         pimpl_->mwpm_.reset();  // Invalidate cached MWPM
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("Failed to add edge: ") + e.what());
+    } catch (const std::exception&) {
+        rethrow_graph_error("Failed to add edge: ");
     }
 }
 
@@ -180,8 +223,8 @@ void PyMatchingGraph::add_boundary_edge(
             pimpl_->user_graph_->add_or_merge_boundary_edge(node, obs_vec, weight, NAN, pm_strategy);
         }
         pimpl_->mwpm_.reset();  // Invalidate cached MWPM
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("Failed to add boundary edge: ") + e.what());
+    } catch (const std::exception&) {
+        rethrow_graph_error("Failed to add boundary edge: ");
     }
 }
 
@@ -303,9 +346,20 @@ rust::Vec<size_t> PyMatchingGraph::get_boundary() const {
 }
 
 void PyMatchingGraph::set_boundary(const rust::Slice<const size_t> boundary) {
-    std::set<size_t> boundary_set(boundary.data(), boundary.data() + boundary.size());
-    pimpl_->user_graph_->set_boundary(boundary_set);
-    pimpl_->mwpm_.reset();  // Invalidate cached MWPM
+    try {
+        std::set<size_t> boundary_set(boundary.data(), boundary.data() + boundary.size());
+        // Grow the node list first: upstream records the new boundary before it
+        // grows the list, so a failed growth there would leave boundary ids past
+        // the end. A failed resize here leaves the graph unchanged.
+        auto& nodes = pimpl_->user_graph_->nodes;
+        if (!boundary_set.empty() && *boundary_set.rbegin() >= nodes.size()) {
+            nodes.resize(*boundary_set.rbegin() + 1);
+        }
+        pimpl_->user_graph_->set_boundary(boundary_set);
+        pimpl_->mwpm_.reset();  // Invalidate cached MWPM
+    } catch (const std::exception&) {
+        rethrow_graph_error("Failed to set the boundary: ");
+    }
 }
 
 bool PyMatchingGraph::is_boundary_node(size_t node) const {
@@ -317,8 +371,6 @@ bool PyMatchingGraph::is_boundary_node(size_t node) const {
 ExtendedMatchingResult PyMatchingGraph::decode_detection_events_64(
     const rust::Slice<const uint8_t> detection_events) {
 
-    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
-
     // Convert detection events to vector of indices
     std::vector<uint64_t> detections;
     for (size_t i = 0; i < detection_events.size(); i++) {
@@ -326,6 +378,8 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_64(
             detections.push_back(i);
         }
     }
+
+    pimpl_->build_matcher(pimpl_->enable_correlations_);
 
     try {
         auto result = pm::decode_detection_events_for_up_to_64_observables(
@@ -342,16 +396,14 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_64(
 
         ext_result.weight = static_cast<double>(result.weight) / pimpl_->normalising_constant_;
         return ext_result;
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
         pimpl_->reset_mwpm();
-        throw std::runtime_error(std::string("Decoding failed: ") + e.what());
+        rethrow_decode_error("Decoding failed: ");
     }
 }
 
 ExtendedMatchingResult PyMatchingGraph::decode_detection_events_extended(
     const rust::Slice<const uint8_t> detection_events) {
-
-    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     // Convert detection events
     std::vector<uint64_t> detections;
@@ -360,6 +412,8 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_extended(
             detections.push_back(i);
         }
     }
+
+    pimpl_->build_matcher(pimpl_->enable_correlations_);
 
     try {
         size_t num_obs = pimpl_->user_graph_->get_num_observables();
@@ -378,16 +432,14 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_extended(
         result.weight = static_cast<double>(weight) / pimpl_->normalising_constant_;
 
         return result;
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
         pimpl_->reset_mwpm();
-        throw std::runtime_error(std::string("Decoding failed: ") + e.what());
+        rethrow_decode_error("Decoding failed: ");
     }
 }
 
 rust::Vec<MatchedPair> PyMatchingGraph::decode_to_matched_pairs(
     const rust::Slice<const uint8_t> detection_events) {
-
-    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     // Convert detection events
     std::vector<uint64_t> detections;
@@ -396,6 +448,8 @@ rust::Vec<MatchedPair> PyMatchingGraph::decode_to_matched_pairs(
             detections.push_back(i);
         }
     }
+
+    pimpl_->build_matcher(pimpl_->enable_correlations_);
 
     try {
         // Call PyMatching's decode to match edges
@@ -413,16 +467,14 @@ rust::Vec<MatchedPair> PyMatchingGraph::decode_to_matched_pairs(
 
         pimpl_->reset_mwpm();
         return pairs;
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
         pimpl_->reset_mwpm();
-        throw std::runtime_error(std::string("Decode to matched pairs failed: ") + e.what());
+        rethrow_decode_error("Decode to matched pairs failed: ");
     }
 }
 
 rust::Vec<MatchedPair> PyMatchingGraph::decode_to_edges(
     const rust::Slice<const uint8_t> detection_events) {
-
-    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     // Convert detection events
     std::vector<uint64_t> detections;
@@ -432,10 +484,10 @@ rust::Vec<MatchedPair> PyMatchingGraph::decode_to_edges(
         }
     }
 
-    try {
-        // Ensure we have search flooder for edge extraction
-        pimpl_->ensure_mwpm(true); // true = include search graph
+    // Edge extraction needs the search flooder.
+    pimpl_->build_matcher(true);
 
+    try {
         // Call PyMatching's decode to edges
         std::vector<int64_t> edges;
         if (pimpl_->enable_correlations_) {
@@ -456,9 +508,9 @@ rust::Vec<MatchedPair> PyMatchingGraph::decode_to_edges(
 
         pimpl_->reset_mwpm();
         return edge_pairs;
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
         pimpl_->reset_mwpm();
-        throw std::runtime_error(std::string("Decode to edges failed: ") + e.what());
+        rethrow_decode_error("Decode to edges failed: ");
     }
 }
 
@@ -468,8 +520,6 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
     size_t num_detectors,
     bool bit_packed_shots,
     bool bit_packed_predictions) {
-
-    pimpl_->ensure_mwpm(pimpl_->enable_correlations_);
 
     BatchDecodingResult result;
     result.predictions = rust::Vec<uint8_t>();
@@ -482,6 +532,8 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
     // Pre-allocate result space
     result.predictions.reserve(num_shots * obs_bytes_per_shot);
     result.weights.reserve(num_shots);
+
+    pimpl_->build_matcher(pimpl_->enable_correlations_);
 
     try {
         for (size_t shot = 0; shot < num_shots; shot++) {
@@ -566,9 +618,9 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
         }
 
         return result;
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
         pimpl_->reset_mwpm();
-        throw std::runtime_error(std::string("Batch decoding failed: ") + e.what());
+        rethrow_decode_error("Batch decoding failed: ");
     }
 }
 
@@ -662,15 +714,19 @@ BatchDecodingResult PyMatchingGraph::add_noise(
         }
 
         return result;
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("Noise simulation failed: ") + e.what());
+    } catch (const std::exception&) {
+        rethrow_decode_error("Noise simulation failed: ");
     }
 }
 
 // ===== Weight Information =====
 
 double PyMatchingGraph::get_edge_weight_normalising_constant(size_t num_distinct_weights) const {
-    return pimpl_->user_graph_->get_edge_weight_normalising_constant(num_distinct_weights);
+    try {
+        return pimpl_->user_graph_->get_edge_weight_normalising_constant(num_distinct_weights);
+    } catch (const std::exception&) {
+        rethrow_graph_error("Failed to compute the edge weight normalising constant: ");
+    }
 }
 
 bool PyMatchingGraph::all_edges_have_error_probabilities() const {
@@ -690,12 +746,20 @@ void PyMatchingGraph::validate_detector_indices(const rust::Slice<const uint8_t>
 // ===== Free Functions for FFI =====
 
 std::unique_ptr<PyMatchingGraph> create_pymatching_graph(size_t num_nodes) {
-    return std::make_unique<PyMatchingGraph>(num_nodes);
+    try {
+        return std::make_unique<PyMatchingGraph>(num_nodes);
+    } catch (const std::exception&) {
+        rethrow_graph_error("Failed to create the graph: ");
+    }
 }
 
 std::unique_ptr<PyMatchingGraph> create_pymatching_graph_with_observables(
     size_t num_nodes, size_t num_observables) {
-    return std::make_unique<PyMatchingGraph>(num_nodes, num_observables);
+    try {
+        return std::make_unique<PyMatchingGraph>(num_nodes, num_observables);
+    } catch (const std::exception&) {
+        rethrow_graph_error("Failed to create the graph: ");
+    }
 }
 
 std::unique_ptr<PyMatchingGraph> create_pymatching_graph_from_dem(const rust::Str dem_string) {

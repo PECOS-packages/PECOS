@@ -27,7 +27,10 @@
 //!   little-endian 64-bit words, lowest observables first, no more words than
 //!   `num_observables` needs and no observable at or above it. A worker is only
 //!   ever called from the one thread that built it, one shot at a time. An
-//!   exception it raises is reported as a decode failure naming the shot.
+//!   exception it raises, including a `TypeError` for a result of the wrong type,
+//!   reaches the caller of `decode` as the same exception object, with a note
+//!   naming the shot (for example `decoder failed on shot 3`). A well-typed result
+//!   that breaks this contract is reported as a `RuntimeError` naming the shot.
 //!
 //! Version 2 replaces the spec method with `_pecos_prepare_decoder(dem: str)`,
 //! returning a prepared object with `_pecos_build_decoder() -> worker`. The call's
@@ -44,6 +47,8 @@
 //! None words mean an undecoded shot, never a zero correction. A fallback must
 //! supply words; consistency can only be specified for a fallback. Deltas are
 //! nonnegative, strictly increasing actual attempts. Version 1 stays strict.
+//! Exceptions it raises and answers that break this contract are reported as for
+//! `_pecos_decode_obs`.
 //!
 //! The bridge holds the GIL only around those calls. A provider that does native
 //! work should release it inside them, or its workers run one at a time.
@@ -276,7 +281,8 @@ impl ObservableDecoder for ProviderDecoder {
                 .extract::<Vec<u64>>()?;
             Ok::<_, PyErr>(ObsMask::from_words(&words))
         })
-        .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+        // Carry the provider's exception unchanged; the Python boundary re-raises it.
+        .map_err(|error| DecoderError::Other(error.into()))?;
         self.validate_mask(&mask)?;
         Ok(mask)
     }
@@ -296,7 +302,7 @@ impl ObservableDecoder for ProviderDecoder {
                 .call_method1("_pecos_decode_outcome", (PyBytes::new(py, syndrome),))?
                 .extract::<(Option<Vec<u64>>, bool, Option<bool>, Vec<f64>)>()
         })
-        .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
+        .map_err(|error| DecoderError::Other(error.into()))?;
         if fallback_used && words.is_none() {
             return Err(DecoderError::DecodingFailed(
                 "decoder provider fallback_used=True requires prediction words, got None".into(),

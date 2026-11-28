@@ -55,15 +55,23 @@ pub(crate) mod ffi {
         // ===== Construction =====
 
         /// Create a new `PyMatching` graph with the given number of nodes.
-        #[must_use]
-        fn create_pymatching_graph(num_nodes: usize) -> UniquePtr<PyMatchingGraph>;
+        ///
+        /// # Errors
+        ///
+        /// Returns a marked CXX exception if the graph cannot be created, for
+        /// example a node count too large to allocate.
+        fn create_pymatching_graph(num_nodes: usize) -> Result<UniquePtr<PyMatchingGraph>>;
 
         /// Create a new `PyMatching` graph with specified nodes and observables.
-        #[must_use]
+        ///
+        /// # Errors
+        ///
+        /// Returns a marked CXX exception if the graph cannot be created, for
+        /// example a node count too large to allocate.
         fn create_pymatching_graph_with_observables(
             num_nodes: usize,
             num_observables: usize,
-        ) -> UniquePtr<PyMatchingGraph>;
+        ) -> Result<UniquePtr<PyMatchingGraph>>;
 
         /// Create a `PyMatching` graph from a detector error model string.
         ///
@@ -180,9 +188,18 @@ pub(crate) mod ffi {
         fn pymatching_get_boundary(graph: &PyMatchingGraph) -> Vec<usize>;
 
         /// Set the boundary nodes.
-        fn pymatching_set_boundary(graph: Pin<&mut PyMatchingGraph>, boundary: &[usize]);
+        ///
+        /// # Errors
+        ///
+        /// Returns a marked CXX exception if the graph cannot grow to hold a
+        /// boundary node.
+        fn pymatching_set_boundary(
+            graph: Pin<&mut PyMatchingGraph>,
+            boundary: &[usize],
+        ) -> Result<()>;
 
-        /// Check if a node is a boundary node.
+        /// Check if a node is a boundary node. Upstream indexes the node list
+        /// unchecked, so `node` must be below the node count or `usize::MAX`.
         fn pymatching_is_boundary_node(graph: &PyMatchingGraph, node: usize) -> bool;
 
         // ===== Decoding Methods =====
@@ -270,10 +287,15 @@ pub(crate) mod ffi {
         // ===== Weight Information =====
 
         /// Get the normalizing constant for edge weights.
+        ///
+        /// # Errors
+        ///
+        /// Returns a marked CXX exception if an edge weight is out of range or an edge
+        /// rewrite rule is invalid.
         fn get_edge_weight_normalising_constant(
             graph: &PyMatchingGraph,
             num_distinct_weights: usize,
-        ) -> f64;
+        ) -> Result<f64>;
 
         /// Check if all edges have error probabilities set.
         fn all_edges_have_error_probabilities(graph: &PyMatchingGraph) -> bool;
@@ -313,4 +335,30 @@ pub(crate) mod ffi {
         /// Returns a CXX exception if the range is invalid.
         fn pymatching_rand_float(from: f64, to: f64) -> Result<f64>;
     }
+
+    extern "Rust" {
+        /// Marker the C++ bridge prepends to a graph-phase failure.
+        fn pymatching_input_error_prefix() -> &'static str;
+    }
+}
+
+/// Marks a C++ exception as a graph-phase failure, a rejection of the graph.
+///
+/// The bridge classifies by the phase that failed, not by exception type. It
+/// prepends the marker to any `std::exception` from a graph-phase step: parsing or
+/// building from DEM text, creating a graph, adding edges, setting the boundary,
+/// computing the edge weight normalising constant, and building the matcher,
+/// which happens when the graph is first used for decoding and is where edge
+/// weights and rewrite rules are checked. These depend only on the caller's
+/// graph or arguments, so `std::bad_alloc` and `std::length_error` count too.
+/// [`PyMatchingError`](crate::PyMatchingError) strips the marker and reports
+/// [`PyMatchingError::InvalidGraph`](crate::PyMatchingError::InvalidGraph).
+///
+/// Decode-phase failures (the decode calls and noise sampling) are not marked and
+/// stay [`PyMatchingError::Ffi`](crate::PyMatchingError::Ffi), including an
+/// odd-parity syndrome with no perfect matching.
+pub(crate) const INPUT_ERROR_PREFIX: &str = "pecos-pymatching input error: ";
+
+fn pymatching_input_error_prefix() -> &'static str {
+    INPUT_ERROR_PREFIX
 }

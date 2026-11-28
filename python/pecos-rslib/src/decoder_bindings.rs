@@ -2853,6 +2853,9 @@ fn relay_error_to_py(error: pecos_decoders::RelayBpError) -> PyErr {
         | RelayBpError::InvalidSyndrome(message) => {
             pyo3::exceptions::PyValueError::new_err(message)
         }
+        error @ RelayBpError::InvalidDimensions { .. } => {
+            pyo3::exceptions::PyValueError::new_err(error.to_string())
+        }
         RelayBpError::DecodingFailed(message) => pyo3::exceptions::PyRuntimeError::new_err(message),
     }
 }

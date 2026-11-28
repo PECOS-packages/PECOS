@@ -5,7 +5,7 @@
 
 pub mod grammar;
 
-use crate::errors::DecoderError;
+use crate::errors::{DecoderError, check_syndrome_length};
 use grammar::{Kind, Target, index_u32, parse_line, target_indices, xor_indices};
 
 pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
@@ -21,12 +21,15 @@ pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usiz
 
 /// Reject a DEM error mechanism whose own prior is above 0.5.
 ///
-/// A matching edge's weight `ln((1 - p) / p)` is negative above 0.5, so every
-/// mechanism with a one- or two-detector component must have a prior of at most
-/// 0.5, as upstream `PyMatching` requires of each instruction. The check runs per
-/// mechanism, before parallel mechanisms are merged or correlated components
-/// cancel, so it also rejects parallel mechanisms whose independent combination
-/// falls back below 0.5.
+/// A matching edge's weight `ln((1 - p) / p)` is negative above 0.5, so a
+/// mechanism that becomes a matching edge must have a prior of at most 0.5, as
+/// upstream `PyMatching` requires of each instruction. Matching graphs and commit
+/// windows check every mechanism with a one- or two-detector component;
+/// logical-subgraph extraction checks every mechanism with a positive prior and a
+/// detector, before projection, so the result does not depend on the membership.
+/// The check runs per mechanism, before parallel mechanisms are merged or
+/// correlated components cancel, so it also rejects parallel mechanisms whose
+/// independent combination falls back below 0.5.
 pub(crate) fn check_matching_prior(probability: f64) -> Result<(), DecoderError> {
     if probability > 0.5 {
         return Err(DecoderError::InvalidConfiguration(format!(
@@ -399,12 +402,7 @@ impl DemSupport {
         syndrome: &mut [u8],
         num_detectors: usize,
     ) -> Result<(), DecoderError> {
-        if syndrome.len() != num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(num_detectors, syndrome.len())?;
         self.validate_dimensions(num_detectors)?;
         if let Some((index, value)) = syndrome.iter().enumerate().find(|(_, value)| **value > 1) {
             return Err(DecoderError::InvalidSyndrome(format!(
@@ -1066,12 +1064,7 @@ where
         use super::DecodingResultTrait;
 
         // Validate before XOR, including for wrappers constructed without reduction.
-        if syndrome.len() != self.dem.num_detectors {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.dem.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.dem.num_detectors, syndrome.len())?;
         if self.syndrome_arr.len() != self.dem.num_detectors {
             self.syndrome_arr = ndarray::Array1::zeros(self.dem.num_detectors);
         }

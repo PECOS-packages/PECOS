@@ -121,7 +121,7 @@ def test_auto_execution_wide_observables_and_count_only():
 @pytest.mark.parametrize("workers", [1, 3])
 def test_invalid_order_and_impossible_syndrome_are_errors(workers):
     batch = SampleBatch([[0, 0, 0]], [0])
-    with pytest.raises(RuntimeError, match="permutation"):
+    with pytest.raises(ValueError, match="permutation"):
         batch.decode(DEM, bp_trellis(ordering=[0, 0, 1, 2]), workers=workers)
     with pytest.raises(RuntimeError, match="unexplainable"):
         SampleBatch([[1]], [0]).decode("detector D0\n", bp_trellis(), workers=workers)
@@ -218,9 +218,11 @@ def test_direct_parallel_batch_releases_gil():
 @pytest.mark.parametrize("shot", [[0], [0, 1]])
 def test_direct_batch_reports_first_failing_shot(workers, shot):
     decoder = exp.BpTrellisDecoder.from_dem("error(0.1) D0 L0\ndetector D1\n")
-    with pytest.raises(RuntimeError) as individual_error:
+    # A short row is caller input; an unexplainable one is a decoding failure.
+    error_type = ValueError if len(shot) == 1 else RuntimeError
+    with pytest.raises(error_type) as individual_error:
         decoder.decode_syndrome(shot)
-    with pytest.raises(RuntimeError) as batch_error:
+    with pytest.raises(error_type) as batch_error:
         decoder.decode_batch([[0, 0], shot, [1]], workers=workers)
     assert str(batch_error.value) == f"shot 1: {individual_error.value}"
 
@@ -269,5 +271,11 @@ def test_incremental_score_is_opt_in():
 def test_incremental_score_rejects_nonfinite_suffix():
     dem = "error(0.1) D0 L0\nerror(1e-17) D0"
     exp.BpTrellisDecoder.from_dem(dem, bp_score_iterations=0)
-    with pytest.raises(RuntimeError, match="incremental_score"):
+    with pytest.raises(ValueError, match="incremental_score"):
         exp.BpTrellisDecoder.from_dem(dem, bp_score_iterations=0, incremental_score=True)
+
+
+def test_sparse_defect_outside_the_model_is_value_error():
+    decoder = exp.BpTrellisDecoder.from_dem("error(0.1) D0 L0\ndetector D1\n")
+    with pytest.raises(ValueError, match="Invalid node index 2: must be < 2"):
+        decoder.decode_from_defects([2])

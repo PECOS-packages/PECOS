@@ -26,7 +26,7 @@ use crate::decoder::{UfDecoder, UfDecoderConfig};
 use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
 use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 use pecos_decoder_core::dem::{DemCheckMatrix, DemMatchingGraph};
-use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::errors::{DecoderError, check_syndrome_length};
 
 /// BP message schedule.
 #[derive(Debug, Clone, Copy, Default)]
@@ -314,7 +314,7 @@ impl BpUfDecoder {
 
 impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
     fn compute_weights(&mut self, syndrome: &[u8]) -> Result<Vec<f64>, DecoderError> {
-        validate_syndrome_length(&self.bp_graph, syndrome)?;
+        check_syndrome_length(self.bp_graph.check_count(), syndrome.len())?;
         let num_defects = syndrome.iter().filter(|&&v| v != 0).count();
 
         let iters = if self.config.bp_iterations > 0 {
@@ -468,7 +468,7 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        validate_syndrome_length(&self.bp_graph, syndrome)?;
+        check_syndrome_length(self.bp_graph.check_count(), syndrome.len())?;
         // Fast path: cluster predecoder handles isolated cases without BP.
         // This catches 0 defects, single defects, and isolated pairs. Gated on
         // the UF config like the plain `UfDecoder` paths. It deliberately runs
@@ -577,17 +577,6 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
         }
 
         Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(mask))
-    }
-}
-
-fn validate_syndrome_length(graph: &BpGraph, syndrome: &[u8]) -> Result<(), DecoderError> {
-    if syndrome.len() == graph.check_count() {
-        Ok(())
-    } else {
-        Err(DecoderError::InvalidDimensions {
-            expected: graph.check_count(),
-            actual: syndrome.len(),
-        })
     }
 }
 

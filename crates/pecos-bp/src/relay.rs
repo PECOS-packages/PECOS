@@ -26,7 +26,7 @@
 //! again. Correction costs use raw saturated priors; BP+UF and trellis are unchanged.
 
 use crate::{BpGraph, LLR_SATURATION};
-use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::errors::{DecoderError, check_syndrome_length};
 use pecos_random::PecosRng;
 
 /// Minimum magnitude for priors that seed native Relay-BP and `MinSumBpDecoder`,
@@ -229,12 +229,7 @@ impl RelayBp {
         syndrome: &[u8],
         shot_seed: u64,
     ) -> Result<RelayOutcome, DecoderError> {
-        if syndrome.len() != self.graph.check_count() {
-            return Err(DecoderError::InvalidDimensions {
-                expected: self.graph.check_count(),
-                actual: syndrome.len(),
-            });
-        }
+        check_syndrome_length(self.graph.check_count(), syndrome.len())?;
         if let Some((check, &value)) = syndrome.iter().enumerate().find(|&(_, &value)| value > 1) {
             return Err(DecoderError::InvalidSyndrome(format!(
                 "Relay-BP syndrome entry {check} must be zero or one, got {value}"

@@ -33,18 +33,11 @@ pub(crate) mod ffi {
         pub detector2: i64, // -1 for boundary
     }
 
-    // Decoding result for >64 observables
+    // Decoding result for <=64 observables: the packed observable mask
     #[derive(Debug)]
     pub struct ExtendedMatchingResult {
         pub observables: Vec<u8>,
         pub weight: f64,
-    }
-
-    // Batch decoding result
-    #[derive(Debug)]
-    pub struct BatchDecodingResult {
-        pub predictions: Vec<u8>, // Bit-packed predictions
-        pub weights: Vec<f64>,    // Weight for each shot
     }
 
     unsafe extern "C++" {
@@ -214,15 +207,19 @@ pub(crate) mod ffi {
             detection_events: &[u8],
         ) -> Result<ExtendedMatchingResult>;
 
-        /// Decode detection events (for any number of observables).
+        /// Decode detection events (for any number of observables) into
+        /// `observables`, which must be zeroed and hold one byte per graph
+        /// observable. Returns the matching weight.
         ///
         /// # Errors
         ///
-        /// Returns a CXX exception if detection events are invalid or decoding fails.
+        /// Returns a marked CXX exception if the matcher cannot be built, or an
+        /// unmarked one if `observables` has the wrong length or decoding fails.
         fn decode_detection_events_extended(
             graph: Pin<&mut PyMatchingGraph>,
             detection_events: &[u8],
-        ) -> Result<ExtendedMatchingResult>;
+            observables: &mut [u8],
+        ) -> Result<f64>;
 
         /// Decode to matched detection event pairs.
         ///
@@ -244,27 +241,36 @@ pub(crate) mod ffi {
             detection_events: &[u8],
         ) -> Result<Vec<MatchedPair>>;
 
-        /// Batch decode multiple shots.
+        /// Batch decode `weights.len()` shots into `predictions` (one row per
+        /// shot of one byte per graph observable, or the bit-packed bytes) and
+        /// `weights` (one per shot). Both must be zeroed.
         ///
         /// # Errors
         ///
-        /// Returns a CXX exception if shots are malformed or decoding fails.
+        /// Returns a marked CXX exception if the matcher or one shot's
+        /// observable scratch cannot be built, or an unmarked one if the output
+        /// buffers have the wrong length or decoding fails.
         fn decode_batch(
             graph: Pin<&mut PyMatchingGraph>,
             shots: &[u8],
-            num_shots: usize,
             num_detectors: usize,
             bit_packed_shots: bool,
             bit_packed_predictions: bool,
-        ) -> Result<BatchDecodingResult>;
+            predictions: &mut [u8],
+            weights: &mut [f64],
+        ) -> Result<()>;
 
         // ===== Path Finding =====
 
-        /// Find the shortest path between two nodes.
+        /// Find the shortest path between two nodes. Upstream dereferences a null
+        /// pointer when no path exists and when `source == target`, so the
+        /// caller must rule those out first.
         ///
         /// # Errors
         ///
-        /// Returns a CXX exception if nodes are invalid or no path exists.
+        /// Returns a marked CXX exception if the search-graph matcher cannot be
+        /// built, or an unmarked one if upstream rejects the query, for example
+        /// two boundary nodes.
         fn get_shortest_path(
             graph: Pin<&mut PyMatchingGraph>,
             source: usize,
@@ -273,16 +279,22 @@ pub(crate) mod ffi {
 
         // ===== Noise Simulation =====
 
-        /// Generate noise samples based on edge error probabilities.
+        /// Sample noise from the edge error probabilities into `errors` (one
+        /// byte per graph observable per sample) and `syndromes` (one byte per
+        /// node, boundary nodes included, per sample). Both must be zeroed.
+        /// Leaves them zero unless every edge has an error probability.
         ///
         /// # Errors
         ///
-        /// Returns a CXX exception if error probabilities are not set.
+        /// Returns an unmarked CXX exception if the buffers have the wrong
+        /// length or sampling fails.
         fn add_noise(
             graph: &PyMatchingGraph,
             num_samples: usize,
             rng_seed: u64,
-        ) -> Result<BatchDecodingResult>;
+            errors: &mut [u8],
+            syndromes: &mut [u8],
+        ) -> Result<()>;
 
         // ===== Weight Information =====
 

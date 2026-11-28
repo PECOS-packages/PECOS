@@ -12,7 +12,6 @@ enum class MergeStrategy : uint8_t;
 struct EdgeData;
 struct MatchedPair;
 struct ExtendedMatchingResult;
-struct BatchDecodingResult;
 
 // Main PyMatching graph wrapper
 class PyMatchingGraph {
@@ -64,8 +63,9 @@ public:
     ExtendedMatchingResult decode_detection_events_64(
         const rust::Slice<const uint8_t> detection_events);
 
-    ExtendedMatchingResult decode_detection_events_extended(
-        const rust::Slice<const uint8_t> detection_events);
+    double decode_detection_events_extended(
+        const rust::Slice<const uint8_t> detection_events,
+        rust::Slice<uint8_t> observables);
 
     rust::Vec<MatchedPair> decode_to_matched_pairs(
         const rust::Slice<const uint8_t> detection_events);
@@ -73,20 +73,23 @@ public:
     rust::Vec<MatchedPair> decode_to_edges(
         const rust::Slice<const uint8_t> detection_events);
 
-    BatchDecodingResult decode_batch(
+    void decode_batch(
         const rust::Slice<const uint8_t> shots,
-        size_t num_shots,
         size_t num_detectors,
         bool bit_packed_shots,
-        bool bit_packed_predictions);
+        bool bit_packed_predictions,
+        rust::Slice<uint8_t> predictions,
+        rust::Slice<double> weights);
 
     // Path finding
     rust::Vec<size_t> get_shortest_path(size_t source, size_t target);
 
     // Noise simulation
-    BatchDecodingResult add_noise(
+    void add_noise(
         size_t num_samples,
-        uint64_t rng_seed) const;
+        uint64_t rng_seed,
+        rust::Slice<uint8_t> errors,
+        rust::Slice<uint8_t> syndromes) const;
 
     // Weight information
     double get_edge_weight_normalising_constant(size_t num_distinct_weights) const;
@@ -149,9 +152,10 @@ ExtendedMatchingResult decode_detection_events_64(
     PyMatchingGraph& graph,
     const rust::Slice<const uint8_t> detection_events);
 
-ExtendedMatchingResult decode_detection_events_extended(
+double decode_detection_events_extended(
     PyMatchingGraph& graph,
-    const rust::Slice<const uint8_t> detection_events);
+    const rust::Slice<const uint8_t> detection_events,
+    rust::Slice<uint8_t> observables);
 
 rust::Vec<MatchedPair> decode_to_matched_pairs(
     PyMatchingGraph& graph,
@@ -161,23 +165,26 @@ rust::Vec<MatchedPair> decode_to_edges(
     PyMatchingGraph& graph,
     const rust::Slice<const uint8_t> detection_events);
 
-BatchDecodingResult decode_batch(
+void decode_batch(
     PyMatchingGraph& graph,
     const rust::Slice<const uint8_t> shots,
-    size_t num_shots,
     size_t num_detectors,
     bool bit_packed_shots,
-    bool bit_packed_predictions);
+    bool bit_packed_predictions,
+    rust::Slice<uint8_t> predictions,
+    rust::Slice<double> weights);
 
 rust::Vec<size_t> get_shortest_path(
     PyMatchingGraph& graph,
     size_t source,
     size_t target);
 
-BatchDecodingResult add_noise(
+void add_noise(
     const PyMatchingGraph& graph,
     size_t num_samples,
-    uint64_t rng_seed);
+    uint64_t rng_seed,
+    rust::Slice<uint8_t> errors,
+    rust::Slice<uint8_t> syndromes);
 
 double get_edge_weight_normalising_constant(
     const PyMatchingGraph& graph,

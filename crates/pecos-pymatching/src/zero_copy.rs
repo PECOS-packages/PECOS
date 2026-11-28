@@ -1,6 +1,6 @@
 //! Zero-copy and buffer reuse utilities for `PyMatching` decoder
 
-use super::decoder::{DecodingResult, PyMatchingDecoder};
+use super::decoder::{DecodingResult, PyMatchingDecoder, zeroed_rows};
 use super::errors::Result;
 
 /// A reusable buffer for decoding operations
@@ -16,12 +16,21 @@ impl DecodeBuffer {
     ///
     /// The observable buffer holds
     /// [`PyMatchingDecoder::num_decoded_observables`] bytes.
-    #[must_use]
-    pub fn new(decoder: &PyMatchingDecoder) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PyMatchingError::InvalidGraph`](crate::PyMatchingError::InvalidGraph)
+    /// if the observable buffer, sized by the graph, cannot be allocated.
+    pub fn new(decoder: &PyMatchingDecoder) -> Result<Self> {
+        Ok(Self {
             syndrome_buffer: Vec::new(),
-            observable_buffer: vec![0; decoder.num_decoded_observables()],
-        }
+            observable_buffer: zeroed_rows(
+                decoder.num_decoded_observables(),
+                1,
+                "observable",
+                "num_shots",
+            )?,
+        })
     }
 
     /// Clear the buffer for reuse
@@ -46,8 +55,11 @@ impl DecodeBuffer {
 /// Extension methods for zero-copy operations
 impl PyMatchingDecoder {
     /// Create a reusable decode buffer
-    #[must_use]
-    pub fn create_decode_buffer(&self) -> DecodeBuffer {
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`DecodeBuffer::new`].
+    pub fn create_decode_buffer(&self) -> Result<DecodeBuffer> {
         DecodeBuffer::new(self)
     }
 
@@ -191,7 +203,7 @@ mod tests {
             .unwrap();
         assert_eq!(observable_buffer, expected);
 
-        let mut buffer = decoder.create_decode_buffer();
+        let mut buffer = decoder.create_decode_buffer().unwrap();
         let result = decoder.decode_with_buffer(&[1, 0], &mut buffer).unwrap();
         assert_eq!(result.observable, expected);
     }
@@ -215,7 +227,7 @@ mod tests {
             Err(crate::PyMatchingError::InvalidSyndrome { .. })
         ));
 
-        let mut buffer = decoder.create_decode_buffer();
+        let mut buffer = decoder.create_decode_buffer().unwrap();
         decoder.decode_with_buffer(&[1, 0], &mut buffer).unwrap();
         let (syndrome, observables) = (
             buffer.syndrome_buffer().to_vec(),
@@ -252,7 +264,7 @@ mod tests {
             .add_boundary_edge(3, &[], Some(1.0), Some(0.1), None)
             .unwrap();
 
-        let mut buffer = decoder.create_decode_buffer();
+        let mut buffer = decoder.create_decode_buffer().unwrap();
 
         // Decode multiple times reusing the buffer - use even parity patterns
         let test_syndromes = vec![
@@ -284,7 +296,7 @@ mod tests {
         let expected = decoder.decode(&[1, 1]).unwrap().observable;
         assert_eq!(expected, [0, 0, 1]);
 
-        let mut buffer = decoder.create_decode_buffer();
+        let mut buffer = decoder.create_decode_buffer().unwrap();
         assert_eq!(buffer.observable_buffer().len(), expected.len());
         let result = decoder.decode_with_buffer(&[1, 1], &mut buffer).unwrap();
         assert_eq!(result.observable, expected);
@@ -302,7 +314,7 @@ mod tests {
         let narrow = PyMatchingDecoder::from_dem("error(0.1) D0 L0\nerror(0.1) D0 D1").unwrap();
         let mut decoder =
             PyMatchingDecoder::from_dem("error(0.1) D0 L2\nerror(0.1) D0 D1").unwrap();
-        let mut buffer = narrow.create_decode_buffer();
+        let mut buffer = narrow.create_decode_buffer().unwrap();
         buffer.syndrome_buffer.extend_from_slice(&[1, 0]);
         buffer.observable_buffer.fill(0xAB);
         match decoder.decode_with_buffer(&[1, 0], &mut buffer) {

@@ -3,9 +3,12 @@
 
 """Caller input errors retain their category across decoder entry points."""
 
+import sys
+
 import pytest
 from pecos_rslib import TickCircuit
 from pecos_rslib.decoders import (
+    CheckMatrix,
     DemAwareDecoder,
     FusionBlossomDecoder,
     PyMatchingDecoder,
@@ -23,6 +26,8 @@ from pecos_rslib.qec import (
     SampleBatch,
     WindowedLogicalSubgraphDecoder,
 )
+
+pytest_plugins = ("pytester",)
 
 DEM = "error(0.1) D0 L0\ndetector D1"
 
@@ -502,3 +507,110 @@ def test_pymatching_decode_phase_failure_stays_runtime_error():
     decoder = PyMatchingDecoder.from_dem("error(0.1) D0 D1")
     with pytest.raises(RuntimeError, match="No perfect matching"):
         decoder.decode_syndrome([1, 0])
+
+
+def _value_error_in_subprocess(pytester, call, setup=""):
+    """Run `call` in a fresh interpreter, since before #1771 it ended the process."""
+    script = (
+        "from pecos_rslib.decoders import PyMatchingDecoder\n"
+        f"{setup}"
+        "try:\n"
+        f"    {call}\n"
+        "except ValueError as error:\n"
+        "    print('ValueError:', error)\n"
+        "else:\n"
+        "    print('no error')\n"
+    )
+    result = pytester.run(sys.executable, "-c", script, timeout=60)
+    assert result.ret == 0, result.stderr.str()
+    return result.stdout.str()
+
+
+# Upstream sizes its node list as `node + 1`, which wraps for 2**64 - 1, and then
+# indexes past the end.
+@pytest.mark.parametrize(
+    "call",
+    [
+        "PyMatchingDecoder(4).add_edge(2**64 - 1, 1, [0], 1.0)",
+        "PyMatchingDecoder(4).add_edge(0, 2**64 - 1, [0], 1.0)",
+        "PyMatchingDecoder(4).add_boundary_edge(2**64 - 1, [0], 1.0)",
+    ],
+)
+def test_pymatching_boundary_node_marker_is_not_an_edge_node(pytester, call):
+    output = _value_error_in_subprocess(pytester, call)
+    assert "ValueError: node 18446744073709551615 is out of range: BOUNDARY_NODE_MARKER" in output
+
+
+@pytest.mark.parametrize("add", ["add_edge", "add_boundary_edge"])
+def test_pymatching_observable_usize_max_is_rejected_before_the_edge_is_added(add):
+    decoder = PyMatchingDecoder(4)
+    nodes = (0, 1) if add == "add_edge" else (0,)
+    with pytest.raises(ValueError, match="observable 18446744073709551615 is out of range"):
+        getattr(decoder, add)(*nodes, [2**64 - 1], 1.0)
+    assert decoder.num_edges == 0
+
+
+# Observable 2**63 gives an observable count no buffer can hold, on any machine
+# and with any overcommit setting; the output is sized by the graph, so it is a
+# rejection of the graph. Before #1771 decode_batch aborted the process.
+@pytest.mark.parametrize("decode", ["decode_syndrome([1, 1, 0, 0])", "decode_batch([1, 1, 0, 0], num_shots=1)"])
+def test_pymatching_unallocatable_observable_output_is_an_input_error(pytester, decode):
+    output = _value_error_in_subprocess(
+        pytester, f"d = PyMatchingDecoder(4); d.add_edge(0, 1, [2**63], 1.0); d.{decode}"
+    )
+    assert "ValueError: cannot allocate one row of" in output
+    assert "sized by the graph's observable count" in output
+
+
+def test_pymatching_batch_too_large_for_num_shots_is_an_input_error(pytester):
+    # No detectors, so the empty shot buffer matches any num_shots.
+    output = _value_error_in_subprocess(pytester, "PyMatchingDecoder(0).decode_batch([], num_shots=2**62)")
+    assert "ValueError: Configuration error: cannot allocate" in output
+    assert "pass a smaller num_shots" in output
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="limits the address space with RLIMIT_AS")
+def test_pymatching_batch_rows_too_many_for_memory_are_an_input_error(pytester):
+    # The flat output fits under the limit, but splitting it into one row per
+    # shot does not; every row allocation must fail as an error, not abort.
+    setup = (
+        "import os, resource\n"
+        "from pathlib import Path\n"
+        "used = int(Path('/proc/self/statm').read_text().split()[0]) * os.sysconf('SC_PAGE_SIZE')\n"
+        "limit = used + 600 * 1024 * 1024\n"
+        "resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n"
+        "resource.setrlimit(resource.RLIMIT_AS, (limit, limit))\n"
+    )
+    output = _value_error_in_subprocess(
+        pytester, "PyMatchingDecoder(0).decode_batch([], num_shots=4_000_000)", setup=setup
+    )
+    assert "ValueError: Configuration error: cannot allocate 4000000 output rows; pass a smaller num_shots" in output
+
+
+@pytest.mark.parametrize(
+    ("repetitions", "message"),
+    [
+        (0, "repetitions must be at least 1, got 0"),
+        (2**63, f"2 rows times {2**63} repetitions overflows usize; pass fewer repetitions"),
+    ],
+)
+def test_pymatching_check_matrix_repetitions_are_input_errors(repetitions, message):
+    matrix = CheckMatrix.from_dense([[1, 1, 0], [0, 1, 1]])
+    with pytest.raises(ValueError, match=message):
+        PyMatchingDecoder.from_check_matrix_with_repetitions(
+            matrix, repetitions=repetitions, use_virtual_boundary=False
+        )
+
+
+def test_pymatching_unallocatable_node_names_the_node():
+    decoder = PyMatchingDecoder(4)
+    with pytest.raises(
+        ValueError,
+        match=(
+            f"Failed to add edge: node {2**64 - 2} needs a graph of {2**64 - 1} nodes, " "which cannot be allocated"
+        ),
+    ):
+        decoder.add_edge(2**64 - 2, 1, [0], 1.0)
+    with pytest.raises(ValueError, match=f"Failed to add boundary edge: node {2**64 - 2} needs a graph"):
+        decoder.add_boundary_edge(2**64 - 2, [0], 1.0)
+    assert (decoder.num_nodes, decoder.num_edges) == (4, 0)

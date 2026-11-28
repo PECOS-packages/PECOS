@@ -247,6 +247,14 @@ impl CheckMatrix {
             .collect()
     }
 
+    /// The error for a column count too large to hold one entry per column.
+    fn too_many_columns(cols: usize) -> PyMatchingError {
+        PyMatchingError::Configuration(format!(
+            "cannot allocate one entry per column for {cols} columns; pass the matrix's real \
+             column count"
+        ))
+    }
+
     /// Validate the matrix structure and constraints
     ///
     /// # Errors
@@ -292,7 +300,11 @@ impl CheckMatrix {
         }
 
         // Check QEC constraint: each column has at most 2 non-zero entries (for matching decoder)
-        let mut col_counts = vec![0; self.cols];
+        let mut col_counts = Vec::new();
+        col_counts
+            .try_reserve_exact(self.cols)
+            .map_err(|_| Self::too_many_columns(self.cols))?;
+        col_counts.resize(self.cols, 0usize);
         for &col in &self.col_indices {
             col_counts[col] += 1;
         }
@@ -344,6 +356,75 @@ impl Default for PyMatchingConfig {
             num_observables: DEFAULT_OBSERVABLES,
         }
     }
+}
+
+/// Allocate `rows` zeroed rows of `row_len` entries for the C++ bridge to fill.
+///
+/// A `rust::Vec` that fails to grow inside the bridge ends the process, so
+/// output sized by the graph or by a caller count is allocated here, where a
+/// failure is an error. `row_len` comes from the graph's count of `row_unit`s:
+/// if one row cannot be allocated on its own the graph is too large, a
+/// [`PyMatchingError::InvalidGraph`]; otherwise only `rows` is too large, a
+/// [`PyMatchingError::Configuration`] naming the `rows_name` argument.
+pub(crate) fn zeroed_rows<T: Copy + Default>(
+    row_len: usize,
+    rows: usize,
+    row_unit: &str,
+    rows_name: &str,
+) -> Result<Vec<T>> {
+    let mut buffer = Vec::new();
+    if let Some(len) = row_len.checked_mul(rows)
+        && buffer.try_reserve_exact(len).is_ok()
+    {
+        buffer.resize(len, T::default());
+        return Ok(buffer);
+    }
+    if Vec::<T>::new().try_reserve_exact(row_len).is_err() {
+        return Err(PyMatchingError::InvalidGraph(format!(
+            "cannot allocate one row of {row_len} output entries, sized by the graph's \
+             {row_unit} count; build the graph with fewer {row_unit}s"
+        )));
+    }
+    Err(PyMatchingError::Configuration(format!(
+        "cannot allocate {rows} rows of {row_len} output entries; pass a smaller {rows_name}"
+    )))
+}
+
+/// Split `flat`, `rows` rows of `row_len` entries, into one `Vec` per row that
+/// keeps the first `width` entries.
+///
+/// Every allocation is fallible: the split doubles the output's memory, and
+/// the row count comes from the caller.
+///
+/// # Errors
+///
+/// Returns [`PyMatchingError::Configuration`] naming the `rows_name` argument
+/// if the rows cannot be allocated.
+fn split_rows<T: Copy>(
+    flat: &[T],
+    row_len: usize,
+    width: usize,
+    rows: usize,
+    rows_name: &str,
+) -> Result<Vec<Vec<T>>> {
+    // Free the rows split so far before the error message is allocated.
+    let split = || -> Option<Vec<Vec<T>>> {
+        let kept = width.min(row_len);
+        let mut split = Vec::new();
+        split.try_reserve_exact(rows).ok()?;
+        for index in 0..rows {
+            let mut row = Vec::new();
+            row.try_reserve_exact(kept).ok()?;
+            row.extend_from_slice(&flat[index * row_len..][..kept]);
+            split.push(row);
+        }
+        Some(split)
+    };
+    split().ok_or_else(|| {
+        PyMatchingError::Configuration(format!(
+            "cannot allocate {rows} output rows; pass a smaller {rows_name}"
+        ))
+    })
 }
 
 /// Complete `PyMatching` decoder with full API
@@ -666,7 +747,34 @@ impl PyMatchingDecoder {
         matrix: &CheckMatrix,
         config: &CheckMatrixConfig,
     ) -> Result<Self> {
-        let total_nodes = matrix.rows * config.repetitions;
+        if config.repetitions == 0 {
+            return Err(PyMatchingError::Configuration(
+                "repetitions must be at least 1, got 0".to_string(),
+            ));
+        }
+        // Every node index below (`row + rep * rows` with `row < rows` and
+        // `rep < repetitions`) is below `total_nodes`, so this is the only
+        // product that can overflow.
+        let total_nodes = matrix.rows.checked_mul(config.repetitions).ok_or_else(|| {
+            PyMatchingError::Configuration(format!(
+                "{} rows times {} repetitions overflows usize; pass fewer repetitions",
+                matrix.rows, config.repetitions
+            ))
+        })?;
+        for (name, values) in [
+            ("weights", &config.weights),
+            ("error_probabilities", &config.error_probabilities),
+        ] {
+            if let Some(values) = values
+                && values.len() != matrix.cols
+            {
+                return Err(PyMatchingError::Configuration(format!(
+                    "{name} has length {} but must equal the number of columns ({})",
+                    values.len(),
+                    matrix.cols
+                )));
+            }
+        }
 
         // Create decoder with appropriate number of nodes
         let decoder_config = PyMatchingConfig {
@@ -685,7 +793,11 @@ impl PyMatchingDecoder {
         }
 
         // Group matrix entries by column
-        let mut col_entries: Vec<Vec<usize>> = vec![Vec::new(); matrix.cols];
+        let mut col_entries: Vec<Vec<usize>> = Vec::new();
+        col_entries
+            .try_reserve_exact(matrix.cols)
+            .map_err(|_| CheckMatrix::too_many_columns(matrix.cols))?;
+        col_entries.resize_with(matrix.cols, Vec::new);
         for (&row, &col) in matrix.row_indices.iter().zip(matrix.col_indices.iter()) {
             col_entries[col].push(row);
         }
@@ -751,6 +863,9 @@ impl PyMatchingDecoder {
     ///
     /// # Errors
     /// Returns an error if matrix validation fails, configuration is invalid, or decoder creation fails.
+    /// Returns [`PyMatchingError::Configuration`] if `repetitions` is 0, if rows
+    /// times `repetitions` overflows `usize`, or if `weights` or
+    /// `error_probabilities` does not have one entry per column.
     ///
     /// # Example
     /// ```rust
@@ -780,16 +895,52 @@ impl PyMatchingDecoder {
         Self::from_check_matrix_with_config_internal(matrix, &config)
     }
 
-    /// Widen the decoded observable count to cover `observables`.
+    /// Reject `usize::MAX` as an edge's node.
+    ///
+    /// Upstream grows its node list to `node + 1`, which wraps for `usize::MAX`,
+    /// and then indexes past the end of the list.
+    fn check_edge_node(node: NodeId) -> Result<()> {
+        if node == BOUNDARY_NODE_MARKER {
+            return Err(PyMatchingError::InvalidGraph(format!(
+                "node {node} is out of range: BOUNDARY_NODE_MARKER (usize::MAX) is not a node; \
+                 use add_boundary_edge to connect a node to the boundary"
+            )));
+        }
+        Ok(())
+    }
+
+    /// The observable count that covers `observables`, or `None` if empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PyMatchingError::InvalidGraph`] for observable `usize::MAX`,
+    /// whose count `usize::MAX + 1` does not exist.
+    fn observable_count_for(observables: &[ObservableId]) -> Result<Option<usize>> {
+        observables
+            .iter()
+            .max()
+            .map(|&max| {
+                max.checked_add(1).ok_or_else(|| {
+                    PyMatchingError::InvalidGraph(format!(
+                        "observable {max} is out of range; observable indices must be below \
+                         usize::MAX"
+                    ))
+                })
+            })
+            .transpose()
+    }
+
+    /// Widen the decoded observable count to `count`, from
+    /// [`Self::observable_count_for`].
     ///
     /// `decode` returns `config.num_observables` entries, so it must cover every
     /// observable an edge carries or flips on it would be dropped. The backend graph
     /// grows on its own only when a new edge is added, not when a parallel edge is
     /// merged, so both counts are raised together through `ensure_num_observables`.
-    fn include_observables(&mut self, observables: &[ObservableId]) -> Result<()> {
-        match observables.iter().max() {
-            Some(&max) if max >= self.config.num_observables => {
-                self.ensure_num_observables(max + 1)
+    fn include_observables(&mut self, count: Option<usize>) -> Result<()> {
+        match count {
+            Some(count) if count > self.config.num_observables => {
+                self.ensure_num_observables(count)
             }
             _ => Ok(()),
         }
@@ -797,8 +948,15 @@ impl PyMatchingDecoder {
 
     /// Add an edge between two nodes with configuration
     ///
+    /// `PyMatching` grows the graph to hold both nodes and every observable.
+    ///
     /// # Errors
-    /// Returns an error if the edge cannot be added due to graph constraints.
+    /// Returns [`PyMatchingError::InvalidGraph`], before the edge is added, if a
+    /// node is [`BOUNDARY_NODE_MARKER`] (`usize::MAX`), which is not a node (use
+    /// [`Self::add_boundary_edge`] for a boundary edge), or an observable is
+    /// `usize::MAX`. Also returns [`PyMatchingError::InvalidGraph`] if upstream
+    /// rejects the edge, for example a node too large to allocate, or an error if
+    /// the edge conflicts with the merge strategy.
     pub fn add_edge_with_config(
         &mut self,
         node1: NodeId,
@@ -806,6 +964,9 @@ impl PyMatchingDecoder {
         observables: &[ObservableId],
         config: EdgeConfig,
     ) -> Result<()> {
+        Self::check_edge_node(node1)?;
+        Self::check_edge_node(node2)?;
+        let observable_count = Self::observable_count_for(observables)?;
         let error_prob = config.error_probability.unwrap_or(f64::NAN);
 
         let result = ffi::add_edge(
@@ -820,7 +981,7 @@ impl PyMatchingDecoder {
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
         self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
         result?;
-        self.include_observables(observables)?;
+        self.include_observables(observable_count)?;
 
         Ok(())
     }
@@ -828,7 +989,7 @@ impl PyMatchingDecoder {
     /// Add an edge between two nodes (compatibility method)
     ///
     /// # Errors
-    /// Returns an error if the edge cannot be added due to graph constraints.
+    /// Returns the errors of [`Self::add_edge_with_config`].
     pub fn add_edge(
         &mut self,
         node1: NodeId,
@@ -849,8 +1010,15 @@ impl PyMatchingDecoder {
 
     /// Add a boundary edge from a node
     ///
+    /// `PyMatching` grows the graph to hold the node and every observable.
+    ///
     /// # Errors
-    /// Returns an error if the boundary edge cannot be added due to graph constraints.
+    /// Returns [`PyMatchingError::InvalidGraph`], before the edge is added, if
+    /// `node` is [`BOUNDARY_NODE_MARKER`] (`usize::MAX`), which is not a node, or
+    /// an observable is `usize::MAX`. Also returns
+    /// [`PyMatchingError::InvalidGraph`] if upstream rejects the edge, for example
+    /// a node too large to allocate, or an error if the edge conflicts with the
+    /// merge strategy.
     pub fn add_boundary_edge(
         &mut self,
         node: NodeId,
@@ -859,9 +1027,8 @@ impl PyMatchingDecoder {
         error_probability: Option<f64>,
         merge_strategy: Option<MergeStrategy>,
     ) -> Result<()> {
-        // Note: PyMatching auto-expands nodes and observables, so we don't validate bounds here
-        // The C++ layer will handle expansion as needed
-
+        Self::check_edge_node(node)?;
+        let observable_count = Self::observable_count_for(observables)?;
         let (weight, error_probability, merge_strategy) =
             Self::normalize_edge_params(weight, error_probability, merge_strategy);
 
@@ -876,7 +1043,7 @@ impl PyMatchingDecoder {
         self.num_detectors = ffi::pymatching_get_num_detectors(&self.graph);
         self.num_nodes = ffi::pymatching_get_num_nodes(&self.graph);
         result?;
-        self.include_observables(observables)?;
+        self.include_observables(observable_count)?;
 
         Ok(())
     }
@@ -1054,8 +1221,9 @@ impl PyMatchingDecoder {
     /// Entry `i` is node `i`, so with a boundary node below the highest
     /// detector, the entries past `num_detectors` address the top detectors.
     /// Returns [`PyMatchingError::InvalidGraph`] if upstream rejects the graph when
-    /// the matcher is first built, for example an edge weight above its maximum.
-    /// Also returns an error if decoding fails.
+    /// the matcher is first built, for example an edge weight above its maximum,
+    /// or if the result, one entry per graph observable past 64 observables,
+    /// cannot be allocated. Also returns an error if decoding fails.
     ///
     /// # Panics
     ///
@@ -1091,13 +1259,14 @@ impl PyMatchingDecoder {
                 weight: result.weight,
             })
         } else {
-            let result =
-                ffi::decode_detection_events_extended(self.graph.pin_mut(), detection_events)?;
+            let mut observable = zeroed_rows(self.num_observables(), 1, "observable", "num_shots")?;
+            let weight = ffi::decode_detection_events_extended(
+                self.graph.pin_mut(),
+                detection_events,
+                &mut observable,
+            )?;
 
-            Ok(DecodingResult {
-                observable: result.observables.into_iter().collect(),
-                weight: result.weight,
-            })
+            Ok(DecodingResult { observable, weight })
         }
     }
 
@@ -1175,6 +1344,10 @@ impl PyMatchingDecoder {
     ///
     /// # Errors
     /// Returns an error if shot data is invalid, parameters are inconsistent, or batch decoding fails.
+    /// Returns [`PyMatchingError::InvalidGraph`] if one shot's predictions, sized
+    /// by the graph's observable count, cannot be allocated, and
+    /// [`PyMatchingError::Configuration`] if only `num_shots` makes the output too
+    /// large.
     pub fn decode_batch_with_config(
         &mut self,
         shots: &[u8],
@@ -1208,43 +1381,76 @@ impl PyMatchingDecoder {
             });
         }
 
-        let result = ffi::decode_batch(
+        // The backend writes one row per shot, padded to the graph's observable count.
+        let packed_width = |observables: usize| {
+            if config.bit_packed_output {
+                observables.div_ceil(BITS_PER_BYTE)
+            } else {
+                observables
+            }
+        };
+        let row_len = packed_width(self.num_observables());
+        let mut predictions = zeroed_rows(row_len, num_shots, "observable", "num_shots")?;
+        let mut weights = Vec::new();
+        weights.try_reserve_exact(num_shots).map_err(|_| {
+            PyMatchingError::Configuration(format!(
+                "cannot allocate {num_shots} shot weights; pass a smaller num_shots"
+            ))
+        })?;
+        weights.resize(num_shots, 0.0);
+
+        ffi::decode_batch(
             self.graph.pin_mut(),
             shots,
-            num_shots,
             num_detectors,
             config.bit_packed_input,
             config.bit_packed_output,
+            &mut predictions,
+            &mut weights,
         )?;
 
-        let mut batch_result = BatchDecodingResult::from(result);
-        batch_result.bit_packed = config.bit_packed_output;
-        // The backend pads predictions to the graph's observable count; trim them to the
-        // width `decode` returns.
-        let observables = self.num_decoded_observables();
-        let width = if config.bit_packed_output {
-            observables.div_ceil(BITS_PER_BYTE)
-        } else {
-            observables
-        };
-        for prediction in &mut batch_result.predictions {
-            prediction.truncate(width);
-        }
+        // Trim each row to the width `decode` returns.
+        let width = packed_width(self.num_decoded_observables());
+        let predictions = split_rows(&predictions, row_len, width, num_shots, "num_shots")?;
 
-        // If not returning weights, clear them
-        if !config.return_weights {
-            batch_result.weights.clear();
-        }
-
-        Ok(batch_result)
+        Ok(BatchDecodingResult {
+            predictions,
+            weights: if config.return_weights {
+                weights
+            } else {
+                Vec::new()
+            },
+            bit_packed: config.bit_packed_output,
+        })
     }
 
     /// Find shortest path between two nodes
-    /// Returns the sequence of nodes along the shortest path from source to target
-    /// If no path exists, returns an empty vector
+    ///
+    /// Returns the nodes along the shortest path, in order from `source` to
+    /// `target`; the path is never empty. Between two detectors it starts at
+    /// `source` and ends at `target`. When one node is a boundary node,
+    /// upstream `PyMatching` searches from the other node to the nearest
+    /// boundary (any boundary node or boundary edge, not necessarily the given
+    /// one) and the boundary node is left out, so the path ends (or, for a
+    /// boundary `source`, starts) at the detector next to that boundary. For a
+    /// detector `source == target` on a graph with edges it is `[source]`,
+    /// returned without building the matcher.
     ///
     /// # Errors
-    /// Returns an error if nodes are out of bounds, graph is empty, or nodes are in different components.
+    ///
+    /// Checked in this order, each before upstream is called:
+    /// [`PyMatchingError::Configuration`] if a node is out of bounds, if the
+    /// graph has no edges (also for `source == target`), if both nodes are
+    /// boundary nodes, or if no path exists: `target` is not reachable from
+    /// `source` without passing through a boundary node, or, when one node is a
+    /// boundary node, no boundary is reachable from the other.
+    /// [`PyMatchingError::InvalidGraph`] if the reachability search, sized by
+    /// the graph, cannot be allocated. Upstream would dereference a null pointer
+    /// for an unreachable target and for `source == target`, which is why these
+    /// are checked first. Then [`PyMatchingError::InvalidGraph`] if upstream
+    /// rejects the graph when it builds the matcher, for example an edge weight
+    /// above its maximum, and [`PyMatchingError::Ffi`] if the upstream search
+    /// fails.
     pub fn get_shortest_path(&mut self, source: usize, target: usize) -> Result<Vec<usize>> {
         // Validate node indices
         let num_nodes = self.num_nodes();
@@ -1266,24 +1472,118 @@ impl PyMatchingDecoder {
             ));
         }
 
-        // Quick check: if source == target, return trivial path
+        let source_is_boundary = self.is_boundary_node(source);
+        let target_is_boundary = self.is_boundary_node(target);
+        if source_is_boundary && target_is_boundary {
+            return Err(PyMatchingError::Configuration(format!(
+                "Source node {source} and target node {target} are both boundary nodes; at \
+                 least one must be a detector"
+            )));
+        }
+
         if source == target {
             return Ok(vec![source]);
         }
 
-        // Check connectivity before calling PyMatching to avoid segfault
-        if !self.check_nodes_connected(source, target) {
-            return Err(PyMatchingError::Configuration(format!(
-                "No path exists between nodes {source} and {target}. They are in different connected components."
-            )));
+        let (start, end) = if source_is_boundary {
+            (target, source)
+        } else {
+            (source, target)
+        };
+        if !self.path_exists(start, end)? {
+            return Err(PyMatchingError::Configuration(
+                if self.is_boundary_node(end) {
+                    format!(
+                        "No path exists between nodes {source} and {target}: no boundary is \
+                     reachable from node {start}"
+                    )
+                } else {
+                    format!(
+                        "No path exists between nodes {source} and {target}. They are in different connected components."
+                    )
+                },
+            ));
         }
 
         let path = ffi::get_shortest_path(self.graph.pin_mut(), source, target)?;
         Ok(path.into_iter().collect())
     }
 
-    /// Check if two nodes are in the same connected component
-    /// This prevents segfaults when calling `shortest_path` on disconnected graphs
+    /// Whether upstream's search from detector `start` reaches `end`.
+    ///
+    /// Upstream searches a graph without boundary nodes: an edge to a boundary
+    /// node is a boundary edge, and the search never passes through one. A
+    /// detector `end` must be reachable over edges between detectors; a boundary
+    /// `end` is reached through any boundary edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PyMatchingError::InvalidGraph`] if the search state, sized by
+    /// the graph's node and edge counts, cannot be allocated.
+    fn path_exists(&self, start: usize, end: usize) -> Result<bool> {
+        let num_nodes = self.num_nodes();
+        let too_large = || {
+            PyMatchingError::InvalidGraph(format!(
+                "cannot allocate the shortest-path search over the graph's {num_nodes} nodes; \
+                 build the graph with fewer nodes"
+            ))
+        };
+        let falses = || -> Result<Vec<bool>> {
+            let mut flags = Vec::new();
+            flags
+                .try_reserve_exact(num_nodes)
+                .map_err(|_| too_large())?;
+            flags.resize(num_nodes, false);
+            Ok(flags)
+        };
+        let end_is_boundary = self.is_boundary_node(end);
+        let mut adjacent: Vec<Vec<usize>> = Vec::new();
+        adjacent
+            .try_reserve_exact(num_nodes)
+            .map_err(|_| too_large())?;
+        adjacent.resize_with(num_nodes, Vec::new);
+        let mut touches_boundary = falses()?;
+        // The bridge's copy of the edges is at most the size of the graph's own.
+        for edge in ffi::pymatching_get_all_edges(&self.graph) {
+            // A boundary edge's `node2` is `usize::MAX`, which is a boundary node.
+            let node2_is_detector = !self.is_boundary_node(edge.node2);
+            match (self.is_boundary_node(edge.node1), node2_is_detector) {
+                (false, true) => {
+                    for (from, to) in [(edge.node1, edge.node2), (edge.node2, edge.node1)] {
+                        adjacent[from].try_reserve(1).map_err(|_| too_large())?;
+                        adjacent[from].push(to);
+                    }
+                }
+                (false, false) => touches_boundary[edge.node1] = true,
+                (true, true) => touches_boundary[edge.node2] = true,
+                (true, false) => {}
+            }
+        }
+
+        let mut visited = falses()?;
+        // Each node is queued at most once, so the queue never grows past this.
+        let mut queue = std::collections::VecDeque::new();
+        queue
+            .try_reserve_exact(num_nodes)
+            .map_err(|_| too_large())?;
+        queue.push_back(start);
+        visited[start] = true;
+        while let Some(node) = queue.pop_front() {
+            if node == end || (end_is_boundary && touches_boundary[node]) {
+                return Ok(true);
+            }
+            for &neighbor in &adjacent[node] {
+                if !visited[neighbor] {
+                    visited[neighbor] = true;
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Check if two nodes are in the same connected component, counting
+    /// boundary nodes as ordinary nodes and ignoring boundary edges
     fn check_nodes_connected(&self, source: usize, target: usize) -> bool {
         use std::collections::{HashSet, VecDeque};
 
@@ -1328,39 +1628,44 @@ impl PyMatchingDecoder {
     }
 
     /// Simulate noise on the graph
-    /// Returns (errors, syndromes) for the specified number of samples
-    /// Note: The `BatchDecodingResult` is repurposed here - predictions contain errors,
-    /// and weights contain syndromes (as f64 values)
+    ///
+    /// Samples each edge with its error probability and returns, per sample, the
+    /// flipped observables ([`Self::num_observables`] entries) and the syndrome.
+    /// The syndrome has one entry per node, [`Self::num_nodes`] entries, as
+    /// upstream `PyMatching`'s `add_noise` returns; a boundary node's entry is
+    /// always 0. With no boundary that is [`Self::num_detectors`] entries.
+    /// [`Self::decode`] accepts a syndrome of that length. Unless every edge has
+    /// an error probability, every sample is all zeros.
     ///
     /// # Errors
-    /// Returns an error if noise simulation fails or parameters are invalid.
+    ///
+    /// Returns [`PyMatchingError::InvalidGraph`] if one sample's output, sized by
+    /// the graph's observable or node count, cannot be allocated,
+    /// [`PyMatchingError::Configuration`] if only `num_samples` makes the output
+    /// too large, or [`PyMatchingError::Ffi`] if sampling fails.
     pub fn add_noise(&self, num_samples: usize, rng_seed: u64) -> Result<NoiseResult> {
-        let result = ffi::add_noise(&self.graph, num_samples, rng_seed)?;
-
-        // Convert BatchDecodingResult to proper noise result
         let num_observables = self.num_observables();
-        let num_detectors = self.num_detectors();
+        let num_nodes = self.num_nodes();
+        let mut errors = zeroed_rows(num_observables, num_samples, "observable", "num_samples")?;
+        let mut syndromes = zeroed_rows(num_nodes, num_samples, "node", "num_samples")?;
+        ffi::add_noise(
+            &self.graph,
+            num_samples,
+            rng_seed,
+            &mut errors,
+            &mut syndromes,
+        )?;
 
-        let mut errors = Vec::with_capacity(num_samples);
-        let mut syndromes = Vec::with_capacity(num_samples);
-
-        // Unpack the results
-        for sample in 0..num_samples {
-            let error_start = sample * num_observables;
-            let error_end = error_start + num_observables;
-            let error_vec: Vec<u8> = result.predictions[error_start..error_end].to_vec();
-            errors.push(error_vec);
-
-            let syndrome_start = sample * num_detectors;
-            let syndrome_end = syndrome_start + num_detectors;
-            let syndrome_vec: Vec<u8> = result.weights[syndrome_start..syndrome_end]
-                .iter()
-                .map(|&w| w.round() as u8)
-                .collect();
-            syndromes.push(syndrome_vec);
-        }
-
-        Ok(NoiseResult { errors, syndromes })
+        Ok(NoiseResult {
+            errors: split_rows(
+                &errors,
+                num_observables,
+                num_observables,
+                num_samples,
+                "num_samples",
+            )?,
+            syndromes: split_rows(&syndromes, num_nodes, num_nodes, num_samples, "num_samples")?,
+        })
     }
 
     /// Get edge weight normalising constant
@@ -1754,31 +2059,6 @@ impl MatchedPairsDict {
             .iter()
             .filter_map(|(&k, &v)| if v.is_none() { Some(k) } else { None })
             .collect()
-    }
-}
-
-impl From<ffi::BatchDecodingResult> for BatchDecodingResult {
-    fn from(result: ffi::BatchDecodingResult) -> Self {
-        // The result from FFI is already in the requested format
-        // We just need to reshape it by shots
-        let num_shots = result.weights.len();
-        let bytes_per_shot = result.predictions.len().checked_div(num_shots).unwrap_or(0);
-
-        let predictions = if bytes_per_shot > 0 {
-            result
-                .predictions
-                .chunks(bytes_per_shot)
-                .map(<[u8]>::to_vec)
-                .collect()
-        } else {
-            vec![Vec::new(); num_shots]
-        };
-
-        Self {
-            predictions,
-            weights: result.weights.into_iter().collect(),
-            bit_packed: true, // The C++ implementation determines this
-        }
     }
 }
 

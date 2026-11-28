@@ -63,10 +63,10 @@ TKET 0.15.11 and `selene-hugr-qis-compiler` 0.4.3 on macOS arm64, matching the
 repository's locked versions. Separately inspected LLVM at optimization levels
 0 and 2 contains the counter reset; requesting Guppy's minimal optimization
 also reproduced it. A plain counter loop without the external-result branch
-compiles correctly. This localizes the failure to compilation, before PECOS
-execution, but does not identify the responsible upstream pass. Preserve the
-HUGR and LLVM artifacts when investigating; do not infer sound source control
-flow from one realized native trace.
+compiles correctly. The compiler-only reproducer below further isolates the
+failure to HUGR constant folding, before PECOS execution. Preserve the HUGR and
+LLVM artifacts when investigating; do not infer sound source control flow from
+one realized native trace.
 
 The diagnostic defines two synthetic external Guppy declarations and replaces
 only their known LLVM declarations with shim definitions. It reuses
@@ -83,6 +83,86 @@ measurement IDs are explicitly `2 * instance` for this fixed two-measurement
 schedule; they are never derived from the observed data they validate. The
 binding's synthetic QIS site label is a declaration, not a recovered HUGR node.
 Batch requests remain `RuntimeDecodeBatchRequest`, with no compiler manifest.
+
+## Compiler-only counter reproducer
+
+`scripts/diagnostics/guppy_external_counter.py` removes PECOS, qubits, decoder
+shims and runtime linking from the reproduction. Its external declaration has
+the signature `external_value(counter: int) -> int`. A loop starts at zero,
+calls this function, branches on its returned value, emits the counter and
+increments it until three. Regardless of the returned integers, the required
+call arguments and emitted counters are 0, 1, 2. The `plain` negative control
+emits the returned value without branching on it.
+
+Run both cases in the locked development environment, under a process timeout:
+
+<!--skip: Compiler-only subprocess diagnostic; exercised with a timeout in test_guppy_external_counter.py. -->
+```python
+import subprocess
+import sys
+
+for case in ("branch", "plain"):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/diagnostics/guppy_external_counter.py",
+            "--case",
+            case,
+            "--artifacts",
+            f"/tmp/pecos-counter-{case}",
+        ],
+        timeout=45,
+        check=False,
+    )
+    print(case, completed.returncode)
+```
+
+Each report records versions, artifact hashes and the HUGR node supplying the
+external call's first argument. Pass experiments start from independent copies
+of the same minimally optimized graph. On the locked stack above:
+
+| HUGR stage | Branch case call argument | Plain case call argument |
+| --- | --- | --- |
+| Guppy minimal | Block input | Block input |
+| Guppy default | Constant 0 | Block input |
+| `Normalize(constant_folding=False)` | Block input | Block input |
+| `Normalize(constant_folding=True)` | Constant 0 | Block input |
+| `_QSystemLLVMPass(constant_fold=False)` | Block input | Block input |
+| `_QSystemLLVMPass(constant_fold=True)` | Constant 0 | Block input |
+
+Exit 2 reports the constant-zero symptom; exit 0 reports only that this input
+was retained. Neither outcome certifies compiler correctness. Unexpected graph
+shapes or compiler exceptions fail the diagnostic. The probe deliberately uses
+private serialization and a private pass API to inspect these pinned versions;
+it is not a reusable frontend adapter. The tests recognize the exact known pass
+split or retention at every stage after a future fix. The separate live probe
+still requires correct execution or the precise native sequence rejection.
+
+Artifacts include all six HUGR packages and JSON graphs plus LLVM generated
+from the minimal package at optimization levels 0 and 2. The compiler-only
+probe does not execute that LLVM. In the pinned compiler,
+[`process_hugr`](https://github.com/Quantinuum/tket2/blob/qis-compiler-v0.4.3/qis-compiler/rust/lib.rs)
+runs `QSystemRebasePass` followed by the default `QSystemLLVMPass` before LLVM
+optimization. Disabling Guppy folding or selecting LLVM level 0 therefore does
+not bypass the faulty pass in the complete compilation pipeline.
+
+The likely mechanism is in the pinned
+[dataflow analysis](https://github.com/Quantinuum/tket2/blob/qis-compiler-v0.4.3/tket/src/passes/dataflow/datalog.rs):
+direct-call results propagate from a function's `Output` child, which an
+external `FuncDecl` lacks; the generic leaf handler skips calls. Such results
+appear to remain lattice bottom (unreachable) rather than top (unknown).
+Consequently, analysis can miss the branch successors and loop back edge while
+folding the first iteration's counter. This source-level explanation is an
+inference; the pass toggle experiment is the demonstrated result. An upstream
+fix should model external results conservatively and cover direct and indirect
+declarations, branch successors and loop fixed points. No upstream fix or
+patched compiler is included here.
+
+Retain native instance checking and defer production Guppy admission. Do not
+rewrite the frozen counter in LLVM, suppress its guard, or promote the helper
+loop's successful unrolling into evidence for arbitrary feedback loops. A
+candidate compiler fix must pass this reproduction and both live runtime cases,
+including the exact 0, 1, 2 instance sequence and correction-dependent outputs.
 
 ## Next implementation boundary
 

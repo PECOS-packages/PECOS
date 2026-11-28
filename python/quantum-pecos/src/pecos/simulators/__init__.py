@@ -51,6 +51,7 @@ from pecos_rslib.simulators import (
 )
 
 from pecos.simulators import sim_class_types
+from pecos.simulators.batch_validation import PreparedCircuit, prepare_circuit
 from pecos.simulators.cointoss import CoinToss
 from pecos.simulators.default_simulator import DefaultSimulator
 from pecos.simulators.pauliprop import (
@@ -116,6 +117,7 @@ __all__ = [
     "MeasurementSample",
     "PauliFaultProp",
     "PauliProp",
+    "PreparedCircuit",
     "QuditDensityMatrix",
     "QuditError",
     "QuditIndexError",
@@ -133,6 +135,7 @@ __all__ = [
     "coin_toss",
     "density_matrix",
     "embedded_qubit_unitary",
+    "prepare_circuit",
     "qutrit_leakage_channel",
     "qutrit_seepage_channel",
     "sim_class_types",

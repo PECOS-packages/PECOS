@@ -233,7 +233,31 @@ uv sync --group cuda13 --inexact   # or cuda12; on V100 install the Volta pin ab
 just pytest-cuda
 ```
 
-`just pytest-cuda` uses the environment as installed (it never syncs, so a manual V100 pin is kept). It fails if the GPU, cuQuantum, CuPy or pytket-cutensornet is not usable, and fails if any CUDA test skips. CI has no GPU, so run it before merging changes to the CUDA backends.
+`just pytest-cuda` uses the environment as installed (it never syncs, so a manual V100 pin is kept). It fails if the GPU, cuQuantum, CuPy or pytket-cutensornet is not usable, and fails if any CUDA test skips. The CUDA CI lane has no NVIDIA GPU, so run it before merging changes to the CUDA backends. The separate wgpu tests on macOS do not validate CUDA.
+
+### Before merging CUDA changes
+
+Use a local NVIDIA machine with the setup above. Keep the tested checkout unchanged
+between building and running tests, and attach the following evidence to the PR:
+
+1. Record `git rev-parse HEAD` and `git status --short`; identify any local changes.
+2. Record `nvidia-smi`, `nvcc --version`, the cuQuantum version, and
+   `uv pip freeze`. Include the GPU model and driver version.
+3. Build this checkout with `just build-cuda`, install the matching CUDA Python
+   group as above, and run `just pytest-cuda`. Save its complete output and final
+   counts. It covers the Rust Python extension and the Python CuStateVec/MPS paths,
+   and rejects an unavailable runtime or skipped tests.
+4. For Rust cuQuantum changes, also run
+   `cargo test --locked -p pecos-cuquantum -- --nocapture`. Inspect the output:
+   tests that return early with `Skipping test`, or a run with no applicable
+   tests, are missing hardware coverage even if Cargo exits successfully.
+5. List any backend or affected path that was not exercised. If no NVIDIA machine
+   was available, state **CUDA hardware tests: NOT EXECUTED — no NVIDIA hardware
+   available** in the PR and leave this validation outstanding.
+
+A CUDA toolkit install, stub test, build, or successful import is not evidence
+that a CUDA kernel executed correctly. See the [CI evidence policy](https://github.com/PECOS-packages/PECOS/blob/dev/.github/CI.md#gpu-and-cuda-validation-evidence)
+for the separate wgpu hardware suite and the PR evidence format.
 
 ## Package Versions
 

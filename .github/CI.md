@@ -60,3 +60,32 @@ that the latest scheduled run of every validation workflow tested this SHA and
 succeeded (or a successful manual dispatch of each on `dev` while `dev` is at
 this SHA). Run the same status command afterwards to check the full validation
 matrix.
+
+## GPU and CUDA validation evidence
+
+The two GPU backends have different coverage:
+
+| Backend | Automated coverage | Evidence needed for an affected PR |
+| --- | --- | --- |
+| `pecos-gpu-sims` (wgpu) | Full macOS Rust jobs probe hardware and run the GPU suite when available, including `gate_fuzz`. CPU-only runners run a reduced subset. | Use `ci:full-rust` and confirm the macOS log says `Including pecos-gpu-sims in Rust tests` and the relevant tests ran. A successful probe or build alone is not suite coverage. |
+| CUDA/cuQuantum (Rust and Python) | `cuda-build-check` compiles and tests stub behavior; it does not execute CUDA kernels. No NVIDIA runner is configured for this lane. | Run the [local CUDA checklist](../docs/user-guide/cuda-setup.md#before-merging-cuda-changes) on NVIDIA hardware and attach the results. |
+
+For a local wgpu run, record the commit, adapter/backend from the probe, and test
+output. The probe must succeed on hardware before claiming GPU coverage:
+
+```bash
+git rev-parse HEAD
+cargo run --locked -p pecos-gpu-sims --bin gpu-check -- --json
+cargo test --locked -p pecos-gpu-sims -- --nocapture
+```
+
+The full command runs the `gate_fuzz` integration target; running only `cargo check` or the
+GPU-free subset does not exercise those kernels. macOS/Metal results do not
+validate NVIDIA CUDA or every wgpu adapter/backend.
+
+For changes under `crates/pecos-gpu-sims`, `crates/pecos-cuquantum*`,
+`python/pecos-rslib-cuda`, or the Python CuStateVec/MPS wrappers, fill in the PR's
+GPU/CUDA evidence section. Record the tested SHA, device/driver/backend, commands,
+pass/fail/skip counts, and a log link. If hardware validation was unavailable,
+write **NOT EXECUTED**, name the untested backend and reason, and leave hardware
+validation outstanding. CPU/stub CI passing must not be reported as GPU validation.

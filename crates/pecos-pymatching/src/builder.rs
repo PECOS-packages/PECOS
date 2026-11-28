@@ -220,10 +220,13 @@ impl PyMatchingBuilder {
         self
     }
 
-    /// Add edges from a `CheckMatrix`
+    /// Build a decoder from a `CheckMatrix`
     ///
-    /// This is a convenience method to populate the builder from a check matrix.
-    /// Note: this will set the number of nodes and observables based on the matrix.
+    /// This consumes the builder and builds the decoder from the matrix alone:
+    /// nodes, observables, edges and boundary nodes already set on the builder
+    /// are discarded. With `config`, this is
+    /// [`PyMatchingDecoder::from_check_matrix_with_config`]; without it,
+    /// [`PyMatchingDecoder::from_check_matrix`].
     ///
     /// # Errors
     ///

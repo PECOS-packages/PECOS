@@ -72,7 +72,9 @@ use std::time::{Duration, Instant};
 use ndarray::{Array1, Array2};
 use pecos_core::{ChannelExpr, QubitId, channel, unitary_rep};
 use pecos_num::graph::bipartite_edge_coloring;
-use pecos_qec::fault_tolerance::fault_sampler::{FaultCatalog, StochasticNoiseParams};
+use pecos_qec::fault_tolerance::fault_sampler::{
+    FaultAlternative, FaultCatalog, FaultLocation, StochasticNoiseParams,
+};
 use pecos_qec::{BivariateTricycleCode, ParityCheckMatrix, connected_cluster_code_distance};
 use pecos_quantum::{F2Matrix, TickCircuit};
 use pecos_random::PecosRng;
@@ -492,22 +494,51 @@ pub(crate) fn catalog_fault_distance(
     observables: usize,
     max_weight: usize,
 ) -> Result<usize, String> {
+    let columns = catalog_signature_columns(catalog, detectors, observables)?;
+    connected_cluster_code_distance(&columns.h, &columns.l, max_weight)
+        .map(|result| result.distance)
+        .ok_or_else(|| {
+            format!(
+                "extraction fault distance search found no logical witness through {max_weight}"
+            )
+        })
+}
+
+pub(crate) struct CatalogSignatureColumns {
+    pub h: ParityCheckMatrix,
+    pub l: ParityCheckMatrix,
+    pub signatures: Vec<(Vec<usize>, Vec<usize>)>,
+}
+
+/// Positive-probability alternatives with a nonempty detector/observable signature.
+pub(crate) fn signature_alternatives(
+    location: &FaultLocation,
+) -> impl Iterator<Item = &FaultAlternative> {
+    location.faults.iter().filter(|alternative| {
+        alternative.absolute_probability > 0.0
+            && (!alternative.affected_detectors.is_empty()
+                || !alternative.affected_observables.is_empty())
+    })
+}
+
+pub(crate) fn catalog_signature_columns(
+    catalog: &FaultCatalog,
+    detectors: usize,
+    observables: usize,
+) -> Result<CatalogSignatureColumns, String> {
     let signatures = catalog
         .locations
         .iter()
-        .flat_map(|location| &location.faults)
-        .filter(|alternative| alternative.absolute_probability > 0.0)
-        .filter(|alternative| {
-            !alternative.affected_detectors.is_empty()
-                || !alternative.affected_observables.is_empty()
-        })
+        .flat_map(signature_alternatives)
         .map(|alternative| {
             (
                 alternative.affected_detectors.clone(),
                 alternative.affected_observables.clone(),
             )
         })
-        .collect::<BTreeSet<_>>();
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     let mut h = vec![vec![0; signatures.len()]; detectors];
     let mut l = vec![vec![0; signatures.len()]; observables];
     for (column, (dets, obs)) in signatures.iter().enumerate() {
@@ -520,13 +551,7 @@ pub(crate) fn catalog_fault_distance(
     }
     let h = ParityCheckMatrix::from_dense(h).map_err(|e| e.to_string())?;
     let l = ParityCheckMatrix::from_dense(l).map_err(|e| e.to_string())?;
-    connected_cluster_code_distance(&h, &l, max_weight)
-        .map(|result| result.distance)
-        .ok_or_else(|| {
-            format!(
-                "extraction fault distance search found no logical witness through {max_weight}"
-            )
-        })
+    Ok(CatalogSignatureColumns { h, l, signatures })
 }
 
 /// Physical CCZ or the paper's Pauli approximation.

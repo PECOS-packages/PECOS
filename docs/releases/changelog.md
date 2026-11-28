@@ -53,7 +53,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   allocated. The check-matrix constructors reject `weights` or
   `error_probabilities` longer than the column count with
   `PyMatchingError::Configuration` (`ValueError`); before, the extra entries
-  were ignored.
+  were ignored. `PyMatchingBuilder::from_check_matrix` now applies a config with
+  one repetition, which it used to ignore, so that config's `weights`,
+  `error_probabilities` and `use_virtual_boundary` take effect and are checked.
 
 - **Fixed:** PyMatching inputs that ended the process now raise errors (#1771).
   `add_edge`, `add_edge_with_config`, `add_boundary_edge`, the builder and
@@ -72,7 +74,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   repetitions product that overflows, per-column `weights` or
   `error_probabilities` shorter than the column count, and a column count too
   large to allocate with `Configuration` (`ValueError`) instead of panicking or
-  aborting, and a matrix with no rows no longer loops over every repetition. `get_shortest_path` no longer returns an empty path on an upstream
+  aborting. A matrix with no rows no longer loops over every repetition.
+  `get_shortest_path` no longer returns an empty path on an upstream
   failure: a matcher-build failure such as an edge weight above upstream's
   maximum is `InvalidGraph`; two boundary nodes, and a target reachable only
   through a boundary node (which segfaulted), are `Configuration`. When one node

@@ -87,6 +87,15 @@ def test_all_gadget_functions_compile(module, patch):
         "consume_t_resource",
         "correct_t_teleportation",
         "apply_t_teleportation",
+        "apply_t_teleportation_framed",
+        "frame_h",
+        "frame_s",
+        "frame_cx",
+        "frame_sz_teleportation",
+        "frame_correct_z_readout",
+        "frame_correct_x_readout",
+        "frame_correct_z_readout_swapped",
+        "frame_correct_x_readout_swapped",
         *(f"prep_injection_{state}_seed" for state in ("z", "minus_z", "x", "minus_x", "y", "minus_y", "t", "tdg")),
         *(f"prepare_injected_{state}" for state in ("z", "minus_z", "x", "minus_x", "y", "minus_y", "t", "tdg")),
         "prep_x_basis",
@@ -592,6 +601,7 @@ def _expected_readout(scope, basis="z"):
             "make_sz_teleportation",
             [
                 "data = prep_z_basis()",
+                "frame = PauliFrame(False, False)",
                 "anc = prep_y_basis()",
                 "syn = syndrome_extraction_data(data)",
                 "output('synx_data', syn.synx)",
@@ -603,12 +613,16 @@ def _expected_readout(scope, basis="z"):
                 "transversal_cx(data, anc)",
                 _expected_rounds("rounds_after", "data", "anc"),
                 *_expected_readout("anc"),
+                "decision = sz_teleportation_decision(first, final)",
                 "if comptime(correction == 'physical'):\n"
-                "    correct_sz_teleportation(data, sz_teleportation_decision(first, final))\n"
+                "    correct_sz_teleportation(data, decision)\n"
                 "else:\n"
-                "    output('sz_correction', sz_teleportation_decision(first, final))",
+                "    output('sz_correction', decision)",
+                "if comptime(correction == 'frame'):\n    frame_sz_teleportation(frame, decision)",
                 _expected_rounds("trailing_data_rounds", "data"),
-                *_expected_readout("data"),
+                "final = measure_z_basis(data)",
+                "if comptime(correction == 'frame'):\n    frame_correct_z_readout(frame, final)",
+                "output('final_data', final)",
             ],
         ),
         (
@@ -820,16 +834,32 @@ def test_partition_skips_classical_derivations(monkeypatch, tag):
         measurement_partition_from_trace("program", 1, {"a": "D"})
 
 
-@pytest.mark.parametrize("correction", [True, False, 1, "frame", "Physical", "", None, [], {}])
+@pytest.mark.parametrize("correction", [True, False, 1, "Physical", "", None, [], {}])
 def test_sz_correction_rejects_invalid_mode(module, correction):
-    with pytest.raises(ValueError, match="correction must be physical or record"):
+    with pytest.raises(ValueError, match="correction must be physical, frame, or record"):
         module["make_sz_teleportation"](2, 2, 2, correction=correction)
 
 
-@pytest.mark.parametrize("correction", ["physical", "record"])
+@pytest.mark.parametrize("correction", ["physical", "frame", "record"])
 def test_sz_correction_accepts_valid_mode(module, correction):
     program = module["make_sz_teleportation"](2, 2, 2, correction=correction)
     assert callable(program.compile)
+
+
+@pytest.mark.parametrize("distance", [3, 5])
+def test_sz_factory_modes_have_same_z_readout(distance):
+    """The factory's deferred Z commutes with every final Z measurement."""
+    patch = SurfacePatch.create(distance=distance)
+    module = load_surface_protocol_module(patch)
+    results = {
+        mode: _results(
+            module["make_sz_teleportation"](2, 2, 2, correction=mode),
+            get_transversal_num_qubits("surface", distance),
+        )
+        for mode in ("physical", "frame", "record")
+    }
+    for tag in ("final_data", "sz_correction"):
+        assert results["physical"][tag] == results["frame"][tag] == results["record"][tag]
 
 
 def test_sz_correction_variant_identity(module):
@@ -838,10 +868,14 @@ def test_sz_correction_variant_identity(module):
     factory = module["make_sz_teleportation"]
     execute_program = factory(2, 2, 2, correction="physical")
     record_program = factory(2, 2, 2, correction="record")
-    assert execute_program.wrapped.name != record_program.wrapped.name
+    frame_program = factory(2, 2, 2, correction="frame")
+    assert len({program.wrapped.name for program in (execute_program, frame_program, record_program)}) == 3
     executed = compile_guppy_to_hugr(execute_program)
     recorded = compile_guppy_to_hugr(record_program)
+    framed = compile_guppy_to_hugr(frame_program)
     assert executed != recorded
+    assert framed != executed
+    assert framed != recorded
     assert compile_guppy_to_hugr(factory(2, 2, 2)) == executed
 
 
@@ -859,11 +893,13 @@ def test_sz_recorded_signed_witness(distance):
     before, factory = source.split("def make_sz_teleportation(", 1)
     factory, after = factory.split("def make_t_teleportation_placeholder(", 1)
     # Change only the factory's input and readout to the sign-sensitive recipe;
-    # retain its correction branch so the witness exercises both renderer modes.
+    # retain its correction branch so the witness exercises all three renderer modes.
     factory = factory.replace("data = prep_z_basis()", "data = prep_x_basis()")
     factory = factory.replace("final = measure_z_basis(data)", "final = measure_x_basis(data)")
+    factory = factory.replace("frame_correct_z_readout", "frame_correct_x_readout")
     factory = factory.replace(
         "        for _ in range(comptime(trailing_data_rounds)):",
+        "        frame_s(frame)\n"
         "        syn = syndrome_extraction_fold_szdg_data(data)\n"
         '        output("fold_z", syn.synz)\n'
         "        for _ in range(comptime(trailing_data_rounds)):",
@@ -874,7 +910,7 @@ def test_sz_recorded_signed_witness(distance):
     )
     parities_by_mode = {}
     decisions_by_mode = {}
-    for correction in ("physical", "record"):
+    for correction in ("physical", "frame", "record"):
         program = module["make_sz_teleportation"](2, 2, 2, correction=correction)
         results = (
             pecos.sim(program)
@@ -895,5 +931,5 @@ def test_sz_recorded_signed_witness(distance):
     recorded = parities_by_mode["record"]
     corrected = [parity ^ decision for parity, decision in zip(recorded, decisions_by_mode["record"], strict=True)]
     assert set(recorded) == {0, 1}
-    assert corrected == parities_by_mode["physical"] == [0] * 64
-    assert decisions_by_mode["record"] == decisions_by_mode["physical"]
+    assert corrected == parities_by_mode["physical"] == parities_by_mode["frame"] == [0] * 64
+    assert decisions_by_mode["record"] == decisions_by_mode["physical"] == decisions_by_mode["frame"]

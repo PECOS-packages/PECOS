@@ -3,7 +3,8 @@
 
 """Executable surface-code raw injection, heralded hook injection, and T teleportation.
 
-The feed-forward uses a physical fold-S round, not a Pauli-frame annotation.
+The feed-forward uses a physical fold-S round. The framed helper also propagates
+a pending logical Pauli frame on the data patch through that correction.
 Noisy execution requires decoded measurement outcomes and a sufficiently good
 resource. By default the factory uses raw parities and is a noiseless
 reference experiment, not a fault-tolerant magic-state factory;
@@ -13,6 +14,7 @@ reference experiment, not a fault-tolerant magic-state factory;
 
 from pecos.guppy_gen._module_loader import load_cached_guppy_source
 from pecos.guppy_gen.gadget_render import render_gadget_function
+from pecos.guppy_gen.pauli_frame import render_frame_primitives
 from pecos.qec.surface.circuit_builder import QubitAllocation
 from pecos.qec.surface.gadgets import (
     default_allocation,
@@ -95,8 +97,12 @@ def _render_surface_t_teleportation_module(
     ``consume_t_resource(data, resource)`` consumes an encoded T (or T-dagger)
     resource and returns its raw logical-Z parity. ``correct_t_teleportation``
     takes the decoded parity and performs S (or S-dagger) when it is true.
-    Both patches must be in the canonical unswapped orientation with +1
-    stabilizers and no pending logical Pauli frame.
+    Both patches must be in the canonical unswapped orientation. The data's
+    Z checks must be +1 for the fold-S correction; its X-check signs may be
+    arbitrary. The fold's logical sign contains the product of the current Z
+    checks, which this precondition fixes to +1. The resource must have +1 X
+    and Z checks and zero logical frame. The unframed convenience path assumes
+    no pending data frame; otherwise use ``apply_t_teleportation_framed``.
     The square restriction comes from the existing fold-S correction gadget.
     """
     if not patch.rotated or patch.dx != patch.dz or patch.dx < 3 or patch.dx % 2 == 0:
@@ -151,6 +157,9 @@ def _render_surface_t_teleportation_module(
     else:
         lines = ["from guppylang.std.quantum import t, tdg, z", ""]
         functions = []
+    # Every module includes this renderer once, including protocols that supply
+    # their own common gadgets and hook modules that disable sidebands.
+    lines.extend(render_frame_primitives(patch))
     functions.extend((injection.seed, None) for injection in injections)
     for gadget, scope in functions:
         lines.extend(render_gadget_function(gadget, tag_scope=scope, sidebands=sidebands))
@@ -215,6 +224,15 @@ def _render_surface_t_teleportation_module(
             '    """Noiseless convenience: use raw parity as the correction decision."""',
             "    outcome = consume_t_resource(data, resource)",
             "    correct_t_teleportation(data, outcome, dagger)",
+            "",
+            "",
+            "@guppy",
+            f"def apply_t_teleportation_framed(data: {surface}, resource: {surface} @ owned,",
+            "                                 frame: PauliFrame, dagger: bool) -> None:",
+            '    """Noiseless raw-parity T/TDG with a data frame and a zero-frame canonical resource."""',
+            "    decision = consume_t_resource(data, resource) != frame.x",
+            "    correct_t_teleportation(data, decision, dagger)",
+            "    frame.z = frame.z != (frame.x & decision)",
             "",
             "",
             "def make_t_teleportation(rounds_before: int = 0, rounds_after: int = 0, *,",

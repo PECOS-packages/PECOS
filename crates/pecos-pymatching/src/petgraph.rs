@@ -60,6 +60,7 @@ pub struct PyMatchingEdge {
 /// # Errors
 ///
 /// Returns a [`PyMatchingError`] if:
+/// - A node id is `usize::MAX` ([`PyMatchingError::InvalidGraph`])
 /// - The decoder builder fails
 /// - Setting the number of observables fails
 /// - Adding an edge fails
@@ -70,10 +71,16 @@ pub fn pymatching_from_petgraph<S: std::hash::BuildHasher>(
 ) -> Result<PyMatchingDecoder, PyMatchingError> {
     // Find the maximum node ID to determine graph size
     let max_node_id = graph.node_weights().map(|n| n.id).max().unwrap_or(0);
+    let num_nodes = max_node_id.checked_add(1).ok_or_else(|| {
+        PyMatchingError::InvalidGraph(format!(
+            "node id {max_node_id} is out of range: BOUNDARY_NODE_MARKER (usize::MAX) is not a \
+             node; mark a boundary node with is_boundary instead"
+        ))
+    })?;
 
     // Create decoder with appropriate size
     let mut decoder = PyMatchingDecoder::builder()
-        .nodes(max_node_id + 1)
+        .nodes(num_nodes)
         .observables(num_observables)
         .build()?;
 

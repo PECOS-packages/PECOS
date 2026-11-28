@@ -220,32 +220,28 @@ impl PyMatchingBuilder {
         self
     }
 
-    /// Add edges from a `CheckMatrix`
+    /// Build a decoder from a `CheckMatrix`
     ///
-    /// This is a convenience method to populate the builder from a check matrix.
-    /// Note: this will set the number of nodes and observables based on the matrix.
+    /// This consumes the builder and builds the decoder from the matrix alone:
+    /// nodes, observables, edges and boundary nodes already set on the builder
+    /// are discarded. With `config`, this is
+    /// [`PyMatchingDecoder::from_check_matrix_with_config`]; without it,
+    /// [`PyMatchingDecoder::from_check_matrix`].
     ///
     /// # Errors
     ///
-    /// Returns a [`PyMatchingError`](crate::PyMatchingError) if the decoder creation fails.
-    ///
-    /// # Panics
-    ///
-    /// This function will not panic. The internal `unwrap()` is safe because
-    /// `config` is checked for `is_none()` before use.
+    /// Returns a [`PyMatchingError`](crate::PyMatchingError) if the decoder creation fails,
+    /// including every error of [`PyMatchingDecoder::from_check_matrix_with_config`] when
+    /// `config` is given.
     pub fn from_check_matrix(
         self,
         matrix: &CheckMatrix,
         config: Option<CheckMatrixConfig>,
     ) -> Result<PyMatchingDecoder> {
-        // If this is a simple case, just use the direct API
-        let Some(config) = config else {
-            return PyMatchingDecoder::from_check_matrix(matrix);
-        };
-        if config.repetitions == 1 {
-            return PyMatchingDecoder::from_check_matrix(matrix);
+        match config {
+            Some(config) => PyMatchingDecoder::from_check_matrix_with_config(matrix, config),
+            None => PyMatchingDecoder::from_check_matrix(matrix),
         }
-        PyMatchingDecoder::from_check_matrix_with_config(matrix, config)
     }
 
     /// Build the decoder
@@ -365,5 +361,20 @@ mod tests {
         assert_eq!(decoder.num_edges(), 3); // 2 regular + 1 boundary
         // PyMatching always reports at least 64 observables
         assert!(decoder.num_observables() >= 10);
+    }
+
+    #[test]
+    fn check_matrix_config_with_one_repetition_is_not_dropped() {
+        let matrix = CheckMatrix::new(2, 3, vec![0, 0, 1, 1], vec![0, 1, 1, 2]);
+        let config = CheckMatrixConfig {
+            weights: Some(vec![1.0, 2.0]),
+            ..Default::default()
+        };
+        let result = PyMatchingDecoder::builder().from_check_matrix(&matrix, Some(config));
+        assert!(
+            matches!(result, Err(crate::PyMatchingError::Configuration(_))),
+            "two weights for three columns must be rejected, got {:?}",
+            result.as_ref().err()
+        );
     }
 }

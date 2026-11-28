@@ -808,10 +808,8 @@ impl FusionBlossomDecoder {
     ) -> Result<()> {
         if node1 >= self.num_nodes || node2 >= self.num_nodes {
             return Err(FusionBlossomError::InvalidGraph(format!(
-                "Node indices {} or {} out of bounds (max {})",
-                node1,
-                node2,
-                self.num_nodes - 1
+                "Node indices {} or {} out of bounds (must be < {})",
+                node1, node2, self.num_nodes
             )));
         }
         Self::check_observable_indices(observables)?;
@@ -860,9 +858,8 @@ impl FusionBlossomDecoder {
     ) -> Result<()> {
         if node >= self.num_nodes {
             return Err(FusionBlossomError::InvalidGraph(format!(
-                "Node index {} out of bounds (max {})",
-                node,
-                self.num_nodes - 1
+                "Node index {} out of bounds (must be < {})",
+                node, self.num_nodes
             )));
         }
         Self::check_observable_indices(observables)?;
@@ -1327,6 +1324,27 @@ fn check_prior_weight(probability: f64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn out_of_bounds_node_on_an_empty_graph_is_an_invalid_graph() {
+        let mut decoder = FusionBlossomDecoder::new(FusionBlossomConfig {
+            num_nodes: Some(0),
+            ..Default::default()
+        })
+        .unwrap();
+        let error = decoder.add_edge(0, 0, &[], None).unwrap_err();
+        assert!(
+            matches!(&error, FusionBlossomError::InvalidGraph(message)
+                if message == "Node indices 0 or 0 out of bounds (must be < 0)"),
+            "{error:?}"
+        );
+        let error = decoder.add_boundary_edge(0, &[], None).unwrap_err();
+        assert!(
+            matches!(&error, FusionBlossomError::InvalidGraph(message)
+                if message == "Node index 0 out of bounds (must be < 0)"),
+            "{error:?}"
+        );
+    }
 
     #[test]
     fn endpoint_and_perturbed_priors_are_rejected_before_weight_clamping() {

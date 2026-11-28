@@ -478,6 +478,383 @@ mod tests {
         );
     }
 
+    fn decoder_with_nodes(num_nodes: usize) -> crate::PyMatchingDecoder {
+        crate::PyMatchingDecoder::new(crate::PyMatchingConfig {
+            num_neighbours: None,
+            num_nodes: Some(num_nodes),
+            num_observables: 1,
+        })
+        .expect("the graph is created")
+    }
+
+    fn assert_invalid_graph<T>(result: &crate::errors::Result<T>, needle: &str) {
+        match result {
+            Err(crate::PyMatchingError::InvalidGraph(message)) if message.contains(needle) => {}
+            Err(error) => panic!("expected an invalid graph naming {needle:?}, got {error:?}"),
+            Ok(_) => panic!("expected an invalid graph naming {needle:?}, got Ok"),
+        }
+    }
+
+    #[test]
+    fn boundary_node_marker_is_rejected_as_an_edge_node_before_the_edge_is_added() {
+        use crate::decoder::BOUNDARY_NODE_MARKER;
+        // Upstream sizes its node list as `node + 1`, which wraps for this node,
+        // and then indexes past the end.
+        let mut decoder = decoder_with_nodes(4);
+        let marker = "BOUNDARY_NODE_MARKER (usize::MAX) is not a node";
+        assert_invalid_graph(
+            &decoder.add_edge(BOUNDARY_NODE_MARKER, 1, &[0], Some(1.0), None, None),
+            marker,
+        );
+        assert_invalid_graph(
+            &decoder.add_edge(0, BOUNDARY_NODE_MARKER, &[0], Some(1.0), None, None),
+            marker,
+        );
+        assert_invalid_graph(
+            &decoder.add_edge_with_config(
+                0,
+                BOUNDARY_NODE_MARKER,
+                &[0],
+                crate::EdgeConfig::default(),
+            ),
+            marker,
+        );
+        assert_invalid_graph(
+            &decoder.add_boundary_edge(BOUNDARY_NODE_MARKER, &[0], Some(1.0), None, None),
+            marker,
+        );
+        assert_eq!((decoder.num_nodes(), decoder.num_edges()), (4, 0));
+
+        assert_invalid_graph(
+            &crate::PyMatchingDecoder::builder()
+                .nodes(4)
+                .add_edge(0, BOUNDARY_NODE_MARKER, vec![0], 1.0, None)
+                .build(),
+            marker,
+        );
+        assert_invalid_graph(
+            &crate::PyMatchingDecoder::builder()
+                .nodes(4)
+                .add_boundary_edge(BOUNDARY_NODE_MARKER, vec![0], 1.0, None)
+                .build(),
+            marker,
+        );
+        let mut graph = petgraph::graph::UnGraph::new_undirected();
+        let n0 = graph.add_node(crate::PyMatchingNode {
+            id: 0,
+            is_boundary: false,
+        });
+        let n1 = graph.add_node(crate::PyMatchingNode {
+            id: BOUNDARY_NODE_MARKER,
+            is_boundary: true,
+        });
+        graph.add_edge(
+            n0,
+            n1,
+            crate::PyMatchingEdge {
+                observables: vec![0],
+                weight: 1.0,
+                error_probability: None,
+            },
+        );
+        assert_invalid_graph(
+            &crate::pymatching_from_petgraph(&graph, &std::collections::HashSet::new(), 1),
+            marker,
+        );
+    }
+
+    #[test]
+    fn observable_usize_max_is_rejected_before_the_edge_is_added() {
+        let mut decoder = decoder_with_nodes(4);
+        let message = format!("observable {} is out of range", usize::MAX);
+        assert_invalid_graph(
+            &decoder.add_edge(0, 1, &[0, usize::MAX], Some(1.0), None, None),
+            &message,
+        );
+        assert_invalid_graph(
+            &decoder.add_boundary_edge(0, &[usize::MAX], Some(1.0), None, None),
+            &message,
+        );
+        assert_eq!(decoder.num_edges(), 0);
+        assert_eq!(decoder.num_decoded_observables(), 1);
+        assert_eq!(decoder.num_observables(), 64);
+    }
+
+    /// A graph whose observable count, `2**63 + 1`, no buffer can hold.
+    fn unallocatable_observables_graph() -> crate::PyMatchingDecoder {
+        let mut decoder = decoder_with_nodes(2);
+        decoder
+            .add_edge(0, 1, &[1 << 63], Some(1.0), None, None)
+            .expect("upstream accepts a large observable index");
+        decoder
+    }
+
+    #[test]
+    fn unallocatable_observable_output_is_an_invalid_graph_on_every_entry_point() {
+        let message = "sized by the graph's observable count";
+        let syndrome = [1, 1];
+        assert_invalid_graph(
+            &unallocatable_observables_graph().decode(&syndrome),
+            message,
+        );
+        for (bit_packed_input, bit_packed_output) in [(false, false), (true, true)] {
+            let shots: &[u8] = if bit_packed_input { &[0b11] } else { &syndrome };
+            let config = crate::BatchConfig {
+                bit_packed_input,
+                bit_packed_output,
+                return_weights: true,
+            };
+            assert_invalid_graph(
+                &unallocatable_observables_graph().decode_batch_with_config(shots, 1, 2, config),
+                message,
+            );
+        }
+        assert_invalid_graph(&unallocatable_observables_graph().add_noise(1, 7), message);
+        assert_invalid_graph(
+            &unallocatable_observables_graph().create_decode_buffer(),
+            message,
+        );
+        // Matched pairs and edges have no observable-sized output, so they decode.
+        let mut decoder = unallocatable_observables_graph();
+        assert_eq!(
+            decoder.decode_to_matched_pairs(&syndrome).expect("decodes"),
+            [crate::MatchedPair {
+                detector1: 0,
+                detector2: Some(1)
+            }]
+        );
+        assert_eq!(
+            decoder.decode_to_edges(&syndrome).expect("decodes").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn output_too_large_only_for_the_shot_count_is_a_configuration_error() {
+        // No detectors, so any shot count matches an empty shot buffer.
+        let mut decoder = decoder_with_nodes(0);
+        let result =
+            decoder.decode_batch_with_config(&[], 1 << 62, 0, crate::BatchConfig::default());
+        assert!(
+            matches!(&result, Err(crate::PyMatchingError::Configuration(message))
+                if message.contains("pass a smaller num_shots")),
+            "{result:?}"
+        );
+        let result = decoder.add_noise(1 << 62, 7);
+        assert!(
+            matches!(&result, Err(crate::PyMatchingError::Configuration(message))
+                if message.contains("pass a smaller num_samples")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn shortest_path_matcher_build_rejection_is_an_invalid_graph() {
+        assert_matcher_build_rejected(&overweight_graph(1).get_shortest_path(0, 1));
+    }
+
+    /// A graph on `num_nodes` nodes with unit-weight `edges` and `boundary` nodes.
+    fn path_graph(
+        num_nodes: usize,
+        edges: &[(usize, usize)],
+        boundary: &[usize],
+    ) -> crate::PyMatchingDecoder {
+        let mut decoder = decoder_with_nodes(num_nodes);
+        for &(node1, node2) in edges {
+            decoder
+                .add_edge(node1, node2, &[], Some(1.0), None, None)
+                .expect("the edge is added");
+        }
+        decoder.set_boundary(boundary).expect("the boundary is set");
+        decoder
+    }
+
+    #[test]
+    fn shortest_path_cases_upstream_cannot_answer_are_configuration_errors() {
+        // Each case dereferences a null pointer or throws in upstream.
+        let cases: [(&str, crate::PyMatchingDecoder, usize, usize); 5] = [
+            (
+                "different connected components",
+                path_graph(4, &[(0, 1), (2, 3)], &[]),
+                0,
+                3,
+            ),
+            (
+                "different connected components",
+                path_graph(3, &[(0, 1)], &[]),
+                2,
+                0,
+            ),
+            // Upstream never searches through a boundary node.
+            (
+                "different connected components",
+                path_graph(3, &[(0, 1), (1, 2)], &[1]),
+                0,
+                2,
+            ),
+            (
+                "no boundary is reachable from node 0",
+                path_graph(4, &[(0, 1), (2, 3)], &[3]),
+                0,
+                3,
+            ),
+            (
+                "are both boundary nodes",
+                path_graph(3, &[(0, 1), (1, 2)], &[0, 2]),
+                0,
+                2,
+            ),
+        ];
+        for (needle, mut decoder, source, target) in cases {
+            let result = decoder.get_shortest_path(source, target);
+            assert!(
+                matches!(&result, Err(crate::PyMatchingError::Configuration(message))
+                    if message.contains(needle)),
+                "{source} -> {target}: {result:?}"
+            );
+        }
+        let result = path_graph(2, &[], &[]).get_shortest_path(0, 1);
+        assert!(
+            matches!(&result, Err(crate::PyMatchingError::Configuration(message))
+                if message.contains("empty graph")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn shortest_path_returns_upstream_paths() {
+        let mut decoder = path_graph(3, &[(0, 1), (1, 2)], &[]);
+        assert_eq!(
+            decoder.get_shortest_path(0, 2).expect("connected"),
+            [0, 1, 2]
+        );
+        assert_eq!(decoder.get_shortest_path(1, 1).expect("trivial"), [1]);
+        // A boundary endpoint is left out; the path runs to the nearest boundary,
+        // here node 1's boundary edge rather than boundary node 3.
+        let mut decoder = path_graph(4, &[(0, 1)], &[3]);
+        decoder
+            .add_boundary_edge(1, &[], Some(1.0), None, None)
+            .expect("the boundary edge is added");
+        assert_eq!(
+            decoder.get_shortest_path(0, 3).expect("boundary reachable"),
+            [0, 1]
+        );
+        assert_eq!(
+            decoder.get_shortest_path(3, 0).expect("boundary reachable"),
+            [1, 0]
+        );
+    }
+
+    #[test]
+    fn shortest_path_uses_weights_set_after_an_earlier_query() {
+        // 0 - 1 - 2 costs 2 against 10 for the direct edge, until every edge
+        // gets the same weight.
+        let mut decoder = path_graph(3, &[(0, 1), (1, 2)], &[]);
+        decoder
+            .add_edge(0, 2, &[], Some(10.0), None, None)
+            .expect("the edge is added");
+        assert_eq!(
+            decoder.get_shortest_path(0, 2).expect("connected"),
+            [0, 1, 2]
+        );
+        decoder
+            .set_all_error_probabilities(0.1)
+            .expect("the probability is valid");
+        assert_eq!(decoder.get_shortest_path(0, 2).expect("connected"), [0, 2]);
+    }
+
+    #[test]
+    fn check_matrix_caller_counts_are_configuration_errors() {
+        let matrix = CheckMatrix::new(2, 3, vec![0, 0, 1, 1], vec![0, 1, 1, 2]);
+        let build = |config: CheckMatrixConfig| {
+            PyMatchingDecoder::from_check_matrix_with_config(&matrix, config).err()
+        };
+        let cases = [
+            (
+                CheckMatrixConfig {
+                    repetitions: 0,
+                    use_virtual_boundary: false,
+                    ..Default::default()
+                },
+                "repetitions must be at least 1, got 0".to_string(),
+            ),
+            (
+                CheckMatrixConfig {
+                    repetitions: 1 << 63,
+                    ..Default::default()
+                },
+                format!(
+                    "2 rows times {} repetitions overflows usize; pass fewer repetitions",
+                    1_usize << 63
+                ),
+            ),
+            (
+                CheckMatrixConfig {
+                    error_probabilities: Some(vec![0.1]),
+                    ..Default::default()
+                },
+                "error_probabilities has length 1 but must equal the number of columns (3)"
+                    .to_string(),
+            ),
+        ];
+        for (config, expected) in cases {
+            let error = build(config);
+            assert!(
+                matches!(&error, Some(PyMatchingError::Configuration(message)) if *message == expected),
+                "{error:?}"
+            );
+        }
+        let error =
+            PyMatchingDecoder::from_check_matrix(&CheckMatrix::new(1, 1 << 62, vec![], vec![]))
+                .err();
+        assert!(
+            matches!(&error, Some(PyMatchingError::Configuration(message))
+                if message.starts_with("cannot allocate one entry per column")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn check_matrix_without_rows_does_not_loop_over_repetitions() {
+        // Zero rows pass the product check for any count, so a loop over the
+        // empty rounds would not finish.
+        let matrix = CheckMatrix::new(0, 1, vec![], vec![]);
+        let config = CheckMatrixConfig {
+            repetitions: 1 << 62,
+            ..Default::default()
+        };
+        let decoder = PyMatchingDecoder::from_check_matrix_with_config(&matrix, config)
+            .expect("a matrix without rows builds an empty graph");
+        assert_eq!(decoder.num_nodes(), 0);
+    }
+
+    #[test]
+    fn add_noise_syndrome_covers_nodes_past_the_detector_count() {
+        // Boundary node 0 leaves 3 detectors, but the edge flips nodes 2 and 3.
+        let mut decoder = decoder_with_nodes(4);
+        decoder.set_boundary(&[0]).expect("the boundary is set");
+        decoder
+            .add_edge(2, 3, &[0], None, Some(0.5), None)
+            .expect("the edge is added");
+        decoder
+            .add_edge(0, 1, &[], None, Some(0.5), None)
+            .expect("the edge is added");
+        assert_eq!((decoder.num_nodes(), decoder.num_detectors()), (4, 3));
+        let noise = decoder.add_noise(64, 7).expect("noise is sampled");
+        let mut flipped = 0;
+        for (errors, syndrome) in noise.errors.iter().zip(&noise.syndromes) {
+            assert_eq!(syndrome.len(), 4);
+            assert_eq!(syndrome[0], 0, "a boundary node never fires");
+            assert_eq!(syndrome[2], errors[0]);
+            assert_eq!(syndrome[3], errors[0]);
+            flipped += usize::from(errors[0]);
+            decoder
+                .decode(syndrome)
+                .expect("the syndrome length is accepted");
+        }
+        assert!(0 < flipped && flipped < 64, "{flipped}");
+    }
+
     #[test]
     fn disallowed_parallel_edge_is_an_invalid_graph() {
         let mut decoder =

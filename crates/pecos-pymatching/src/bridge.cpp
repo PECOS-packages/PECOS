@@ -35,10 +35,17 @@ static std::mutex g_pymatching_rng_mutex;
 // pymatching_input_error_prefix(), which the Rust side reports as
 // PyMatchingError::InvalidGraph.
 //
-// Decode phase: the decode calls and noise sampling. They fail because of the
-// syndrome (for example an odd-parity syndrome with no perfect matching) or an
-// upstream invariant, so rethrow_decode_error leaves them unmarked; they stay
-// FFI errors.
+// Decode phase: the decode calls, noise sampling and the shortest-path query.
+// They fail because of the syndrome (for example an odd-parity syndrome with no
+// perfect matching), the query or an upstream invariant, so rethrow_decode_error
+// leaves them unmarked; they stay FFI errors.
+//
+// A failed rust::Vec allocation ends the process and cannot be caught here.
+// Output that copies data already held in memory, and is at most its size
+// (edge data, the boundary, matched pairs and edges, a shortest path), stays a
+// rust::Vec. Output that a small input can make large (observable rows sized by
+// the graph's observable count, one row per shot or sample) is allocated by the
+// Rust caller and passed in as a slice.
 //
 // Both must be called from inside a catch block for a std::exception.
 [[noreturn]] static void rethrow_graph_error(const std::string& context) {
@@ -98,6 +105,23 @@ public:
         }
     }
 
+    // Grow the node list to hold `node`, a graph-phase step. Upstream grows it
+    // too when an edge is added, but its failure does not name the node. The
+    // Rust caller rejects SIZE_MAX, so `node + 1` does not wrap. A failed
+    // resize leaves the node list unchanged.
+    void grow_to_hold(size_t node, const std::string& context) {
+        auto& nodes = user_graph_->nodes;
+        if (node < nodes.size()) {
+            return;
+        }
+        try {
+            nodes.resize(node + 1);
+        } catch (const std::exception&) {
+            rethrow_graph_error(context + "node " + std::to_string(node) + " needs a graph of " +
+                                std::to_string(node + 1) + " nodes, which cannot be allocated: ");
+        }
+    }
+
     // Reset decoder state after each use
     void reset_mwpm() {
         if (mwpm_) {
@@ -151,10 +175,6 @@ void PyMatchingGraph::add_edge(
     double error_probability,
     MergeStrategy merge_strategy) {
 
-    // Use data()+size() instead of begin()/end() iterators to avoid
-    // Xcode 15.4 libc++ pointer_traits incompatibility with cxx iterators in C++20
-    std::vector<size_t> obs_vec(observables.data(), observables.data() + observables.size());
-
     // Convert merge strategy enum
     pm::MERGE_STRATEGY pm_strategy;
     switch (merge_strategy) {
@@ -175,7 +195,11 @@ void PyMatchingGraph::add_edge(
             break;
     }
 
+    pimpl_->grow_to_hold(std::max(node1, node2), "Failed to add edge: ");
     try {
+        // Use data()+size() instead of begin()/end() iterators to avoid
+        // Xcode 15.4 libc++ pointer_traits incompatibility with cxx iterators in C++20
+        std::vector<size_t> obs_vec(observables.data(), observables.data() + observables.size());
         if (std::isfinite(error_probability) && error_probability > 0 && error_probability < 1) {
             pimpl_->user_graph_->add_or_merge_edge(node1, node2, obs_vec, NAN, error_probability, pm_strategy);
         } else {
@@ -193,8 +217,6 @@ void PyMatchingGraph::add_boundary_edge(
     double weight,
     double error_probability,
     MergeStrategy merge_strategy) {
-
-    std::vector<size_t> obs_vec(observables.data(), observables.data() + observables.size());
 
     // Convert merge strategy
     pm::MERGE_STRATEGY pm_strategy;
@@ -216,7 +238,9 @@ void PyMatchingGraph::add_boundary_edge(
             break;
     }
 
+    pimpl_->grow_to_hold(node, "Failed to add boundary edge: ");
     try {
+        std::vector<size_t> obs_vec(observables.data(), observables.data() + observables.size());
         if (std::isfinite(error_probability) && error_probability > 0 && error_probability < 1) {
             pimpl_->user_graph_->add_or_merge_boundary_edge(node, obs_vec, NAN, error_probability, pm_strategy);
         } else {
@@ -230,9 +254,20 @@ void PyMatchingGraph::add_boundary_edge(
 
 void PyMatchingGraph::set_all_error_probabilities(double error_probability) {
     double weight = std::log((1 - error_probability) / error_probability);
-    for (auto& edge : pimpl_->user_graph_->edges) {
-        edge.weight = weight;
-        edge.error_probability = error_probability;
+    // Edit each edge through upstream's own edge update (REPLACE keeps its
+    // observables), which also marks upstream's cached matcher, used by
+    // get_shortest_path, for rebuilding. Writing the edges directly would leave
+    // that matcher stale. Each edge sits once in its node1's neighbour list, as
+    // the entry whose neighbour is node2 (pos 1).
+    auto& graph = *pimpl_->user_graph_;
+    for (size_t node = 0; node < graph.nodes.size(); node++) {
+        auto& neighbors = graph.nodes[node].neighbors;
+        for (size_t i = 0; i < neighbors.size(); i++) {
+            if (neighbors[i].pos == 1) {
+                graph.merge_edge_or_boundary_edge(
+                    node, i, neighbors[i].edge_it->observable_indices, weight, error_probability, pm::REPLACE);
+            }
+        }
     }
     pimpl_->mwpm_.reset();
 }
@@ -402,8 +437,9 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_64(
     }
 }
 
-ExtendedMatchingResult PyMatchingGraph::decode_detection_events_extended(
-    const rust::Slice<const uint8_t> detection_events) {
+double PyMatchingGraph::decode_detection_events_extended(
+    const rust::Slice<const uint8_t> detection_events,
+    rust::Slice<uint8_t> observables) {
 
     // Convert detection events
     std::vector<uint64_t> detections;
@@ -414,24 +450,17 @@ ExtendedMatchingResult PyMatchingGraph::decode_detection_events_extended(
     }
 
     pimpl_->build_matcher(pimpl_->enable_correlations_);
+    // Upstream writes one byte per matcher observable into `observables`.
+    if (observables.size() != pimpl_->mwpm_->flooder.graph.num_observables) {
+        throw std::logic_error("observable buffer does not match the matcher's observable count");
+    }
 
     try {
-        size_t num_obs = pimpl_->user_graph_->get_num_observables();
-        std::vector<uint8_t> obs_vec(num_obs, 0);
         pm::total_weight_int weight = 0;
-
         pm::decode_detection_events(
-            *pimpl_->mwpm_, detections, obs_vec.data(), weight, pimpl_->enable_correlations_);
+            *pimpl_->mwpm_, detections, observables.data(), weight, pimpl_->enable_correlations_);
         pimpl_->reset_mwpm();
-
-        ExtendedMatchingResult result;
-        result.observables = rust::Vec<uint8_t>();
-        for (auto val : obs_vec) {
-            result.observables.push_back(val);
-        }
-        result.weight = static_cast<double>(weight) / pimpl_->normalising_constant_;
-
-        return result;
+        return static_cast<double>(weight) / pimpl_->normalising_constant_;
     } catch (const std::exception&) {
         pimpl_->reset_mwpm();
         rethrow_decode_error("Decoding failed: ");
@@ -514,26 +543,39 @@ rust::Vec<MatchedPair> PyMatchingGraph::decode_to_edges(
     }
 }
 
-BatchDecodingResult PyMatchingGraph::decode_batch(
+void PyMatchingGraph::decode_batch(
     const rust::Slice<const uint8_t> shots,
-    size_t num_shots,
     size_t num_detectors,
     bool bit_packed_shots,
-    bool bit_packed_predictions) {
-
-    BatchDecodingResult result;
-    result.predictions = rust::Vec<uint8_t>();
-    result.weights = rust::Vec<double>();
-
-    size_t num_obs = pimpl_->user_graph_->get_num_observables();
-    size_t obs_bytes_per_shot = bit_packed_predictions ? ((num_obs + 7) / 8) : num_obs;
-    size_t det_bytes_per_shot = bit_packed_shots ? ((num_detectors + 7) / 8) : num_detectors;
-
-    // Pre-allocate result space
-    result.predictions.reserve(num_shots * obs_bytes_per_shot);
-    result.weights.reserve(num_shots);
+    bool bit_packed_predictions,
+    rust::Slice<uint8_t> predictions,
+    rust::Slice<double> weights) {
 
     pimpl_->build_matcher(pimpl_->enable_correlations_);
+
+    // The caller allocates the output, one weight and one prediction row per
+    // shot, since a failed rust::Vec allocation here would end the process.
+    // Written as divisions so the check cannot wrap.
+    size_t num_shots = weights.size();
+    size_t num_obs = pimpl_->mwpm_->flooder.graph.num_observables;
+    size_t obs_bytes_per_shot = bit_packed_predictions ? (num_obs / 8 + (num_obs % 8 != 0)) : num_obs;
+    size_t det_bytes_per_shot = bit_packed_shots ? (num_detectors / 8 + (num_detectors % 8 != 0)) : num_detectors;
+    if (num_shots != 0 && (predictions.size() % num_shots != 0 ||
+                           predictions.size() / num_shots != obs_bytes_per_shot)) {
+        throw std::logic_error("batch prediction buffer does not match the shot and observable counts");
+    }
+
+    // Bit-packing more than 64 observables needs one unpacked shot. It is sized
+    // by the graph's observable count, so failing to allocate it is a rejection
+    // of the graph.
+    std::vector<uint8_t> obs_vec;
+    if (num_obs > 64 && bit_packed_predictions) {
+        try {
+            obs_vec.resize(num_obs);
+        } catch (const std::exception&) {
+            rethrow_graph_error("Failed to allocate one shot's observables: ");
+        }
+    }
 
     try {
         for (size_t shot = 0; shot < num_shots; shot++) {
@@ -562,6 +604,8 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
                 }
             }
 
+            uint8_t* shot_predictions = predictions.data() + shot * obs_bytes_per_shot;
+
             // Decode
             if (num_obs <= 64) {
                 auto res = pm::decode_detection_events_for_up_to_64_observables(
@@ -576,24 +620,23 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
                                 val |= (1 << bit);
                             }
                         }
-                        result.predictions.push_back(val);
+                        shot_predictions[byte] = val;
                     }
                 } else {
                     // Unpacked format - one byte per observable
                     for (size_t i = 0; i < num_obs; i++) {
-                        result.predictions.push_back((res.obs_mask >> i) & 1);
+                        shot_predictions[i] = (res.obs_mask >> i) & 1;
                     }
                 }
 
-                result.weights.push_back(static_cast<double>(res.weight) / pimpl_->normalising_constant_);
+                weights[shot] = static_cast<double>(res.weight) / pimpl_->normalising_constant_;
             } else {
-                std::vector<uint8_t> obs_vec(num_obs, 0);
                 pm::total_weight_int weight = 0;
 
-                pm::decode_detection_events(
-                    *pimpl_->mwpm_, detections, obs_vec.data(), weight, pimpl_->enable_correlations_);
-
                 if (bit_packed_predictions) {
+                    std::fill(obs_vec.begin(), obs_vec.end(), 0);
+                    pm::decode_detection_events(
+                        *pimpl_->mwpm_, detections, obs_vec.data(), weight, pimpl_->enable_correlations_);
                     // Pack observables into bytes
                     for (size_t byte = 0; byte < obs_bytes_per_shot; byte++) {
                         uint8_t val = 0;
@@ -602,22 +645,19 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
                                 val |= (1 << bit);
                             }
                         }
-                        result.predictions.push_back(val);
+                        shot_predictions[byte] = val;
                     }
                 } else {
-                    // Unpacked format - copy directly
-                    for (size_t i = 0; i < num_obs; i++) {
-                        result.predictions.push_back(obs_vec[i]);
-                    }
+                    // Unpacked format - decode into the caller's zeroed shot
+                    pm::decode_detection_events(
+                        *pimpl_->mwpm_, detections, shot_predictions, weight, pimpl_->enable_correlations_);
                 }
 
-                result.weights.push_back(static_cast<double>(weight) / pimpl_->normalising_constant_);
+                weights[shot] = static_cast<double>(weight) / pimpl_->normalising_constant_;
             }
 
             pimpl_->reset_mwpm();
         }
-
-        return result;
     } catch (const std::exception&) {
         pimpl_->reset_mwpm();
         rethrow_decode_error("Batch decoding failed: ");
@@ -627,93 +667,61 @@ BatchDecodingResult PyMatchingGraph::decode_batch(
 // ===== Path Finding =====
 
 rust::Vec<size_t> PyMatchingGraph::get_shortest_path(size_t source, size_t target) {
-    rust::Vec<size_t> path;
-
+    // Upstream builds its own search-graph matcher inside the query; build it
+    // first so that a failure there is reported as a rejection of the graph.
     try {
-        // Validate nodes
-        size_t num_nodes = pimpl_->user_graph_->get_num_nodes();
-
-        if (source >= num_nodes) {
-            throw std::invalid_argument("Source node " + std::to_string(source) + " is out of bounds");
-        }
-        if (target >= num_nodes) {
-            throw std::invalid_argument("Target node " + std::to_string(target) + " is out of bounds");
-        }
-
-        // PyMatching's shortest path requires the MWPM with search graph
-        // We need to ensure it's initialized before calling
-        // Note: This modifies internal state, so this method cannot be const
-
-        // Try to get the shortest path
-        // PyMatching may segfault on disconnected graphs, so we wrap in a try-catch
-        try {
-            std::vector<size_t> result_path;
-            pimpl_->user_graph_->get_nodes_on_shortest_path_from_source(source, target, result_path);
-
-
-            // Convert to rust::Vec
-            for (size_t node : result_path) {
-                path.push_back(node);
-            }
-        } catch (...) {
-            // PyMatching crashed or threw an exception
-            // This typically happens with disconnected graphs
-            // Return empty path
-        }
-
-        return path;
-    } catch (const std::exception& e) {
-        // PyMatching throws exceptions for various cases:
-        // - Disconnected graphs
-        // - Both source and target are boundary nodes
-        // - Invalid configurations
-        // We'll handle these gracefully by returning an empty path
-        return path;
+        pimpl_->user_graph_->get_mwpm_with_search_graph();
+    } catch (const std::exception&) {
+        rethrow_graph_error("Failed to build the matcher: ");
     }
+
+    std::vector<size_t> nodes;
+    try {
+        pimpl_->user_graph_->get_nodes_on_shortest_path_from_source(source, target, nodes);
+    } catch (const std::exception&) {
+        rethrow_decode_error("Shortest path failed: ");
+    }
+
+    // A copy of `nodes`, which is at most one entry per node of the graph.
+    rust::Vec<size_t> path;
+    path.reserve(nodes.size());
+    for (size_t node : nodes) {
+        path.push_back(node);
+    }
+    return path;
 }
 
 // ===== Noise Simulation =====
 
-BatchDecodingResult PyMatchingGraph::add_noise(
+void PyMatchingGraph::add_noise(
     size_t num_samples,
-    uint64_t rng_seed) const {
+    uint64_t rng_seed,
+    rust::Slice<uint8_t> errors,
+    rust::Slice<uint8_t> syndromes) const {
 
-    BatchDecodingResult result;
-    result.predictions = rust::Vec<uint8_t>();
-    result.weights = rust::Vec<double>();
+    // Upstream writes one byte per observable into a sample's errors, and one
+    // byte per node (boundary nodes included) into its syndrome. The caller
+    // allocates both, zeroed, since a failed rust::Vec allocation here would end
+    // the process. Written as divisions so the check cannot wrap.
+    size_t num_observables = pimpl_->user_graph_->get_num_observables();
+    size_t num_nodes = pimpl_->user_graph_->get_num_nodes();
+    if (num_samples != 0 &&
+        (errors.size() % num_samples != 0 || errors.size() / num_samples != num_observables ||
+         syndromes.size() % num_samples != 0 || syndromes.size() / num_samples != num_nodes)) {
+        throw std::logic_error("noise output buffers do not match num_samples and the graph");
+    }
 
     try {
-        // Calculate sizes
-        size_t num_observables = pimpl_->user_graph_->get_num_observables();
-        size_t num_detectors = pimpl_->user_graph_->get_num_detectors();
-
         // Lock mutex for entire noise generation to ensure deterministic results
         std::lock_guard<std::mutex> lock(g_pymatching_rng_mutex);
 
         // Seed the internal RNG
         pm::set_seed((uint32_t)rng_seed);
 
-        // Generate noise samples
         for (size_t sample = 0; sample < num_samples; sample++) {
-            std::vector<uint8_t> error_vec(num_observables, 0);
-            std::vector<uint8_t> syndrome_vec(num_detectors, 0);
-
-            // Call PyMatching's add_noise
-            pimpl_->user_graph_->add_noise(error_vec.data(), syndrome_vec.data());
-
-            // Copy errors to result (as predictions)
-            for (auto val : error_vec) {
-                result.predictions.push_back(val);
-            }
-
-            // Copy syndrome to weights (reinterpret as double for now)
-            // In the actual API, syndromes would be returned separately
-            for (auto val : syndrome_vec) {
-                result.weights.push_back(static_cast<double>(val));
-            }
+            pimpl_->user_graph_->add_noise(
+                errors.data() + sample * num_observables, syndromes.data() + sample * num_nodes);
         }
-
-        return result;
     } catch (const std::exception&) {
         rethrow_decode_error("Noise simulation failed: ");
     }
@@ -855,10 +863,11 @@ ExtendedMatchingResult decode_detection_events_64(
     return graph.decode_detection_events_64(detection_events);
 }
 
-ExtendedMatchingResult decode_detection_events_extended(
+double decode_detection_events_extended(
     PyMatchingGraph& graph,
-    const rust::Slice<const uint8_t> detection_events) {
-    return graph.decode_detection_events_extended(detection_events);
+    const rust::Slice<const uint8_t> detection_events,
+    rust::Slice<uint8_t> observables) {
+    return graph.decode_detection_events_extended(detection_events, observables);
 }
 
 rust::Vec<MatchedPair> decode_to_matched_pairs(
@@ -873,14 +882,15 @@ rust::Vec<MatchedPair> decode_to_edges(
     return graph.decode_to_edges(detection_events);
 }
 
-BatchDecodingResult decode_batch(
+void decode_batch(
     PyMatchingGraph& graph,
     const rust::Slice<const uint8_t> shots,
-    size_t num_shots,
     size_t num_detectors,
     bool bit_packed_shots,
-    bool bit_packed_predictions) {
-    return graph.decode_batch(shots, num_shots, num_detectors, bit_packed_shots, bit_packed_predictions);
+    bool bit_packed_predictions,
+    rust::Slice<uint8_t> predictions,
+    rust::Slice<double> weights) {
+    graph.decode_batch(shots, num_detectors, bit_packed_shots, bit_packed_predictions, predictions, weights);
 }
 
 rust::Vec<size_t> get_shortest_path(
@@ -890,11 +900,13 @@ rust::Vec<size_t> get_shortest_path(
     return graph.get_shortest_path(source, target);
 }
 
-BatchDecodingResult add_noise(
+void add_noise(
     const PyMatchingGraph& graph,
     size_t num_samples,
-    uint64_t rng_seed) {
-    return graph.add_noise(num_samples, rng_seed);
+    uint64_t rng_seed,
+    rust::Slice<uint8_t> errors,
+    rust::Slice<uint8_t> syndromes) {
+    graph.add_noise(num_samples, rng_seed, errors, syndromes);
 }
 
 double get_edge_weight_normalising_constant(

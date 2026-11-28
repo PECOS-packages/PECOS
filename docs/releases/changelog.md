@@ -43,6 +43,49 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   documented caller obligations; reusing a failed instance, for example through
   Selene's interactive `next_shot`, now fails instead of continuing.
 
+- **Breaking:** PyMatching `add_noise` syndromes have one entry per node
+  (`num_nodes`, boundary nodes included and always 0) instead of
+  `num_detectors`, as upstream PyMatching's `add_noise` returns (#1771); with no
+  boundary the length is unchanged. With a boundary the old buffer was too short
+  and upstream wrote past it. `DecodeBuffer::new` and
+  `PyMatchingDecoder::create_decode_buffer` now return `Result`, with
+  `PyMatchingError::InvalidGraph` when the observable buffer cannot be
+  allocated. The check-matrix constructors reject `weights` or
+  `error_probabilities` longer than the column count with
+  `PyMatchingError::Configuration` (`ValueError`); before, the extra entries
+  were ignored. `PyMatchingBuilder::from_check_matrix` now applies a config with
+  one repetition, which it used to ignore, so that config's `weights`,
+  `error_probabilities` and `use_virtual_boundary` take effect and are checked.
+
+- **Fixed:** PyMatching inputs that ended the process now raise errors (#1771).
+  `add_edge`, `add_edge_with_config`, `add_boundary_edge`, the builder and
+  `pymatching_from_petgraph` reject node `usize::MAX` (`BOUNDARY_NODE_MARKER`,
+  `2**64 - 1` from Python, which segfaulted) and observable `usize::MAX` (which
+  panicked after inserting the edge) with `PyMatchingError::InvalidGraph`
+  (`ValueError`) before the edge is added. A node too large to allocate, such as
+  `2**64 - 2`, names the node and the node count it needs. Decoder outputs are
+  allocated in Rust: a graph whose observable or node count makes one shot's
+  output unallocatable is `InvalidGraph` (`ValueError`) from `decode` past 64
+  observables, `decode_batch_with_config` and `add_noise`, instead of
+  `RuntimeError` or an abort, and a batch too large only because of `num_shots`
+  or `num_samples` is `PyMatchingError::Configuration` (`ValueError`).
+  `from_check_matrix_with_config` (Python
+  `from_check_matrix_with_repetitions`) rejects `repetitions=0`, a rows times
+  repetitions product that overflows, per-column `weights` or
+  `error_probabilities` shorter than the column count, and a column count too
+  large to allocate with `Configuration` (`ValueError`) instead of panicking or
+  aborting. A matrix with no rows no longer loops over every repetition.
+  `get_shortest_path` no longer returns an empty path on an upstream
+  failure: a matcher-build failure such as an edge weight above upstream's
+  maximum is `InvalidGraph`; two boundary nodes, and a target reachable only
+  through a boundary node (which segfaulted), are `Configuration`. When one node
+  is a boundary node it returns upstream's path to the nearest boundary, instead
+  of `Configuration` when the given boundary node itself is not connected.
+  After `set_all_error_probabilities`, `get_shortest_path` uses the new weights
+  instead of the weights of its first call. `FusionBlossomDecoder` with no nodes
+  reports an out-of-bounds node instead of panicking while formatting the
+  error.
+
 - **Breaking:** More decoder input errors keep their category, and syndrome
   length errors convert to one `DecoderError` variant (#1749). PyMatching now
   classifies upstream Stim and PyMatching failures by the phase that failed. Any
